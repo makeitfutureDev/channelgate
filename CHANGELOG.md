@@ -6,6 +6,9 @@
   cookie secret's hash is stored), and a passkey sign-in lasts thirty days instead of twelve hours.
   Slack-link launches and admin hand-offs keep the twelve-hour session.
 
+- Keep shared Done conversations visible in green for other participants until they Hide them.
+  Your own Done removes the row from Active and keeps it in Completed; dismissal is personal.
+
 - Let callers explicitly mark their current thread Done by voice, with the same starter/access
   checks as Activity. The call stays open and running work continues. New threads started by
   voice belong to their caller, so they can appear in Activity and be completed there too.

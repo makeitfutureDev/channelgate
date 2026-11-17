@@ -1,5 +1,5 @@
 import { getChannelEntry } from "../config/store.js";
-import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, setSlackThreadDone, setSlackThreadLater, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
+import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, setSlackThreadDone, setSlackThreadLater, updateSlackThreadRootCompletion, isSlackThreadParticipant, markSlackThreadCompletionDismissed } from "../gateway/slack-threads.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { accessContext } from "./home-threads.js";
@@ -22,8 +22,16 @@ export async function syncThreadCompletionReaction(client, event, { added = fals
   // A delayed mirror event must not promote an old human check past a newer prompt/Reopen.
   const mirrorEvent = event.user === getSlackThread(channelId, threadTs)?.completion_mirror_user;
   updateSlackThreadRootCompletion(channelId, { ts: threadTs }, {
-    ...inspected, reactionAt: added && !mirrorEvent ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0,
+    ...inspected, reopenedAt: !added ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0, reactionAt: added && !mirrorEvent ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0,
   });
+  if (added && !mirrorEvent && event.user && isSlackThreadParticipant(channelId, threadTs, event.user)) {
+    const version = accessVersion;
+    const entry = await getChannelEntry(channelId);
+    const access = await accessContext(client, event.user);
+    if (await access.allows(entry && { ...entry, channelId }, threadTs) && version === accessVersion) {
+      markSlackThreadCompletionDismissed(channelId, threadTs, event.user, Math.floor(Number(event.event_ts) * 1000));
+    }
+  }
   await syncThreadDoneMarker(client, channelId, threadTs);
 }
 

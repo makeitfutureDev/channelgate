@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Shared Done stays visible until personal dismissal (2026-11-17)
+
+Done is shared across a conversation, while leaving Active is personal. When somebody else completes a thread, its green Done row remains in your Activity until you Hide it. Completing it yourself removes it from Active and retains it in Completed; pins cannot override this. Hide remains separate and affects only your list. Reopen resets automatic completion dismissals while preserving manual Hide, and your next newer original message restores your own visibility. Existing starter-only dashboard and voice completion authority is unchanged. Existing running tasks continue, but shared Done remains the displayed state.
+
 ## Mark threads Done by voice (2026-11-17)
 
 During a voice call, “mark this thread done” or “close this conversation” invokes a direct

@@ -1,5 +1,10 @@
 # ChannelGate — Test Plan
 
+## Shared Done and personal dismissal (2026-11-17)
+
+- Automated: `test/activity-done-dismissal.test.js` covers migration 59, per-actor dismissal, duplicate/delayed reactions, access checks, Reopen cycles, manual Hide separation and voice acknowledgment. Activity API/Home/browser regressions cover shared Done visibility, personal archive capacity, pins and status while work continues. `test/activity-shared-done-browser.test.js` exercises two viewers on desktop and phone.
+- Private control-plane gate `ACTIVITY-SHARED-DONE-01`: owner completes a shared thread; only owner leaves Active while participant retains a green Done row. Participant Hides it; owner Reopens without restoring participant. Participant sends a newer original message to restore their row. Repeat with a participant Slack checkmark so the owner sees Done until explicit personal dismissal. Preserve current authorization and follow-up suppression. This case invokes no engine; participant admission dual-engine and live Gemini tool selection retain their separate gates. Definition and local fixtures do not certify live acceptance.
+
 ## Mark threads Done by voice (2026-11-17)
 
 - Automated: `test/voice-calls.test.js` exercises direct completion without engine dispatch,

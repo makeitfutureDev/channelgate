@@ -3,7 +3,7 @@
 import { getChannelEntry } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { accessContext } from "./home-threads.js";
-import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, slackThreadIsDone, setSlackThreadDone, recordSlackThreadMessage, recordSlackThreadParticipation } from "../gateway/slack-threads.js";
+import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, slackThreadIsDone, setSlackThreadDone, recordSlackThreadMessage, recordSlackThreadParticipation, markSlackThreadCompletionDismissed } from "../gateway/slack-threads.js";
 import { markDone, clearDone } from "../gateway/followups.js";
 import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { isSlackTs } from "./thread-keys.js";
@@ -34,6 +34,7 @@ export async function completeThreadForCaller(client, { channelId, threadTs, use
   if (!row || row.starter_id !== userId || !isSlackThreadEligible(row)) throw denied();
   const alreadyDone = slackThreadIsDone(row);
   if (!alreadyDone && !setSlackThreadDone(channelId, threadTs, userId, true)) throw denied();
+  if (alreadyDone) markSlackThreadCompletionDismissed(channelId, threadTs, userId);
   markDone(userId, channelId, threadTs);
   await syncThreadDoneMarker(client, channelId, threadTs);
   const current = getSlackThread(channelId, threadTs);

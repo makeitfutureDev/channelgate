@@ -134,7 +134,11 @@ export function recordSlackThreadOutcome(channelId, threadKey, { error = false, 
 export function setSlackThreadDone(channelId, threadTs, userId, done, at = Date.now()) {
   const changed = Boolean(getDb().prepare("UPDATE slack_threads SET done_ms=?,later_ms=0,updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=? WHERE channel_id=? AND thread_ts=? AND starter_id=?")
     .run(done ? at : -at, at, at, channelId, threadTs, userId).changes);
-  if (changed) notifyThreadChanged({ channelId, threadTs });
+  if (changed) {
+    if (done) writeSlackThreadCompletionDismissed(channelId, threadTs, userId, at);
+    else clearSlackThreadCompletionDismissals(channelId, threadTs, at);
+    notifyThreadChanged({ channelId, threadTs });
+  }
   return changed;
 }
 
@@ -145,11 +149,14 @@ export function setSlackThreadLater(channelId, threadTs, userId, later, at = Dat
     completion_marker_retry_ms=?
     WHERE channel_id=? AND thread_ts=? AND starter_id=?`)
     .run(later ? at : 0, later ? 1 : 0, -at, at, at, channelId, threadTs, userId).changes);
-  if (changed) notifyThreadChanged({ channelId, threadTs });
+  if (changed) {
+    if (later) clearSlackThreadCompletionDismissals(channelId, threadTs, at);
+    notifyThreadChanged({ channelId, threadTs });
+  }
   return changed;
 }
 
-export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0, completed = messageHasCompletionReaction(root), lastMessageMs = 0, inspectedAt = 0 } = {}) {
+export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0, reopenedAt = 0, completed = messageHasCompletionReaction(root), lastMessageMs = 0, inspectedAt = 0 } = {}) {
   if (!root?.ts) return;
   const previous = getSlackThread(channelId, root.ts);
   const done = completed ? 1 : 0;
@@ -167,6 +174,7 @@ export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 
     WHERE channel_id=? AND thread_ts=?`)
     .run(done ? reactionAt : 0, checkedAt, done, checkedAt, inspectedAt, checkedAt, inspectedAt, lastMessageMs, lastMessageMs, checkedAt, done, done ? reactionAt : 0, Date.now(), channelId, root.ts);
   const current = getSlackThread(channelId, root.ts);
+  if (slackThreadIsDone(previous) && !slackThreadIsDone(current)) clearSlackThreadCompletionDismissals(channelId, root.ts, reopenedAt || reactionAt || checkedAt);
   if (current && ["root_done", "root_reaction_ms", "last_message_ms"].some((key) => previous?.[key] !== current[key])) {
     notifyThreadChanged({ channelId, threadTs: root.ts });
   }
@@ -192,6 +200,7 @@ export function recordSlackThreadMessage(channelId, threadKey, messageTs, { huma
     .run(at, Date.now(), channelId, threadTs, at).changes > 0;
   const changed = getDb().prepare("UPDATE slack_threads SET last_message_ms=? WHERE channel_id=? AND thread_ts=? AND last_message_ms<?")
     .run(at, channelId, threadTs, at).changes;
+  if (reopened) clearSlackThreadCompletionDismissals(channelId, threadTs, at);
   if (changed || resumed || reopened) notifyThreadChanged({ channelId, threadTs });
   return Boolean(resumed || reopened);
 }
@@ -235,10 +244,37 @@ export function recordSlackThreadParticipation(channelId, threadKey, userId, mes
     SELECT channel_id,thread_ts,?,? FROM slack_threads WHERE channel_id=? AND thread_ts=? AND starter_id!=''
     ON CONFLICT(channel_id,thread_ts,user_id) DO UPDATE SET
       last_own_message_ts=excluded.last_own_message_ts,
-      hidden_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>hidden_ms THEN 0 ELSE hidden_ms END
+      hidden_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>hidden_ms THEN 0 ELSE hidden_ms END,
+      dismissed_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>dismissed_ms THEN 0 ELSE dismissed_ms END
     WHERE CAST(excluded.last_own_message_ts AS REAL)>CAST(last_own_message_ts AS REAL)`)
     .run(userId, String(messageTs), channelId, threadTs).changes;
   if (changed) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(changed);
+}
+
+function clearSlackThreadCompletionDismissals(channelId, threadTs, at) {
+  getDb().prepare("UPDATE slack_threads SET completion_reopened_ms=MAX(completion_reopened_ms,?) WHERE channel_id=? AND thread_ts=?")
+    .run(at, channelId, threadTs);
+  getDb().prepare("UPDATE slack_thread_participants SET dismissed_ms=0 WHERE channel_id=? AND thread_ts=?")
+    .run(channelId, threadTs);
+}
+
+// The authenticated action/reaction caller must already be a participant. Do not let a
+// delayed completion event archive newer own work or an explicitly reopened work cycle.
+export function markSlackThreadCompletionDismissed(channelId, threadTs, userId, at = Date.now()) {
+  const changed = writeSlackThreadCompletionDismissed(channelId, threadTs, userId, at);
+  if (changed) notifyThreadChanged({ channelId, threadTs });
+  return changed;
+}
+
+function writeSlackThreadCompletionDismissed(channelId, threadTs, userId, at) {
+  if (!Number.isSafeInteger(at) || at <= 0) return false;
+  const row = getSlackThread(channelId, threadTs);
+  if (!slackThreadIsDone(row) || at <= row.completion_reopened_ms || (row.done_ms < 0 && at <= Math.abs(row.done_ms))) return false;
+  const changed = getDb().prepare(`UPDATE slack_thread_participants SET dismissed_ms=MAX(dismissed_ms,?)
+    WHERE channel_id=? AND thread_ts=? AND user_id=?
+      AND CAST(CAST(last_own_message_ts AS REAL)*1000 AS INTEGER)<?`)
+    .run(at, channelId, threadTs, userId, at).changes;
   return Boolean(changed);
 }
 
@@ -253,7 +289,7 @@ export function setSlackThreadHidden(channelId, threadTs, userId, hidden, at = D
 }
 
 export function slackThreadsForUser(userId) {
-  return getDb().prepare(`SELECT t.*,p.hidden_ms,p.last_own_message_ts FROM slack_threads t
+  return getDb().prepare(`SELECT t.*,p.hidden_ms,p.dismissed_ms,p.last_own_message_ts FROM slack_threads t
     JOIN slack_thread_participants p USING(channel_id,thread_ts)
     WHERE p.user_id=? AND t.starter_id!='' ORDER BY t.updated_ms DESC,t.thread_ts DESC`).all(userId);
 }

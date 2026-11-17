@@ -59,7 +59,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const pinnedBody = el("pinned-threads"), pinnedChannelList = el("pinned-channels");
   const pendingChannels = new Set(), channelNodes = new Map();
   let pinnedChannels = [];
-  const isPinned = (row) => !row.hidden && (row.pinned || row.channelPinned && row.status !== "done");
+  const isPinned = (row) => !row.hidden && !(row.status === "done" && row.dismissed) && (row.pinned || row.channelPinned);
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
@@ -483,8 +483,9 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   }
   function matches(row) {
     if (Boolean(row.hidden) !== (filter === "hidden")) return false;
+    if (filter === "active" && row.status === "done" && row.dismissed) return false;
     if (filter !== "hidden" && !isPinned(row)) {
-      if (filter === "active" && ["done", "later"].includes(row.status)) return false;
+      if (filter === "active" && row.status === "later") return false;
       if (filter === "open" && row.status === "done") return false;
       if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
     }
@@ -525,13 +526,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   }
   function render() {
     const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0, hidden: 0 };
-    for (const row of rows) { if (row.hidden) { counts.hidden++; continue; } counts[row.status]++; if (row.status !== "done") { counts.open++; if (row.status !== "later") counts.active++; } }
+    for (const row of rows) { if (row.hidden) { counts.hidden++; continue; } counts[row.status]++; if (row.status !== "done") counts.open++; if (row.status !== "later" && !(row.status === "done" && row.dismissed)) counts.active++; }
     for (const button of tabs.querySelectorAll("button")) {
       const selected = button.dataset.filter === filter;
       button.setAttribute("aria-pressed", String(selected));
       button.querySelector("span").textContent = String(counts[button.dataset.filter]);
     }
-    el("summary").textContent = counts.active + " active · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
+    el("summary").textContent = counts.active + " visible · " + counts.done + " done · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
     const rank = (status) => status === "done" ? groupOrder.length + 1 : status === "later" ? groupOrder.length : groupOrder.indexOf(status);
     grouping.disabled = ended || savingGrouping;
     if (!savingGrouping) grouping.value = groupBy;
@@ -642,10 +643,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       entry.delay.title = row.status === "later" ? "Resume" : "Later";
       entry.delay.setAttribute("aria-label", (row.status === "later" ? "Resume: " : "Delay for later: ") + title);
       entry.toggle.disabled = busy || completingAll || ended;
-      entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
-      entry.toggle.dataset.state = busy ? "busy" : row.status === "done" ? "reopen" : "done";
-      entry.toggle.title = row.status === "done" ? "Reopen" : "Mark done";
-      entry.toggle.setAttribute("aria-label", (row.status === "done" ? "Reopen: " : "Mark done: ") + title);
+      const selfDone = row.status === "done" && row.dismissed;
+      entry.toggle.textContent = busy ? "Saving…" : selfDone ? "Reopen" : "Done";
+      entry.toggle.dataset.state = busy ? "busy" : selfDone ? "reopen" : "done";
+      entry.toggle.title = selfDone ? "Reopen" : "Mark done and remove from my Active view";
+      entry.toggle.setAttribute("aria-label", (selfDone ? "Reopen: " : "Mark done: ") + title);
       entry.pin.disabled = busy || completingAll || ended;
       entry.pin.textContent = row.pinned ? "Unpin" : "Pin";
       entry.pin.dataset.state = row.pinned ? "unpin" : "pin";
@@ -670,11 +672,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       }
       entry.name.textContent = channel.channelName;
       channelLink(entry.name, channel.channelId);
-      const open = rows.filter((row) => row.channelId === channel.channelId && !row.hidden && row.status !== "done").length;
+      const open = rows.filter((row) => row.channelId === channel.channelId && !row.hidden && !(row.status === "done" && row.dismissed)).length;
       // A populated channel already has its full card above; keep the compact control for
       // empty channels and for Status grouping, where channel cards are not rendered.
       entry.card.hidden = groupPinned && open > 0 && pinned.some((row) => row.channelId === channel.channelId);
-      entry.count.textContent = open ? open + " open" : "No open conversations";
+      entry.count.textContent = open ? open + " visible" : "No visible conversations";
       entry.card.dataset.channelId = channel.channelId;
       paintChannelPin(entry.button, channel.channelId, channel.channelName, true);
       if (pinnedChannelList.children[index] !== entry.card) pinnedChannelList.insertBefore(entry.card, pinnedChannelList.children[index] || null);
@@ -685,7 +687,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     el("table").hidden = ordinary.length === 0;
     el("empty").hidden = shown.length > 0 || ended;
     el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "hidden" ? "No hidden conversations" : filter === "later" ? "Nothing saved for later" : filter === "done" ? "No completed conversations" : "You’re all caught up";
-    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "hidden" ? "Hide only affects your list. Show a conversation here or send a new message to bring it back." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
+    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "hidden" ? "Hide only affects your list. Show a conversation here or send a new message to bring it back." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Completed conversations appear here. Work you complete yourself leaves Active; work completed by others stays there until you Hide it." : "Conversations matching this view will appear as activity arrives.";
     el("result-count").textContent = ended ? "" : shown.length + (shown.length === 1 ? " conversation" : " conversations");
     historyButton.disabled = ended || !loaded || loadingHistory || !moreHistory;
     historyButton.textContent = loadingHistory ? "Loading older threads…" : moreHistory ? "Load older threads" : "History loaded";
@@ -697,7 +699,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     button.dataset.channelId = channelId;
     button.dataset.state = pinned ? "unpin" : "pin";
     button.textContent = pinned ? "Unpin channel" : "Pin channel";
-    button.title = pinned ? "Unpin channel" : "Pin channel and its open conversations";
+    button.title = pinned ? "Unpin channel" : "Pin channel and its visible conversations";
     button.setAttribute("aria-label", (pinned ? "Unpin channel: " : "Pin channel: ") + String(name || "Conversation"));
     button.setAttribute("aria-pressed", String(pinned));
     button.disabled = ended || pendingChannels.has(channelId);
@@ -829,7 +831,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const row = rows.find((item) => key(item) === rowKey);
     if (!row) return;
     const field = operation === "hide" ? "hidden" : operation === "pin" ? "pinned" : operation === "later" ? "later" : "done";
-    const value = operation === "hide" ? !row.hidden : operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done";
+    const value = operation === "hide" ? !row.hidden : operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done" || !row.dismissed;
     pending.add(rowKey);
     actionMessage = "";
     render();
@@ -1563,7 +1565,8 @@ tbody[data-cards] tr[data-hue="4"]{--g:hsl(345 70% 56%)}tbody[data-cards] tr[dat
 tbody[data-cards] tr[data-hue="6"]{--g:hsl(52 60% 45%)}tbody[data-cards] tr[data-hue="7"]{--g:hsl(105 60% 45%)}
 .thread-cell{padding:10px 0;min-width:0}
 .thread-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;color:var(--ink);font-weight:500;line-height:1.4;overflow:hidden;overflow-wrap:anywhere}
-.s-done .thread-title{color:var(--ink-2)}
+tbody tr.s-done{background-color:color-mix(in srgb,var(--s-done) 10%,var(--panel))}
+.s-done .thread-title{color:var(--s-done)}
 .thread-title:hover{color:var(--ink);text-decoration:underline}
 .channel-cell{font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .channel-link{color:inherit}
@@ -1716,7 +1719,7 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 ${callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
-<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks open tracked agent threads you started done across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
+<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>

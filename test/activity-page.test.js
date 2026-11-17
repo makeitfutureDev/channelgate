@@ -50,7 +50,7 @@ function deferred() { let resolve; const promise = new Promise((r) => { resolve 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const response = (data, status = 200) => ({ status, ok: status >= 200 && status < 300, json: async () => data });
 function row(status = "working", title = "Fixture thread", url = "/activity/session/open/C1/1.1") {
-  return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
+  return { channelId: "C1", threadTs: "1.1", dismissed: status === "done", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
   const elements = Object.fromEntries(["pinned-channels", "pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error", "columns-button", "columns-dialog", "columns-list", "columns-save", "columns-cancel", "columns-reset", "columns-error", "table", "pinned-table"].map((id) => [id, new Element()]));
@@ -347,7 +347,7 @@ test("Mark All Done describes its full scope, requires confirmation, and cancels
   assert.equal(elements["mark-all-done"].disabled, true);
   await flush();
   assert.match(page.html, /aria-labelledby="all-done-title" aria-describedby="all-done-description"/);
-  assert.match(page.html, /open tracked agent threads you started done across all channels/);
+  assert.match(page.html, /tracked agent threads you started done and removes them from your Active view across all channels/);
   assert.match(page.html, /outside the current filter, search, or page/);
   assert.match(page.html, /main Slack messages get ✅. Running work continues/);
   elements.search.value = "not visible"; elements.search.fire("input");
@@ -587,7 +587,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   assert.deepEqual(JSON.parse(posts[0].options.body), { channelId: "C1", threadTs: "1.1", later: true });
   status = "later"; save.resolve(response({ ok: true })); await flush();
   assert.equal(b.elements.threads.children.length, 0);
-  assert.match(b.elements.summary.textContent, /0 active · 1 later/);
+  assert.match(b.elements.summary.textContent, /0 visible · 0 done · 1 later/);
   const select = (filter) => b.elements.filters.fire("click", { target: b.elements.filters.children.find((t) => t.dataset.filter === filter) });
   select("later");
   const resume = b.elements.threads.children[0].children[5].children[1].children[1];
@@ -702,7 +702,7 @@ test("failed grouping save restores the view, serializes writes and safely label
 test("pins move rows to a matching top table, survive status tabs, filter by search and clear on access loss", () => {
   const b = browser(() => new Promise(() => {})), e = b.elements;
   assert.equal(e["pinned-section"].hidden, true);
-  const pinned = { ...row("done", "Saved task"), pinned: true };
+  const pinned = { ...row("done", "Saved task"), dismissed: false, pinned: true };
   const ordinary = { ...row("idle", "Regular task"), threadTs: "2.2" };
   b.stream.snapshot([pinned, ordinary], { groupBy: "status" });
   const tr = e["pinned-threads"].children[0];
@@ -819,12 +819,12 @@ test("channel pins promote all open conversations once across status filters, re
     { ...row("idle", "Open task"), channelPinned: true },
     { ...row("later", "Later task"), threadTs: "2", channelPinned: true },
     { ...row("done", "Done task"), threadTs: "3", channelPinned: true },
-    { ...row("done", "Saved task"), threadTs: "4", channelPinned: true, pinned: true },
+    { ...row("done", "Saved task"), dismissed: false, threadTs: "4", channelPinned: true, pinned: true },
     { ...row("idle", "Regular task"), threadTs: "5", channelId: "C2", channelName: "Other" },
   ];
   b.stream.snapshot(fixtures, { pinnedChannels: [channel] });
   assert.equal(e["pinned-channels"].children[0].children[0].textContent, "Engineering");
-  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "2 open");
+  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "3 visible");
   assert.equal(e["pinned-channels"].hidden, true, "populated channel uses its full card instead of a duplicate chip");
   assert.equal(e["pinned-threads"].dataset.cards, "");
   assert.equal(e["pinned-threads"].children[0].dataset.group, "Engineering · 3");
@@ -846,7 +846,7 @@ test("channel pins promote all open conversations once across status filters, re
   b.stream.snapshot([], { pinnedChannels: [channel] });
   assert.equal(e["pinned-section"].hidden, false);
   assert.equal(e["pinned-channels"].hidden, false, "empty pinned channels retain an accessible unpin control");
-  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "No open conversations");
+  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "No visible conversations");
   assert.equal(e["pinned-channels"].children[0].children[2].textContent, "Unpin channel");
   b.stream.fire("access-ended");
   assert.equal(e["pinned-section"].hidden, true);
@@ -1061,4 +1061,33 @@ test("channel cards follow newest activity across live updates, filters and pinn
   assert.deepEqual(titles("pinned-threads"), ["Beta", "Alpha old", "Alpha newest"]);
   stream.snapshot([a, aNew, { ...b, lastMessageMs: 500 }], { groupBy: "status", groupByVersion: 1 });
   assert.deepEqual(titles(), ["Beta", "Alpha old", "Alpha newest"], "status grouping retains its existing status priority");
+});
+
+test("another person's Done remains in Active and pinned; my Done only appears under Completed", async () => {
+  const { elements, stream } = browser(() => new Promise(() => {}));
+  const shared = { ...row("done", "Completed by someone else"), dismissed: false, channelPinned: true };
+  const mine = { ...row("done", "Completed by me"), threadTs: "2.2", dismissed: true, pinned: true };
+  stream.snapshot([shared, mine]);
+  assert.equal(elements["pinned-threads"].children.length, 1);
+  assert.match(elements["pinned-threads"].children[0].textContent, /Completed by someone else/);
+  assert.equal(elements.threads.children.length, 0, "my completion cannot be promoted by an explicit pin");
+  assert.equal(elements.filters.children.find((b) => b.dataset.filter === "active").children[0].textContent, "1");
+  elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
+  assert.equal(elements.threads.children.length, 1);
+  assert.match(elements.threads.children[0].textContent, /Completed by me/);
+  assert.equal(elements.threads.children[0].children[5].children[1].children[0].textContent, "Reopen");
+});
+
+test("acknowledging an already shared-Done row sends Done true and dismisses only my Active row", async () => {
+  const shared = { ...row("done", "Shared completion"), dismissed: false };
+  const { elements, stream, requests } = browser(async (url) => url.endsWith("/api/completion")
+    ? response({ ok: true }) : response({ rows: [{ ...shared, dismissed: true }] }));
+  stream.snapshot([shared]);
+  const button = elements.threads.children[0].children[5].children[1].children[0];
+  assert.equal(button.textContent, "Done");
+  elements.threads.fire("click", { target: button });
+  await flush(); await flush();
+  const save = requests.find((r) => r.url.endsWith("/api/completion"));
+  assert.equal(JSON.parse(save.options.body).done, true, "acknowledgement must not reopen shared completion");
+  assert.equal(elements.threads.children.length, 0);
 });
