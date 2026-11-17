@@ -59,7 +59,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const pinnedBody = el("pinned-threads"), pinnedChannelList = el("pinned-channels");
   const pendingChannels = new Set(), channelNodes = new Map();
   let pinnedChannels = [];
-  const isPinned = (row) => row.pinned || row.channelPinned && row.status !== "done";
+  const isPinned = (row) => !row.hidden && (row.pinned || row.channelPinned && row.status !== "done");
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
@@ -467,11 +467,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const call = node("a", "call-link", "Call the agent");
     call.href = "#call";
     if (voiceCalls) links.append(call);
-    state.append(toggle, delay, pin);
+    const hide = node("button", "toggle");
+    hide.type = "button"; hide.dataset.key = rowKey; hide.dataset.operation = "hide";
+    state.append(toggle, delay, pin, hide);
     actions.append(links, state);
     const cells = { conversation: titleCell, comment: commentCell, channel: channelCell, status: statusCell, last: timeCell, actions };
     placeCells(tr, cells);
-    const entry = { tr, cells, title, comment, saved: "", channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
+    const entry = { tr, cells, title, comment, saved: "", channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, hide, pin, since: 0, stamp: 0 };
     comment.addEventListener("keydown", (event) => {
       if (event.key === "Enter") { event.preventDefault?.(); comment.blur?.(); }
       else if (event.key === "Escape") { comment.value = entry.saved; delete comment.dataset.state; comment.blur?.(); }
@@ -480,7 +482,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     return entry;
   }
   function matches(row) {
-    if (!isPinned(row)) {
+    if (Boolean(row.hidden) !== (filter === "hidden")) return false;
+    if (filter !== "hidden" && !isPinned(row)) {
       if (filter === "active" && ["done", "later"].includes(row.status)) return false;
       if (filter === "open" && row.status === "done") return false;
       if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
@@ -521,8 +524,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     }
   }
   function render() {
-    const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0 };
-    for (const row of rows) { counts[row.status]++; if (row.status !== "done") { counts.open++; if (row.status !== "later") counts.active++; } }
+    const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0, hidden: 0 };
+    for (const row of rows) { if (row.hidden) { counts.hidden++; continue; } counts[row.status]++; if (row.status !== "done") { counts.open++; if (row.status !== "later") counts.active++; } }
     for (const button of tabs.querySelectorAll("button")) {
       const selected = button.dataset.filter === filter;
       button.setAttribute("aria-pressed", String(selected));
@@ -626,7 +629,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
         entry.call.setAttribute("aria-label", "Call the agent: " + title);
       }
       const busy = pending.has(rowKey);
-      entry.delay.hidden = row.status === "done";
+      entry.delay.hidden = row.status === "done" || row.canComplete === false || row.hidden;
+      entry.toggle.hidden = row.canComplete === false || row.hidden;
+      entry.hide.disabled = busy || completingAll || ended;
+      entry.hide.textContent = row.hidden ? "Show" : "Hide";
+      entry.hide.dataset.state = row.hidden ? "show" : "hide";
+      entry.hide.title = row.hidden ? "Show in my activity" : "Hide from my activity; your next message brings it back";
+      entry.hide.setAttribute("aria-label", (row.hidden ? "Show: " : "Hide: ") + title);
       entry.delay.disabled = busy || completingAll || ended;
       entry.delay.textContent = busy ? "Saving…" : row.status === "later" ? "Resume" : "Later";
       entry.delay.dataset.state = busy ? "busy" : row.status === "later" ? "resume" : "later";
@@ -647,7 +656,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       if (target.children[localIndex] !== entry.tr) target.insertBefore(entry.tr, target.children[localIndex] || null);
     });
     const query = search.value.trim().toLocaleLowerCase();
-    const channels = ended ? [] : pinnedChannels.filter((entry) => !query || entry.channelName.toLocaleLowerCase().includes(query)
+    const channels = ended || filter === "hidden" ? [] : pinnedChannels.filter((entry) => !query || entry.channelName.toLocaleLowerCase().includes(query)
       || pinned.some((row) => row.channelId === entry.channelId))
       .sort((a, b) => a.channelName.localeCompare(b.channelName) || a.channelId.localeCompare(b.channelId));
     const visibleChannels = new Set(channels.map((entry) => entry.channelId));
@@ -661,7 +670,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       }
       entry.name.textContent = channel.channelName;
       channelLink(entry.name, channel.channelId);
-      const open = rows.filter((row) => row.channelId === channel.channelId && row.status !== "done").length;
+      const open = rows.filter((row) => row.channelId === channel.channelId && !row.hidden && row.status !== "done").length;
       // A populated channel already has its full card above; keep the compact control for
       // empty channels and for Status grouping, where channel cards are not rendered.
       entry.card.hidden = groupPinned && open > 0 && pinned.some((row) => row.channelId === channel.channelId);
@@ -675,8 +684,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     el("pinned-count").textContent = String(pinned.length);
     el("table").hidden = ordinary.length === 0;
     el("empty").hidden = shown.length > 0 || ended;
-    el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "later" ? "Nothing saved for later" : filter === "done" ? "No completed conversations" : "You’re all caught up";
-    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
+    el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "hidden" ? "No hidden conversations" : filter === "later" ? "Nothing saved for later" : filter === "done" ? "No completed conversations" : "You’re all caught up";
+    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "hidden" ? "Hide only affects your list. Show a conversation here or send a new message to bring it back." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
     el("result-count").textContent = ended ? "" : shown.length + (shown.length === 1 ? " conversation" : " conversations");
     historyButton.disabled = ended || !loaded || loadingHistory || !moreHistory;
     historyButton.textContent = loadingHistory ? "Loading older threads…" : moreHistory ? "Load older threads" : "History loaded";
@@ -819,8 +828,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     if (ended || completingAll || pending.has(rowKey)) return;
     const row = rows.find((item) => key(item) === rowKey);
     if (!row) return;
-    const field = operation === "pin" ? "pinned" : operation === "later" ? "later" : "done";
-    const value = operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done";
+    const field = operation === "hide" ? "hidden" : operation === "pin" ? "pinned" : operation === "later" ? "later" : "done";
+    const value = operation === "hide" ? !row.hidden : operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done";
     pending.add(rowKey);
     actionMessage = "";
     render();
@@ -1388,6 +1397,7 @@ function settingsBrowser(config, browser, theme) {
 const icon = (svg) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>${svg}</svg>`)}")`;
 const ICONS = {
   call: icon("<path d='M6.6 2.6c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8L9.4 8.1c-.3.3-.4.8-.1 1.2a13 13 0 0 0 5.4 5.4c.4.2.9.2 1.2-.1l1.4-1.3c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8l-1.5 1.5c-1 1-2.5 1.4-3.9.9A20 20 0 0 1 4.2 8c-.5-1.4-.1-2.9.9-3.9l1.5-1.5Z'/>"),
+  hide: icon("<g fill='none' stroke='white' stroke-width='2' stroke-linecap='round'><path d='M3 3l18 18M10 5a12 12 0 0 1 12 7 17 17 0 0 1-4 5M6 6a17 17 0 0 0-4 6 12 12 0 0 0 13 7'/><path d='M10 10a3 3 0 0 0 4 4'/></g>"),
   pin: icon("<path d='m15 2 7 7-2 2-2-1-4 4v3l-1 1-3-3-5 5-1-1 5-5-3-3 1-1h3l4-4-1-2 2-2Z'/>"),
   slack: icon("<path d='M5.04 15.17a2.53 2.53 0 1 1-2.52-2.53h2.52v2.53Zm1.27 0a2.53 2.53 0 0 1 5.05 0v6.31a2.53 2.53 0 1 1-5.05 0v-6.31ZM8.83 5.04a2.53 2.53 0 1 1 2.53-2.52v2.52H8.83Zm0 1.27a2.53 2.53 0 0 1 0 5.05H2.52a2.53 2.53 0 0 1 0-5.05h6.31Zm10.13 2.52a2.53 2.53 0 1 1 2.52 2.53h-2.52V8.83Zm-1.27 0a2.53 2.53 0 0 1-5.05 0V2.52a2.53 2.53 0 1 1 5.05 0v6.31Zm-2.52 10.13a2.53 2.53 0 1 1-2.53 2.52v-2.52h2.53Zm0-1.27a2.53 2.53 0 0 1 0-5.05h6.31a2.53 2.53 0 1 1 0 5.05h-6.31Z'/>"),
   done: icon("<path d='M20.3 5.3a1 1 0 0 1 0 1.4l-10.5 10.5a1 1 0 0 1-1.4 0L3.7 12.5a1 1 0 1 1 1.4-1.4l4 4 9.8-9.8a1 1 0 0 1 1.4 0Z'/>"),
@@ -1412,7 +1422,7 @@ const LIGHT = `color-scheme:light;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
 // Column labels and the default track of each column when the viewer has not resized it.
 const COLUMN_LABELS = Object.freeze({ conversation: "Conversation", comment: "Comment", channel: "Channel", status: "Status", last: "Last", actions: "Actions" });
-const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "136px" });
+const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "156px" });
 const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES,
   min: ACTIVITY_COLUMN_MIN_WIDTHS, max: ACTIVITY_COLUMN_MAX_WIDTH, commentMax: ACTIVITY_COMMENT_MAX });
 const DEFAULT_COLUMN_TEMPLATE = ACTIVITY_COLUMNS.map((id) => COLUMN_TEMPLATES[id]).join(" ");
@@ -1431,7 +1441,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
-  const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
+  const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"], ["hidden", "Hidden"]];
   return { nonce, html: `<!doctype html>
 <html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${callsView ? "Calls" : subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor, theme)}
 <style nonce="${nonce}">
@@ -1572,10 +1582,10 @@ tbody[data-cards] tr[data-hue="6"]{--g:hsl(52 60% 45%)}tbody[data-cards] tr[data
 .elapsed{font:10px var(--mono);opacity:.9}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 60%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
 .time-cell{font:11.5px var(--mono);color:var(--ink-2);text-align:left;white-space:nowrap}
-.actions{display:flex;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
+.actions{display:flex;flex-wrap:wrap;min-width:0;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
 tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-error .actions{opacity:1}
-.action-links,.action-state{display:flex;gap:4px;margin:0}
-.open-link,.call-link,.toggle{display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
+.action-links,.action-state{display:flex;flex-wrap:wrap;min-width:0;max-width:100%;justify-content:flex-end;gap:4px;margin:0}
+.open-link,.call-link,.toggle{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
 .open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
 .call-link{--icon:${ICONS.call}}
@@ -1584,6 +1594,8 @@ ${voiceCalls ? CALL_OVERLAY_CSS : ""}
 .toggle[data-state=reopen]{--icon:${ICONS.reopen}}
 .toggle[data-state=later]{--icon:${ICONS.later};color:var(--s-later)}
 .toggle[data-state=resume]{--icon:${ICONS.resume};color:var(--s-later)}
+.toggle[data-state=hide]{--icon:${ICONS.hide}}
+.toggle[data-state=show]{--icon:${ICONS.reopen}}
 .toggle[data-state=busy]{--icon:${ICONS.busy}}
 .toggle[data-state=pin],.toggle[data-state=unpin]{--icon:${ICONS.pin}}
 .toggle[data-state=unpin]{color:var(--orange);background:var(--orange-soft)}
@@ -1704,7 +1716,7 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 ${callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
-<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
+<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks open tracked agent threads you started done across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>

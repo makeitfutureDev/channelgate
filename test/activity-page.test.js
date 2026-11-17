@@ -347,7 +347,7 @@ test("Mark All Done describes its full scope, requires confirmation, and cancels
   assert.equal(elements["mark-all-done"].disabled, true);
   await flush();
   assert.match(page.html, /aria-labelledby="all-done-title" aria-describedby="all-done-description"/);
-  assert.match(page.html, /all your open tracked agent threads done across all channels/);
+  assert.match(page.html, /open tracked agent threads you started done across all channels/);
   assert.match(page.html, /outside the current filter, search, or page/);
   assert.match(page.html, /main Slack messages get ✅. Running work continues/);
   elements.search.value = "not visible"; elements.search.fire("input");

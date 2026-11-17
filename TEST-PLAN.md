@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Shared Activity participation and personal Hide (2026-11-17)
+
+- Automated: `test/slack-thread-participants.test.js` covers migration/backfill, original-event
+  admission, member/owner separation, Hide ordering, denied access, and discovery races.
+  `test/activity.test.js` covers participant Open/pin/comment, owner-only completion, personal
+  Hide/Show, CSRF/private access, bulk scope, and immediate participant SSE updates.
+  `test/home-threads.test.js` checks hidden feed capacity and bulk Hide races.
+  `test/activity-participants-browser.test.js` exercises Chromium desktop/phone controls,
+  pinned Hide precedence, Hidden/Show, reload durability and newer-message SSE restoration.
+- Live dual-engine gate: use approved Contact and Apps actors in the prepared private Claude
+  and Codex Auto fixtures, each with their own Activity session. Contact starts a harmless task;
+  Apps replies with “Please reply with participation canary.” Both lists show the same thread.
+  Apps hides it; Contact's next prompt and the agent reply leave Apps hidden and Contact visible.
+  Apps can Show, hide again, then post an unmentioned original reply to restore only its own row.
+  Verify actual engine delivery separately, current access, starter-only Done/Later, personal
+  pins/comments, bulk exclusions, restart durability and desktop/mobile Hidden controls.
+- Control-plane negative fixture (engine-independent): outsider, private-membership loss,
+  approval revocation, non-admin sudo access, missing/wrong CSRF/Origin, edited/deleted/bot events,
+  reaction-triggered synthetic requests and replayed older messages cannot join/unhide. Revocation
+  or a Hide during awaited bulk completion must be honored before mutation. With 1000 newer
+  hidden rows, an older visible row remains in the normal feed. Provider execution is not involved
+  in these original-event/storage/API checks.
+- Private QA definitions: `ACTIVITY-PARTICIPANTS-01` (Claude and Codex) and
+  `ACTIVITY-HIDE-SECURITY-01` (control-plane only). Creating definitions and passing automated
+  fake-client checks do not establish live provider acceptance; that gate remains unexecuted.
+
 ## Activity call history (2026-11-16)
 
 - Automated: `test/call-history.test.js` verifies persistence from a fresh process and licensed

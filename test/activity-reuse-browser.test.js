@@ -278,7 +278,7 @@ test("Activity Mark All Done confirms on desktop and mobile and completes owned 
     await page.locator("#search").fill("Visible");
     await page.locator("#result-count").filter({ hasText: "2 conversations" }).waitFor();
     await page.locator("#mark-all-done").click();
-    const dialog = page.getByRole("dialog", { name: "Mark all your threads done?" });
+    const dialog = page.getByRole("dialog", { name: "Mark all threads you started done?" });
     assert.match(await dialog.innerText(), /outside the current filter, search, or page/);
     assert.equal(await page.evaluate(() => globalThis.document.activeElement.id), "all-done-cancel");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -423,7 +423,7 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
       return { label: item.getAttribute("aria-label"), width: item.clientWidth, height: item.clientHeight, size: parseFloat(icon.width),
         left: parseFloat(icon.marginLeft), top: parseFloat(icon.marginTop), position: icon.position };
     }));
-    assert.equal(icons.length, 4, "Slack, Done, Later and Pin each have a centred icon");
+    assert.equal(icons.length, 5, "Slack, Done, Later, Pin and Hide each have a centred icon");
     for (const icon of icons) {
       assert.equal(icon.position, "absolute", icon.label);
       assert.ok(Math.abs(icon.left - (icon.width - icon.size) / 2) <= 0.5 && Math.abs(icon.top - (icon.height - icon.size) / 2) <= 0.5,

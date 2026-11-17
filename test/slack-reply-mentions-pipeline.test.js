@@ -52,3 +52,32 @@ for (const engine of ["claude", "codex"]) {
     });
   }
 }
+
+test("pipeline discovery joins original authors but ignores synthetic reaction/edit requesters before hydration", async () => {
+  const { indexSlackThread, isSlackThreadParticipant, setSlackThreadHidden, getSlackThreadParticipant } = await import("../src/gateway/slack-threads.js");
+  const channel = "C_PARTICIPATION_PIPE", owner = "U_PIPE_OWNER", actor = "U_PIPE_ACTOR", rootTs = "9000.000001";
+  const entry = await upsertChannelEntry(channel, { name: channel, type: "channel" });
+  await saveChannelMeta(entry.slug, { channelId: channel, type: "channel", engine: "codex", access: "approved", template: "custom" });
+  for (const userId of [owner, actor]) await setUser(userId, { approved: true });
+  const root = { ts: rootTs, user: owner, text: "Shared work" };
+  indexSlackThread({ channelId: channel, slug: entry.slug, root, agentEngaged: true });
+  const ok = async () => ({ ok: true });
+  const client = { apiCall: ok,
+    chat: { postMessage: async () => ({ ok: true, ts: `9100.${++sequence}` }), update: ok, delete: ok, postEphemeral: ok },
+    users: { info: async ({ user }) => ({ user: { id: user, real_name: "Fixture" } }), list: async () => ({ members: [] }) },
+    conversations: { info: async () => ({ channel: { id: channel } }), members: async () => ({ members: [owner, actor] }),
+      history: async () => ({ messages: [] }), replies: async () => ({ messages: [root], response_metadata: {} }) },
+    chatStream: () => ({ ts: `9200.${++sequence}`, append: ok, stop: ok }) };
+  const send = (extra = {}) => processMessageEvent({ channel, channel_type: "channel", user: actor,
+    text: `<@${BOT}> reply briefly`, ts: (Date.now() / 1000 + ++sequence).toFixed(6), thread_ts: rootTs, ...extra }, client,
+    { botUserId: BOT, teamId: "T_PREF", bypassMention: true });
+  await send();
+  assert.equal(isSlackThreadParticipant(channel, rootTs, actor), false, "synthetic requester is not an original-message author");
+  await send({ type: "message" });
+  assert.equal(isSlackThreadParticipant(channel, rootTs, actor), true);
+  setSlackThreadHidden(channel, rootTs, actor, true);
+  await send();
+  assert.ok(getSlackThreadParticipant(channel, rootTs, actor).hidden_ms > 0, "synthetic newer timestamp cannot restore");
+  await send({ type: "message" });
+  assert.equal(getSlackThreadParticipant(channel, rootTs, actor).hidden_ms, 0);
+});
