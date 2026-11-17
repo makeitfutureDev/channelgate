@@ -21,7 +21,9 @@
   or read-only, so several conversations can share one directory while keeping their own working
   folders (Settings → Additional folders; `add_channel_folder` / `remove_channel_folder` /
   `list_channel_folders`). Entries are validated like the working folder, re-checked at every
-  spawn, and never derived from a symlink.
+  spawn, and never derived from a symlink. The Slack file explorer, browser file links, public
+  links and the workspace read tools show them as `@mounts/<name>` branches, read-only mounts
+  refusing writes; the admin UI keeps each entry's path visible.
 
 - Document the enforced network-off refusal as HTTP 403 `network-off`, while preserving engine and selected connector access.
 
