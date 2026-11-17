@@ -233,6 +233,10 @@ They remain outside personal lists, do not trigger the partial-data banner, and 
 consume the root-repair batch ahead of older human threads. Failed or timed-out Slack reads still
 raise the warning and remain retryable. Current access is rechecked before saving an exclusion.
 
+In Activity Channel grouping, channel cards sort by their newest visible conversation activity,
+including live updates, in both pinned and ordinary sections. Ties use channel name and ID;
+status priority and individual pin priority within a channel remain unchanged.
+
 ## Pinned Activity channels (2026-11-14)
 
 Each Activity row has a **Pin channel** control beside its channel name. It saves the channel

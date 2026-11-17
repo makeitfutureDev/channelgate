@@ -793,12 +793,12 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   assert.deepEqual(groups(), [undefined, undefined, undefined, undefined]);
   b.stream.snapshot([...pinned, ordinary], { groupBy: "channel", groupByVersion: 1 });
   assert.equal(e["pinned-threads"].dataset.groupBy, "channel");
-  assert.deepEqual(titles(), ["Alpha error pinned", "Alpha idle pinned", "Same name pinned", "Beta pinned"]);
-  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1", "Beta · 1"]);
+  assert.deepEqual(titles(), ["Alpha error pinned", "Alpha idle pinned", "Beta pinned", "Same name pinned"]);
+  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Beta · 1", "Alpha · 1"]);
   assert.equal(e.threads.children[0].dataset.group, "Alpha · 1", "regular counts exclude pins");
   assert.ok(e["pinned-threads"].children.every((tr) => originalNodes.has(tr)), "grouping reuses existing row controls");
   e.search.value = "pinned"; e.search.fire("input");
-  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1", "Beta · 1"]);
+  assert.deepEqual(groups(), ["Beta · 1", "Alpha · 2", undefined, "Alpha · 1"]);
   e.search.value = "Alpha"; e.search.fire("input");
   assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"], "same-named channel ids stay distinct");
   e.search.value = "Beta"; e.search.fire("input");
@@ -1036,4 +1036,29 @@ test("a failed Columns save restores the previous layout and Reset stages the de
   assert.equal(elements["columns-dialog"].open, true);
   assert.match(elements["columns-error"].textContent, /couldn’t be saved/);
   assert.equal(classes()[0], "channel-cell", "the previous layout comes back");
+});
+
+
+test("channel cards follow newest activity across live updates, filters and pinned sections", () => {
+  const { elements: e, stream } = browser(() => new Promise(() => {}));
+  const a = { ...row("error", "Alpha old"), channelName: "Alpha", lastMessageMs: 100 };
+  const aNew = { ...a, status: "idle", title: "Alpha newest", threadTs: "2", lastMessageMs: 400 };
+  const b = { ...a, channelId: "C2", channelName: "Beta", title: "Beta", lastMessageMs: 300 };
+  const titles = (id = "threads") => e[id].children.map((tr) => tr.children[0].textContent);
+  stream.snapshot([b, a, aNew], { groupBy: "channel" });
+  assert.deepEqual(titles(), ["Alpha old", "Alpha newest", "Beta"], "newest member ranks the card regardless of status priority");
+  const betaNode = e.threads.children[2];
+  stream.snapshot([{ ...b, lastMessageMs: 500 }, a, aNew]);
+  assert.deepEqual(titles(), ["Beta", "Alpha old", "Alpha newest"], "live activity moves the whole channel first");
+  assert.equal(e.threads.children[0], betaNode, "moving a card preserves row controls");
+  stream.snapshot([b, a, aNew]);
+  e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "error") });
+  assert.deepEqual(titles(), ["Beta", "Alpha old"], "filtered cards rank by visible activity");
+  e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "active") });
+  stream.snapshot([a, aNew, b].map((item) => ({ ...item, pinned: true })));
+  assert.deepEqual(titles("pinned-threads"), ["Alpha old", "Alpha newest", "Beta"]);
+  stream.snapshot([a, aNew, { ...b, lastMessageMs: 500 }].map((item) => ({ ...item, pinned: true })));
+  assert.deepEqual(titles("pinned-threads"), ["Beta", "Alpha old", "Alpha newest"]);
+  stream.snapshot([a, aNew, { ...b, lastMessageMs: 500 }], { groupBy: "status", groupByVersion: 1 });
+  assert.deepEqual(titles(), ["Beta", "Alpha old", "Alpha newest"], "status grouping retains its existing status priority");
 });
