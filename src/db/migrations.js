@@ -1379,4 +1379,11 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 57,
+    up(db) {
+      // Only a successfully created voice-call root can attribute its bot message to a caller.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN voice_bot_user_id TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];

@@ -1,5 +1,26 @@
 # ChannelGate — Features
 
+## Mark threads Done by voice (2026-11-17)
+
+During a voice call, “mark this thread done” or “close this conversation” invokes a direct
+`mark_thread_done` action. It saves the same shared Done/follow-up state as Activity and mirrors
+its Slack checkmark, without dispatching an engine task, stopping running work or hanging up.
+Only an explicit completion request triggers it; an agent reporting that its task finished does
+not imply acceptance. The voice identifies the conversation and reports the tool's actual result.
+
+The caller must be the starter and retain current channel/private/sudo access. The exact target
+must match the call's bound thread; ambiguous references are resolved first and a different
+thread must be opened before completion. Revocation, moving the call or hanging up during the
+Slack root lookup prevents the write. A repeated provider tool-call ID reuses its original receipt
+and cannot re-close a reopened thread. Failed Slack decoration retains durable Done and queues
+its normal retry, which the voice describes separately. A new spoken task reopens the thread
+using its posted request timestamp, without allowing old requests to undo a newer Done choice.
+
+New threads created by a spoken task record the authenticated caller as starter even though
+Slack posts their root as the gateway bot. The saved creation record and exact bot identity are
+required; arbitrary bot posts cannot claim human ownership. This starts with new voice-created
+roots after installation and also makes them appear in their caller's Activity.
+
 ## Shared Activity participation and personal Hide (2026-11-17)
 
 An indexed agent conversation appears in Activity for its starter and each authorized person who

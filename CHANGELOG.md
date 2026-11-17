@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Let callers explicitly mark their current thread Done by voice, with the same starter/access
+  checks as Activity. The call stays open and running work continues. New threads started by
+  voice belong to their caller, so they can appear in Activity and be completed there too.
+
 - Play the voice-call audio straight from the AudioContext again: routing it through a media
   element (added earlier today for phones) caused lag and crackle. A looping silent track now
   holds the phone's audio session instead, so a locked screen still keeps the call.
