@@ -53,8 +53,9 @@
   the mounted shared folder" — expected: `workspace_list` with `@mounts/shared` names the file.
 - [x] `test/extra-folders.test.js` — normalization (absolute, deduplicated, known mode, the cap);
   the validator follows a symlink to its real target and refuses relative/missing paths, the
-  gateway root, another conversation's default folder, the channel's own working folder, a
-  subfolder or parent of it, a duplicate and an overlapping entry; the resolver mounts each entry
+  gateway root and the workspace root (a parent of the artifact tree), the channel's own working
+  folder, a subfolder or parent of it, a duplicate and an overlapping entry, while another
+  conversation's default folder and a platform folder are accepted; the resolver mounts each entry
   at its identical path with its mode (`:ro` in the create argv) and the mount fingerprint changes
   with the list and with a mode; a stored entry that no longer passes throws
   `extra_folder_refused` with the remedy for a turn/job/schedule spawn; the lockdown file lists

@@ -23,7 +23,8 @@
   `list_channel_folders`). Entries are validated like the working folder, re-checked at every
   spawn, and never derived from a symlink. The Slack file explorer, browser file links, public
   links and the workspace read tools show them as `@mounts/<name>` branches, read-only mounts
-  refusing writes; the admin UI keeps each entry's path visible.
+  refusing writes; the admin UI keeps each entry's path visible. Any conversation folder may be
+  mounted, another channel's default folder included; only the gateway's own trees are refused.
 
 - Document the enforced network-off refusal as HTTP 403 `network-off`, while preserving engine and selected connector access.
 

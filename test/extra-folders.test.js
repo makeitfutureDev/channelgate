@@ -16,7 +16,7 @@ process.env.CG_FS_ROOT = path.dirname(realpathSync(os.tmpdir()));
 process.env.PATH = `${path.resolve("test/fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 
 const { normalizeExtraFolders, validateExtraFolder, resolveExtraFoldersForSpawn, extraFolderMounts, extraFolderDirectories, describeExtraFolders, MAX_EXTRA_FOLDERS } = await import("../src/gateway/extra-folders.js");
-const { gatewayRoot, workspaceFolder } = await import("../src/config/paths.js");
+const { gatewayRoot, workspaceFolder, workspaceRoot } = await import("../src/config/paths.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { containerMountFingerprint, buildCreateArgs } = await import("../src/runtimes/container/lifecycle.js");
 const { buildSettings } = await import("../src/gateway/folders.js");
@@ -65,7 +65,10 @@ test("validateExtraFolder follows a symlink to its real directory and refuses th
   assert.match(validateExtraFolder("relative/path", opts).error, /ABSOLUTE|absolute/);
   assert.match(validateExtraFolder(path.join(HOME, "missing"), opts).error, /does not exist/);
   assert.match(validateExtraFolder(GATEWAY_ROOT, opts).error, /^Refused: .*gateway runtime root/);
-  assert.match(validateExtraFolder(OTHER_DEFAULT, opts).error, /^Refused: .*another conversation's work folder/);
+  // Another conversation's folder — default or custom — is an admin's explicit decision to share it.
+  assert.deepEqual(validateExtraFolder(OTHER_DEFAULT, opts), { path: OTHER_DEFAULT });
+  assert.deepEqual(validateExtraFolder(path.dirname(OTHER_DEFAULT), opts), { path: path.dirname(OTHER_DEFAULT) }, "a platform folder too");
+  assert.match(validateExtraFolder(workspaceRoot(), opts).error, /a parent of the hidden runtime artifact tree/);
   assert.match(validateExtraFolder(PROJECT, opts).error, /already this channel's working folder/);
   assert.match(validateExtraFolder(path.join(PROJECT, "sub"), { ...opts, workDir: PROJECT }).error ?? "does not exist", /does not exist|inside this channel's working folder/);
   ensure(path.join(PROJECT, "sub"));
@@ -102,7 +105,7 @@ test("the resolver mounts each folder at its identical path with its mode, and t
 });
 
 test("an already-stored entry that no longer passes fails the spawn closed with the remedy", () => {
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [path.join(HOME, "vanished"), /does not exist/], [PROJECT, /already this channel's working folder/], [OTHER_DEFAULT, /another conversation's work folder/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [path.join(HOME, "vanished"), /does not exist/], [PROJECT, /already this channel's working folder/]]) {
     assert.throws(() => resolveRuntime(mine.slug, { ...baseMeta(), extraFolders: [{ path: dir, mode: "rw" }] }, { settings: SETTINGS }), (error) => {
       assert.equal(error.code, "extra_folder_refused");
       assert.match(error.message, /never mounts that into a container/);
@@ -150,10 +153,12 @@ test("add_channel_folder / remove_channel_folder / list_channel_folders: admins 
   const member = toolsFor(MEMBER);
   assert.match((await member.get("add_channel_folder")({ path: SHARED })).content[0].text, /Only admins/);
   assert.match((await admin.get("list_channel_folders")()).content[0].text, /mounts no additional folders/);
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [PROJECT, /already this channel's working folder/], [path.join(HOME, "Code"), /contains this channel's working folder/], [OTHER_DEFAULT, /another conversation's work folder/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [PROJECT, /already this channel's working folder/], [path.join(HOME, "Code"), /contains this channel's working folder/]]) {
     assert.match((await admin.get("add_channel_folder")({ path: dir })).content[0].text, why, dir);
     assert.deepEqual((await getChannelMeta(mine.slug)).extraFolders || [], [], "nothing was written");
   }
+  assert.match((await admin.get("add_channel_folder")({ path: OTHER_DEFAULT })).content[0].text, /✅ .*read-write/, "another conversation's default folder is an admin decision");
+  await admin.get("remove_channel_folder")({ path: OTHER_DEFAULT });
   assert.match((await admin.get("add_channel_folder")({ path: LINK, mode: "ro" })).content[0].text, /✅ .*read-only/);
   assert.deepEqual((await getChannelMeta(mine.slug)).extraFolders, [{ path: SHARED, mode: "ro" }], "the link's real target");
   assert.match((await admin.get("add_channel_folder")({ path: SHARED_SUB })).content[0].text, /overlaps the additional folder/);
@@ -179,7 +184,7 @@ const put = async (body) => {
 };
 
 test("the admin UI's Additional folders field validates every changed entry against the saved work folder and refuses with a named reason", async () => {
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [PROJECT, /already this channel's working folder/], [OTHER_DEFAULT, /another conversation's work folder/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [PROJECT, /already this channel's working folder/]]) {
     const { status, json } = await put({ extraFolders: [{ path: dir, mode: "rw" }] });
     assert.equal(status, 400, dir);
     assert.match(json.error, /^extraFolders refused: /);
