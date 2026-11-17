@@ -69,9 +69,11 @@ The call is a web page, so it behaves like a call only as far as the phone's bro
 
 - While the call is up the page holds a **screen wake lock**, so the phone does not auto-lock
   mid-call (Chrome on Android, Safari on iOS 16.4 or later). Hiding the panel keeps the lock.
-- The agent's voice is played through a media element, which lets iOS and Android keep the audio
-  session — and your microphone — running if you lock the screen by hand or switch apps, and shows
-  the call on the lock screen with a hang-up control (pause/play mute and unmute).
+- A silent track loops in the background for the whole call, which lets iOS and Android keep the
+  audio session — and your microphone — running if you lock the screen by hand or switch apps, and
+  shows the call on the lock screen with a hang-up control (pause/play mute and unmute). The
+  agent's voice itself plays directly, with a short jitter buffer, so headphones connecting or a
+  stalled connection do not chop it.
 - Leaving the page no longer hangs up at once: the call is **suspended** for 45 seconds. Come back
   (unlock, return to the tab or app) and it continues; stay away and it ends with the usual
   summary, "the caller's device went away".
@@ -164,8 +166,8 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
   same-origin scripts for that worklet.
 - `src/web/call-overlay.js` — the overlay: microphone capture through an AudioWorklet
   (ScriptProcessor fallback), 120 ms batches resampled to 16 kHz, gapless playback of the 24 kHz
-  replies through a media element (`MediaStreamAudioDestinationNode` → `<audio>`) with
-  interruption support, the screen wake lock, Media Session metadata and actions, the suspend
+  replies on a 150 ms jitter buffer with interruption support, the looping silent keep-alive
+  track (`/activity/call-silence.wav`), the screen wake lock, Media Session metadata and actions, the suspend
   beacon on `pagehide` and the resume on `visibilitychange`, the current conversation, live
   transcript and task list; `src/web/activity-page.js` mounts it and wires the row and top-bar
   actions.

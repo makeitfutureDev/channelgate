@@ -236,10 +236,13 @@ tasks) is saved to the caller's own DM channel memory when they have a DM folder
 restarts end calls without a summary.
 
 On a phone the call behaves like a call (`src/web/call-overlay.js`, 2026-11-17): the overlay holds
-a Screen Wake Lock while a call is up (re-acquired whenever the page becomes visible again), plays
-the agent's audio through a hidden media element fed by the AudioContext so iOS and Android keep
-the audio session and the microphone alive when the screen does lock or the app goes to the
-background, announces the call to the lock screen through the Media Session API (hang up, and
+a Screen Wake Lock while a call is up (re-acquired whenever the page becomes visible again), loops
+a half-second silent same-origin track (`/activity/call-silence.wav`, admitted by the Activity
+view's `media-src 'self'`) in a hidden media element so iOS and Android keep the audio session and
+the microphone alive when the screen does lock or the app goes to the background — the voice
+itself plays straight from the AudioContext, because routing it through the media element (the
+first version of this, the same day) added lag and crackle — announces the call to the lock
+screen through the Media Session API (hang up, and
 pause/play as mute/unmute), and resumes the audio graph and the event stream when the page comes
 back. Leaving the page (`pagehide`, which a locking phone fires like a closing tab) no longer
 hangs up: the beacon calls `…/end?grace=1`, which **suspends** the call (`suspend()`, event
