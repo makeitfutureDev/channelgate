@@ -102,21 +102,20 @@ test("a call is refused without configuration, for an unknown conversation and f
   assert.equal(FakeSession.instances.length, 0);
 });
 
-test("a call without a thread opens one, with a thread announces itself there and reads the context, and the voice gets the caller's recent conversations", async () => {
+test("a call without a thread binds at the channel's top level and posts nothing, with a thread announces itself there and reads the context, and the voice gets the caller's recent conversations", async () => {
   await channel();
   const f = fixture();
   const fresh = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client, teamId: "T_WORK" });
-  assert.equal(fresh.threadTs, "100.000100");
-  assert.equal(f.posted[0].threadKey, undefined);
-  assert.match(f.posted[0].text, /Voice call.*Tiberiu/);
+  assert.equal(fresh.threadTs, "");
+  assert.equal(f.posted.length, 0, "no placeholder root: the first task becomes the visible channel message");
   assert.equal(fresh.channelName, "#c_work"); assert.equal(fresh.callerName, "Tiberiu"); assert.equal(fresh.model, "gemini-3.8-live");
-  assert.deepEqual(fresh.bound, { channelId: "C_WORK", channelName: "#c_work", threadTs: "100.000100", title: "" });
+  assert.deepEqual(fresh.bound, { channelId: "C_WORK", channelName: "#c_work", threadTs: "", title: "", topLevel: true });
   const session = FakeSession.instances[0];
   assert.equal(session.options.apiKey, "AIzaTestKey_0123456789abc");
   assert.deepEqual(session.options.tools, TOOL_DECLARATIONS);
-  assert.match(session.options.systemInstruction, /voice call with Tiberiu/);
-  assert.match(session.options.systemInstruction, /currently in the Slack conversation #c_work/);
-  assert.match(session.options.systemInstruction, /new and empty/);
+  assert.match(session.options.systemInstruction, /voice connection between Tiberiu and/);
+  assert.match(session.options.systemInstruction, /currently in the Slack conversation #c_work, at the channel's top level/);
+  assert.doesNotMatch(session.options.systemInstruction, /new and empty/);
   // The initial list: the caller's open conversations, most recent first, done ones excluded.
   assert.match(session.options.systemInstruction, /1\. \[C_WORK:55\.000001\] #c_work — Build the voice page \(working/);
   assert.match(session.options.systemInstruction, /2\. \[C_SALES:44\.000001\] #c_sales — Pipeline review for Q4 \(waiting/);
@@ -132,10 +131,113 @@ test("a call without a thread opens one, with a thread announces itself there an
   assert.match(joined.text, /joined this thread by voice call/);
   const second = FakeSession.instances[1];
   assert.match(second.options.systemInstruction, /Tiberiu: Earlier message\nAgent: Earlier reply/);
+  assert.match(second.options.systemInstruction, /only knowledge of it; it may not be complete — use read_thread for more/);
   assert.match(buildSystemInstruction({ callerName: "A", channelName: "#x", isAdmin: true }), /organization admin/);
   assert.match(buildSystemInstruction({ callerName: "A", channelName: "#x" }), /offer to dispatch a search.*never guess/i);
   assert.match(buildSystemInstruction({ callerName: "A" }), /not in any conversation yet/);
+  assert.match(buildSystemInstruction({ callerName: "A", channelName: "#x" }), /new and empty/, "a thread without readable messages is said to be empty");
+  // The relay contract: the voice is the line between the caller and the agent, not the agent.
+  const relay = buildSystemInstruction({ callerName: "A", channelName: "#x", agentName: "Atlas" });
+  assert.match(relay, /You are NOT that agent and you do not have its knowledge, files, tools or memory/);
+  assert.match(relay, /Assume nothing\. You know exactly three things/);
+  assert.match(relay, /not in a message you have read, do not answer from your own knowledge: dispatch the question to the channel agent with run_task/);
+  assert.match(relay, /call read_thread with a larger limit first, then run_task/);
+  assert.match(relay, /Every action and every question for the agent goes through run_task/);
+  assert.match(relay, /never announce an outcome before the \[gateway\] message brings it/);
+  assert.match(relay, /Relay it for the caller in one or two spoken sentences without adding anything of your own/);
+  assert.match(TOOL_DECLARATIONS.find((t) => t.name === "run_task").description, /only source of truth.*every question whose answer is not literally in a message you have read/);
+  assert.match(TOOL_DECLARATIONS.find((t) => t.name === "read_thread").description, /only report what the messages literally say/);
   await f.manager.end(bound.id, "U_MINE");
+});
+
+test("at a channel's top level the first spoken task is posted as a new channel message whose thread the call follows", async () => {
+  await channel();
+  const f = fixture();
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client, teamId: "T_WORK" });
+  const session = FakeSession.instances[0];
+  const seen = [];
+  f.manager.subscribe(call.id, "U_MINE", (event) => seen.push(event));
+  session.live();
+  session.emit("input_transcript", { text: "Please build the export" });
+  session.emit("tool_call", { id: "c1", name: "run_task", args: { request: "Build the export and run the tests" } });
+  session.emit("tool_call", { id: "c2", name: "run_task", args: { request: "Then deploy it" } });
+  await tick(80);
+  // One root message carrying the request itself; the second request lands inside its thread.
+  const roots = f.posted.filter((p) => p.conversationId === "C_WORK" && !p.threadKey);
+  assert.equal(roots.length, 1);
+  assert.match(roots[0].text, /^🎙️ \*Tiberiu \(voice call\):\* Build the export and run the tests$/);
+  assert.doesNotMatch(f.posted.map((p) => p.text).join("\n"), /Voice call\* — Tiberiu is talking/, "no placeholder root is ever posted");
+  const rootTs = "100.000100";
+  const inThread = f.posted.filter((p) => p.threadKey === rootTs && /voice call\)/.test(p.text));
+  assert.equal(inThread.length, 1); assert.match(inThread[0].text, /Then deploy it/);
+  assert.deepEqual(f.runs.map((r) => r.threadKey), [rootTs, rootTs]);
+  assert.equal(f.runs[0].authorId, "U_MINE"); assert.equal(f.runs[0].origin, VOICE_CALL_ORIGIN);
+  assert.equal(f.delivered.length, 2); assert.equal(f.delivered[0].threadKey, rootTs);
+  const started = session.responses.find((r) => r.id === "c1");
+  assert.equal(started.response.task, 1); assert.match(started.response.note, /Posted as a new message in the channel; the call now follows that thread/);
+  assert.equal(session.responses.find((r) => r.id === "c2").response.note, undefined);
+  const live = f.manager.get(call.id);
+  assert.equal(live.bound.threadTs, rootTs); assert.equal(live.bound.title, "Build the export and run the tests");
+  assert.deepEqual(seen.filter((e) => e.type === "bound").at(-1), { type: "bound", channelId: "C_WORK", channelName: "#c_work", threadTs: rootTs, title: "Build the export and run the tests", topLevel: false });
+  assert.ok(f.logs.some(([name, data]) => name === "voice_call_bound" && data.topLevel === true && data.threadTs === ""));
+  assert.ok(f.logs.some(([name, data]) => name === "voice_call_bound" && data.opened === true && data.threadTs === rootTs));
+  // Hang-up: one visit, so the summary lands in the task's thread and the receipt names it once.
+  await f.manager.end(call.id, "U_MINE", "the caller hung up");
+  const summary = f.posted.at(-1);
+  assert.equal(summary.threadKey, rootTs); assert.match(summary.text, /Voice call ended\* — 1 min · 2 tasks/);
+  assert.match(summary.text, /\*Tasks here:\* 1\. Build the export and run the tests — done · 2\. Then deploy it — done/);
+  assert.doesNotMatch(summary.text, /Also visited/);
+  const { readCallHistory } = await import("../src/gateway/voice/history.js");
+  const saved = readCallHistory(call.id, "U_MINE", "T_WORK");
+  assert.equal(saved.threads.length, 1); assert.equal(saved.threads[0].threadTs, rootTs); assert.equal(saved.threads[0].title, "Build the export and run the tests");
+  assert.match(f.memories[0].text, /worked in #c_work "Build the export and run the tests"; tasks: "Build the export and run the tests" \(done\), "Then deploy it" \(done\)$/);
+});
+
+test("a top-level segment with nothing said is left silently, one with speech is posted into the channel", async () => {
+  await channel(); await channel("C_SALES");
+  const f = fixture();
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client });
+  const session = FakeSession.instances[0]; session.live();
+  session.emit("tool_call", { id: "t1", name: "switch_conversation", args: { channel: "c_sales" } });
+  await tick(20);
+  const moved = session.responses.at(-1).response;
+  assert.equal(moved.topLevel, true); assert.match(moved.note, /top level of the channel: the next run_task is posted as a new channel message/);
+  assert.equal(f.posted.length, 0, "leaving an empty top-level binding posts nothing");
+  session.emit("input_transcript", { text: "Just thinking aloud here" }); session.emit("turn_complete");
+  await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK" });
+  assert.equal(f.posted.length, 1); assert.equal(f.posted[0].conversationId, "C_SALES"); assert.equal(f.posted[0].threadKey, "");
+  assert.match(f.posted[0].text, /Voice call moved on[\s\S]*Just thinking aloud here/);
+  assert.match(session.texts.at(-1), /now at the top level of #c_work: the next run_task is posted as a new channel message[\s\S]*You have read no messages here/);
+  await f.manager.end(call.id, "U_MINE", "the caller hung up");
+  const summary = f.posted.at(-1);
+  assert.equal(summary.conversationId, "C_WORK"); assert.equal(summary.threadKey, "", "the end summary is always posted, at the top level when no thread was opened");
+  assert.match(summary.text, /Voice call ended\* — 1 min · 0 tasks[\s\S]*\*Also visited:\* #c_sales/);
+});
+
+test("a hidden phone suspends the call for a grace window that audio or a new event stream cancels", async () => {
+  await channel();
+  const f = fixture({ suspendGraceMs: 40 });
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client });
+  const session = FakeSession.instances[0]; session.live();
+  const seen = [];
+  f.manager.subscribe(call.id, "U_MINE", (event) => seen.push(event));
+  assert.throws(() => f.manager.suspend(call.id, "U_OTHER"), (e) => e.status === 404);
+  assert.equal(f.manager.suspend(call.id, "U_MINE"), true);
+  assert.equal(f.manager.suspend(call.id, "U_MINE"), true, "a repeated beacon does not shorten the window");
+  assert.deepEqual(seen.at(-1), { type: "suspended", graceMs: 40 });
+  await tick(15);
+  f.manager.audio(call.id, "U_MINE", Buffer.from([1, 2]));
+  assert.equal(seen.at(-1).type, "resumed");
+  await tick(60);
+  assert.ok(f.manager.get(call.id), "resumed audio keeps the call alive past the grace window");
+  f.manager.suspend(call.id, "U_MINE", 30);
+  f.manager.subscribe(call.id, "U_MINE", () => {});
+  await tick(50);
+  assert.ok(f.manager.get(call.id), "a reconnecting event stream also cancels the suspension");
+  f.manager.suspend(call.id, "U_MINE", 20);
+  await tick(50);
+  assert.equal(f.manager.get(call.id), null);
+  assert.equal(seen.at(-1).type, "ended"); assert.match(seen.at(-1).reason, /device went away/);
 });
 
 test("an unbound call lists, searches and switches conversations, posting each segment where it happened", async () => {
@@ -176,7 +278,7 @@ test("an unbound call lists, searches and switches conversations, posting each s
   assert.equal(switched.scheduling, "INTERRUPT");
   assert.equal(switched.response.switched, true); assert.equal(switched.response.conversation, "#c_sales"); assert.equal(switched.response.title, "Pipeline review for Q4");
   assert.deepEqual(switched.response.recentMessages, [{ from: "Tiberiu", text: "Earlier message" }, { from: "Agent", text: "Earlier reply" }]);
-  assert.deepEqual(seen.at(-1), { type: "bound", channelId: "C_SALES", channelName: "#c_sales", threadTs: "44.000001", title: "Pipeline review for Q4" });
+  assert.deepEqual(seen.at(-1), { type: "bound", channelId: "C_SALES", channelName: "#c_sales", threadTs: "44.000001", title: "Pipeline review for Q4", topLevel: false });
   assert.equal(f.posted.length, 1); assert.equal(f.posted[0].threadKey, "44.000001"); assert.match(f.posted[0].text, /joined this thread by voice call/);
   // A task runs in the current conversation; then the call moves to a new thread in #c_work.
   session.emit("tool_call", { id: "t6", name: "run_task", args: { request: "Summarize the pipeline" } });
@@ -187,14 +289,13 @@ test("an unbound call lists, searches and switches conversations, posting each s
   session.emit("tool_call", { id: "t7", name: "switch_conversation", args: { channel: "c_work" } });
   await tick(20);
   const moved = session.responses.at(-1).response;
-  assert.equal(moved.switched, true); assert.equal(moved.conversation, "#c_work"); assert.equal(moved.opened, true); assert.deepEqual(moved.recentMessages, []);
+  assert.equal(moved.switched, true); assert.equal(moved.conversation, "#c_work"); assert.equal(moved.topLevel, true); assert.deepEqual(moved.recentMessages, []);
   const segment = f.posted.find((p) => /Voice call moved on/.test(p.text));
   assert.equal(segment.threadKey, "44.000001");
   assert.match(segment.text, /moved on\* — 1 min here · 1 task/);
   assert.match(segment.text, /\*Tasks here:\* 1\. Summarize the pipeline — done/);
   assert.match(segment.text, /> \*Tiberiu:\* Open the pipeline review\n> \*Agent:\* Started the summary\./);
-  const root = f.posted.find((p) => p.conversationId === "C_WORK" && !p.threadKey);
-  assert.equal(root.conversationId, "C_WORK"); assert.equal(root.threadKey, undefined); assert.match(root.text, /Voice call.*Tiberiu/);
+  assert.equal(f.posted.filter((p) => p.conversationId === "C_WORK").length, 0, "a top-level binding posts nothing until a task or the summary");
   session.emit("tool_call", { id: "t8", name: "switch_conversation", args: { channel: "nowhere" } });
   await tick();
   assert.match(session.responses.at(-1).response.error, /No channel named "nowhere"/);
@@ -213,7 +314,7 @@ test("an unbound call lists, searches and switches conversations, posting each s
   session.emit("usage", { delta: { audioIn: 1000, textIn: 100, audioOut: 500, textOut: 50 } });
   await f.manager.end(call.id, "U_MINE", "the caller hung up");
   const summary = f.posted.at(-1);
-  assert.equal(summary.conversationId, "C_WORK"); assert.equal(summary.threadKey, root.threadKey ?? `${f.posted.indexOf(root) + 1}00.000100`);
+  assert.equal(summary.conversationId, "C_WORK"); assert.equal(summary.threadKey, "", "no thread was opened in #c_work, so the summary is a channel message");
   assert.match(summary.text, /Voice call ended\* — 1 min · 1 task · ~\$0\.0093 voice/);
   assert.match(summary.text, /\*Also visited:\* #c_sales — Pipeline review for Q4/);
   assert.doesNotMatch(summary.text, /Tasks here/);
@@ -382,7 +483,7 @@ test("the call memory line goes to the caller's own DM folder only", async () =>
 // ── Browser routes and the Slack button ─────────────────────────────────────────
 async function webFixture(t, { manager } = {}) {
   let base;
-  const started = [], audio = [], ended = [], listeners = new Map();
+  const started = [], audio = [], ended = [], suspended = [], listeners = new Map();
   const calls = manager || {
     available: () => true,
     start: async (args) => { started.push(args); return { id: "call-1", threadTs: args.threadTs || "100.000100", channelName: args.channelId ? "#c_work" : "", callerName: "Tiberiu", model: "gemini-3.8-live", bound: args.channelId ? { channelId: args.channelId, channelName: "#c_work", threadTs: args.threadTs || "100.000100", title: "" } : null }; },
@@ -409,7 +510,7 @@ async function webFixture(t, { manager } = {}) {
     const csrf = /"csrf":"([A-Za-z0-9_-]+)"/.exec(await page.text())?.[1];
     return { url, sessionBase, cookie, csrf, headers: { cookie, Origin: base, "X-CG-CSRF": csrf } };
   };
-  return { base, client, request, login, started, audio, ended, listeners };
+  return { base, client, request, login, started, audio, ended, suspended, listeners, calls };
 }
 
 test("a launch may carry the call destination, and the dashboard serves the overlay, its worklet and the auto-open target", async (t) => {
@@ -428,6 +529,12 @@ test("a launch may carry the call destination, and the dashboard serves the over
   assert.match(csp, /script-src 'nonce-[A-Za-z0-9_-]+' 'self'/, "the dashboard admits the same-origin AudioWorklet module");
   const html = await page.text();
   assert.match(html, /id="call-overlay"/); assert.match(html, /id="call-agent"/); assert.match(html, /"voiceCalls":true/);
+  // Phone behaviour ships in the overlay: a media element for playback, the wake lock, the media
+  // session, and a pagehide beacon that only suspends.
+  assert.match(html, /<audio data-call="speaker" playsinline hidden>/);
+  assert.match(html, /createMediaStreamDestination/); assert.match(html, /wakeLock\.request\("screen"\)/);
+  assert.match(html, /mediaSession/); assert.match(html, /setActionHandler\?\.\("hangup"/);
+  assert.match(html, /\/end\?csrf=" \+ encodeURIComponent\(csrf\) \+ "&grace=1"/);
   assert.match(html, /"callTarget":\{"channelId":"C_WORK","threadTs":"100.000001"\}/);
   assert.match(html, /"callAgent":"Atlas"/);
   assert.match(html, /registerProcessor|callOverlayBrowser|data-call="start"/);
@@ -478,6 +585,15 @@ test("the call routes start (bound or not), stream, relay audio and end a call f
   assert.deepEqual(f.audio, [3200]);
   assert.equal((await f.request(`${s.sessionBase}/call/call-1/audio`, { method: "POST", headers: { ...s.headers, "Content-Type": "application/octet-stream" } })).status, 400);
   assert.equal((await f.request(`${s.sessionBase}/call/call-9/events`, { headers: { cookie: s.cookie } })).status, 404);
+  // The pagehide beacon only suspends when the manager can; this fixture cannot, so it hangs up.
+  f.calls.suspend = (id, ownerId) => { f.suspended.push([id, ownerId]); return true; };
+  const grace = await f.request(`${s.sessionBase}/call/call-1/end?csrf=${s.csrf}&grace=1`, { method: "POST", headers: { cookie: s.cookie, Origin: f.base } });
+  assert.deepEqual(await grace.json(), { ok: true });
+  assert.deepEqual(f.suspended, [["call-1", "U_MINE"]]); assert.deepEqual(f.ended, []);
+  delete f.calls.suspend;
+  assert.deepEqual(await (await f.request(`${s.sessionBase}/call/call-1/end?csrf=${s.csrf}&grace=1`, { method: "POST", headers: { cookie: s.cookie, Origin: f.base } })).json(), { ok: true });
+  assert.deepEqual(f.ended, [["call-1", "U_MINE", "the caller hung up"]]);
+  f.ended.length = 0;
   const end = await f.request(`${s.sessionBase}/call/call-1/end?csrf=${s.csrf}`, { method: "POST", headers: { cookie: s.cookie, Origin: f.base } });
   assert.deepEqual(await end.json(), { ok: true });
   assert.deepEqual(f.ended, [["call-1", "U_MINE", "the caller hung up"]]);

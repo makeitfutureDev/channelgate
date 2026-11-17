@@ -87,6 +87,7 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 <div class="call-transcript" data-call="transcript" aria-label="Transcript" aria-live="polite"></div>
 <section class="call-tasks" data-call="tasks-section" hidden><h3>Tasks sent to the agent</h3><ul data-call="tasks"></ul></section>
 <p class="call-foot">Everything said is logged into the Slack conversation the call is in. Say which conversation to open, or ask what you are working on.</p>
+<audio data-call="speaker" playsinline hidden></audio>
 </div></aside>`;
 }
 
@@ -96,15 +97,23 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 // shows the panel bound to a conversation ({ channelId, threadTs, channelName, title }) or to none
 // (the voice then lists the caller's conversations). During a call, open(target) switches it and
 // keeps the panel as it is; open(null) shows the panel. A call starts only when Start is pressed.
+//
+// On a phone the call has to behave like a call: a Screen Wake Lock keeps the display from
+// locking while the call is up (re-acquired whenever the page is shown again), the agent's audio
+// is played through a media element fed by the AudioContext (so iOS and Android keep the audio
+// session — and the microphone — alive when the screen does lock or the app goes to the
+// background), the lock screen shows the call through the Media Session API, and leaving the page
+// only SUSPENDS the call on the server for a grace window instead of hanging up, because a locking
+// phone fires the same pagehide as a closing tab.
 export function callOverlayBrowser(config, env) {
   const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob } = env;
   const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, inputRate, outputRate } = config;
   const root = document.getElementById("call-overlay");
   if (!root) return { open() {}, active: () => false };
   const q = (name) => root.querySelector('[data-call="' + name + '"]');
-  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer");
+  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer"), speaker = q("speaker");
   const topButton = document.getElementById("call-agent");
-  let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null;
+  let callId = "", target = null, events = null, capture = null, player = null, sink = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
   let playhead = 0; const playing = new Set();
   let bound = null, switchQueue = Promise.resolve();
   const headers = { "X-CG-CSRF": csrf, "X-CG-Request": "1" };
@@ -140,8 +149,30 @@ export function callOverlayBrowser(config, env) {
     binding.replaceChildren();
     if (!bound || !bound.channelName) { binding.textContent = target && target.channelName ? "Will open in " + target.channelName + (target.title ? " · " + target.title : "") : "Not in a conversation yet. Ask the agent what you are working on, or name a conversation."; updateTop(); return; }
     const strong = document.createElement("strong"); strong.textContent = bound.channelName;
-    binding.append("In ", strong, bound.title ? " · " + bound.title : bound.threadTs ? " · thread" : "");
+    binding.append("In ", strong, bound.title ? " · " + bound.title : bound.threadTs ? " · thread" : " · your first request opens a new thread here");
     updateTop();
+  }
+  // Phone behaviour: keep the screen on, and tell the OS this is a call it should not interrupt.
+  async function holdWakeLock() {
+    if (!callId || !navigator.wakeLock?.request || document.visibilityState === "hidden") return;
+    try { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener?.("release", () => { wakeLock = null; }); } catch (e) { wakeLock = null; }
+  }
+  function releaseWakeLock() { const lock = wakeLock; wakeLock = null; try { void lock?.release(); } catch (e) { /* released already */ } }
+  function announceCall() {
+    const session = navigator.mediaSession;
+    if (!session) return;
+    try {
+      if (env.MediaMetadata) session.metadata = new env.MediaMetadata({ title: "Call with " + agent, artist: binding.textContent || "ChannelGate" });
+      session.playbackState = "playing";
+      session.setActionHandler?.("hangup", () => { void finish(); });
+      session.setActionHandler?.("pause", () => { if (!muted) mute.click?.(); });
+      session.setActionHandler?.("play", () => { if (muted) mute.click?.(); });
+    } catch (e) { /* a platform without the call actions still gets the metadata */ }
+  }
+  function clearAnnouncement() {
+    const session = navigator.mediaSession;
+    if (!session) return;
+    try { session.metadata = null; session.playbackState = "none"; for (const action of ["hangup", "pause", "play"]) session.setActionHandler?.(action, null); } catch (e) { /* fine */ }
   }
   function line(who, text, ms) {
     const row = document.createElement("div"); row.className = "line " + who;
@@ -173,7 +204,7 @@ export function callOverlayBrowser(config, env) {
     for (let i = 0; i < samples.length; i++) { const lo = bytes.charCodeAt(2 * i), hi = bytes.charCodeAt(2 * i + 1); const v = (hi << 8) | lo; samples[i] = (v >= 0x8000 ? v - 0x10000 : v) / 32768; }
     if (!samples.length) return;
     const buffer = player.createBuffer(1, samples.length, outputRate); buffer.copyToChannel(samples, 0);
-    const source = player.createBufferSource(); source.buffer = buffer; source.connect(player.destination);
+    const source = player.createBufferSource(); source.buffer = buffer; source.connect(sink || player.destination);
     const at = Math.max(player.currentTime + 0.02, playhead);
     source.start(at); playhead = at + buffer.duration;
     playing.add(source); source.onended = () => playing.delete(source);
@@ -211,18 +242,34 @@ export function callOverlayBrowser(config, env) {
       source.connect(processor); processor.connect(capture.destination);
     }
     player = new AudioContext({ sampleRate: outputRate });
+    // Play through a media element rather than the context's own output: a page playing media
+    // keeps its audio session (and the microphone) when a phone locks, a bare AudioContext does not.
+    sink = null;
+    if (speaker && typeof player.createMediaStreamDestination === "function") {
+      try {
+        sink = player.createMediaStreamDestination();
+        speaker.srcObject = sink.stream; speaker.muted = false;
+        await speaker.play?.();
+      } catch (e) { try { speaker.srcObject = null; } catch (_) { /* fine */ } sink = null; }
+    }
     await player.resume();
+  }
+  // After the page was hidden the browser may have suspended the audio graph: wake it back up.
+  async function resumeAudio() {
+    try { await capture?.resume?.(); await player?.resume?.(); if (sink && speaker?.paused) await speaker.play?.(); } catch (e) { /* the next user gesture resumes it */ }
   }
   function closeCapture() {
     try { workletNode?.disconnect(); processor?.disconnect(); } catch (e) { /* fine */ }
     for (const track of stream?.getTracks?.() || []) track.stop();
     stopPlayback();
+    try { if (speaker) { speaker.pause?.(); speaker.srcObject = null; } } catch (e) { /* fine */ }
     try { capture?.close(); player?.close(); } catch (e) { /* fine */ }
-    capture = player = workletNode = processor = stream = null;
+    capture = player = sink = workletNode = processor = stream = null;
   }
   function endLocal(message) {
     if (events) { events.close(); events = null; }
     closeCapture();
+    releaseWakeLock(); clearAnnouncement();
     if (tick) { clearInterval(tick); tick = null; }
     callId = "";
     start.hidden = false; hangup.hidden = true; mute.hidden = true;
@@ -241,6 +288,8 @@ export function callOverlayBrowser(config, env) {
       if (event.type === "transcript") { updateLine(event); return; }
       if (event.type === "task") { showTask(event); return; }
       if (event.type === "error") { say("Voice service: " + event.message, "error"); return; }
+      if (event.type === "suspended") { say("Phone in the background — the call stays up for a moment; come back to continue.", "warn"); return; }
+      if (event.type === "resumed") { say("Connected — start talking", "live"); return; }
       if (event.type === "ended") { endLocal("Call ended (" + (event.reason || "hung up") + "). The transcript is in the Slack conversation."); }
     };
     events.onerror = () => { if (callId) say("Reconnecting…", "warn"); };
@@ -262,6 +311,7 @@ export function callOverlayBrowser(config, env) {
       start.hidden = true; hangup.hidden = false; mute.hidden = false;
       tick = setInterval(() => { timer.textContent = fmt(Date.now() - startedAt); updateTop(); }, 1000);
       say("Connecting to the voice service…", "");
+      void holdWakeLock(); announceCall();
     } catch (error) {
       closeCapture();
       say(error && error.message ? error.message : "The call could not start.", "error");
@@ -280,7 +330,15 @@ export function callOverlayBrowser(config, env) {
   closeButton.addEventListener("click", () => setVisible(false));
   root.addEventListener("keydown", (event) => { if (event.key === "Escape") setVisible(false); });
   mute.addEventListener("click", () => { muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted)); workletNode?.port.postMessage({ muted }); updateTop(); });
-  env.addEventListener?.("pagehide", () => { if (callId) navigator.sendBeacon?.(base + "/call/" + callId + "/end?csrf=" + encodeURIComponent(csrf)); });
+  // Leaving the page: a closing tab, but also a phone locking its screen or switching apps. The
+  // beacon asks the server to SUSPEND the call (it hangs up by itself after a grace window) so a
+  // lock does not kill the call; audio resuming, or the event stream reconnecting, cancels it.
+  env.addEventListener?.("pagehide", () => { if (callId) navigator.sendBeacon?.(base + "/call/" + callId + "/end?csrf=" + encodeURIComponent(csrf) + "&grace=1"); });
+  document.addEventListener?.("visibilitychange", () => {
+    if (!callId || document.visibilityState === "hidden") return;
+    void holdWakeLock(); void resumeAudio();
+    if (events && events.readyState === 2) connectEvents();
+  });
   const supported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof AudioContext === "function";
   async function switchTo(next, id) {
     if (callId !== id) return;

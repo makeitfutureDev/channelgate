@@ -243,8 +243,45 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   distinct Dock icons after Chrome refreshes them (reopen or reinstall if needed). Linux Chromium
   evidence proves supplied assets and settings; it does not establish macOS Dock refresh timing.
 
-## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14)
+## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14, relay and phone behaviour 2026-11-17)
 
+- Relay-only voice, top-level channel tasks and the suspend grace (2026-11-17, engine-independent
+  for the fixture cases): `test/voice-calls.test.js` asserts the system instruction's relay
+  contract (not the agent, assume nothing, three sources of knowledge, unknown details go to
+  `run_task`, larger `read_thread` first, `[gateway]` results relayed without additions, outcomes
+  never announced early) and the `run_task` / `read_thread` tool descriptions; that a call started
+  with a channel and no thread binds at the top level and posts nothing; that the first spoken task
+  becomes a root "🎙️ *Name (voice call):* …" message, the second lands inside its thread, both
+  turns run in that thread as the caller, the voice is told the request was posted as a new channel
+  message, the `bound` event and the receipt carry the opened thread and the request as its title,
+  and the end summary lands in that thread; that an empty top-level segment left on a move posts
+  nothing while one with speech posts into the channel, and the end summary of a top-level binding
+  is a channel message; and that `suspend()` ends the call only after its grace window, with audio
+  or a new event stream cancelling it, a foreign owner refused and the browser's `grace=1` beacon
+  routed to `suspend` when the manager has it. The dashboard HTML is checked for the media
+  element, `createMediaStreamDestination`, the wake lock request, the Media Session hang-up
+  handler and the `&grace=1` beacon. The Chromium case runs unchanged with the media-element
+  playback path.
+- Live acceptance of the relay behaviour (Claude and Codex separately, synthetic Gemini does not
+  establish it): open a call from a thread that contains a specific fact posted by the agent (for
+  example "The deploy ID is 4471"). Ask "what is the deploy ID?": pass when the voice quotes the
+  message. Ask for a detail NOT in the thread ("who approved the deploy?"): pass when the voice
+  says it will ask the agent, a "🎙️ *You (voice call):* who approved the deploy?" message appears
+  in the thread, and the voice relays the agent's answer only after the reply posts; fail if it
+  answers from its own knowledge or claims an outcome early. Start a call from the dashboard's
+  Call button, say "switch to #<fixture channel>" then "ask the agent to reply with TOP_LEVEL_OK":
+  pass when a new top-level message carrying the request appears in the channel (no "Voice call —
+  … is talking" root), the agent's answer is threaded under it, and the hang-up summary lands in
+  that same thread.
+- Live acceptance on a phone (engine-independent): on an iPhone (Safari, and the installed
+  Activity app) and an Android phone (Chrome), start a call and leave the phone untouched past
+  its auto-lock interval. Pass: the screen stays on while the call is up. Then lock the screen by
+  hand for 20 seconds and unlock: pass when the call is still connected (header still "In call",
+  the Slack thread shows no "device went away" summary) and talking resumes; the status shows
+  "Phone in the background" while hidden and "Connected" after. Lock for more than 45 seconds
+  without returning: pass when the call ends with the "the caller's device went away" summary.
+  Record the OS version: iOS keeps the audio session only while the media element is playing,
+  so a device that still drops the call is reported with its version rather than retried.
 - Side panel and dashboard switching (2026-11-14, side panel replaced the floating bubble): `test/voice-calls.test.js` checks
   owner-only, CSRF-protected switching, malformed destinations, revoked caller/destination access,
   unchanged same-thread selection, the original voice session, segment placement, context updates

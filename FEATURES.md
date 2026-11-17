@@ -128,7 +128,7 @@ icon URLs and uncached manifest responses expose updates without changing app id
 Chrome controls installed icon updates; an existing Dock icon may need the app reopened or
 reinstalled to refresh. No macOS-specific update timing is promised.
 
-## Voice calls with a channel's agent · Beta (2026-11-13, navigation 2026-11-14)
+## Voice calls with a channel's agent · Beta (2026-11-13, navigation 2026-11-14, relay and phone behaviour 2026-11-17)
 
 An approved user can talk to a channel's agent from a voice-call overlay on their personal
 Activity dashboard (`docs/VOICE-CALLS.md`). Entry points: the **📞 Call** reply-menu button
@@ -163,20 +163,36 @@ Settings → **Voice calls** holds the enable switch, the Gemini API key (write-
 revealable only through `POST /api/secrets/reveal`; both the `AIza…` and the dotted `AQ.…`
 shapes), the model (`gemini-3.8-live` or the 2.5 native-audio preview) and the voice.
 
-The voice model only converses, navigates and dispatches (`src/gateway/voice/calls.js`). A call
-is bound to one conversation and one thread at a time, or to none: an unbound call (the
-dashboard button) starts with the caller's eight most recent open conversations in its
-instructions and asks which to open. Tools: `list_conversations` (the caller's OWN conversations,
+The voice model is a **relay**, not the agent (`src/gateway/voice/calls.js`, 2026-11-17): its
+instructions say it is the phone line between the caller and the channel agent, that it has none
+of the agent's knowledge, files, tools or memory, and that it knows exactly three things — the
+briefing, the messages it has read (`read_thread`, or the thread context quoted at start) and
+what tools return. It must assume, infer or complete nothing beyond them, report thread contents
+only as what the messages literally say with attribution, hand any detail it cannot find in a
+message to the agent with `run_task` (after a larger `read_thread` when the caller refers to
+something earlier), relay `[gateway]` results without additions and never announce an outcome
+before the result arrives. A call opened from a thread reads up to 40 recent messages (600
+characters each) before the voice says anything. A call is bound to one conversation and one
+thread at a time, or to none: an unbound call (the dashboard button) starts with the caller's
+eight most recent open conversations in its instructions and asks which to open. A channel
+without a thread binds at the channel's **top level**: nothing is posted, and the first
+`run_task` posts the spoken request as a NEW channel message ("🎙️ *Name (voice call):* …", what
+a typed top-level @mention would be) whose thread the agent answers in and the call follows, so
+members see the request, progress card and answer in the channel rather than inside a generic
+"Voice call" thread; a top-level segment left on a move is posted into the channel when
+something was said and skipped when nothing was, the end summary always posts. Tools:
+`list_conversations` (the caller's OWN conversations,
 exactly the Activity list, most recent first, filtered by status and channel, 8 by default and
 at most 20), `search_conversations` (title/channel words, optional channel filter; anything beyond
 the caller's own conversations is a task for the channel agent), `switch_conversation` (an id from
-the list, or a channel name to open a new root there; re-authorized by `allows()`; the segment's
-transcript and tasks are posted to the thread being left as "📞 Voice call moved on", the new
-thread gets "joined by voice call" and its recent messages come back to the voice), `run_task`
-(posts the spoken request into the current thread as "🎙️ *Name (voice call):* …" and runs an
-ordinary engine turn there **authored by the caller**, origin `voice_call`, the thread's run queue,
-live progress, the usual footer, then reports the result back as a `[gateway]` message that says
-where it ran if the call has moved on), `check_tasks`, `read_thread` and `end_call`. `voice_call`
+the list, or a channel name to go to that channel's top level; re-authorized by `allows()`; the
+segment's transcript and tasks are posted to the thread being left as "📞 Voice call moved on",
+an existing thread gets "joined by voice call" and its recent messages come back to the voice),
+`run_task` (posts the spoken request into the current thread as "🎙️ *Name (voice call):* …" — or
+as the new channel message above — and runs an ordinary engine turn there **authored by the
+caller**, origin `voice_call`, the thread's run queue, live progress, the usual footer, then
+reports the result back as a `[gateway]` message that says where it ran if the call has moved
+on), `check_tasks`, `read_thread` and `end_call`. `voice_call`
 is an interactive user origin that is deliberately **not escalatable**: an admin's spoken task
 runs as Worker and answers tool prompts through the thread's approval cards. One call per person;
 at most eight per gateway; a call ends after 60 minutes, after five silent minutes, on hang-up,
@@ -187,6 +203,17 @@ the Gemini audio and text rates, one line describing the call (date, duration, c
 tasks) is saved to the caller's own DM channel memory when they have a DM folder, and
 `voice_call_started` / `voice_call_bound` / `voice_call_ended` events are logged. Gateway
 restarts end calls without a summary.
+
+On a phone the call behaves like a call (`src/web/call-overlay.js`, 2026-11-17): the overlay holds
+a Screen Wake Lock while a call is up (re-acquired whenever the page becomes visible again), plays
+the agent's audio through a hidden media element fed by the AudioContext so iOS and Android keep
+the audio session and the microphone alive when the screen does lock or the app goes to the
+background, announces the call to the lock screen through the Media Session API (hang up, and
+pause/play as mute/unmute), and resumes the audio graph and the event stream when the page comes
+back. Leaving the page (`pagehide`, which a locking phone fires like a closing tab) no longer
+hangs up: the beacon calls `…/end?grace=1`, which **suspends** the call (`suspend()`, event
+`suspended`) for 45 seconds; the next audio chunk or a reconnecting event stream cancels it
+(`resumed`), otherwise the call ends with "the caller's device went away" and the usual summary.
 
 **Per-person voice preferences (2026-11-14).** Activity → Settings → **Voice calls** lets each
 person set how the voice talks to them: a default **language** (empty follows whatever they

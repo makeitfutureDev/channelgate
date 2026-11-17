@@ -14,7 +14,12 @@ conversation or channel, and keep talking.
    gateway has voice calls configured.
 2. Press **Start call**, allow the microphone and talk. The voice knows your eight most recent
    open conversations (the same list as your Activity page) and, when the call is in a thread,
-   its recent messages. You can interrupt it.
+   its recent messages (up to 40, read before it says a word). You can interrupt it.
+   The voice is the **phone line**, not the agent: it knows only what is in those messages and
+   what the agent answers. Ask "what did the agent write about the deploy?" and it quotes the
+   thread; ask anything that is not in a message and it tells you it is asking the agent, posts
+   the question in the thread as "🎙️ *You (voice call):* …" and relays the reply when it arrives.
+   It never fills in an answer of its own.
    The call opens in a side panel on the right; the dashboard stays usable beside it. While you
    are in a call the header's **📞 Call** button turns green and shows the call time — click it
    (or the panel's ×, or press Escape) to hide or show the panel and its transcript; hiding never
@@ -24,14 +29,18 @@ conversation or channel, and keep talking.
    voice lists or searches your own conversations, with a channel filter when you name one. Say
    "open that one" or "switch to #sales": the call moves there. The thread you leave receives the
    transcript of what was said while you were in it; the new thread gets a "joined by voice call"
-   note and the voice tells you where it left off. Naming a channel without a conversation opens
-   a new thread there.
+   note and the voice tells you where it left off. Naming a channel without a conversation puts
+   the call at that channel's top level: nothing is posted until you ask for something.
 4. Ask for work: "build the export, run the tests, tell me when it is done". The voice hands the
    request to that channel's agent, which runs it as a normal turn in the current thread — in the
    channel's container, with its files, tools, memory and credentials, under the channel's mode
    and queue. The thread shows your request as "🎙️ *You (voice call):* …", the live progress card
-   and the agent's answer with the usual footer. The voice tells you when it is done, and says
-   where it ran if you have moved on since. Ask "is it done?" or "what was said here?" at any time.
+   and the agent's answer with the usual footer. At a channel's top level the request itself
+   becomes a **new channel message**, exactly like a typed @mention: everyone sees it in the
+   channel, the agent answers in its thread, and the call follows that thread for your next
+   requests (say "switch to #channel" again for a fresh top-level message). The voice tells you
+   when it is done, and says where it ran if you have moved on since. Ask "is it done?" or "what
+   was said here?" at any time.
 5. Say goodbye or press **Hang up**. The current thread receives the call summary: duration, the
    tasks you dispatched, the estimated voice cost, the other conversations you visited and the
    last segment's transcript. One line about the call (date, duration, conversations, tasks) is
@@ -53,6 +62,22 @@ Activity → Settings → **Voice calls** is yours alone and applies to your nex
 
 The voice is also briefed about you on every call: your name and role, your open conversations,
 the current thread's recent messages and your last five calls (from your own DM memory).
+
+## Calling from a phone
+
+The call is a web page, so it behaves like a call only as far as the phone's browser allows:
+
+- While the call is up the page holds a **screen wake lock**, so the phone does not auto-lock
+  mid-call (Chrome on Android, Safari on iOS 16.4 or later). Hiding the panel keeps the lock.
+- The agent's voice is played through a media element, which lets iOS and Android keep the audio
+  session — and your microphone — running if you lock the screen by hand or switch apps, and shows
+  the call on the lock screen with a hang-up control (pause/play mute and unmute).
+- Leaving the page no longer hangs up at once: the call is **suspended** for 45 seconds. Come back
+  (unlock, return to the tab or app) and it continues; stay away and it ends with the usual
+  summary, "the caller's device went away".
+- For the most call-like experience on iOS, install the Activity dashboard to the home screen
+  (Share → Add to Home Screen) and call from the installed app. Browsers still reserve the right
+  to pause a background page; if a phone drops the call after a manual lock, note its OS version.
 
 ## Who may call, and what the voice can see
 
@@ -79,7 +104,8 @@ cards in the thread. Open the thread in Slack to answer them.
 - The list shows up to 20 conversations per request; the voice starts with the eight most
   recent open ones and asks for more when needed.
 - A call ends after 60 minutes, after five minutes without audio, on hang-up, when the voice is
-  asked to end it, or when the voice service drops the connection. Closing the tab hangs up.
+  asked to end it, or when the voice service drops the connection. Closing the tab (or locking
+  the phone and not coming back) ends it 45 seconds later.
 - Transcripts posted to a thread are capped at roughly 2,800 characters per segment; the task
   result the voice hears is capped at 1,500 characters. Nothing is spoken that the agent did not
   produce.
@@ -138,7 +164,10 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
   same-origin scripts for that worklet.
 - `src/web/call-overlay.js` — the overlay: microphone capture through an AudioWorklet
   (ScriptProcessor fallback), 120 ms batches resampled to 16 kHz, gapless playback of the 24 kHz
-  replies with interruption support, the current conversation, live transcript and task list;
-  `src/web/activity-page.js` mounts it and wires the row and top-bar actions.
+  replies through a media element (`MediaStreamAudioDestinationNode` → `<audio>`) with
+  interruption support, the screen wake lock, Media Session metadata and actions, the suspend
+  beacon on `pagehide` and the resume on `visibilitychange`, the current conversation, live
+  transcript and task list; `src/web/activity-page.js` mounts it and wires the row and top-bar
+  actions.
 - `src/slack/call-button.js` + `src/slack/footer.js` — the reply-menu button and its private
   launch.

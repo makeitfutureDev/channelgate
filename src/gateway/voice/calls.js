@@ -45,17 +45,18 @@ export const MAX_LISTED_CONVERSATIONS = 20;
 const MAX_TRANSCRIPT_ENTRIES = 400;
 const MAX_TASKS_PER_CALL = 20;
 const MAX_RUNNING_TASKS = 3;
-const CONTEXT_MESSAGES = 20;
-const CONTEXT_MESSAGE_CHARS = 400;
+const CONTEXT_MESSAGES = 40;
+const CONTEXT_MESSAGE_CHARS = 600;
 const RESULT_TO_MODEL_CHARS = 1_500;
 const END_CALL_GRACE_MS = 4_000;
+export const SUSPEND_GRACE_MS = 45_000;
 const STATUS_FILTERS = Object.freeze(["open", "working", "waiting", "error", "idle", "later", "done", "all"]);
 
 export const TOOL_DECLARATIONS = Object.freeze([
   {
     name: "run_task", nonBlocking: true,
-    description: "Give the channel agent a task or question to work on in the conversation the call is currently in. It runs in that channel's own environment with its files, tools, memory and credentials, and may take minutes. Returns immediately; the result arrives later as a message starting with [gateway].",
-    parameters: { type: "object", properties: { request: { type: "string", description: "The complete request, in the caller's words, with every detail they gave." } }, required: ["request"] },
+    description: "Hand the channel agent a task OR a question in the conversation the call is currently in. The channel agent is the only source of truth: use this for every action and for every question whose answer is not literally in a message you have read. It runs in that channel's own environment with its files, tools, memory and credentials, and may take minutes. When the call is at the top level of a channel (no thread yet), the request is posted as a new message in the channel and the call follows its thread. Returns immediately; the result arrives later as a message starting with [gateway].",
+    parameters: { type: "object", properties: { request: { type: "string", description: "The complete request or question, in the caller's words, with every detail they gave." } }, required: ["request"] },
   },
   {
     name: "check_tasks",
@@ -64,7 +65,7 @@ export const TOOL_DECLARATIONS = Object.freeze([
   },
   {
     name: "read_thread",
-    description: "Read the most recent messages of the conversation the call is currently in, newest last.",
+    description: "Read the most recent messages of the conversation the call is currently in, newest last. Use it before saying anything about what the thread contains, and only report what the messages literally say.",
     parameters: { type: "object", properties: { limit: { type: "integer", description: "How many recent messages to read (1-40, default 15)." } } },
   },
   {
@@ -87,7 +88,7 @@ export const TOOL_DECLARATIONS = Object.freeze([
   },
   {
     name: "switch_conversation",
-    description: "Move the call to another conversation: an id from list_conversations/search_conversations, or a channel name to start a new conversation there. The transcript so far is posted to the conversation being left. Returns the new conversation's recent messages.",
+    description: "Move the call to another conversation: an id from list_conversations/search_conversations, or a channel name to go to the top level of that channel, where the next run_task starts a new thread as a visible channel message. The transcript so far is posted to the conversation being left. Returns the new conversation's recent messages.",
     parameters: { type: "object", properties: {
       id: { type: "string", description: "A conversation id from the list, like C0123ABC:1700000000.123456." },
       channel: { type: "string", description: "A channel name or id to open a NEW conversation in (ignored when id is given)." },
@@ -121,7 +122,7 @@ const PATIENCE_RULES = Object.freeze({
   patient: "The caller may pause mid-thought. Wait for them to finish; if a pause runs long, ask gently whether they are done rather than answering a half-sentence.",
 });
 
-export function buildSystemInstruction({ callerName, channelName = "", agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
+export function buildSystemInstruction({ callerName, channelName = "", topLevel = false, agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
   const prefs = preferences || {};
   const style = Object.hasOwn(STYLE_RULES, prefs.style) ? STYLE_RULES[prefs.style] : STYLE_RULES.brief;
   const language = prefs.language ? `Speak ${prefs.language} by default; if the caller switches language, follow them.` : "Speak the language the caller uses.";
@@ -133,17 +134,18 @@ export function buildSystemInstruction({ callerName, channelName = "", agentName
     ? `The caller's most recent open conversations (ids for switch_conversation):\n${conversations.map((c, i) => `${i + 1}. [${c.id}] ${c.channel} — ${c.title || "Untitled"} (${c.status}${c.lastActivity ? `, ${c.lastActivity}` : ""})`).join("\n")}\nUse list_conversations or search_conversations for more or for older ones.`
     : "The caller has no tracked conversations yet; list_conversations will say so.";
   return [
-    `You are the voice of ${agentName}, the ChannelGate agent, on a live voice call with ${callerName}${isAdmin ? " (an organization admin)" : ""}. ${bound ? `The call is currently in the Slack conversation ${channelName}.` : "The call is not in any conversation yet: ask which one to open, or offer the list below."} Everything you dispatch runs in the current conversation and everything said is logged there when the call moves on or ends.`,
+    `You are the voice connection between ${callerName}${isAdmin ? " (an organization admin)" : ""} and ${agentName}, the ChannelGate agent working in their Slack conversations. You are NOT that agent and you do not have its knowledge, files, tools or memory: you are the phone line between the caller and the agent running in the current conversation. ${bound ? `The call is currently in the Slack conversation ${channelName}${topLevel ? ", at the channel's top level: the first task you dispatch is posted as a new message in the channel and the call then follows that thread" : ""}.` : "The call is not in any conversation yet: ask which one to open, or offer the list below."} Everything you dispatch runs in the current conversation as a visible message there, and everything said is logged there when the call moves on or ends.`,
+    "Assume nothing. You know exactly three things: this briefing, the messages you have read with read_thread (or that are quoted below), and what tools return. Never infer, extend, complete or guess beyond them, and never present a plausible answer as fact. When you report what a conversation contains, say only what its messages literally say and attribute it (\"the agent wrote…\", \"you asked…\"). If the caller asks for any detail, status, reason, file, number or decision that is not in a message you have read, do not answer from your own knowledge: dispatch the question to the channel agent with run_task, say that you asked it, and relay its reply when the [gateway] message arrives. If the caller refers to something earlier than the messages you have, call read_thread with a larger limit first, then run_task if it is still not there.",
+    "Every action and every question for the agent goes through run_task, in the caller's own words with every detail they gave. The request is posted in the conversation so the caller can see it, and the agent's work and answer appear in that thread like any typed message. Say in a few words that you sent it, then keep talking; never pretend a result you do not have and never announce an outcome before the [gateway] message brings it.",
     "Use the readable conversation label and title when speaking. Never read conversation IDs aloud; IDs are only routing keys for tools.",
     [style, language, patience].filter(Boolean).join(" "),
-    "You discuss, answer from the context you have, and hand real work to the channel agent with run_task: it runs in the channel's own environment with its files, tools, memory and credentials, and can take minutes. Pass the caller's request completely and faithfully. Say in a few words that you started it, then keep talking; never pretend a result you do not have.",
-    "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Summarize it for the caller in one or two spoken sentences, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
+    "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Relay it for the caller in one or two spoken sentences without adding anything of your own, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
     "You can see the caller's own conversations, the same list as their Activity page: list_conversations and search_conversations show them (title, channel, status), and switch_conversation moves the call there — a different thread, or a different channel, in which case you work with that channel's agent. When the caller asks what they are working on, what is pending, or about another channel, use these tools; when they want to act on another conversation, switch to it first. Conversations started by other people or thread contents are not in that list: offer to dispatch a search to the channel agent with run_task. Never guess or claim that nothing else is happening.",
     "When the caller says goodbye or asks to hang up, say a short goodbye and call end_call.",
     own,
     recent,
     list,
-    threadContext ? `Recent messages in the current conversation, oldest first:\n${threadContext}` : bound ? "The current conversation is new and empty." : "",
+    threadContext ? `The messages of the current conversation that you have read so far, oldest first (this is your only knowledge of it; it may not be complete — use read_thread for more):\n${threadContext}` : bound && !topLevel ? "The current conversation is new and empty." : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -197,7 +199,7 @@ export function createCallManager({
   progress = startProgress, deliver = deliverResult, record = recordUsage, post = postNotice, directory = getDirectory,
   loadEntry = getChannelEntry, loadUser = getUser, channels = listChannels, access = accessContext, readThread = defaultReadThread,
   snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory, loadHistory = defaultLoadVoiceHistory,
-  log = logEvent, saveHistory = saveCallHistory, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS,
+  log = logEvent, saveHistory = saveCallHistory, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS, suspendGraceMs = SUSPEND_GRACE_MS,
 } = {}) {
   const calls = new Map();
   const config = () => {
@@ -231,7 +233,7 @@ export function createCallManager({
     return { id: task.id, status: task.status, request: task.request, summary: task.summary || "", startedMs: task.startedMs, endedMs: task.endedMs || 0, channelName: task.channelName, threadTs: task.threadTs };
   }
   function boundView(call) {
-    return call.bound ? { channelId: call.bound.channelId, channelName: call.bound.channelName, threadTs: call.bound.threadTs, title: call.bound.title || "" } : null;
+    return call.bound ? { channelId: call.bound.channelId, channelName: call.bound.channelName, threadTs: call.bound.threadTs, title: call.bound.title || "", topLevel: !call.bound.threadTs } : null;
   }
   function snapshotView(call) {
     return { type: "state", status: call.status, callId: call.id, startedMs: call.startedMs, bound: boundView(call),
@@ -262,7 +264,9 @@ export function createCallManager({
   }
 
   // Bind (or re-bind) the call to a conversation. Posts the segment transcript to the thread being
-  // left, announces the call in the new thread (or opens a root there), and loads its context.
+  // left, announces the call in the new thread and loads its context. A channel without a thread
+  // binds at the channel's TOP LEVEL: nothing is posted yet, and the first task opens the thread
+  // as an ordinary, visible channel message (openTaskThread) that the call then follows.
   function bind(call, target) {
     const pending = (call.bindingQueue || Promise.resolve()).then(() => bindNow(call, target));
     call.bindingQueue = pending.catch(() => {});
@@ -275,28 +279,46 @@ export function createCallManager({
     const ctx = await access(call.client, call.ownerId);
     if ((!ctx.user.approved && !ctx.user.isAdmin) || !await ctx.allows({ ...entry, channelId }, threadTs)) throw httpError(403, "You are not authorized to call the agent from that conversation.");
     if (call.ending) throw httpError(404, "That call is not active.");
-    if (call.bound?.channelId === channelId && threadTs && call.bound.threadTs === threadTs) return { ...boundView(call), context: { text: "", messages: [] }, opened: false, unchanged: true };
+    if (call.bound?.channelId === channelId && threadTs && call.bound.threadTs === threadTs) return { ...boundView(call), context: { text: "", messages: [] }, topLevel: false, unchanged: true };
     const channelName = channelLabel(entry, channelId);
-    let boundThread = threadTs, opened = false;
-    if (boundThread) {
-      await post(call.client, { conversationId: channelId, threadKey: boundThread, text: `📞 *${call.callerName}* joined this thread by voice call.` });
-    } else {
-      const posted = await post(call.client, { conversationId: channelId, text: `📞 *Voice call* — ${call.callerName} is talking to the agent. Requests and the transcript land in this thread.` });
-      if (!posted?.messageId) throw httpError(502, "Could not open a thread for the call.");
-      boundThread = posted.messageId; opened = true;
-    }
-    const context = opened ? { text: "", messages: [] } : await contextFor(call, channelId, boundThread);
+    const topLevel = !threadTs;
+    if (!topLevel) await post(call.client, { conversationId: channelId, threadKey: threadTs, text: `📞 *${call.callerName}* joined this thread by voice call.` });
+    const context = topLevel ? { text: "", messages: [] } : await contextFor(call, channelId, threadTs);
     if (call.ending) throw httpError(404, "That call is not active.");
     if (call.bound) await leaveSegment(call, { moved: true });
     if (call.ending) throw httpError(404, "That call is not active.");
     // What was said while the call was in no conversation yet (the request to open this one,
     // typically) belongs to this first segment; a segment left behind was already posted.
-    call.bound = { channelId, slug: entry.slug, isDM: Boolean(entry.isDM || entry.type === "im"), threadTs: boundThread, channelName, title: clean(title, 160), since: now() };
+    call.bound = { channelId, slug: entry.slug, isDM: Boolean(entry.isDM || entry.type === "im"), threadTs, channelName, title: clean(title, 160), since: now() };
     closeTranscriptTurn(call);
-    call.visited.push({ channelId, channelName, threadTs: boundThread, title: call.bound.title });
+    call.visited.push({ channelId, channelName, threadTs, title: call.bound.title });
     broadcast(call, { type: "bound", ...boundView(call) });
-    await log("voice_call_bound", { id: call.id, channelId, threadTs: boundThread, ownerId: call.ownerId, opened }).catch(() => {});
-    return { channelName, threadTs: boundThread, title: call.bound.title, context, opened };
+    await log("voice_call_bound", { id: call.id, channelId, threadTs, ownerId: call.ownerId, topLevel }).catch(() => {});
+    return { channelName, threadTs, title: call.bound.title, context, topLevel };
+  }
+
+  // The first task of a top-level binding: the spoken request becomes a NEW message in the channel
+  // (what a typed @mention at the channel's top level would be), and the call follows its thread so
+  // the caller sees the request, the progress card and the answer where any member would.
+  // Serialized behind the binding queue so two quick requests cannot both open a root.
+  function openTaskThread(call, request) {
+    const pending = (call.bindingQueue || Promise.resolve()).then(async () => {
+      if (call.ending || !call.bound) throw httpError(404, "That call is not active.");
+      const bound = call.bound;
+      if (bound.threadTs) return { threadTs: bound.threadTs, opened: false };
+      const posted = await post(call.client, { conversationId: bound.channelId, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(request)}` });
+      if (!posted?.messageId) throw httpError(502, "Could not post the request in the channel.");
+      if (call.ending || call.bound !== bound) throw httpError(404, "The call moved before the task could start.");
+      bound.threadTs = posted.messageId;
+      if (!bound.title) bound.title = clean(request, 160);
+      const visit = call.visited.at(-1);
+      if (visit && visit.channelId === bound.channelId && !visit.threadTs) { visit.threadTs = bound.threadTs; visit.title = bound.title; }
+      broadcast(call, { type: "bound", ...boundView(call) });
+      await log("voice_call_bound", { id: call.id, channelId: bound.channelId, threadTs: bound.threadTs, ownerId: call.ownerId, opened: true }).catch(() => {});
+      return { threadTs: bound.threadTs, opened: true };
+    });
+    call.bindingQueue = pending.catch(() => {});
+    return pending;
   }
 
   async function start({ ownerId, channelId = "", threadTs = "", client, teamId = "", botUserId = "" }) {
@@ -331,7 +353,7 @@ export function createCallManager({
     try {
       call.session = createSession({
         apiKey: c.apiKey, model: c.model, voice: c.voice, tools: TOOL_DECLARATIONS, patience: preferences.patience,
-        systemInstruction: buildSystemInstruction({ callerName, channelName: call.bound?.channelName || "", isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
+        systemInstruction: buildSystemInstruction({ callerName, channelName: call.bound?.channelName || "", topLevel: Boolean(call.bound) && !call.bound.threadTs, isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
       });
     } catch (error) {
       calls.delete(id);
@@ -387,10 +409,13 @@ export function createCallManager({
         if (!request) return respond({ error: "The request was empty." }, "SILENT");
         if (call.tasks.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit; end the call and start a new one for more." }, "WHEN_IDLE");
         if ([...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status)).length >= MAX_RUNNING_TASKS) return respond({ error: "Three tasks are already in progress; wait for one to finish." }, "WHEN_IDLE");
-        const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: call.bound.threadTs, channelName: call.bound.channelName };
+        const thread = await openTaskThread(call, request);
+        const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, requestPosted: thread.opened };
         call.tasks.set(task.id, task);
         broadcast(call, { type: "task", ...taskView(task) });
-        respond({ status: "started", task: task.id, conversation: call.bound.channelName }, "SILENT");
+        respond(thread.opened
+          ? { status: "started", task: task.id, conversation: call.bound.channelName, note: "Posted as a new message in the channel; the call now follows that thread." }
+          : { status: "started", task: task.id, conversation: call.bound.channelName }, "SILENT");
         void dispatch(call, task);
         return;
       }
@@ -413,7 +438,9 @@ export function createCallManager({
         const target = await resolveSwitch(call, args);
         if (call.bound && call.bound.channelId === target.channelId && target.threadTs && call.bound.threadTs === target.threadTs) return respond({ switched: false, note: "The call is already in that conversation.", conversation: call.bound.channelName });
         const result = await bind(call, target);
-        return respond({ switched: true, conversation: result.channelName, title: result.title, opened: result.opened, recentMessages: result.context.messages.slice(-10) }, "INTERRUPT");
+        return respond({ switched: true, conversation: result.channelName, title: result.title, topLevel: result.topLevel,
+          ...(result.topLevel ? { note: "The call is at the top level of the channel: the next run_task is posted as a new channel message and the call follows its thread." } : {}),
+          recentMessages: result.context.messages.slice(-10) }, "INTERRUPT");
       }
       if (name === "end_call") {
         respond({ status: "ending" });
@@ -436,7 +463,7 @@ export function createCallManager({
     task.handle = handle;
     let status = null, result = null, failure = "";
     try {
-      await post(client, { conversationId: channelId, threadKey: threadTs, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(task.request)}` });
+      if (!task.requestPosted) await post(client, { conversationId: channelId, threadKey: threadTs, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(task.request)}` });
       await queue.acquire(runKey, handle, () => { task.status = "queued"; broadcast(call, { type: "task", ...taskView(task) }); });
       if (handle.aborted || call.ending) throw Object.assign(new Error("call ended before the task started"), { name: "AbortError" });
       task.status = "running"; broadcast(call, { type: "task", ...taskView(task) });
@@ -487,15 +514,33 @@ export function createCallManager({
     if (!call || call.ownerId !== ownerId) throw httpError(404, "That call is not active.");
     call.listeners.add(listener);
     listener(snapshotView(call));
+    resume(call);
     return () => { call.listeners.delete(listener); };
   }
 
   function audio(id, ownerId, chunk) {
     const call = calls.get(id);
     if (!call || call.ownerId !== ownerId) throw httpError(404, "That call is not active.");
-    touch(call);
+    touch(call); resume(call);
     if (!call.session?.ready) return false;
     return call.session.sendAudio(chunk);
+  }
+
+  // The browser was hidden or unloaded (a phone locking its screen fires the same events as a tab
+  // closing): end the call unless audio or a new event stream shows up within the grace window.
+  function suspend(id, ownerId, graceMs = suspendGraceMs) {
+    const call = calls.get(id);
+    if (!call || call.ownerId !== ownerId) throw httpError(404, "That call is not active.");
+    if (call.suspendTimer) return true;
+    const timer = setTimeout(() => { call.suspendTimer = null; void end(id, ownerId, "the caller's device went away"); }, graceMs); timer.unref?.();
+    call.suspendTimer = timer; call.timers.push(timer);
+    broadcast(call, { type: "suspended", graceMs });
+    return true;
+  }
+  function resume(call) {
+    if (!call.suspendTimer) return;
+    clearTimeout(call.suspendTimer); call.suspendTimer = null;
+    broadcast(call, { type: "resumed" });
   }
 
   async function switchConversation(id, ownerId, { channelId, threadTs = "" }) {
@@ -506,7 +551,9 @@ export function createCallManager({
     const target = threadTs ? await resolveSwitch(call, { id: `${channelId}:${threadTs}` }) : { channelId, threadTs };
     const result = await bind(call, target);
     touch(call);
-    if (!result.unchanged) call.session.sendText(`[gateway] The caller moved this active call using the dashboard. You are now in ${result.channelName}, thread ${result.threadTs}${result.title ? ` — ${result.title}` : ""}. Use this conversation for subsequent tasks. Recent messages:\n${result.context.text || "No recent messages."}`);
+    if (!result.unchanged) call.session.sendText(result.topLevel
+      ? `[gateway] The caller moved this active call using the dashboard. You are now at the top level of ${result.channelName}: the next run_task is posted as a new channel message and the call follows its thread. You have read no messages here.`
+      : `[gateway] The caller moved this active call using the dashboard. You are now in ${result.channelName}, thread ${result.threadTs}${result.title ? ` — ${result.title}` : ""}. Use this conversation for subsequent tasks. The messages you have read there, oldest first (use read_thread for more):\n${result.context.text || "No recent messages."}`);
     return { id, bound: boundView(call), switched: !result.unchanged };
   }
 
@@ -522,11 +569,16 @@ export function createCallManager({
   }
 
   // Post what was said in the current conversation to its thread: when the call moves on, as a
-  // segment; when it ends, as the final summary with the whole call's figures.
+  // segment; when it ends, as the final summary with the whole call's figures. A top-level binding
+  // (no thread opened yet) posts into the channel itself — except an empty segment left on a
+  // move, which has nothing to log.
   async function leaveSegment(call, { moved = false, durationMs = 0, costUSD = 0, reason = "", endedMs = now() } = {}) {
     const bound = call.bound;
     if (!bound) return;
     const here = [...call.tasks.values()].filter((t) => t.threadTs === bound.threadTs && t.channelId === bound.channelId);
+    const visit = call.visited.at(-1);
+    if (visit) visit.durationMs = Math.max(0, endedMs - bound.since);
+    if (moved && !bound.threadTs && !here.length && !transcriptLines(call, call.segmentStart).length) { call.bound = null; call.segmentStart = call.transcript.length; return; }
     const lines = [];
     if (moved) {
       lines.push(`📞 *Voice call moved on* — ${minutes(now() - bound.since)} min here · ${here.length} task${here.length === 1 ? "" : "s"}`);
@@ -539,8 +591,6 @@ export function createCallManager({
     if (here.length) lines.push("*Tasks here:* " + here.map((t) => `${t.id}. ${mdToMrkdwn(clean(t.request, 120))} — ${t.status}`).join(" · "));
     const transcript = transcriptLines(call, call.segmentStart);
     if (transcript.length) lines.push("*Transcript*" + (call.transcriptTruncated && call.segmentStart === 0 ? " _(earliest part dropped)_" : ""), transcript.join("\n"));
-    const visit = call.visited.at(-1);
-    if (visit) visit.durationMs = Math.max(0, endedMs - bound.since);
     try {
       const posted = await post(call.client, { conversationId: bound.channelId, threadKey: bound.threadTs, text: lines.join("\n") });
       if (visit) visit.messageTs = posted?.messageId || "";
@@ -604,7 +654,7 @@ export function createCallManager({
     await Promise.all([...calls.keys()].map((id) => end(id, "", reason)));
   }
 
-  return { available, start, subscribe, audio, switchConversation, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
+  return { available, start, subscribe, audio, switchConversation, suspend, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
 }
 
 let shared = null;
