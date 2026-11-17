@@ -328,8 +328,8 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   nothing while one with speech posts into the channel, and the end summary of a top-level binding
   is a channel message; and that `suspend()` ends the call only after its grace window, with audio
   or a new event stream cancelling it, a foreign owner refused and the browser's `grace=1` beacon
-  routed to `suspend` when the manager has it. The dashboard HTML is checked for the media
-  element, the wake lock request, the Media Session hang-up handler and the `&grace=1` beacon.
+  routed to `suspend` when the manager has it. The dashboard HTML is checked for the wake lock
+  request and the `&grace=1` beacon.
 - Live acceptance of the relay behaviour (Claude and Codex separately, synthetic Gemini does not
   establish it): open a call from a thread that contains a specific fact posted by the agent (for
   example "The deploy ID is 4471"). Ask "what is the deploy ID?": pass when the voice quotes the
@@ -341,18 +341,15 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   pass when a new top-level message carrying the request appears in the channel (no "Voice call —
   … is talking" root), the agent's answer is threaded under it, and the hang-up summary lands in
   that same thread.
-- Headphones and stalls (2026-11-17): `test/voice-calls.test.js` asserts the dashboard HTML has no
-  forced-rate `AudioContext`, carries the jitter constants, watches both contexts' state and the
-  `devicechange` event, that the voice connects straight to the context destination (no
-  `createMediaStreamDestination`), that the keep-alive `<audio>` loops the same-origin
-  `/activity/call-silence.wav` (served as `audio/wav`, 4044 bytes of pure silence) and that only the
-  Activity view's CSP carries `media-src 'self'`; its Chromium case pushes a 60-chunk audio burst
-  and an interruption through the player without a page error. Live (engine-independent): on an
-  iPhone, start a call
-  on the speaker, talk, then connect AirPods mid-reply, and later disconnect them. Pass: the
-  reply continues cleanly (at most a short gap) on the new device, no chopped or looping noise;
-  after a deliberate 10-second stall (switch apps and come back) the voice resumes within a
-  sentence rather than replaying the stall. Record the iOS version with any failure.
+- Audio path rollback (2026-11-17): `test/voice-calls.test.js` asserts the dashboard HTML carries
+  the original player (fixed-rate `AudioContext`, the 20 ms lead, `source.connect(player.destination)`),
+  the wake lock request and the `&grace=1` beacon, and none of the rolled-back variants
+  (`createMediaStreamDestination`, keep-alive element, jitter constants, context or device
+  watchers, Media Session); the Activity CSP carries no `media-src`. Its Chromium case pushes a
+  60-chunk audio burst and an interruption through the player without a page error. Live
+  (engine-independent): a call on an iPhone speaker with long replies and interruptions is fluid
+  and intelligible, as before 2026-11-17; connecting AirPods mid-call is recorded as observed, with
+  the iOS version, not retried.
 - Live acceptance on a phone (engine-independent): on an iPhone (Safari, and the installed
   Activity app) and an Android phone (Chrome), start a call and leave the phone untouched past
   its auto-lock interval. Pass: the screen stays on while the call is up. Then lock the screen by
@@ -360,8 +357,8 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   the Slack thread shows no "device went away" summary) and talking resumes; the status shows
   "Phone in the background" while hidden and "Connected" after. Lock for more than 45 seconds
   without returning: pass when the call ends with the "the caller's device went away" summary.
-  Record the OS version: iOS keeps the audio session only while the silent keep-alive track plays,
-  so a device that still drops the call is reported with its version rather than retried.
+  Record the OS version: a web page cannot register as a call, so a device that drops the call
+  on a manual lock is reported with its version rather than retried.
 - Side panel and dashboard switching (2026-11-14, side panel replaced the floating bubble): `test/voice-calls.test.js` checks
   owner-only, CSRF-protected switching, malformed destinations, revoked caller/destination access,
   unchanged same-thread selection, the original voice session, segment placement, context updates

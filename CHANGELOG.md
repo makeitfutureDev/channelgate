@@ -10,15 +10,10 @@
   only announces that an answer is waiting there and offers to switch back, instead of reading
   the result into the current conversation.
 
-- Play the voice-call audio straight from the AudioContext again: routing it through a media
-  element (added earlier today for phones) caused lag and crackle. A looping silent track now
-  holds the phone's audio session instead, so a locked screen still keeps the call.
-
-- Fix the chopped "t-t-t" noise on voice calls when headphones connect or the stream catches up
-  after a stall: playback now runs a jitter buffer on device-rate audio contexts (no forced
-  16 kHz / 24 kHz contexts, which iOS garbles after a route change), re-anchors after gaps, drops
-  backlog longer than three seconds, and flushes when the OS interrupts the audio or the device
-  changes.
+- Roll the voice-call audio path back to the original AudioContext player after the day's
+  media-element, keep-alive and jitter-buffer variants made speech scattered and hard to follow
+  (the backlog cap dropped Gemini's ahead-of-time audio bursts mid-sentence). Kept from the phone
+  work: the screen wake lock and the 45-second suspend instead of a hang-up when the page is hidden.
 
 - Show shared agent conversations in each participant’s Activity. Add personal Hide and a Hidden
   view with Show; your next original message restores a hidden conversation, while other people’s
@@ -30,9 +25,8 @@
   `run_task`. A call opened from a thread reads up to 40 of its messages before it starts. A call
   at a channel's top level no longer opens a placeholder thread: the first spoken request is
   posted as a normal channel message whose thread the agent answers in and the call follows.
-  On phones the call now behaves like a call: a screen wake lock while the call is up, playback
-  through a media element so a locked screen keeps the audio session, lock-screen call controls,
-  and leaving the page only suspends the call for 45 seconds instead of hanging up.
+  On phones a screen wake lock keeps the display on while the call is up, and leaving the page
+  only suspends the call for 45 seconds instead of hanging up.
 
 - Cap voice-dispatched tasks per conversation instead of per call: three may be in flight in one
   thread, while tasks in other conversations start immediately and run in parallel.

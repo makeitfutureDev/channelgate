@@ -10,7 +10,7 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { createRunQueue } = await import("../src/slack/util.js");
 const { createCallManager, buildSystemInstruction, TOOL_DECLARATIONS, VOICE_CALL_ORIGIN, VOICE_ENGINE } = await import("../src/gateway/voice/calls.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, activityCallPath } = await import("../src/web/activity.js");
-const { CALL_WORKLET_PATH, CALL_SILENCE_PATH } = await import("../src/web/call-overlay.js");
+const { CALL_WORKLET_PATH } = await import("../src/web/call-overlay.js");
 const { menuButtons } = await import("../src/slack/footer.js");
 const { handleReplyCallAction, REPLY_CALL_ACTION_ID } = await import("../src/slack/call-button.js");
 const { RUN_ORIGINS, PRINCIPAL_KIND_BY_ORIGIN } = await import("../src/engines/contract.js");
@@ -562,24 +562,16 @@ test("a launch may carry the call destination, and the dashboard serves the over
   assert.match(csp, /script-src 'nonce-[A-Za-z0-9_-]+' 'self'/, "the dashboard admits the same-origin AudioWorklet module");
   const html = await page.text();
   assert.match(html, /id="call-overlay"/); assert.match(html, /id="call-agent"/); assert.match(html, /"voiceCalls":true/);
-  // Phone behaviour ships in the overlay: a looping silent keep-alive track (the voice itself
-  // plays straight from the AudioContext), the wake lock, the media session, and a pagehide beacon
-  // that only suspends.
-  assert.match(html, /<audio data-call="keepalive" playsinline loop hidden>/);
-  assert.match(html, /"silencePath":"\/activity\/call-silence\.wav"/);
-  assert.doesNotMatch(html, /createMediaStreamDestination/, "the voice is never routed through a media element");
-  assert.match(html, /source\.connect\(player\.destination\)/);
-  assert.match(csp, /media-src 'self'/, "the dashboard admits the same-origin keep-alive track");
+  // Phone behaviour kept in the overlay: the screen wake lock and a pagehide beacon that only
+  // suspends. The audio path is the plain AudioContext player (fixed-rate contexts, 20 ms lead,
+  // straight to the destination): the media-element and jitter-buffer variants were rolled back.
   assert.match(html, /wakeLock\.request\("screen"\)/);
-  assert.match(html, /mediaSession/); assert.match(html, /setActionHandler\?\.\("hangup"/);
   assert.match(html, /\/end\?csrf=" \+ encodeURIComponent\(csrf\) \+ "&grace=1"/);
-  // Playback is a jitter buffer on device-rate contexts: no forced sample rates (the iOS
-  // route-change garble), a lead before the first chunk, re-anchoring after a gap, a backlog cap,
-  // and a flush when the OS interrupts a context or the audio device changes.
-  assert.doesNotMatch(html, /new AudioContext\(\{ ?sampleRate/);
-  assert.match(html, /JITTER_S = 0\.15, MAX_BACKLOG_S = 3/);
-  assert.match(html, /watchAudioRoute\(player\)/); assert.match(html, /watchAudioRoute\(capture\)/);
-  assert.match(html, /addEventListener\?\.\("devicechange", onDeviceChange\)/);
+  assert.match(html, /new AudioContext\(\{ sampleRate: outputRate \}\)/);
+  assert.match(html, /Math\.max\(player\.currentTime \+ 0\.02, playhead\)/);
+  assert.match(html, /source\.connect\(player\.destination\)/);
+  assert.doesNotMatch(html, /createMediaStreamDestination|keepalive|JITTER_S|watchAudioRoute|devicechange|mediaSession/);
+  assert.doesNotMatch(csp, /media-src/);
   assert.match(html, /"callTarget":\{"channelId":"C_WORK","threadTs":"100.000001"\}/);
   assert.match(html, /"callAgent":"Atlas"/);
   assert.match(html, /registerProcessor|callOverlayBrowser|data-call="start"/);
@@ -588,12 +580,6 @@ test("a launch may carry the call destination, and the dashboard serves the over
   assert.match(await (await f.request(`${s.sessionBase}?call=bad!`, { headers: { cookie: s.cookie } })).text(), /"callTarget":null/, "a malformed target is ignored, never echoed");
   const settings = await f.request(`${s.sessionBase}/settings`, { headers: { cookie: s.cookie } });
   assert.match(settings.headers.get("content-security-policy"), /script-src 'nonce-[A-Za-z0-9_-]+'; /, "only the Activity view carries the worklet allowance");
-  assert.doesNotMatch(settings.headers.get("content-security-policy"), /media-src/, "only the Activity view admits media");
-  const silence = await f.request(CALL_SILENCE_PATH);
-  assert.equal(silence.status, 200); assert.match(silence.headers.get("content-type"), /audio\/wav/);
-  const wav = Buffer.from(await silence.arrayBuffer());
-  assert.equal(wav.subarray(0, 4).toString(), "RIFF"); assert.equal(wav.length, 4044);
-  assert.ok(wav.subarray(44).every((byte) => byte === 0x80), "the keep-alive track is pure silence");
   assert.doesNotMatch(await settings.text(), /id="call-overlay"/);
   const worklet = await f.request(CALL_WORKLET_PATH);
   assert.equal(worklet.status, 200); assert.match(worklet.headers.get("content-type"), /javascript/);
@@ -757,8 +743,8 @@ test("Activity keeps a call in a docked side panel the header Call button shows 
   const session = FakeSession.instances[0]; session.live();
   session.emit("input_transcript", { text: "Keep this transcript" });
   await page.getByText("Keep this transcript", { exact: true }).waitFor();
-  // A burst of 60 reply chunks (about 1.2 s of 24 kHz PCM arriving at once, as after a stall) and
-  // an interruption must play through the jitter buffer without a page error.
+  // A burst of 60 reply chunks (about 1.2 s of 24 kHz PCM arriving at once) and an interruption
+  // must play through without a page error.
   for (let i = 0; i < 60; i++) session.emit("audio", Buffer.alloc(960, i % 2 ? 0x10 : 0xf0));
   session.emit("interrupted");
   for (let i = 0; i < 5; i++) session.emit("audio", Buffer.alloc(960, 0x20));

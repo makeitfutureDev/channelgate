@@ -261,25 +261,18 @@ tasks) is saved to the caller's own DM channel memory when they have a DM folder
 `voice_call_started` / `voice_call_bound` / `voice_call_ended` events are logged. Gateway
 restarts end calls without a summary.
 
-On a phone the call behaves like a call (`src/web/call-overlay.js`, 2026-11-17): the overlay holds
-a Screen Wake Lock while a call is up (re-acquired whenever the page becomes visible again), loops
-a half-second silent same-origin track (`/activity/call-silence.wav`, admitted by the Activity
-view's `media-src 'self'`) in a hidden media element so iOS and Android keep the audio session and
-the microphone alive when the screen does lock or the app goes to the background — the voice
-itself plays straight from the AudioContext, because routing it through the media element (the
-first version of this, the same day) added lag and crackle — announces the call to the lock
-screen through the Media Session API (hang up, and
-pause/play as mute/unmute), and resumes the audio graph and the event stream when the page comes
-back. Leaving the page (`pagehide`, which a locking phone fires like a closing tab) no longer
-hangs up: the beacon calls `…/end?grace=1`, which **suspends** the call (`suspend()`, event
-`suspended`) for 45 seconds; the next audio chunk or a reconnecting event stream cancels it
-(`resumed`), otherwise the call ends with "the caller's device went away" and the usual summary.
-Playback (2026-11-17) is a jitter buffer: both audio contexts run at the device's own rate (a
-forced 16 kHz or 24 kHz context is what iOS garbles when AirPods change the hardware rate), the
-24 kHz reply buffers carry their rate and are chained 150 ms ahead of the audio clock, a gap
-re-anchors the timeline, a backlog over three seconds is dropped so the conversation stays live
-after a stall, and an OS interruption of either context (headphones connecting, a phone call, a
-lock) or a device change flushes what was scheduled against the stopped clock and resumes.
+On a phone (`src/web/call-overlay.js`, 2026-11-17) the overlay holds a Screen Wake Lock while a
+call is up (re-acquired whenever the page becomes visible again), and leaving the page
+(`pagehide`, which a locking phone fires like a closing tab) no longer hangs up: the beacon calls
+`…/end?grace=1`, which **suspends** the call (`suspend()`, event `suspended`) for 45 seconds; the
+next audio chunk or a reconnecting event stream cancels it (`resumed`), otherwise the call ends
+with "the caller's device went away" and the usual summary. The audio path is the original
+AudioContext player: fixed-rate capture and playback contexts, each reply chunk started 20 ms
+after the audio clock or chained on the previous one, straight to the context destination. Three
+variants tried the same day — playback through a MediaStream-fed media element, a jitter buffer
+with a backlog cap on device-rate contexts, and a looping silent keep-alive track — were rolled
+back after they made speech scattered (the backlog cap dropped Gemini's ahead-of-time audio
+bursts mid-sentence); none is in the product.
 
 **Per-person voice preferences (2026-11-14).** Activity → Settings → **Voice calls** lets each
 person set how the voice talks to them: a default **language** (empty follows whatever they

@@ -28,7 +28,7 @@ import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
-import { CALL_SILENCE_PATH, CALL_SILENCE_WAV, CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
+import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
@@ -83,13 +83,12 @@ export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, team
   return `${base.origin}/activity/open#${secret}`;
 }
 
-// `worklet` admits the call page's same-origin AudioWorklet module (a nonce cannot cover a
-// worklet fetch, so that one page, and only it, also allows 'self' scripts) and the same-origin
-// silent keep-alive track its media element loops during a call.
+// `worklet` admits the call page's same-origin AudioWorklet module: a nonce cannot cover a
+// worklet fetch, so that one page (and only it) also allows 'self' scripts.
 function headers(res, nonce = "", { worklet = false } = {}) {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';${worklet ? " media-src 'self';" : ""}` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
 // Outside /activity/ so installed Chrome opens a regular browser tab. This page
 // grants nothing: the existing same-origin WebAuthn endpoints verify the passkey.
@@ -440,10 +439,6 @@ export function createActivityRouter({
   router.get(CALL_WORKLET_PATH.replace(/^\/activity/, ""), (_req, res) => {
     res.set("Cache-Control", "public, max-age=3600");
     res.type("application/javascript").send(CALL_WORKLET_SOURCE);
-  });
-  router.get(CALL_SILENCE_PATH.replace(/^\/activity/, ""), (_req, res) => {
-    res.set("Cache-Control", "public, max-age=86400");
-    res.type("audio/wav").send(CALL_SILENCE_WAV);
   });
   router.get('/app/session', async (req, res) => {
     const id = activityAppSessionId(req.headers.cookie), session = id && sessions.get(id);
