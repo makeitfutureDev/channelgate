@@ -245,6 +245,12 @@ back. Leaving the page (`pagehide`, which a locking phone fires like a closing t
 hangs up: the beacon calls `…/end?grace=1`, which **suspends** the call (`suspend()`, event
 `suspended`) for 45 seconds; the next audio chunk or a reconnecting event stream cancels it
 (`resumed`), otherwise the call ends with "the caller's device went away" and the usual summary.
+Playback (2026-11-17) is a jitter buffer: both audio contexts run at the device's own rate (a
+forced 16 kHz or 24 kHz context is what iOS garbles when AirPods change the hardware rate), the
+24 kHz reply buffers carry their rate and are chained 150 ms ahead of the audio clock, a gap
+re-anchors the timeline, a backlog over three seconds is dropped so the conversation stays live
+after a stall, and an OS interruption of either context (headphones connecting, a phone call, a
+lock) or a device change flushes what was scheduled against the stopped clock and resumes.
 
 **Per-person voice preferences (2026-11-14).** Activity → Settings → **Voice calls** lets each
 person set how the voice talks to them: a default **language** (empty follows whatever they

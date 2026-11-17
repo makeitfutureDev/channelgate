@@ -319,6 +319,14 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   pass when a new top-level message carrying the request appears in the channel (no "Voice call —
   … is talking" root), the agent's answer is threaded under it, and the hang-up summary lands in
   that same thread.
+- Headphones and stalls (2026-11-17): `test/voice-calls.test.js` asserts the dashboard HTML has no
+  forced-rate `AudioContext`, carries the jitter constants, watches both contexts' state and the
+  `devicechange` event; its Chromium case pushes a 60-chunk audio burst and an interruption
+  through the player without a page error. Live (engine-independent): on an iPhone, start a call
+  on the speaker, talk, then connect AirPods mid-reply, and later disconnect them. Pass: the
+  reply continues cleanly (at most a short gap) on the new device, no chopped or looping noise;
+  after a deliberate 10-second stall (switch apps and come back) the voice resumes within a
+  sentence rather than replaying the stall. Record the iOS version with any failure.
 - Live acceptance on a phone (engine-independent): on an iPhone (Safari, and the installed
   Activity app) and an Android phone (Chrome), start a call and leave the phone untouched past
   its auto-lock interval. Pass: the screen stays on while the call is up. Then lock the screen by

@@ -198,18 +198,42 @@ export function callOverlayBrowser(config, env) {
     if (task.summary) { const summary = document.createElement("div"); summary.className = "call-summary"; summary.textContent = task.summary; row.append(summary); }
     tasksSection.hidden = false;
   }
+  // Playback is a jitter buffer over the audio clock. Each reply arrives as many small PCM chunks;
+  // they are chained on `playhead`, which starts JITTER_S ahead of the clock so Bluetooth output
+  // latency and SSE jitter cannot push a chunk into the past (a chunk started "now" while the
+  // previous one is still sounding is the chopped "t-t-t" noise). A gap re-anchors the timeline;
+  // a backlog longer than MAX_BACKLOG_S (the stream catching up after the page or the audio
+  // device stalled) is dropped so the conversation stays live instead of replaying the stall.
+  // The audio clock itself stops when the OS interrupts the context (headphones connecting, a
+  // phone call, a lock): see watchAudioRoute, which flushes and re-anchors when it comes back.
+  const JITTER_S = 0.15, MAX_BACKLOG_S = 3;
   function playAudio(base64) {
-    if (!player) return;
+    if (!player || player.state !== "running") return;
     const bytes = atob(base64), samples = new Float32Array(bytes.length >> 1);
     for (let i = 0; i < samples.length; i++) { const lo = bytes.charCodeAt(2 * i), hi = bytes.charCodeAt(2 * i + 1); const v = (hi << 8) | lo; samples[i] = (v >= 0x8000 ? v - 0x10000 : v) / 32768; }
     if (!samples.length) return;
+    // The buffer carries its own rate: the context resamples it to whatever the device runs at.
     const buffer = player.createBuffer(1, samples.length, outputRate); buffer.copyToChannel(samples, 0);
     const source = player.createBufferSource(); source.buffer = buffer; source.connect(sink || player.destination);
-    const at = Math.max(player.currentTime + 0.02, playhead);
-    source.start(at); playhead = at + buffer.duration;
+    const now = player.currentTime;
+    if (playhead < now + 0.03) playhead = now + JITTER_S;
+    else if (playhead - now > MAX_BACKLOG_S) { stopPlayback(); playhead = player.currentTime + JITTER_S; }
+    source.start(playhead); playhead += buffer.duration;
     playing.add(source); source.onended = () => playing.delete(source);
   }
   function stopPlayback() { for (const source of playing) { try { source.stop(); } catch (e) { /* ended */ } } playing.clear(); if (player) playhead = player.currentTime; }
+  // The OS can pause either context under us: iOS reports "interrupted" when AirPods connect or a
+  // phone call comes in, every platform "suspended" when the page is hidden. Whatever was queued
+  // was scheduled against a clock that stopped, so flush it and resume; new audio re-anchors.
+  function watchAudioRoute(context) {
+    context.onstatechange = () => {
+      if (!callId) return;
+      if (context.state === "running") { if (context === player) stopPlayback(); return; }
+      stopPlayback();
+      if (document.visibilityState !== "hidden") void context.resume?.().catch?.(() => {});
+    };
+  }
+  function onDeviceChange() { if (!callId) return; stopPlayback(); void resumeAudio(); }
   async function send(buffer) {
     if (!callId || muted) return;
     try {
@@ -219,7 +243,11 @@ export function callOverlayBrowser(config, env) {
   }
   async function openCapture() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    try { capture = new AudioContext({ sampleRate: inputRate }); } catch (e) { capture = new AudioContext(); }
+    // Both contexts run at the device's own rate. Forcing 16 kHz / 24 kHz contexts is what garbles
+    // audio on iOS after a route change (AirPods switch the hardware rate under a fixed-rate
+    // context); the worklet resamples the capture and buffers carry their rate on playback.
+    capture = new AudioContext({ latencyHint: "interactive" });
+    watchAudioRoute(capture);
     const source = capture.createMediaStreamSource(stream);
     try {
       await capture.audioWorklet.addModule(workletPath);
@@ -241,7 +269,10 @@ export function callOverlayBrowser(config, env) {
       };
       source.connect(processor); processor.connect(capture.destination);
     }
-    player = new AudioContext({ sampleRate: outputRate });
+    player = new AudioContext({ latencyHint: "playback" });
+    watchAudioRoute(player);
+    playhead = 0;
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
     // Play through a media element rather than the context's own output: a page playing media
     // keeps its audio session (and the microphone) when a phone locks, a bare AudioContext does not.
     sink = null;
@@ -261,6 +292,9 @@ export function callOverlayBrowser(config, env) {
   function closeCapture() {
     try { workletNode?.disconnect(); processor?.disconnect(); } catch (e) { /* fine */ }
     for (const track of stream?.getTracks?.() || []) track.stop();
+    navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
+    if (capture) capture.onstatechange = null;
+    if (player) player.onstatechange = null;
     stopPlayback();
     try { if (speaker) { speaker.pause?.(); speaker.srcObject = null; } } catch (e) { /* fine */ }
     try { capture?.close(); player?.close(); } catch (e) { /* fine */ }

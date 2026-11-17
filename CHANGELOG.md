@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix the chopped "t-t-t" noise on voice calls when headphones connect or the stream catches up
+  after a stall: playback now runs a jitter buffer on device-rate audio contexts (no forced
+  16 kHz / 24 kHz contexts, which iOS garbles after a route change), re-anchors after gaps, drops
+  backlog longer than three seconds, and flushes when the OS interrupts the audio or the device
+  changes.
+
 - Show shared agent conversations in each participant’s Activity. Add personal Hide and a Hidden
   view with Show; your next original message restores a hidden conversation, while other people’s
   activity leaves it hidden. Shared completion remains with the starter.
