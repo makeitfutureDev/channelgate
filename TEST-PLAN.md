@@ -305,9 +305,7 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   is a channel message; and that `suspend()` ends the call only after its grace window, with audio
   or a new event stream cancelling it, a foreign owner refused and the browser's `grace=1` beacon
   routed to `suspend` when the manager has it. The dashboard HTML is checked for the media
-  element, `createMediaStreamDestination`, the wake lock request, the Media Session hang-up
-  handler and the `&grace=1` beacon. The Chromium case runs unchanged with the media-element
-  playback path.
+  element, the wake lock request, the Media Session hang-up handler and the `&grace=1` beacon.
 - Live acceptance of the relay behaviour (Claude and Codex separately, synthetic Gemini does not
   establish it): open a call from a thread that contains a specific fact posted by the agent (for
   example "The deploy ID is 4471"). Ask "what is the deploy ID?": pass when the voice quotes the
@@ -321,8 +319,12 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   that same thread.
 - Headphones and stalls (2026-11-17): `test/voice-calls.test.js` asserts the dashboard HTML has no
   forced-rate `AudioContext`, carries the jitter constants, watches both contexts' state and the
-  `devicechange` event; its Chromium case pushes a 60-chunk audio burst and an interruption
-  through the player without a page error. Live (engine-independent): on an iPhone, start a call
+  `devicechange` event, that the voice connects straight to the context destination (no
+  `createMediaStreamDestination`), that the keep-alive `<audio>` loops the same-origin
+  `/activity/call-silence.wav` (served as `audio/wav`, 4044 bytes of pure silence) and that only the
+  Activity view's CSP carries `media-src 'self'`; its Chromium case pushes a 60-chunk audio burst
+  and an interruption through the player without a page error. Live (engine-independent): on an
+  iPhone, start a call
   on the speaker, talk, then connect AirPods mid-reply, and later disconnect them. Pass: the
   reply continues cleanly (at most a short gap) on the new device, no chopped or looping noise;
   after a deliberate 10-second stall (switch apps and come back) the voice resumes within a
@@ -334,7 +336,7 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   the Slack thread shows no "device went away" summary) and talking resumes; the status shows
   "Phone in the background" while hidden and "Connected" after. Lock for more than 45 seconds
   without returning: pass when the call ends with the "the caller's device went away" summary.
-  Record the OS version: iOS keeps the audio session only while the media element is playing,
+  Record the OS version: iOS keeps the audio session only while the silent keep-alive track plays,
   so a device that still drops the call is reported with its version rather than retried.
 - Side panel and dashboard switching (2026-11-14, side panel replaced the floating bubble): `test/voice-calls.test.js` checks
   owner-only, CSRF-protected switching, malformed destinations, revoked caller/destination access,

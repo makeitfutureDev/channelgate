@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Play the voice-call audio straight from the AudioContext again: routing it through a media
+  element (added earlier today for phones) caused lag and crackle. A looping silent track now
+  holds the phone's audio session instead, so a locked screen still keeps the call.
+
 - Fix the chopped "t-t-t" noise on voice calls when headphones connect or the stream catches up
   after a stall: playback now runs a jitter buffer on device-rate audio contexts (no forced
   16 kHz / 24 kHz contexts, which iOS garbles after a route change), re-anchors after gaps, drops

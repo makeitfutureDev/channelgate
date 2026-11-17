@@ -6,6 +6,17 @@
 // POSTs up (`…/audio`, ~120 ms of audio each). Both ride the same reverse proxies and cookies the
 // dashboard already uses, so a deployment needs no WebSocket upgrade support.
 export const CALL_WORKLET_PATH = "/activity/call-worklet.js";
+// A half second of 8 kHz silence, looped by a media element for the whole call. iOS and Android
+// keep a page's audio session (and with it the microphone) alive while it is playing media; the
+// agent's voice itself plays straight from the AudioContext, never through this element.
+export const CALL_SILENCE_PATH = "/activity/call-silence.wav";
+export const CALL_SILENCE_WAV = (() => {
+  const samples = 4000, header = Buffer.alloc(44);
+  header.write("RIFF", 0); header.writeUInt32LE(36 + samples, 4); header.write("WAVEfmt ", 8); header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24); header.writeUInt32LE(8000, 28);
+  header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34); header.write("data", 36); header.writeUInt32LE(samples, 40);
+  return Buffer.concat([header, Buffer.alloc(samples, 0x80)]);
+})();
 const INPUT_RATE = 16000, OUTPUT_RATE = 24000;
 
 // Served as a classic module at CALL_WORKLET_PATH. It batches ~120 ms of mono audio, resamples to
@@ -39,7 +50,7 @@ registerProcessor("cg-capture", CgCaptureProcessor);
 `;
 
 export function callOverlayConfig({ base, csrf, agent = "" }) {
-  return { callBase: base, callCsrf: csrf, callAgent: String(agent || "").trim() || "ChannelGate", workletPath: CALL_WORKLET_PATH, inputRate: INPUT_RATE, outputRate: OUTPUT_RATE };
+  return { callBase: base, callCsrf: csrf, callAgent: String(agent || "").trim() || "ChannelGate", workletPath: CALL_WORKLET_PATH, silencePath: CALL_SILENCE_PATH, inputRate: INPUT_RATE, outputRate: OUTPUT_RATE };
 }
 
 export const CALL_OVERLAY_CSS = `
@@ -87,7 +98,7 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 <div class="call-transcript" data-call="transcript" aria-label="Transcript" aria-live="polite"></div>
 <section class="call-tasks" data-call="tasks-section" hidden><h3>Tasks sent to the agent</h3><ul data-call="tasks"></ul></section>
 <p class="call-foot">Everything said is logged into the Slack conversation the call is in. Say which conversation to open, or ask what you are working on.</p>
-<audio data-call="speaker" playsinline hidden></audio>
+<audio data-call="keepalive" playsinline loop hidden></audio>
 </div></aside>`;
 }
 
@@ -99,21 +110,21 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 // keeps the panel as it is; open(null) shows the panel. A call starts only when Start is pressed.
 //
 // On a phone the call has to behave like a call: a Screen Wake Lock keeps the display from
-// locking while the call is up (re-acquired whenever the page is shown again), the agent's audio
-// is played through a media element fed by the AudioContext (so iOS and Android keep the audio
-// session — and the microphone — alive when the screen does lock or the app goes to the
-// background), the lock screen shows the call through the Media Session API, and leaving the page
+// locking while the call is up (re-acquired whenever the page is shown again), a looping silent
+// media element holds the page's audio session (so iOS and Android keep it — and the microphone —
+// alive when the screen does lock or the app goes to the background) while the agent's voice plays
+// straight from the AudioContext, the lock screen shows the call through the Media Session API, and leaving the page
 // only SUSPENDS the call on the server for a grace window instead of hanging up, because a locking
 // phone fires the same pagehide as a closing tab.
 export function callOverlayBrowser(config, env) {
   const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob } = env;
-  const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, inputRate, outputRate } = config;
+  const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, silencePath, inputRate, outputRate } = config;
   const root = document.getElementById("call-overlay");
   if (!root) return { open() {}, active: () => false };
   const q = (name) => root.querySelector('[data-call="' + name + '"]');
-  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer"), speaker = q("speaker");
+  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer"), keepalive = q("keepalive");
   const topButton = document.getElementById("call-agent");
-  let callId = "", target = null, events = null, capture = null, player = null, sink = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
+  let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
   let playhead = 0; const playing = new Set();
   let bound = null, switchQueue = Promise.resolve();
   const headers = { "X-CG-CSRF": csrf, "X-CG-Request": "1" };
@@ -214,7 +225,7 @@ export function callOverlayBrowser(config, env) {
     if (!samples.length) return;
     // The buffer carries its own rate: the context resamples it to whatever the device runs at.
     const buffer = player.createBuffer(1, samples.length, outputRate); buffer.copyToChannel(samples, 0);
-    const source = player.createBufferSource(); source.buffer = buffer; source.connect(sink || player.destination);
+    const source = player.createBufferSource(); source.buffer = buffer; source.connect(player.destination);
     const now = player.currentTime;
     if (playhead < now + 0.03) playhead = now + JITTER_S;
     else if (playhead - now > MAX_BACKLOG_S) { stopPlayback(); playhead = player.currentTime + JITTER_S; }
@@ -273,21 +284,17 @@ export function callOverlayBrowser(config, env) {
     watchAudioRoute(player);
     playhead = 0;
     navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
-    // Play through a media element rather than the context's own output: a page playing media
-    // keeps its audio session (and the microphone) when a phone locks, a bare AudioContext does not.
-    sink = null;
-    if (speaker && typeof player.createMediaStreamDestination === "function") {
-      try {
-        sink = player.createMediaStreamDestination();
-        speaker.srcObject = sink.stream; speaker.muted = false;
-        await speaker.play?.();
-      } catch (e) { try { speaker.srcObject = null; } catch (_) { /* fine */ } sink = null; }
-    }
     await player.resume();
+    // The voice plays straight from the context (routing it through a media element added
+    // latency and crackle). A looping silent track is what keeps the page's audio session alive
+    // when a phone locks; it fails quietly on browsers that do not need or allow it.
+    if (keepalive && silencePath) {
+      try { keepalive.src = silencePath; keepalive.volume = 0.01; await keepalive.play?.(); } catch (e) { /* no keepalive; the call still works in the foreground */ }
+    }
   }
   // After the page was hidden the browser may have suspended the audio graph: wake it back up.
   async function resumeAudio() {
-    try { await capture?.resume?.(); await player?.resume?.(); if (sink && speaker?.paused) await speaker.play?.(); } catch (e) { /* the next user gesture resumes it */ }
+    try { await capture?.resume?.(); await player?.resume?.(); if (keepalive?.src && keepalive.paused) await keepalive.play?.(); } catch (e) { /* the next user gesture resumes it */ }
   }
   function closeCapture() {
     try { workletNode?.disconnect(); processor?.disconnect(); } catch (e) { /* fine */ }
@@ -296,9 +303,9 @@ export function callOverlayBrowser(config, env) {
     if (capture) capture.onstatechange = null;
     if (player) player.onstatechange = null;
     stopPlayback();
-    try { if (speaker) { speaker.pause?.(); speaker.srcObject = null; } } catch (e) { /* fine */ }
+    try { if (keepalive) { keepalive.pause?.(); keepalive.removeAttribute?.("src"); keepalive.load?.(); } } catch (e) { /* fine */ }
     try { capture?.close(); player?.close(); } catch (e) { /* fine */ }
-    capture = player = sink = workletNode = processor = stream = null;
+    capture = player = workletNode = processor = stream = null;
   }
   function endLocal(message) {
     if (events) { events.close(); events = null; }
