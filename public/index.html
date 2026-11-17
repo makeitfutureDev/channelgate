@@ -1453,6 +1453,14 @@
             </div>
             <span class="hint">Save to apply a folder change. Existing files stay in their current folders.</span>
           </label>
+          <div class="field ch-extrafolders-field">
+            <span>Additional folders (mounted into the container at the same path, beside the working folder)</span>
+            <div class="ch-extrafolders"></div>
+            <div class="row">
+              <button type="button" class="ch-extrafolder-add ghost">Add folder…</button>
+            </div>
+            <span class="hint">Share one host folder with several conversations while each keeps its own working folder. Each entry must be an existing directory inside the allowed root, outside the gateway's own trees, and must not overlap the working folder or another entry. Read-only entries refuse writes. Save to apply; the next message recreates the container.</span>
+          </div>
           <label class="field">
             <span>Google Drive sync folder (blank = off — 2-way synced with the whole working folder, minus agent instructions, memory and secrets; exclude more in <code>.driveignore</code>; set up the service account under Settings → Google Drive sync)</span>
             <div class="row">

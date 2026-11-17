@@ -234,6 +234,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     codexAuthSource: "gateway", // gateway login, or a separate host-side login for this channel
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
+    extraFolders: [], // admin-declared additional host folders mounted beside it: [{ path, mode: "rw"|"ro" }] (src/gateway/extra-folders.js)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)
     composioToken: "", // shared `composio` token; personal `composio-user` remains available too
     toolboxToken: "", // channel-wide Toolbox token used for everyone here (overrides per-user)

@@ -16,6 +16,14 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.6.4 — hotfix candidate, pending approval
+
+- Mount additional host folders into a channel's container beside its working folder, read-write
+  or read-only, so several conversations can share one directory while keeping their own working
+  folders (Settings → Additional folders; `add_channel_folder` / `remove_channel_folder` /
+  `list_channel_folders`). Entries are validated like the working folder, re-checked at every
+  spawn, and never derived from a symlink.
+
 ## Unreleased
 
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now

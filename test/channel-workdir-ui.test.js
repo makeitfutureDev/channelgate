@@ -49,6 +49,9 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
     return controls.get(selector);
   };
   card.querySelector = control;
+  // Additional-folder rows are read back on Save; the fixture renders none unless a test adds them.
+  card.extraFolderRows = [];
+  card.querySelectorAll = (selector) => (selector === ".ch-extrafolder" ? card.extraFolderRows : []);
   control(".ch-model").value = "model-fixture";
   control(".ch-effort").value = "high";
   control(".ch-network").checked = true;

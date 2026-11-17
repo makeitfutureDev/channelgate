@@ -90,7 +90,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 - `src/gateway/folders.js` + `library-skills.js` — channel folder provisioning: the generated
   `.claude/settings.json` (curated `permissions.allow`/`ask`/`deny`, `allowedMcpServers`,
   `autoMemoryEnabled:false`, `autoDreamEnabled:false`, the Stop hook — no `sandbox` block, no host
-  path except the operator home in the admin variant's `additionalDirectories`), the
+  path in `additionalDirectories` except the mounted additional folders and, in the admin variant,
+  the operator home), the
   marker-guarded managed block in `CLAUDE.md` (`AGENTS.md` is a symlink to it: the channel's
   Mode/Auto/Lean/Network switches, the hard rules, the admin's global instructions), the
   `channel-memory` protocol and the granted catalog skills materialized as REAL files under
@@ -391,9 +392,14 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   foreground, background job, schedule, API run, memory review — runs inside the channel's
   selected author container (rootless Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME
   volume at `/home/agent` (engine sessions, CLI logins, installed tools) and, bind-mounted at
-  their identical absolute paths, ONLY the channel's work folder, its clean workspace and its
+  their identical absolute paths, ONLY the channel's work folder, its clean workspace, its
   artifact dir (`~/ChannelGate/.runtime/<platform>/<slug>`, which also backs `/tmp` and
-  `/var/tmp`), plus the read-only control socket, the channel's OWN read-only egress socket
+  `/var/tmp`) and the channel's admin-declared **additional folders** (`meta.extraFolders`,
+  `src/gateway/extra-folders.js`: each an existing real directory inside the allowlisted root,
+  validated like the work folder, never overlapping it or each other, read-write or read-only,
+  re-checked at every spawn and failing the spawn closed when it no longer passes; a symlink is
+  never what decides a mount — the daemon stores and mounts the link's real target), plus the
+  read-only control socket, the channel's OWN read-only egress socket
   directory and the CA trust bundle. Nothing else exists on that side: no host home,
   no gateway root, no `gateway.db`, no other channel's folder or egress socket, no daemon checkout,
   no operator `~/.claude`/`~/.codex`. Every container runs with `--network none`: its only way out

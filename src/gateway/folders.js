@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
+import { extraFolderDirectories } from "./extra-folders.js";
 
 
 // The directory Claude actually runs in for a channel: a custom meta.workDir when set to a
@@ -623,7 +624,13 @@ export async function buildSettings(meta, { allowBypass = false, homeGuard = fal
       // which would strip the Stop hook, deny list and memory-off from the run.
       ...(allowBypass ? {} : { disableBypassPermissionsMode: "disable" }),
       disableAutoMode: "disable",
-      additionalDirectories: allowBypass ? operatorHomeDirectories(target) : [],
+      // The admin-declared additional folders the container actually mounts (every variant: the
+      // engine must be allowed to work where the folder is; a read-only mount stays read-only at
+      // the kernel whatever this list says), plus the operator home for the admin variant.
+      additionalDirectories: [
+        ...extraFolderDirectories(target).map((entry) => entry.path),
+        ...(allowBypass ? operatorHomeDirectories(target) : []),
+      ],
       allow: [...SAFE_BUILTIN_TOOLS, ...(bashy ? SHELL_TOOLS : []), ...memTools, ...namespaces, ...gatewayTools],
       // Everything the mode did not grant asks (see ASK_WITHOUT_SHELL). Only when the shell is NOT
       // granted: `ask` outranks `allow`, so listing Bash here for a bash/auto channel — or for the

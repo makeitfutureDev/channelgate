@@ -45,6 +45,7 @@ export const POLICY_KEYS = Object.freeze([
   "effort",
   "runtime", // where a turn runs, when a channel pins it
   "workDir", // the folder every run in this channel reads and writes
+  "extraFolders", // the additional host folders its container mounts beside that folder
   "syncDriveFolder", // the Drive folder two-way-synced into that folder
   "access", // who may USE the conversation
   "manageAccess", // who may MANAGE it

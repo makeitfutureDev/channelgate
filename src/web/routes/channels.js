@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot } from "../security.js";
+import { normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 // MEMORY.md and CLAUDE.md live INSIDE the channel's agent-writable working folder, so every read
 // and write below is a symlink sink: a planted `CLAUDE.md -> ~/.channelgate/config/settings.json`
 // would otherwise stream the gateway's secrets straight into an admin browser, and the save would
@@ -446,6 +447,28 @@ export function createChannelsRouter({
           workDirPatch = real;
         }
       }
+      // Additional folders (src/gateway/extra-folders.js): mounted beside the work folder, so each
+      // entry passes the work folder's own checks plus the no-overlap rule — against the work
+      // folder THIS save ends up with. Unchanged lists are not re-validated (same grandfathering
+      // as workDir); the runtime resolver re-checks every stored entry at every spawn anyway.
+      let extraFoldersPatch; // undefined = leave unchanged
+      if (Array.isArray(body.extraFolders)) {
+        const cur = await getChannelMeta(entry.slug);
+        const wanted = normalizeExtraFolders(body.extraFolders);
+        const stored = normalizeExtraFolders(cur?.extraFolders);
+        if (JSON.stringify(wanted) !== JSON.stringify(stored)) {
+          const workDirForCheck = workDirPatch !== undefined
+            ? (workDirPatch || effectiveWorkDir(entry.slug, { ...(cur || {}), workDir: "", cleanMode: false }))
+            : effectiveWorkDir(entry.slug, { ...(cur || {}), cleanMode: false });
+          const accepted = [];
+          for (const item of wanted) {
+            const checked = validateExtraFolder(item.path, { slug: entry.slug, workDir: workDirForCheck, others: accepted });
+            if (checked.error) return res.status(400).json({ error: `extraFolders refused: ${checked.error}` });
+            accepted.push({ path: checked.path, mode: item.mode });
+          }
+          extraFoldersPatch = accepted;
+        }
+      }
       // Validated HERE for the same reason as workDir: the merge callback below runs synchronously
       // inside the store transaction and cannot answer the request. A malformed entry rejects the
       // whole save (400) instead of quietly wiping the channel's approved egress list.
@@ -493,6 +516,7 @@ export function createChannelsRouter({
             codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
             workDir: workDirPatch !== undefined ? workDirPatch : current.workDir,
+            extraFolders: extraFoldersPatch !== undefined ? extraFoldersPatch : normalizeExtraFolders(current.extraFolders),
             // Google Drive sync folder link — a plain string (no filesystem validation like workDir);
             // an empty string turns the sync off. The scheduled bisync engine consumes it later.
             syncDriveFolder: typeof body.syncDriveFolder === "string" ? body.syncDriveFolder.trim() : current.syncDriveFolder,

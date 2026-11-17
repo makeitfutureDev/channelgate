@@ -313,6 +313,10 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // the operator home, the gateway root or another channel; a wrong change is one message away.
     ["set_channel_workdir", { authz: "admin", details: AUTOMATIC }],
     ["clear_channel_workdir", { authz: "admin", details: AUTOMATIC }],
+    // An additional folder WIDENS what the container mounts (same containment as the work folder,
+    // but beside it rather than instead of it), so adding one keeps a card; removing one narrows.
+    ["add_channel_folder", { authz: "admin", details: ({ path: dir, mode }) => `Mount the host folder ${summarize(dir)} into THIS channel's container at the same path, ${mode === "ro" ? "read-only" : "read-write"}, beside its working folder? Every run here (turns, background jobs, schedules, memory reviews) will see it until an admin removes it.` }],
+    ["remove_channel_folder", { authz: "admin", details: AUTOMATIC }],
     // With network on the agent can already upload the same files anywhere; a Drive link adds no
     // reach a card would withhold.
     ["set_channel_drive_folder", { authz: "admin", details: AUTOMATIC }],

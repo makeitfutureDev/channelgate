@@ -6,6 +6,7 @@
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
 // time — they outlive the turn that created them.
 import { effectiveWorkDir } from "../gateway/folders.js";
+import { resolveExtraFoldersForSpawn } from "../gateway/extra-folders.js";
 import { cleanWorkspaceFolder } from "../config/paths.js";
 import { getContainerRuntime } from "../config/settings.js";
 import { platformOr } from "../platforms/registry.js";
@@ -37,6 +38,10 @@ export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime
   const backend = runtimeBackend(id);
   const cwd = effectiveWorkDir(slug, meta);
   const workDir = meta?.cleanMode ? effectiveWorkDir(slug, { ...meta, cleanMode: false }) : cwd;
+  // Admin-declared additional folders (src/gateway/extra-folders.js): re-validated at every spawn
+  // like the work folder — a stored entry that no longer passes fails the spawn closed with the
+  // remedy rather than mounting it. Host runs see the whole filesystem already, so nothing to add.
+  const extraFolders = id === "container" ? resolveExtraFoldersForSpawn(slug, meta, { workDir }) : [];
   const base = {
     backend: id,
     runtime: backend,
@@ -47,6 +52,7 @@ export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime
     cwd,
     workDir,
     cleanWorkDir: cleanWorkspaceFolder(slug, platform),
+    extraFolders,
     artifactDir: id === "container" ? runtimeArtifactDir(slug, platform, isAdminAuthor === true ? "admin" : "project") : null,
     settings,
     // Trusted caller option, never channel metadata or a caller-supplied author attribution.
