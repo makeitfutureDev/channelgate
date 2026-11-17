@@ -1218,7 +1218,14 @@ no longer says already used. Repeat after revoking admission: the same link must
 The opened page/API/SSE and authorized completion actions must remain usable beyond one hour
 and at twelve hours minus one millisecond, even after the launch link expires. At exactly twelve
 hours after that browser session was issued, page/API/writes fail and SSE sends access-ended.
-Reloads, reads and reconnects must not extend either deadline. Assert cookie Max-Age=43200.
+Reloads, reads and reconnects must not extend either deadline. Assert cookie Max-Age=43200 for a
+Slack-link session and Max-Age=2592000 for a passkey session. Restart persistence (2026-11-17):
+`test/activity.test.js` ("sessions survive a gateway restart") proves a link session is a row
+holding only the secret's hash, survives the cache being forgotten, still expires at twelve hours
+and is pruned on the next issue; `test/activity-passkeys.test.js` (Chromium) proves a passkey
+session survives the forgotten cache and the twelve-hour mark and ends at thirty days while the
+link session next to it has expired. Live (engine-independent): sign in to Activity with a passkey,
+restart the gateway, reload the dashboard — pass when no sign-in page appears.
 Browser regression: enable `CG_BROWSER_MODULE` and `CG_BROWSER_EXECUTABLE`, then run
 `node --test test/activity-reuse-browser.test.js` for actual repeated fragment launches, removal
 of the old already-used message, link expiry, and an opened page loading until its twelve-hour

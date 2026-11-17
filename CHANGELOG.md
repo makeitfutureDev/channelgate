@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep Activity signed in across gateway restarts: sessions now persist in the database (only the
+  cookie secret's hash is stored), and a passkey sign-in lasts thirty days instead of twelve hours.
+  Slack-link launches and admin hand-offs keep the twelve-hour session.
+
 - Let callers explicitly mark their current thread Done by voice, with the same starter/access
   checks as Activity. The call stays open and running work continues. New threads started by
   voice belong to their caller, so they can appear in Activity and be completed there too.

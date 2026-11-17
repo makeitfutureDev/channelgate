@@ -1386,4 +1386,27 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN voice_bot_user_id TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    // Activity sessions survive a gateway restart. Only the sha256 of the cookie secret is kept;
+    // a passkey session lives 30 days, a Slack-link or admin hand-off session 12 hours.
+    version: 58,
+    up(db) {
+      db.exec(`
+        CREATE TABLE activity_sessions (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          credential_id TEXT NOT NULL DEFAULT '',
+          admin_auth TEXT NOT NULL DEFAULT '',
+          cookie_hash TEXT NOT NULL,
+          csrf TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_activity_sessions_owner ON activity_sessions(owner_id, created_at);
+        CREATE INDEX idx_activity_sessions_expiry ON activity_sessions(expires_at);
+      `);
+    },
+  },
 ];

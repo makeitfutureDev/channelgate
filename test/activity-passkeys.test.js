@@ -7,7 +7,7 @@ ensureTestEnv();
 const { setUser } = await import('../src/config/store.js');
 const { saveSettings } = await import('../src/config/settings.js');
 const { getDb } = await import('../src/db/index.js');
-const { createActivityRouter, createActivityBrowserLoginHandler, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_SESSION_TTL_MS } = await import('../src/web/activity.js');
+const { createActivityRouter, createActivityBrowserLoginHandler, createActivityGrantUrl, resetActivityStateForTests, forgetActivitySessionCacheForTests, ACTIVITY_SESSION_TTL_MS, ACTIVITY_PASSKEY_SESSION_TTL_MS } = await import('../src/web/activity.js');
 const { activityAccount, activityPasskeys, activityPasskey } = await import('../src/config/activity-passkeys.js');
 const { createWebApp } = await import('../src/web/app.js');
 
@@ -88,7 +88,7 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     assert.notEqual(passkeySession, linkSession);
     const cookie = (await ctx.cookies()).find(c => c.path === passkeySession);
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.sameSite, 'Lax');
-    assert.match((await (await response).allHeaders())['set-cookie'], /Max-Age=43200/);
+    assert.match((await (await response).allHeaders())['set-cookie'], /Max-Age=2592000/, 'a passkey session lasts thirty days');
     assert.equal((await ctx.cookies()).some(c => c.name === 'cg_session'), false);
     const account = activityAccount({ ownerId: 'U_ACTIVITY_KEY', teamId: team, origin: base });
     assert.ok(activityPasskeys(account.id)[0].lastUsedAt);
@@ -302,8 +302,12 @@ test('Activity passkeys use real browser signatures, persistent identities and i
       passkeySession = login.body.url;
     }
   });
-  await t.test('fixed twelve-hour expiry presents sign-in and expired Slack links offer passkeys', async () => {
+  await t.test('a passkey session outlives a restart and the twelve-hour link life, and ends after thirty days', async () => {
     const link = grant('U_ACTIVITY_KEY'); clock += ACTIVITY_SESSION_TTL_MS;
+    forgetActivitySessionCacheForTests();
+    assert.equal((await api(passkeySession + '/api/threads', undefined, { method: 'GET' })).status, 200, 'a passkey session survives a restart and lasts beyond twelve hours');
+    assert.equal((await api(linkSession + '/api/threads', undefined, { method: 'GET' })).status, 401, 'a Slack-link session keeps its twelve-hour life');
+    clock += ACTIVITY_PASSKEY_SESSION_TTL_MS - ACTIVITY_SESSION_TTL_MS;
     assert.equal((await api(passkeySession + '/api/threads', undefined, { method: 'GET' })).status, 401);
     await page.goto(base + passkeySession); await page.locator('#sign-in').waitFor();
     assert.match(await page.title(), /Sign in/);
