@@ -23,6 +23,7 @@ import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder,
   activityColumns, validActivityColumnOrder, validActivityColumnWidths, activityComments, normalizeActivityComment, ACTIVITY_COMMENT_LIMIT } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
+import { createActivitySessionStore, ACTIVITY_SESSION_TTL_MS, ACTIVITY_PASSKEY_SESSION_TTL_MS } from "./activity-sessions.js";
 import { ACTIVITY_APP_ICONS, activityAppCookie, activityAppSessionId, activityManifest } from "./activity-app.js";
 import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
@@ -34,8 +35,10 @@ import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
-export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
-const grants = new Map(), sessions = new Map();
+export { ACTIVITY_SESSION_TTL_MS, ACTIVITY_PASSKEY_SESSION_TTL_MS } from "./activity-sessions.js";
+const grants = new Map();
+// Sessions persist in SQLite (activity-sessions.js) so a gateway restart signs nobody out.
+const sessions = createActivitySessionStore();
 const streams = new Set();
 let configVersion = 0;
 onConfigChange(() => {
@@ -60,7 +63,8 @@ function capOwner(map, ownerId, max) {
   while (owned.length >= max) map.delete(owned.shift()[0]);
 }
 function prune(now) {
-  for (const map of [grants, sessions]) for (const [key, row] of map) if (row.expiresAt <= now) map.delete(key);
+  for (const [key, row] of grants) if (row.expiresAt <= now) grants.delete(key);
+  sessions.prune(now);
 }
 
 // A launch may carry ONE in-app destination, opened after the exchange: today the dashboard with
@@ -138,6 +142,10 @@ export function resetActivityStateForTests() {
   for (const stream of streams) stream.end();
   streams.clear(); grants.clear(); sessions.clear();
 }
+// What a restart does to the router: the rows stay, the cache is gone.
+export function forgetActivitySessionCacheForTests() {
+  sessions.forgetCache();
+}
 
 export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
@@ -193,16 +201,19 @@ export function createActivityRouter({
   };
   const issueSession = (res, identity, { redirect = false } = {}) => {
     const id = token(12), secret = token(); prune(now());
-    capOwner(sessions, identity.ownerId, 10); cap(sessions, 1000);
+    sessions.capOwner(identity.ownerId, 10); sessions.capTotal(1000);
+    // A passkey sign-in proved the person on this device: it lasts 30 days. A Slack-link launch or
+    // an admin hand-off keeps the 12-hour life.
+    const ttl = identity.credentialId ? ACTIVITY_PASSKEY_SESSION_TTL_MS : ACTIVITY_SESSION_TTL_MS;
     const session = { ownerId: identity.ownerId, teamId: identity.teamId, origin: identity.origin,
       ...(identity.credentialId ? { credentialId: identity.credentialId } : {}),
       ...(identity.adminAuth ? { adminAuth: { ...identity.adminAuth } } : {}),
-      cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
+      cookieHash: hash(secret), csrf: token(), expiresAt: now() + ttl, createdAt: now() };
     sessions.set(id, session);
     const secure = new URL(identity.origin).protocol === "https:";
-    res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${secure ? "; Secure" : ""}`);
+    res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ttl / 1000}${secure ? "; Secure" : ""}`);
     // The installed app's launcher resumes this session; it learns the id only, never the secret.
-    res.append("Set-Cookie", activityAppCookie(id, { maxAgeSeconds: ACTIVITY_SESSION_TTL_MS / 1000, secure }));
+    res.append("Set-Cookie", activityAppCookie(id, { maxAgeSeconds: ttl / 1000, secure }));
     const next = ACTIVITY_NEXT_PATTERN.test(identity.next || "") ? identity.next : "";
     return redirect ? res.redirect(303, `/activity/${id}${next}`) : res.json({ url: `/activity/${id}${next}` });
   };

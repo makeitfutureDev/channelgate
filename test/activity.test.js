@@ -14,7 +14,7 @@ const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-
 const { activityHomeActions } = await import("../src/slack/home-activity.js");
 const { handleReplyDashboardAction, registerReplyDashboardActions, REPLY_DASHBOARD_ACTION_ID } = await import("../src/slack/reply-dashboard.js");
 const { menuButtons } = await import("../src/slack/footer.js");
-const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
+const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, forgetActivitySessionCacheForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
 
 beforeEach(async () => {
   resetActivityStateForTests();
@@ -332,6 +332,26 @@ test("reusing a launch near expiry does not extend its original ten-minute lifet
   assert.equal(expired.headers.get("set-cookie"), null);
   assert.equal((await f.request(url, { headers: { cookie } })).status, 200,
     "an existing browser session retains its independent session lifetime");
+});
+
+test("sessions survive a gateway restart: rows persist, only the cookie secret's hash is stored, expiry still applies", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login("U_MINE");
+  const row = getDb().prepare("SELECT * FROM activity_sessions WHERE owner_id = ?").get("U_MINE");
+  assert.ok(row, "the session is a row");
+  assert.equal(row.credential_id, ""); assert.equal(row.cookie_hash.length, 64);
+  assert.doesNotMatch(JSON.stringify(row), new RegExp(user.cookie.split("=")[1]), "the secret itself is never stored");
+  forgetActivitySessionCacheForTests();
+  assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 200, "a restart does not sign the person out");
+  const stream = await f.request(user.url + "/stream", { headers: user.headers });
+  assert.equal(stream.status, 200); await stream.body.cancel();
+  f.advance(ACTIVITY_SESSION_TTL_MS + 1);
+  forgetActivitySessionCacheForTests();
+  assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 401, "a persisted session still expires");
+  const second = await f.login("U_MINE");
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM activity_sessions WHERE owner_id = ? AND expires_at > ?").get("U_MINE", 0).n >= 1, true);
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM activity_sessions WHERE id = ?").get(user.url.split("/").pop()).n, 0, "the expired row is pruned on the next issue");
+  assert.equal((await f.request(second.url + "/api/threads", { headers: second.headers })).status, 200);
 });
 
 test("opened dashboards load, refresh, reconnect and write for twelve hours without extending their deadline", async (t) => {

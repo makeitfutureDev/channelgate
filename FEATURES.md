@@ -490,8 +490,8 @@ a new Slack Dashboard link remains the recovery path when no saved key is availa
 Activity credentials persist in SQLite and belong to one viewer, Slack workspace and configured
 public origin. Every ceremony requires user verification, a five-minute browser-bound challenge,
 and the current user's admission and live Slack connection. Enrollment and deletion also require
-the existing Activity session and CSRF token. Passkey sign-in creates only the existing fixed
-twelve-hour Activity session and its path-scoped HttpOnly cookie. Removing a key invalidates
+the existing Activity session and CSRF token. Passkey sign-in creates a thirty-day Activity session
+(2026-11-17; twelve hours before) and its path-scoped HttpOnly cookie, persisted across restarts. Removing a key invalidates
 sessions opened with that key. Activity-only credentials retain their limited scope.
 The existing ten-minute Slack launch links retain their original reusable lifetime.
 
@@ -822,15 +822,19 @@ favicon reuse public login assets; no external font service or administrator sty
 
 A private Home button carries a ten-minute, reusable bearer grant in a URL fragment. The landing
 page removes it before exchanging it for a twelve-hour HttpOnly, SameSite cookie scoped to one opaque
-dashboard path (Secure over HTTPS). The same launch link can be opened repeatedly until ten
+dashboard path (Secure over HTTPS); a passkey sign-in instead issues a thirty-day session (2026-11-17). The same launch link can be opened repeatedly until ten
 minutes after creation; opening it never extends that deadline, and every exchange rechecks current
 authorization. The browser can continue loading and refreshing after the launch link expires,
 including reloads, until twelve hours after its own exchange; requests never extend that session
 deadline. Its private reply text says “This link expires in 10 minutes.” followed by an
 Activity hyperlink that can be copied; the hyperlink and Open my Activity button share the same
-private launch URL. Grants, sessions
-and streams are bounded per viewer and
-globally, live only in daemon memory and end on restart. No administrator cookie or API key grants
+private launch URL. Grants and streams are bounded per viewer and globally and live only in daemon
+memory; sessions are bounded the same way but persist in the `activity_sessions` table
+(migration 58, `src/web/activity-sessions.js`: only the sha256 of the cookie secret, the owner,
+workspace, origin, passkey or admin reference, CSRF token and expiry), so a gateway restart no
+longer signs anyone out of the dashboard or the installed app. Every request still re-checks the
+owner's approval, the passkey's existence and the admin account's version, which is what revokes a
+long session. No administrator cookie or API key grants
 dashboard access. Origin/Host checks, nonce CSP, no-store/no-referrer headers and CSRF-protected
 actions apply. Page/API/stream/action requests recheck current user admission and Slack workspace;
 thread access additionally requires root ownership, gateway access, private/DM membership and sudo
