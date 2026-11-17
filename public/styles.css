@@ -297,6 +297,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .field .state code { font-size: 10.5px; }
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; }
+/* Additional-folder rows: the path takes the room, the mode select and buttons keep their width. */
+.ch-extrafolders { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.ch-extrafolder input.ch-extrafolder-path { flex: 1 1 auto; min-width: 0; }
+.ch-extrafolder select.ch-extrafolder-mode { width: auto; flex: 0 0 auto; }
+.ch-extrafolder button { flex: 0 0 auto; white-space: nowrap; }
 
 /* ── Users cards ───────────────────────────────────────────────────────────── */
 .user-card .card-head { gap: 12px; }

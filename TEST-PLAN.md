@@ -32,6 +32,25 @@
 
 ## Additional folders (2026-11-16)
 
+- [x] `test/file-explorer.test.js` — `explorerRoot` keeps a plain string without mounts and
+  names mounts by basename with `-2`/`-3` on collisions; `parentRelative` returns a mount's top
+  level to the root; mounts are listed first at the root with host path and mode, a vanished
+  mount without controls; inside a mount the branch's real path is the root, its own entries
+  carry the `@mounts/<name>/` prefix, traversal and escaping symlinks are refused with "the
+  mounted folder" named, unknown or bare mount names refused, a plain root knows no mounts;
+  preview reads through a mount; the view labels mounts, Up from a mount goes to the root, and
+  hides New file/folder on a read-only mount; directory/file creation, edit and browser upload
+  succeed in a read-write mount and are refused in a read-only one with the mount named.
+  `test/workspace-read-tools.test.js` — `workspace_list` shows `@mounts/<name>` at the root and
+  lists inside it, `workspace_read` reads under the prefix, `workspace_search` from the root
+  finds a mounted file, an escaping link inside a mount and an unknown mount name are refused.
+- [ ] Live, engine-independent (Slack): with `~/Projects/shared` (containing a file) mounted
+  read-only in a test channel, open 📂 Files from a reply's footer. Expected: the first row is
+  `🗂️ shared · mounted /home/<user>/Projects/shared · read-only`; Open lists the file; ↑ Up
+  returns to the working folder; Preview shows the file; no Upload/New file/New folder controls
+  appear inside the mount. Switch the entry to read-write in the admin UI and reopen: the
+  controls appear and New folder creates one on the host. Then ask the agent "list the files in
+  the mounted shared folder" — expected: `workspace_list` with `@mounts/shared` names the file.
 - [x] `test/extra-folders.test.js` — normalization (absolute, deduplicated, known mode, the cap);
   the validator follows a symlink to its real target and refuses relative/missing paths, the
   gateway root, another conversation's default folder, the channel's own working folder, a

@@ -170,6 +170,67 @@ export function normalizeRelativePath(relative = "") {
   return normalized;
 }
 
+// ── Multi-root: the working folder plus the channel's additional folders ─────────────────────
+// A root is either a plain working-folder path (every caller that never heard of mounts) or a
+// spec `{ root, mounts: [{ name, path, mode }] }` built by explorerRoot() from the channel's
+// admin-declared additional folders (src/gateway/extra-folders.js). Inside a spec, a relative
+// path whose first segment is `@mounts` addresses one mount by name: `@mounts/client/docs/a.md`
+// is `<client mount path>/docs/a.md`. Every door resolves through resolveVisiblePath, so the
+// mount's real path is the confinement root for that branch exactly as the working folder is for
+// the rest — a traversal, an escaping symlink or an unknown mount name is refused the same way.
+// A read-only mount is read-only HERE too: the daemon writes on the host, not through the
+// container's mount, so isProtectedResolvedPath refuses writes into it.
+export const MOUNT_SEGMENT = "@mounts";
+
+export function explorerRoot(workDir, extraFolders = []) {
+  const mounts = [];
+  const used = new Set();
+  for (const raw of Array.isArray(extraFolders) ? extraFolders : []) {
+    const folder = String(raw?.path || "").trim();
+    if (!folder || !path.isAbsolute(folder)) continue;
+    const base = path.basename(folder) || "folder";
+    let name = base;
+    for (let n = 2; used.has(name); n++) name = `${base}-${n}`;
+    used.add(name);
+    mounts.push({ name, path: path.resolve(folder), mode: raw?.mode === "ro" ? "ro" : "rw" });
+  }
+  return mounts.length ? { root: String(workDir), mounts } : String(workDir);
+}
+
+function rootSpec(root) {
+  if (typeof root === "string") return { root, mounts: [] };
+  return { root: String(root?.root || ""), mounts: Array.isArray(root?.mounts) ? root.mounts : [] };
+}
+
+export function explorerMounts(root) {
+  return rootSpec(root).mounts;
+}
+
+// Split a logical relative path into the branch it lives in (the working folder or one mount),
+// the path inside that branch, and the prefix that re-joins them for display and round-trips.
+function splitMount(root, relative) {
+  const spec = rootSpec(root);
+  const clean = normalizeRelativePath(relative);
+  const [head, name, ...rest] = clean.split("/");
+  if (head !== MOUNT_SEGMENT) return { base: spec.root, inner: clean, prefix: "", mount: null };
+  const mount = spec.mounts.find((entry) => entry.name === name);
+  if (!mount) throw new Error(name ? `No additional folder named "${name}" is mounted in this channel.` : "Choose one of this channel's additional folders.");
+  return { base: mount.path, inner: rest.join("/"), prefix: `${MOUNT_SEGMENT}/${name}`, mount };
+}
+
+export function joinMountPrefix(prefix, inner) {
+  return prefix ? (inner ? `${prefix}/${inner}` : prefix) : inner;
+}
+
+// The parent of a logical relative path, for the explorer's Up button: a mount's top level goes
+// back to the working folder's root rather than to the bare `@mounts` segment, which is no place.
+export function parentRelative(relative) {
+  const clean = normalizeRelativePath(relative);
+  if (!clean) return "";
+  const parent = path.posix.dirname(clean);
+  return parent === "." || parent === MOUNT_SEGMENT ? "" : parent;
+}
+
 export function isProtectedWritePath(relative = "") {
   const clean = normalizeRelativePath(relative);
   if (isManagedClaudePath(clean)) return true;
@@ -205,9 +266,16 @@ export function isProtectedExportPath(relative = "", { strict = true } = {}) {
     (strict ? isProtectedName(part) : CREDENTIAL_EXACT.has(part) || PROTECTED_EXTENSIONS.has(path.extname(part).toLowerCase())));
 }
 
+function readOnlyError(resolved) {
+  return new Error(resolved?.mount?.mode === "ro"
+    ? `The additional folder ${resolved.mount.path} is mounted read-only in this channel.`
+    : "Protected/internal files are read-only in this explorer.");
+}
+
 function isProtectedResolvedPath(resolved) {
+  if (resolved.mount?.mode === "ro") return true;
   const physicalRelative = path.relative(resolved.rootReal, resolved.path).split(path.sep).join("/");
-  return isProtectedWritePath(resolved.relative) || isProtectedWritePath(physicalRelative);
+  return isProtectedWritePath(resolved.inner ?? resolved.relative) || isProtectedWritePath(physicalRelative);
 }
 
 export function canEditChannelFiles(meta = {}, { isAdminUser = false } = {}) {
@@ -227,16 +295,19 @@ function conflictError() {
 
 // Returns a real, contained path. Internal symlinks work; symlinks leaving the channel root do not.
 export async function resolveVisiblePath(root, relative = "", { kind = "any" } = {}) {
-  const rootReal = await realpath(root);
-  const clean = normalizeRelativePath(relative);
-  const lexical = path.resolve(rootReal, clean);
-  if (!isWithin(rootReal, lexical)) throw new Error("That path leaves this channel's working folder.");
+  const { base, inner, prefix, mount } = splitMount(root, relative);
+  const where = mount ? `the mounted folder ${mount.path}` : "this channel's working folder";
+  const rootReal = await realpath(base);
+  const lexical = path.resolve(rootReal, inner);
+  if (!isWithin(rootReal, lexical)) throw new Error(`That path leaves ${where}.`);
   const targetReal = await realpath(lexical);
-  if (!isWithin(rootReal, targetReal)) throw new Error("That item points outside this channel's working folder.");
+  if (!isWithin(rootReal, targetReal)) throw new Error(`That item points outside ${where}.`);
   const info = await stat(targetReal);
   if (kind === "directory" && !info.isDirectory()) throw new Error("That item is not a folder.");
   if (kind === "file" && !info.isFile()) throw new Error("That item is not a regular file.");
-  return { rootReal, relative: clean, path: targetReal, stat: info };
+  // `relative` keeps the logical spelling (mount prefix included) so views and grants round-trip;
+  // `inner` is the path inside the branch, which is what `rootReal` + physical checks use.
+  return { rootReal, relative: joinMountPrefix(prefix, inner), inner, path: targetReal, stat: info, mount };
 }
 
 export function formatFileSize(bytes) {
@@ -256,7 +327,7 @@ export async function listVisibleDirectory(root, relative = "", { page = 0, page
     const childRelative = dir.relative ? `${dir.relative}/${item.name}` : item.name;
     try {
       // Follow symlinks only after proving their real target stays inside the root.
-      const child = await resolveVisiblePath(dir.rootReal, childRelative);
+      const child = await resolveVisiblePath(root, childRelative);
       if (!child.stat.isDirectory() && !child.stat.isFile()) continue;
       entries.push({
         name: item.name,
@@ -287,13 +358,29 @@ export async function listVisibleDirectory(root, relative = "", { page = 0, page
     const rank = (entry) => entry.type === "directory" ? 0 : entry.type === "file" ? 1 : 2;
     return rank(a) === rank(b) ? a.name.localeCompare(b.name) : rank(a) - rank(b);
   });
+  // The channel's additional folders sit first at the working folder's top level, each one a
+  // branch of its own (`@mounts/<name>`), labelled with its host path and mode in the view.
+  if (!dir.relative) {
+    const mounted = [];
+    for (const mount of explorerMounts(root)) {
+      try {
+        const info = await stat(mount.path);
+        if (!info.isDirectory()) continue;
+        mounted.push({ name: mount.name, relative: `${MOUNT_SEGMENT}/${mount.name}`, type: "directory", size: 0, modifiedMs: info.mtimeMs, symlink: false, shareable: false, mount: { path: mount.path, mode: mount.mode } });
+      } catch {
+        inaccessibleCount++;
+        mounted.push({ name: mount.name, relative: `${MOUNT_SEGMENT}/${mount.name}`, type: "directory", size: 0, modifiedMs: 0, symlink: false, shareable: false, accessible: false, mount: { path: mount.path, mode: mount.mode } });
+      }
+    }
+    entries.unshift(...mounted);
+  }
   const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
   const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
   return {
     root: dir.rootReal,
     // Display the configured logical root spelling (a symlinked root rather than its realpath
     // alias). Filesystem access and confinement stay on `dir.path`.
-    absolutePath: path.resolve(root, dir.relative),
+    absolutePath: dir.mount ? path.join(dir.mount.path, dir.inner) : path.resolve(rootSpec(root).root, dir.inner),
     relative: dir.relative,
     entries: entries.slice(safePage * pageSize, (safePage + 1) * pageSize),
     total: entries.length,
@@ -301,6 +388,7 @@ export async function listVisibleDirectory(root, relative = "", { page = 0, page
     totalPages,
     inaccessibleCount,
     readOnly: isProtectedResolvedPath(dir),
+    readOnlyMount: dir.mount?.mode === "ro",
   };
 }
 
@@ -385,7 +473,7 @@ export async function buildFilesView(root, state, { channelName = "", notice = "
   ];
   if (notice) blocks.push({ type: "context", elements: [plain(notice)] });
   if (listing.readOnly) {
-    blocks.push({ type: "context", elements: [plain("Protected/internal files are browseable but read-only here.")] });
+    blocks.push({ type: "context", elements: [plain(listing.readOnlyMount ? "This additional folder is mounted read-only." : "Protected/internal files are browseable but read-only here.")] });
   }
   if (canUpload && !listing.readOnly) {
     blocks.push({
@@ -417,25 +505,28 @@ export async function buildFilesView(root, state, { channelName = "", notice = "
     });
   }
   if (listing.relative) {
-    const parent = path.posix.dirname(listing.relative);
+    const parent = parentRelative(listing.relative);
     blocks.push({
       type: "actions",
       elements: [
-        { type: "button", action_id: FILES_UP_ACTION_ID, text: plain("↑ Up"), value: actionValue("directory", { p: parent === "." ? "" : parent }) },
+        { type: "button", action_id: FILES_UP_ACTION_ID, text: plain("↑ Up"), value: actionValue("directory", { p: parent }) },
         { type: "button", action_id: FILES_ROOT_ACTION_ID, text: plain("⌂ Root"), value: actionValue("directory", { p: "" }) },
       ],
     });
   }
   for (const [index, entry] of listing.entries.entries()) {
     const isDir = entry.type === "directory";
+    const mountLabel = entry.mount ? ` · mounted ${entry.mount.path}${entry.mount.mode === "ro" ? " · read-only" : ""}` : "";
     const suffix = entry.accessible === false
-      ? `${entry.symlink ? " · link" : ""} · unavailable`
+      ? `${entry.symlink ? " · link" : ""}${mountLabel} · unavailable`
+      : entry.mount
+      ? mountLabel
       : isDir
       ? `${entry.symlink ? " · link" : ""}`
       : ` · ${formatFileSize(entry.size)}${entry.shareable ? "" : " · too large to share"}${entry.symlink ? " · link" : ""}`;
     blocks.push({
       type: "section",
-      text: plain(`${isDir ? "📁" : entry.type === "file" ? "📄" : "🔗"} ${entry.name}${suffix}`),
+      text: plain(`${entry.mount ? "🗂️" : isDir ? "📁" : entry.type === "file" ? "📄" : "🔗"} ${entry.name}${suffix}`),
       ...(entry.accessible === false ? {} : {
         accessory: {
           type: "button",
@@ -567,7 +658,7 @@ export function normalizeNewFolderName(value) {
 // is never replaced.
 export async function createVisibleDirectory(root, relative, requestedName) {
   const parent = await resolveVisiblePath(root, relative, { kind: "directory" });
-  if (isProtectedResolvedPath(parent)) throw new Error("Protected/internal files are read-only in this explorer.");
+  if (isProtectedResolvedPath(parent)) throw readOnlyError(parent);
   const name = normalizeNewFolderName(requestedName);
   const createdRelative = parent.relative ? `${parent.relative}/${name}` : name;
   const destination = path.join(parent.path, name);
@@ -641,7 +732,7 @@ export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, byte
 
 export async function createVisibleFile(root, relative, requestedName, content = "") {
   const parent = await resolveVisiblePath(root, relative, { kind: "directory" });
-  if (isProtectedResolvedPath(parent)) throw new Error("Protected/internal files are read-only in this explorer.");
+  if (isProtectedResolvedPath(parent)) throw readOnlyError(parent);
   const name = normalizeNewFileName(requestedName);
   if (typeof content !== "string" || content.length > MAX_EDIT_CHARS) {
     throw new Error(`Initial text is limited to ${MAX_EDIT_CHARS.toLocaleString()} characters and ${MAX_EDIT_BYTES.toLocaleString()} bytes.`);
@@ -726,6 +817,7 @@ async function writeUploadedBytes(directory, name, bytes) {
 
 async function resolveOrCreateUploadDirectory(root, baseRelative, folderParts) {
   let directory = await resolveVisiblePath(root, baseRelative, { kind: "directory" });
+  if (directory.mount?.mode === "ro") throw readOnlyError(directory);
   assertBrowserUploadDirectory(directory);
   for (const requested of folderParts) {
     const name = normalizeBrowserUploadFolder(requested);
@@ -814,7 +906,7 @@ function editLimits(options = {}) {
 export async function readEditableFile(root, relative, options = {}) {
   const { maxChars, maxBytes, label } = editLimits(options);
   const file = await resolveVisiblePath(root, relative, { kind: "file" });
-  if (isProtectedResolvedPath(file)) throw new Error("Protected/internal files are read-only in this explorer.");
+  if (isProtectedResolvedPath(file)) throw readOnlyError(file);
   if (file.stat.size > maxBytes) throw new Error(`${label} is limited to ${maxChars.toLocaleString()} characters and ${maxBytes.toLocaleString()} bytes.`);
   const handle = await openVisibleFile(file);
   let bytes;
@@ -866,7 +958,7 @@ export async function writeEditableFile(root, relative, expectedHash, content, o
   // Resolve first so the queue key is the real file, not a spelling of its relative path. The same
   // containment/protection rules readEditableFile applies, applied before anything is queued.
   const target = await resolveVisiblePath(root, relative, { kind: "file" });
-  if (isProtectedResolvedPath(target)) throw new Error("Protected/internal files are read-only in this explorer.");
+  if (isProtectedResolvedPath(target)) throw readOnlyError(target);
   return serializeFileWrite(target.path, () => commitEditableFile(root, relative, expectedHash, bytes, content, options));
 }
 

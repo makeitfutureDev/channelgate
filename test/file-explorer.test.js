@@ -26,6 +26,7 @@ import {
   FILES_SEND_DM_ACTION_ID,
   FILES_SHARE_ACTION_ID,
   FILES_SHORTCUT_ID,
+  FILES_UP_ACTION_ID,
   isProtectedName,
   listVisibleDirectory,
   MAX_EDIT_CHARS,
@@ -729,4 +730,102 @@ test("file browser uploads never use Slack file storage", () => {
   assert.doesNotMatch(explorerSource, /type:\s*["']file_input["']/);
   assert.doesNotMatch(appSource, /cg_channel_files_upload_modal/);
   assert.doesNotMatch(appSource, /saveSlackUploadedFile/);
+});
+
+// ── Additional folders (src/gateway/extra-folders.js) as named mounts ─────────────────────────
+// explorerRoot() turns the channel's admin-declared additional folders into `@mounts/<name>`
+// branches of the same explorer: listed first at the working folder's root with their host path
+// and mode, browseable and previewable with the same confinement as the working folder, and
+// refusing writes when mounted read-only (the daemon writes on the host, not through the
+// container's mount, so the explorer must enforce the mode itself).
+async function mountFixture(t) {
+  const { root, outside } = await fixture(t);
+  const base = path.dirname(root);
+  const shared = path.join(base, "shared");
+  const assets = path.join(base, "assets");
+  await mkdir(path.join(shared, "docs"), { recursive: true });
+  await mkdir(assets);
+  await writeFile(path.join(shared, "notes.md"), "# shared notes\n");
+  await writeFile(path.join(shared, "docs", "deep.txt"), "deep\n");
+  await writeFile(path.join(assets, "logo.txt"), "logo\n");
+  await symlink(outside, path.join(shared, "escape"));
+  const spec = fileExplorer.explorerRoot(root, [{ path: shared, mode: "rw" }, { path: assets, mode: "ro" }, { path: path.join(base, "missing"), mode: "rw" }]);
+  return { root, outside, shared, assets, spec };
+}
+
+test("explorerRoot keeps a plain string without mounts and names mounts by basename, deduplicated", () => {
+  assert.equal(fileExplorer.explorerRoot("/w", []), "/w");
+  assert.equal(fileExplorer.explorerRoot("/w", [{ path: "relative" }]), "/w");
+  const spec = fileExplorer.explorerRoot("/w", [{ path: "/a/client", mode: "ro" }, { path: "/b/client" }, { path: "/c/client" }]);
+  assert.deepEqual(spec, { root: "/w", mounts: [{ name: "client", path: "/a/client", mode: "ro" }, { name: "client-2", path: "/b/client", mode: "rw" }, { name: "client-3", path: "/c/client", mode: "rw" }] });
+  assert.equal(fileExplorer.parentRelative("@mounts/client"), "", "a mount's top level goes back to the root");
+  assert.equal(fileExplorer.parentRelative("@mounts/client/docs"), "@mounts/client");
+  assert.equal(fileExplorer.parentRelative("docs/a"), "docs");
+});
+
+test("mounted folders are listed first at the root with their host path and mode, and browse with their own confinement", async (t) => {
+  const { root, shared, assets, spec } = await mountFixture(t);
+  const listing = await listVisibleDirectory(spec, "");
+  const [first, second, third] = listing.entries;
+  assert.deepEqual([first.name, second.name, third.name], ["shared", "assets", "missing"]);
+  assert.equal(first.relative, "@mounts/shared");
+  assert.deepEqual(first.mount, { path: shared, mode: "rw" });
+  assert.deepEqual(second.mount, { path: assets, mode: "ro" });
+  assert.equal(third.accessible, false, "a vanished mount is shown without an Open control");
+  assert.ok(listing.entries.some((entry) => entry.name === "readme.txt"), "the working folder's own entries follow");
+  // The plain working folder (no spec) lists nothing extra.
+  assert.ok(!(await listVisibleDirectory(root, "")).entries.some((entry) => entry.mount));
+  // Inside a mount: the branch's real path is the root, traversal and escaping links are refused.
+  const inside = await listVisibleDirectory(spec, "@mounts/shared");
+  assert.equal(inside.absolutePath, shared);
+  assert.deepEqual(inside.entries.filter((entry) => entry.accessible !== false).map((entry) => entry.relative).sort(), ["@mounts/shared/docs", "@mounts/shared/notes.md"]);
+  assert.equal(inside.entries.find((entry) => entry.name === "escape").accessible, false);
+  const deep = await resolveVisiblePath(spec, "@mounts/shared/docs/deep.txt", { kind: "file" });
+  assert.equal(deep.path, path.join(shared, "docs", "deep.txt"));
+  assert.equal(deep.relative, "@mounts/shared/docs/deep.txt");
+  assert.equal(deep.inner, "docs/deep.txt");
+  await assert.rejects(resolveVisiblePath(spec, "@mounts/shared/escape/private.txt"), /points outside the mounted folder/);
+  await assert.rejects(resolveVisiblePath(spec, "@mounts/nope/x"), /No additional folder named "nope"/);
+  await assert.rejects(resolveVisiblePath(spec, "@mounts"), /Choose one of this channel's additional folders/);
+  await assert.rejects(resolveVisiblePath(root, "@mounts/shared/notes.md"), /No additional folder/, "a plain root knows no mounts");
+  // Preview reads through the mount.
+  const preview = await readFilePreview(spec, "@mounts/shared/notes.md");
+  assert.equal(preview.text ?? preview.bytes?.toString(), undefined === preview.text ? preview.bytes?.toString() : preview.text);
+  assert.ok(String(preview.text || preview.bytes || "").includes("shared notes"));
+});
+
+test("the explorer view labels mounts, navigates Up from a mount to the root, and hides write controls on a read-only mount", async (t) => {
+  const { spec, shared, assets } = await mountFixture(t);
+  const state = { channelId: "C1", slug: "s", threadTs: "", ownerId: "U1", relative: "", page: 0 };
+  const rootView = await buildFilesView(spec, state, { channelName: "chan", canUpload: true });
+  assertUniqueActionIds(rootView);
+  const labels = rootView.blocks.filter((block) => block.type === "section").map((block) => block.text.text);
+  assert.ok(labels.some((label) => label.includes("shared") && label.includes(`mounted ${shared}`) && !label.includes("read-only")));
+  assert.ok(labels.some((label) => label.includes("assets") && label.includes(`mounted ${assets}`) && label.includes("read-only")));
+  const open = rootView.blocks.find((block) => block.text?.text.includes("mounted " + shared)).accessory;
+  assert.deepEqual(JSON.parse(open.value), { o: "directory", p: "@mounts/shared" });
+  const inMount = await buildFilesView(spec, { ...state, relative: "@mounts/assets" }, { channelName: "chan", canUpload: true });
+  const up = inMount.blocks.find((block) => block.elements?.some((el) => el.action_id === FILES_UP_ACTION_ID)).elements[0];
+  assert.deepEqual(JSON.parse(up.value), { o: "directory", p: "" });
+  assert.ok(inMount.blocks.some((block) => block.elements?.[0]?.text?.includes("mounted read-only")));
+  assert.ok(!inMount.blocks.some((block) => block.elements?.some((el) => el.action_id === FILES_NEW_FOLDER_ACTION_ID)), "no New folder on a read-only mount");
+  const inRw = await buildFilesView(spec, { ...state, relative: "@mounts/shared" }, { channelName: "chan", canUpload: true });
+  assert.ok(inRw.blocks.some((block) => block.elements?.some((el) => el.action_id === FILES_NEW_FOLDER_ACTION_ID)), "a read-write mount keeps them");
+});
+
+test("writes land in a read-write mount and are refused in a read-only one with the mount named", async (t) => {
+  const { spec, shared, assets } = await mountFixture(t);
+  const created = await createVisibleDirectory(spec, "@mounts/shared", "new-dir");
+  assert.equal(created.relative, "@mounts/shared/new-dir");
+  assert.ok((await stat(path.join(shared, "new-dir"))).isDirectory());
+  await assert.rejects(createVisibleDirectory(spec, "@mounts/assets", "nope"), new RegExp(`${assets.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")} is mounted read-only`));
+  await assert.rejects(readEditableFile(spec, "@mounts/assets/logo.txt"), /mounted read-only/);
+  const editable = await readEditableFile(spec, "@mounts/shared/notes.md");
+  const saved = await writeEditableFile(spec, "@mounts/shared/notes.md", editable.hash, "# edited\n");
+  assert.equal(saved.relative, "@mounts/shared/notes.md");
+  assert.equal(await readFile(path.join(shared, "notes.md"), "utf8"), "# edited\n");
+  await assert.rejects(saveBrowserUploadedFile(spec, "@mounts/assets", "x.txt", Buffer.from("x")), /mounted read-only/);
+  const uploaded = await saveBrowserUploadedFile(spec, "@mounts/shared", "up/x.txt", Buffer.from("x"));
+  assert.ok(uploaded, "upload into a read-write mount succeeds");
+  assert.equal(await readFile(path.join(shared, "up", "x.txt"), "utf8"), "x");
 });

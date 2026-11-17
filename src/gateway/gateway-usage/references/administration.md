@@ -288,7 +288,10 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   its real target. The next message recreates the container. Once mounted, a symlink inside the
   working folder pointing at the folder (`ln -s /host/shared shared`) resolves; a symlink to a
   folder that is NOT mounted is broken inside the container, and the gateway never follows such a
-  link to decide a mount — say so instead of trying.
+  link to decide a mount — say so instead of trying. In the Slack file explorer and in
+  `workspace_list` / `workspace_read` / `workspace_search`, each mounted folder is the branch
+  `@mounts/<name>` (the folder's basename), listed first at the root; a read-only mount refuses
+  writes there too. Inside the container, use the folder's real host path.
 - `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir` or
   `add_channel_folder`.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
