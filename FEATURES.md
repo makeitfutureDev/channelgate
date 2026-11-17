@@ -4465,16 +4465,24 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   mode are CONSUMER keys (`ck_…`, the hosted MCP's credential), which that endpoint rejects, so
   with a consumer key the gateway stages through the hosted MCP's own workbench instead: the daemon
   opens its own MCP session on the same key, writes the file into the sandbox in base64 chunks of
-  768 KB (one request above ~5 MB is rejected), checks the md5 and mints the key with
-  `get_mount_file_s3_key` — a key the model's separate session can then use. Bytes still never
-  pass through the model. The sandbox path is a random directory plus a name reduced to safe
-  characters, so a file name can never become Python source. Consumer-key staging is capped at
-  25 MB (project keys keep 100 MB), within an overall 10-minute deadline; the MCP session is ended
-  afterwards, but the sandbox copy is kept because the s3key IS that file's storage (deleting it
-  breaks the upload — verified live). A known property of this route: the copy stays in that
-  identity's Composio file storage, so on `composio-agent` backed by the organization key it is
-  listable from any conversation sharing that key (its random directory name is not a secret) —
-  stage on `composio-user`, or give the channel its own Composio key, when that matters. The bytes are read from the SAME descriptor the confinement
+  768 KB (one request above ~5 MB is rejected) under the sandbox's own `/tmp`, checks the md5 and
+  uploads with the workbench's `upload_local_file` helper — a presigned PUT whose status the helper
+  checks — and then PROVES the stored object is retrievable (a one-byte ranged GET of the helper's
+  download URL, whose Content-Range total must equal the file's size) before returning the key the
+  model's separate session can then use. A key whose object storage cannot serve is never handed
+  out: the tool fails naming the HTTP status (or the size mismatch) instead of reporting a success
+  that Drive, Gmail or Slack would then turn into "file does not exist in storage". The earlier
+  route — `get_mount_file_s3_key` on a copy under `/mnt/files` — only NAMED the key a file on that
+  s3fs FUSE mount would have, and whether the mount had flushed the bytes by the time a tool fetched
+  the key was luck (six invoices in a row failed on one deployment); it remains only as the
+  fallback for a workbench without the upload helper, unverified. Bytes still never pass through
+  the model. The sandbox path is a random directory plus a name reduced to safe characters, so a
+  file name can never become Python source, and the temporary copy is removed after the upload (the
+  s3key names the uploaded object, not the sandbox file). Consumer-key staging is capped at 25 MB
+  (project keys keep 100 MB), within an overall 10-minute deadline; the MCP session is ended
+  afterwards. The uploaded object lives in that identity's Composio file storage, so on
+  `composio-agent` backed by the organization key it is reachable from any conversation sharing
+  that key — stage on `composio-user`, or give the channel its own Composio key, when that matters. The bytes are read from the SAME descriptor the confinement
   check proved (O_NOFOLLOW + /proc/self/fd), bounded to the cap: the tool used to close that
   descriptor and reopen the file by path, so a symlink swapped in by the container between proof
   and read could have sent any file the daemon can read. Every error text is scrubbed of the key

@@ -5293,8 +5293,15 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
       reintroducing the reopen-by-path, dropping the session header, accepting a server ping as the
       answer, or removing the key scrub each turns a test red.
 - [x] Consumer keys (`test/composio-files.test.js`, `test/file-sharing-tools.test.js`): a `ck_` key
-      never reaches the REST API; the file crosses as appended base64 chunks in one MCP session and
-      is md5-verified before `get_mount_file_s3_key`; an incomplete transfer, a sandbox error and an
+      never reaches the REST API; the file crosses as appended base64 chunks in one MCP session,
+      assembled under the sandbox's `/tmp` (never `/mnt/files`), md5-verified, uploaded with
+      `upload_local_file` and then proven retrievable with a one-byte ranged GET of the download
+      URL (`redirect: follow`, no key sent to storage) before the key is returned; a 404 on that
+      GET, a stored size that differs from the staged size, the helper's own upload error and an
+      unreachable download URL are each an error WITHOUT a key; a 200 that ignores Range but
+      carries the right Content-Length passes; a workbench without the helper falls back to the
+      mount key unverified; `verifyStoredFile` accepts an empty object on any 2xx; an incomplete
+      transfer, a sandbox error and an
       oversize file (the 25 MB consumer cap) are errors without the key; a hostile file name never
       reaches the Python source; a project (`ak_`) key keeps the REST route and any other shape is
       treated as a consumer key; every later request carries the minted MCP session id and the

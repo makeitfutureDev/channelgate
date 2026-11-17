@@ -73,29 +73,35 @@ function failure(step, status, body) {
 // endpoint above does not accept them under either header (401 "Invalid API key" / "No
 // authentication provided"), so with a consumer key the three-step flow cannot work, and it never
 // did: every personal-mode stage failed before this route existed. What a consumer key CAN do is
-// run code in the MCP's own workbench, whose `get_mount_file_s3_key(path)` puts a file from the
-// sandbox's /mnt/files into the same storage and returns the s3key GOOGLEDRIVE_UPLOAD_FILE & co.
-// expect — and that key is usable from any later MCP session on the same identity, which is what
-// lets the daemon stage here and the model use the result in its own session.
+// run code in the MCP's own workbench, whose `upload_local_file(path)` helper PUTs a sandbox file
+// to a presigned URL of the same storage, checks the PUT's status, and returns the s3key
+// GOOGLEDRIVE_UPLOAD_FILE & co. expect — a key usable from any later MCP session on the same
+// identity, which is what lets the daemon stage here and the model use the result in its own
+// session.
 //
 // It still runs in the daemon, for the same reason as the REST route: the key never reaches the
 // model, and neither do the file's bytes. They cross as base64 inside the code the daemon sends,
 // in chunks, because one request above ~5 MB of base64 is rejected (413). All chunk calls go
 // through ONE MCP session, so they land in the same sandbox and append to one file; a final call
-// checks the md5 before minting the key. That makes this route slower than the REST one, hence its
-// own, lower size cap and an overall deadline.
+// checks the md5, uploads, and the daemon then proves the stored object is RETRIEVABLE (a
+// one-byte ranged GET of the helper's download URL, whose Content-Range total must equal the
+// file's size) before the key is handed back. That makes this route slower than the REST one,
+// hence its own, lower size cap and an overall deadline.
 //
-// The sandbox copy is deliberately NOT deleted afterwards: the s3key IS that mounted file's
-// storage, and removing the file makes the upload fail with "the file does not exist in storage"
-// (verified live). Ending the MCP session (HTTP DELETE) does not affect the file or the key (also
-// verified). So the copy stays in that identity's Composio file storage — and on `composio-agent`
-// backed by the organization key, that storage is shared by every conversation using the same
-// key, whose own workbench can list it. The random directory name is not a secret.
+// Why not `get_mount_file_s3_key`, which this module used first: it only NAMES the storage key a
+// file under /mnt/files would have. That directory is an s3fs FUSE mount, so the bytes reach
+// storage whenever the mount flushes them — usually, but not always, before a tool fetches the
+// key. On one deployment every stage reported success while Drive, Gmail and Slack then received
+// a key whose object did not exist (HTTP 404 from storage), six files in a row. The upload helper
+// has no such window, and the chunks are now assembled under the sandbox's own /tmp, never on the
+// mount. The temporary copy is removed after the upload; the s3key names the uploaded object, not
+// the file. When a workbench lacks the helper the mount route remains as the fallback.
 export const COMPOSIO_WORKBENCH_STAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const COMPOSIO_WORKBENCH_CHUNK_BYTES = 768 * 1024;
 export const COMPOSIO_WORKBENCH_DEADLINE_MS = 10 * 60_000;
 const WORKBENCH_TOOL = "COMPOSIO_REMOTE_WORKBENCH";
 const WORKBENCH_CALL_TIMEOUT_MS = 120_000;
+const WORKBENCH_VERIFY_TIMEOUT_MS = 30_000;
 const STAGE_MARKER = "CGSTAGE";
 
 /**
@@ -254,8 +260,9 @@ export async function stageViaWorkbench({
   const client = mcpClient({ url: mcpUrl, key: consumerKey, fetchImpl, deadline: AbortSignal.timeout(deadlineMs) });
   try {
     await client.open();
-    // A fresh directory per stage, so two stages in one sandbox can never append to each other.
-    const target = `/mnt/files/channelgate-stage/${randomBytes(8).toString("hex")}/${sandboxFileName(name)}`;
+    // A fresh directory per stage, so two stages in one sandbox can never append to each other —
+    // under the sandbox's own /tmp, never under the s3fs mount at /mnt/files (see above).
+    const target = `/tmp/channelgate-stage/${randomBytes(8).toString("hex")}/${sandboxFileName(name)}`;
     const step = Math.max(1, Math.floor(chunkBytes));
     for (let offset = 0, first = true; offset < bytes.length || first; offset += step, first = false) {
       const chunk = bytes.subarray(offset, offset + step).toString("base64");
@@ -267,13 +274,26 @@ export async function stageViaWorkbench({
       );
       if (bytes.length === 0) break;
     }
+    // Verify the reassembled bytes, then upload them with the workbench's own helper (a presigned
+    // PUT whose status it checks). The mount route is only the fallback for a workbench without it.
     const output = await client.run(
-      "import hashlib, json\n" +
+      "import hashlib, json, os, shutil\n" +
       `data = open('${target}', 'rb').read()\n` +
       `digest = hashlib.md5(data).hexdigest()\n` +
-      `key = get_mount_file_s3_key('${target}') if digest == '${md5}' else None\n` +
-      "key = key[0] if isinstance(key, (tuple, list)) else key\n" +
-      `print('${STAGE_MARKER}' + json.dumps({'md5': digest, 'bytes': len(data), 's3key': key}))\n`,
+      "key, url, err, route = None, None, '', 'upload'\n" +
+      `if digest == '${md5}':\n` +
+      "    if 'upload_local_file' in globals():\n" +
+      `        res, err = upload_local_file('${target}')\n` +
+      "        key, url = (res or {}).get('s3key'), (res or {}).get('s3_url')\n" +
+      "    else:\n" +
+      "        route = 'mount'\n" +
+      `        mounted = '/mnt/files' + '${target}'\n` +
+      "        os.makedirs(os.path.dirname(mounted), exist_ok=True)\n" +
+      `        shutil.copyfile('${target}', mounted)\n` +
+      "        key = get_mount_file_s3_key(mounted)\n" +
+      "        key = key[0] if isinstance(key, (tuple, list)) else key\n" +
+      `shutil.rmtree(os.path.dirname('${target}'), ignore_errors=True)\n` +
+      `print('${STAGE_MARKER}' + json.dumps({'md5': digest, 'bytes': len(data), 's3key': key, 'url': url, 'error': str(err or ''), 'route': route}))\n`,
     );
     const line = String(output).split("\n").find((entry) => entry.startsWith(STAGE_MARKER));
     if (!line) throw new Error("the Composio workbench did not report the staged file");
@@ -281,11 +301,44 @@ export async function stageViaWorkbench({
     if (report.md5 !== md5 || report.bytes !== bytes.length) {
       throw new Error("the file arrived in the Composio workbench incomplete; nothing was staged");
     }
+    if (report.error) throw new Error(`the Composio workbench could not upload the file: ${String(report.error).slice(0, 200)}`);
     const s3key = String(report.s3key || "");
     if (!s3key) throw new Error("the Composio workbench returned no storage key");
+    if (report.url) await verifyStoredFile({ url: String(report.url), bytes: bytes.length, fetchImpl });
     return s3key;
   } finally {
     await client.close();
+  }
+}
+
+// Prove the uploaded object can be fetched before its key is handed out: a one-byte ranged GET of
+// the helper's (redirecting) download URL. A 206 must carry a Content-Range whose total is the
+// file's size; a 200 (a server that ignores Range) must carry that size as Content-Length. Anything
+// else means a tool given this key would fail the same way — so fail HERE, with the status, instead
+// of reporting a success the model then trusts. An empty file has no byte to range over and is
+// accepted on any 2xx.
+export async function verifyStoredFile({ url, bytes, fetchImpl = fetch }) {
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      headers: bytes > 0 ? { Range: "bytes=0-0" } : {},
+      redirect: "follow",
+      signal: AbortSignal.timeout(WORKBENCH_VERIFY_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(`the staged file could not be verified in Composio storage: ${String(error?.message || error).slice(0, 120)}`);
+  }
+  const body = response.body;
+  if (body && typeof body.cancel === "function") body.cancel().catch?.(() => {});
+  if (!response.ok) throw new Error(`Composio accepted the upload but the stored file cannot be retrieved (HTTP ${response.status})`);
+  if (bytes === 0) return;
+  const header = (name) => String(response.headers?.get?.(name) || "");
+  const total = response.status === 206
+    ? Number(header("content-range").split("/").pop())
+    : Number(header("content-length"));
+  if (Number.isFinite(total) && total > 0 && total !== bytes) {
+    throw new Error(`the stored file is ${total} bytes, not the ${bytes} staged; nothing was staged`);
   }
 }
 
