@@ -713,7 +713,7 @@ test("SSE publishes local status and completion changes, bounds connections, and
 });
 
 for (const engine of ["claude", "codex"]) {
-  test(`${engine} durable run events push Working/Waiting and restore completion without polling`, async (t) => {
+  test(`${engine} durable run events preserve shared Done until explicit Reopen without polling`, async (t) => {
     const f = await fixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
     const entry = await f.root();
     setSlackThreadDone("C_WORK", "100.000001", "U_MINE", true);
@@ -725,9 +725,9 @@ for (const engine of ["claude", "codex"]) {
     const run = { channelId: "C_WORK", slug: entry.slug, authorId: "U_OTHER", engine,
       threadKey: "100.000001", slackThreadTs: "100.000001" };
     recordActiveRun("activity-live", run);
-    assert.equal((await nextEvent(reader)).rows[0].status, "working");
+    assert.equal((await nextEvent(reader)).rows[0].status, "done");
     recordActiveRun("activity-live", { ...run, awaitingChoice: true });
-    assert.equal((await nextEvent(reader)).rows[0].status, "waiting");
+    assert.equal((await nextEvent(reader)).rows[0].status, "done");
     clearActiveRun("activity-live");
     assert.equal((await nextEvent(reader)).rows[0].status, "done");
     assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, doneAt);
@@ -735,6 +735,8 @@ for (const engine of ["claude", "codex"]) {
     assert.equal((await nextEvent(reader)).rows[0].status, "idle");
     recordActiveRun("activity-live", run);
     assert.equal((await nextEvent(reader)).rows[0].status, "working");
+    recordActiveRun("activity-live", { ...run, awaitingChoice: true });
+    assert.equal((await nextEvent(reader)).rows[0].status, "waiting");
     clearActiveRun("activity-live");
     assert.equal((await nextEvent(reader)).rows[0].status, "idle");
     assert.deepEqual(f.reads, []);
@@ -1543,4 +1545,25 @@ test("participant streams receive personal Hide and Show immediately", async (t)
   assert.equal((await nextEvent(reader)).rows[0].hidden, true);
   setSlackThreadHidden("C_WORK", "100.000001", "U_OTHER", false);
   assert.equal((await nextEvent(reader)).rows[0].hidden, false);
+});
+
+test("shared Done stays on other participants' Active list while the actor's completion is personal", async (t) => {
+  const f = await fixture(t);
+  await f.root();
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_OTHER", "101.000001");
+  const owner = await f.login(), other = await f.login("U_OTHER");
+  const save = (session, path, body) => f.request(session.url + "/api/" + path, { method: "POST", headers: session.post,
+    body: JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", ...body }) });
+  assert.equal((await save(owner, "completion", { done: true })).status, 200);
+  const mine = (await (await f.request(owner.url + "/api/threads", { headers: owner.headers })).json()).rows[0];
+  const theirs = (await (await f.request(other.url + "/api/threads", { headers: other.headers })).json()).rows[0];
+  assert.equal(mine.status, "done"); assert.equal(mine.dismissed, true); assert.equal(mine.hidden, false);
+  assert.equal(theirs.status, "done"); assert.equal(theirs.dismissed, false); assert.equal(theirs.hidden, false);
+  assert.equal((await activityThreadSnapshot(f.client, "U_OTHER", { filter: "active" })).rows.length, 1);
+  assert.equal((await activityThreadSnapshot(f.client, "U_MINE", { filter: "active" })).rows.length, 0);
+  assert.equal((await save(other, "hide", { hidden: true })).status, 200);
+  assert.equal((await activityThreadSnapshot(f.client, "U_OTHER", { filter: "active" })).rows.length, 0);
+  assert.equal((await save(owner, "completion", { done: false })).status, 200);
+  assert.equal((await activityThreadSnapshot(f.client, "U_MINE", { filter: "active" })).rows.length, 1);
+  assert.equal((await activityThreadSnapshot(f.client, "U_OTHER", { filter: "active" })).rows.length, 0, "manual Hide survives global Reopen");
 });

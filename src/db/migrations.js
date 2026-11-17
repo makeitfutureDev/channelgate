@@ -1409,4 +1409,21 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 59,
+    up(db) {
+      // Automatic completion dismissal is personal and separate from an explicit Hide.
+      db.exec(`
+        ALTER TABLE slack_thread_participants ADD COLUMN dismissed_ms INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE slack_threads ADD COLUMN completion_reopened_ms INTEGER NOT NULL DEFAULT 0;
+        UPDATE slack_threads SET completion_reopened_ms=ABS(done_ms) WHERE done_ms<0;
+        UPDATE slack_thread_participants SET dismissed_ms=COALESCE((
+          SELECT done_ms FROM slack_threads t
+          WHERE t.channel_id=slack_thread_participants.channel_id
+            AND t.thread_ts=slack_thread_participants.thread_ts
+            AND t.starter_id=slack_thread_participants.user_id AND t.done_ms>0
+        ),0);
+      `);
+    },
+  },
 ];

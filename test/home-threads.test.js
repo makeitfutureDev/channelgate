@@ -191,12 +191,15 @@ test("missing ownership evidence and Slack failures do not leak or invent rows",
   assert.equal(view.rows.length, 0); assert.equal(view.unavailable, true);
 });
 
-test("a checked thread stays completed after a newer request and successful reply", async () => {
+test("a passively checked thread stays Done and visible in Active after a newer request and successful reply", async () => {
   const c = await channel();
   root(c, "100.000001", "U_MINE", { reactions: [{ name: "white_check_mark", count: 1 }] });
   await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "200.000001" });
   recordSlackThreadOutcome(c.channelId, "100.000001", { at: 201000 });
-  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  const active = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(active.rows.length, 1, "passive completion does not dismiss work for the viewer");
+  assert.equal(active.rows[0].status, "done");
+  assert.equal(active.rows[0].dismissed_ms, 0);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0].status, "done");
 });
 
@@ -353,7 +356,7 @@ for (const reaction of ["+1", "thumbsup", "+1::skin-tone-3", "thumbsup::skin-ton
 }
 
 for (const marker of ["white_check_mark", "heavy_check_mark", "activity", "feedback"]) {
-  test(`${marker} completion on a root/reply or in Activity hides active work and suppresses both reminder paths`, async () => {
+  test(`${marker} completion stays Done during live work, dismisses only the actor and suppresses both reminder paths`, async () => {
     const { noteBotReply, sweepNudges } = await import("../src/gateway/nudges.js");
     const { recordActivity, sendDigest, buildPendingReportForUser } = await import("../src/gateway/followups.js");
     const c = await channel(); const row = root(c, "100.000001");
@@ -378,12 +381,16 @@ for (const marker of ["white_check_mark", "heavy_check_mark", "activity", "feedb
         body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: row.thread_ts } } });
     }
     getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("still-running", toJson({ channelId: c.channelId, threadKey: row.thread_ts }));
-    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+    const selfDone = ["activity", "feedback"].includes(marker);
+    const active = await homeThreadsSnapshot(client, "U_MINE");
+    assert.equal(active.rows.length, selfDone ? 0 : 1, "only the completion actor dismisses their own work");
     assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "all" })).rows.length, 0);
-    assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0].status, "done");
+    const completed = (await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0];
+    assert.equal(completed.status, "done", "shared Done takes precedence over a live run");
+    assert.equal(completed.dismissed_ms > 0, selfDone);
     await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: row.thread_ts, messageTs: "103.000001" });
     recordSlackThreadOutcome(c.channelId, row.thread_ts);
-    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, selfDone ? 0 : 1);
     const map = new Map(); noteBotReply(c.channelId, c.slug, row.thread_ts, "U_MINE", { map, nowMs: 1000 });
     let notifications = 0;
     client.chat.postMessage = async () => { notifications++; return { ts: "999.000001" }; };
@@ -473,7 +480,7 @@ test("root/reply completion events agree, preserve other markers and honor expli
   const messages = [roots.get("C_THREADS:100.000001"), { ts: "101.000001", thread_ts: "100.000001", user: "BOT", reactions: [{ name: "heavy_check_mark", count: 1 }] }];
   client.conversations.replies = async () => ({ messages });
   client.reactions = { ...client.reactions, get: async ({ timestamp }) => ({ message: messages.find((m) => m.ts === timestamp) }) };
-  const event = (ts, reaction, eventTs) => ({ item: { type: "message", channel: c.channelId, ts }, reaction, event_ts: eventTs });
+  const event = (ts, reaction, eventTs) => ({ user: "U_MINE", item: { type: "message", channel: c.channelId, ts }, reaction, event_ts: eventTs });
   await syncThreadCompletionReaction(client, event("101.000001", "heavy_check_mark", "200.000001"), { added: true });
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
   messages[0].reactions = [{ name: "white_check_mark", count: 1 }];
@@ -563,7 +570,11 @@ test("fast navigation skips history discovery and forced Refresh bypasses cached
   assert.ok(reads.every((key) => key.endsWith("100.000001")));
   roots.get(`${c.channelId}:100.000001`).reactions = [{ name: "white_check_mark", count: 1 }];
   const refreshed = await homeThreadsSnapshot(client, "U_MINE", {}, { reader, discover: true, reconcile: true, force: true });
-  assert.equal(refreshed.rows.length, 1); assert.equal(refreshed.rows[0].thread_ts, "200.000001");
+  assert.equal(refreshed.rows.length, 2);
+  assert.deepEqual(refreshed.rows.map((row) => [row.thread_ts, row.status]).sort(), [
+    ["100.000001", "done"], ["200.000001", "idle"],
+  ]);
+  assert.equal(refreshed.rows.find((row) => row.thread_ts === "100.000001").dismissed_ms, 0);
   assert.equal(getSlackThread(c.channelId, "100.000001").root_done, 1);
 });
 
@@ -724,8 +735,10 @@ test("local Activity snapshots cap visible data and flag partial results", async
   assert.equal(channelPin.rows.length, 1001, "all open threads in a pinned channel survive the feed cap");
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
   const completed = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses", pageSize: 1, pinnedChannels: [c.channelId] });
-  assert.equal(completed.rows.length, 1000);
-  assert.equal(completed.rows.some((row) => row.thread_ts === "100.000001"), false, "channel pins do not retain completed history outside the page");
+  assert.equal(completed.rows.length, 1001);
+  const archived = completed.rows.find((row) => row.thread_ts === "100.000001");
+  assert.equal(archived.status, "done", "all-statuses retains completed history outside the ordinary page");
+  assert.ok(archived.dismissed_ms > 0, "archived completion is distinguishable from pinned open work");
 });
 
 test("thread changes emit scoped invalidations and passive checks do not loop", async () => {
@@ -748,7 +761,7 @@ test("thread changes emit scoped invalidations and passive checks do not loop", 
   assert.equal(notifications.length, 4);
 });
 
-test("Activity shows live resumed completed work while Home and completion markers remain completed", async () => {
+test("Activity and Home keep shared Done ahead of live runtime state until explicit Reopen", async () => {
   const c = await channel(); const thread = root(c, "100.000001");
   setSlackThreadDone(c.channelId, thread.thread_ts, "U_MINE", true);
   const initialKey = homeThreadsRefreshKey("U_MINE");
@@ -756,13 +769,18 @@ test("Activity shows live resumed completed work while Home and completion marke
   active.run("resumed-completed", toJson({ channelId: c.channelId, slackThreadTs: thread.thread_ts, threadKey: "code-channel", authorId: "U_MINE" }));
   const workingKey = homeThreadsRefreshKey("U_MINE");
   assert.notEqual(workingKey, initialKey, "live work invalidates refresh even when Home still considers the thread complete");
-  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "working" })).rows[0]?.status, "working");
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "working" })).rows.length, 0);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "active" })).rows.length, 0);
   getDb().prepare("UPDATE active_runs SET data=? WHERE id=?").run(toJson({ channelId: c.channelId, threadKey: thread.thread_ts, awaitingChoice: true }), "resumed-completed");
   const waitingKey = homeThreadsRefreshKey("U_MINE");
   assert.notEqual(waitingKey, workingKey);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "waiting" })).rows.length, 0);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
+  setSlackThreadDone(c.channelId, thread.thread_ts, "U_MINE", false);
   assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "waiting" })).rows[0]?.status, "waiting");
+  setSlackThreadDone(c.channelId, thread.thread_ts, "U_MINE", true);
   getDb().prepare("DELETE FROM active_runs WHERE id=?").run("resumed-completed");
   assert.notEqual(homeThreadsRefreshKey("U_MINE"), waitingKey);
   assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
@@ -1214,6 +1232,30 @@ test("Home Mark All Done requires native confirmation and covers all owned open 
   assert.equal(getSlackThread(c.channelId, "200.000001").done_ms, 0);
   assert.equal(getDb().prepare("SELECT count(*) n FROM slack_threads WHERE completion_marker_retry_ms>0 AND starter_id='U_MINE'").get().n, 13);
   await handler(args); assert.deepEqual(published.bulkResult, { marked: 0, skipped: 0, failed: 0 });
+});
+
+test("Mark All Done dismisses owned shared Done completed by another participant", async () => {
+  const { recordSlackThreadParticipation, getSlackThreadParticipant } = await import("../src/gateway/slack-threads.js");
+  const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
+  const c = await channel(); root(c, "100.000001");
+  recordSlackThreadParticipation(c.channelId, "100.000001", "U_OTHER", "101.000001");
+  const message = roots.get(`${c.channelId}:100.000001`);
+  message.reactions = [{ name: "white_check_mark", count: 1, users: ["U_OTHER"] }];
+  client.reactions.get = async () => ({ message });
+  await syncThreadCompletionReaction(client, { user: "U_OTHER", reaction: "white_check_mark",
+    item: { type: "message", channel: c.channelId, ts: message.ts }, event_ts: "200.000001" }, { added: true });
+  const active = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(active.rows.length, 1);
+  assert.equal(active.rows[0].status, "done");
+  assert.equal(active.rows[0].dismissed_ms, 0, "another participant's completion stays on the owner's Active list");
+  assert.ok(getSlackThreadParticipant(c.channelId, message.ts, "U_OTHER").dismissed_ms > 0);
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 1, skipped: 0, failed: 0 });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  const completed = (await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0];
+  assert.equal(completed.status, "done");
+  assert.ok(completed.dismissed_ms > 0);
+  assert.equal(completed.hidden_ms, 0, "bulk completion does not change manual Hide");
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 0, skipped: 0, failed: 0 });
 });
 
 test("Mark All Done skips private nonmembers, foreign roots, unengaged and sudo threads", async () => {

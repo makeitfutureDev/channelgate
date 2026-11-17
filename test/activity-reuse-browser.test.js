@@ -132,7 +132,8 @@ test("Activity group order works on desktop and mobile and persists for only its
   let base;
   const rows = ["idle", "working", "waiting", "error", "error", "done"].map((status, i) => ({
     channel_id: "C_ORDER", thread_ts: String(100 + i), title: status + i,
-    channelName: "Activity fixture", status, last_message_ms: Date.now() - i * 1000,
+    channelName: "Activity fixture", status, dismissed_ms: status === "done" ? Date.now() : 0,
+    last_message_ms: Date.now() - i * 1000,
   }));
   const app = express(); serveBrandAssets(app);
   app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TORDER", getBaseUrl: () => base,
@@ -180,7 +181,7 @@ test("Activity group order works on desktop and mobile and persists for only its
   }
 });
 
-test("mobile Activity counts reflect durable worker events on completed roots without reload", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+test("mobile Activity preserves Done counts through durable worker events without reload", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
   for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
   await setUser("UACTIVITYBROWSER", { approved: true, isAdmin: false });
@@ -203,19 +204,36 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const NativeEventSource = globalThis.EventSource;
+    globalThis.activityThreadEvents = 0;
+    globalThis.EventSource = class extends NativeEventSource {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("threads", () => { globalThis.activityThreadEvents++; });
+      }
+    };
+  });
   await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: root.user, teamId: "TFIXTURE" }));
   await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
   await page.locator("#connection-text").filter({ hasText: "Live updates" }).waitFor();
+  await page.locator('[data-filter="done"]').click();
+  await page.locator("tbody tr .pill").filter({ hasText: "Done" }).waitFor();
   const sessionUrl = page.url();
   assert.equal(await page.evaluate(async () => {
     await globalThis.document.fonts.ready;
     return globalThis.document.fonts.check("13px Geist");
   }), true);
+  const runtimeEvent = async (change) => {
+    const before = await page.evaluate(() => globalThis.activityThreadEvents);
+    change();
+    await page.waitForFunction((previous) => globalThis.activityThreadEvents > previous, before);
+  };
   for (const engine of ["claude", "codex"]) {
     const run = { channelId: "C_ACTIVITY", slug: entry.slug, threadKey: root.ts, engine, authorId: root.user };
-    recordActiveRun("mobile-worker", run);
-    await page.locator("#summary").filter({ hasText: "1 active · 0 later · 1 working · 0 waiting" }).waitFor();
-    assert.equal(await page.locator("tbody tr .pill").innerText(), "Working");
+    await runtimeEvent(() => recordActiveRun("mobile-worker", run));
+    await page.locator("#summary").filter({ hasText: "0 visible · 1 done · 0 later · 0 working · 0 waiting" }).waitFor();
+    assert.equal(await page.locator("tbody tr .pill").innerText(), "Done");
     if (engine === "claude" && process.env.CG_ACTIVITY_SCREENSHOT) {
       await page.screenshot({ path: process.env.CG_ACTIVITY_SCREENSHOT, fullPage: true });
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -223,11 +241,11 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
       assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
       await page.setViewportSize({ width: 390, height: 844 });
     }
-    recordActiveRun("mobile-worker", { ...run, awaitingChoice: true });
-    await page.locator("#summary").filter({ hasText: "1 active · 0 later · 0 working · 1 waiting" }).waitFor();
-    assert.equal(await page.locator("tbody tr .pill").innerText(), "Waiting");
-    clearActiveRun("mobile-worker");
-    await page.locator("#summary").filter({ hasText: "0 active · 0 later · 0 working · 0 waiting" }).waitFor();
+    await runtimeEvent(() => recordActiveRun("mobile-worker", { ...run, awaitingChoice: true }));
+    await page.locator("#summary").filter({ hasText: "0 visible · 1 done · 0 later · 0 working · 0 waiting" }).waitFor();
+    assert.equal(await page.locator("tbody tr .pill").innerText(), "Done");
+    await runtimeEvent(() => clearActiveRun("mobile-worker"));
+    await page.locator("#summary").filter({ hasText: "0 visible · 1 done · 0 later · 0 working · 0 waiting" }).waitFor();
     assert.equal(page.url(), sessionUrl);
   }
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
@@ -607,8 +625,14 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   await page.getByRole("button", { name: "Resume: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#pinned-threads tr").count(), 1);
   await page.getByRole("button", { name: "Mark done: " + roots[0].text, exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 0);
+  await page.getByRole("button", { name: /^Completed/ }).click();
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor();
-  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "Done does not unpin");
+  assert.equal(await page.locator("#threads tr").count(), 1, "self-Done moves from pins to Completed");
+  await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
+  await page.locator("#pinned-threads tr").waitFor();
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "Reopen restores the saved pin preference");
+  await page.getByRole("button", { name: /^Active/ }).click();
   await page.locator("#search").fill("Second");
   assert.equal(await page.locator("#pinned-section").isVisible(), false);
   await page.locator("#search").fill("");
@@ -620,9 +644,10 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   assert.equal(await other.locator("#pinned-section").isVisible(), false);
   assert.equal(await other.locator("#threads tr").count(), 1);
   await otherContext.close();
-  await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
+  await page.getByRole("button", { name: "Mark done: " + roots[0].text, exact: true }).click();
   await page.waitForFunction(() => globalThis.document.getElementById("pinned-section").hidden);
   await page.getByRole("button", { name: /^Completed/ }).click();
+  await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
   await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#threads tr").count(), 1);
   assert.deepEqual(errors, []);
@@ -771,9 +796,14 @@ test("Activity channel pins collect future open threads, retain empty channels a
   assert.equal(await otherPage.locator("#pinned-section").isVisible(), false, "channel pins remain personal");
   await otherContext.close();
   for (const root of roots.filter((root) => root.user === ownerId)) setSlackThreadDone(channelId, root.ts, ownerId, true);
-  await page.waitForFunction(() => globalThis.document.querySelector("#pinned-channels .pinned-channel-count")?.textContent === "No open conversations");
-  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "explicit Done pin survives channel completion");
-  await page.locator("#pinned-channels").getByRole("button", { name: "Unpin channel: Pinned channel with a long name", exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.querySelector("#pinned-channels .pinned-channel-count")?.textContent === "No visible conversations");
+  assert.equal(await page.locator("#pinned-threads tr").count(), 0, "self-Done leaves both explicit and inherited pins");
+  await page.getByRole("button", { name: /^Completed/ }).click();
+  await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 1);
+  assert.equal(await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).count(), 1,
+    "Reopen restores the saved explicit pin");
+  await page.locator("#pinned-threads").getByRole("button", { name: "Unpin channel: Pinned channel with a long name", exact: true }).click();
   await page.waitForFunction(() => globalThis.document.getElementById("pinned-channels").hidden);
   assert.equal(await page.locator("#pinned-threads tr").count(), 1, "unpinning the channel preserves explicit thread pins");
   await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();

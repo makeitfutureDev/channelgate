@@ -269,7 +269,7 @@ export function createActivityRouter({
       pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
-        hidden: row.hidden_ms > 0, canComplete: row.starter_id === session.ownerId,
+        hidden: row.hidden_ms > 0, dismissed: row.dismissed_ms > 0, canComplete: row.starter_id === session.ownerId,
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         comment: Object.hasOwn(comments, JSON.stringify([row.channel_id, row.thread_ts])) ? comments[JSON.stringify([row.channel_id, row.thread_ts])] : "",
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,

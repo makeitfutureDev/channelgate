@@ -185,7 +185,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
   if (reconcile) await runBatch([...eligible.values()].sort((a, b) => a.checked_ms - b.checked_ms).slice(0, HISTORY_BATCH), verifySafely);
   const selection = () => [...eligible.values()]
     .filter((r) => !hiddenChannels.has(r.channel_id))
-    .filter((r) => view.filter === "all" ? r.status !== "done" : view.filter === "active" ? !["done", "later"].includes(r.status) : r.status === view.filter)
+    .filter((r) => view.filter === "all" ? r.status !== "done" : view.filter === "active" ? r.status !== "later" && !(r.status === "done" && r.dismissed_ms > 0) : r.status === view.filter)
     .sort((a, b) => RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
   let filtered;
   let pages;
@@ -295,44 +295,44 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   const authorized = [];
   const pinned = new Set(Array.isArray(requested.pinnedThreads) ? requested.pinnedThreads : []);
   const pinnedChannels = new Set(Array.isArray(requested.pinnedChannels) ? requested.pinnedChannels : []);
-  const isPinned = (row) => pinned.has(JSON.stringify([row.channel_id, row.thread_ts]))
-    || pinnedChannels.has(row.channel_id) && row.status !== "done";
-  let ordinaryCount = 0, hiddenCount = 0;
+  const isPinned = (row) => !row.hidden_ms && !(row.status === "done" && row.dismissed_ms > 0)
+    && (pinned.has(JSON.stringify([row.channel_id, row.thread_ts])) || pinnedChannels.has(row.channel_id));
+  let ordinaryCount = 0, hiddenCount = 0, archivedCount = 0;
   let truncated = false;
   for (const row of eligibleSlackThreadsForUser(userId)) {
     if (row.hidden_ms > 0 && !requested.includeHidden) continue;
-    // Inherited channel pins include open work only; explicit thread pins may include Done.
-    const status = row.later_ms > 0 ? slackThreadStatus(row, runtime) : runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
+    // Shared Done stays visible until this viewer completes it personally or hides it.
+    const status = slackThreadStatus(row, runtime);
+    const archived = status === "done" && row.dismissed_ms > 0;
     const hidden = row.hidden_ms > 0;
     const saved = !hidden && isPinned({ ...row, status });
     // Keep saved pins reachable when newer history fills the ordinary feed's bound. Pins
     // still pass exactly the same ownership, eligibility and live access checks below.
-    if ((hidden ? hiddenCount : ordinaryCount) === 1000 && !saved) { truncated = true; continue; }
+    if ((hidden ? hiddenCount : archived ? archivedCount : ordinaryCount) === 1000 && !saved) { truncated = true; continue; }
     const entry = channels.get(row.channel_id);
     if (!await access.allows(entry, row.thread_ts)) continue;
-    if (hidden) hiddenCount++; else if (!saved) ordinaryCount++;
-    // Completion continues to suppress reminders/Home. The browser exposes current work until
-    // it ends, then falls back to the same durable completion marker.
+    if (hidden) hiddenCount++; else if (archived) archivedCount++; else if (!saved) ordinaryCount++;
+    // Completion does not cancel runtime work; the row keeps its shared Done state.
     const since = status === "working" ? workingSince.get(`${row.channel_id}::${row.thread_ts}`) : undefined;
     authorized.push({ ...row, channelName: await activityChannelName(entry), isDM: isActivityDM(entry), status, ...(since ? { working_since_ms: since } : {}) });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>
-    (view.filter === "all-statuses" || (view.filter === "all" ? row.status !== "done" : view.filter === "active" ? !["done", "later"].includes(row.status) : row.status === view.filter))
+    (view.filter === "all-statuses" || (view.filter === "all" ? row.status !== "done" : view.filter === "active" ? row.status !== "later" && !(row.status === "done" && row.dismissed_ms > 0) : row.status === view.filter))
     && (!needle || `${row.title} ${row.channelName}`.toLocaleLowerCase().includes(needle)))
-    .sort((a, b) => Number(a.hidden_ms > 0) - Number(b.hidden_ms > 0) || RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
+    .sort((a, b) => Number(a.hidden_ms > 0) - Number(b.hidden_ms > 0) || Number(a.status === "done" && a.dismissed_ms > 0) - Number(b.status === "done" && b.dismissed_ms > 0) || RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(view.page, pages - 1);
   return { ...view, search, pageSize, page, pages, total: filtered.length,
     rows: filtered.filter((row, index) => (index >= page * pageSize && index < (page + 1) * pageSize)
-      || (requested.includeHidden && row.hidden_ms > 0) || isPinned(row)), unavailable: discovery.unavailable || access.unavailable, truncated };
+      || (requested.includeHidden && row.hidden_ms > 0) || (view.filter === "all-statuses" && row.status === "done" && row.dismissed_ms > 0) || isPinned(row)), unavailable: discovery.unavailable || access.unavailable, truncated };
 }
 
 // Only local display state participates: unchanged Activity pages never poll Slack history.
 export function homeThreadsRefreshKey(userId) {
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   return JSON.stringify(eligibleSlackThreadsForUser(userId).map((row) => [
-    row.channel_id, row.thread_ts, row.title, row.last_message_ms, row.hidden_ms, slackThreadStatus(row, runtime),
+    row.channel_id, row.thread_ts, row.title, row.last_message_ms, row.hidden_ms, row.dismissed_ms, slackThreadStatus(row, runtime),
     runtime.get(`${row.channel_id}::${row.thread_ts}`) || "",
   ]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)));
 }
@@ -342,7 +342,7 @@ export function homeThreadBlocks(snapshot) {
   const state = { filter, page };
   const blocks = [
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: "*My threads* · ✅ / Done / answer-feedback 👍 hides completed work. Emoji 👍 reactions leave work open. Reopen from Completed." } },
+    { type: "section", text: { type: "mrkdwn", text: "*My threads* · Completing a thread removes it from your Active view. Threads completed by someone else stay visible as Done until you Hide them in Activity. Reopen your completed work from Completed." } },
     { type: "actions", elements: [
       { type: "static_select", action_id: "cg_home_threads_filter", placeholder: { type: "plain_text", text: "Status" },
         initial_option: { text: { type: "plain_text", text: LABELS[filter] }, value: filter },
@@ -365,10 +365,11 @@ export function homeThreadBlocks(snapshot) {
       ? `<!date^${Math.floor(at / 1000)}^{date_short_pretty} at {time}|${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC>`
       : "Unavailable";
     const done = row.status === "done";
+    const selfDone = done && row.dismissed_ms > 0;
     blocks.push(
       { type: "divider" },
       { type: "section", text: { type: "mrkdwn", text: `<${row.url}|${esc(title.length > 110 ? title.slice(0, 107) + "…" : title)}>\n${esc(row.channelName)} · ${ICONS[row.status]} ${done ? "Done" : LABELS[row.status]} · Last message ${date}` },
-        ...(row.canComplete !== false ? { accessory: { ...button(done ? "Reopen" : "✓ Done", done ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }), ...(done ? {} : { style: "primary" }) } } : {}) },
+        ...(row.canComplete !== false ? { accessory: { ...button(selfDone ? "Reopen" : "✓ Done", selfDone ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }), ...(selfDone ? {} : { style: "primary" }) } } : {}) },
     );
   }
   const navigation = [];
@@ -388,7 +389,7 @@ export async function markAllSlackThreadsDone(client, userId, { beforeWrite = as
   const unsubscribe = onConfigChange(() => { version++; });
   const result = { marked: 0, skipped: 0, failed: 0 };
   try {
-    const candidates = eligibleSlackThreadsForUser(userId).filter((row) => row.starter_id === userId && !row.hidden_ms && !slackThreadIsDone(row));
+    const candidates = eligibleSlackThreadsForUser(userId).filter((row) => row.starter_id === userId && !row.hidden_ms && !(slackThreadIsDone(row) && row.dismissed_ms > 0));
     for (let index = 0; index < candidates.length; index++) {
       const candidate = candidates[index];
       try {
@@ -406,7 +407,7 @@ export async function markAllSlackThreadsDone(client, userId, { beforeWrite = as
         const allowed = await access.allows(entry && { ...entry, channelId: candidate.channel_id }, candidate.thread_ts);
         await beforeWrite(candidate);
         const row = getSlackThread(candidate.channel_id, candidate.thread_ts);
-        if (!allowed || checkedVersion !== version || row?.starter_id !== userId || getSlackThreadParticipant(row.channel_id, row.thread_ts, userId)?.hidden_ms > 0 || !isSlackThreadEligible(row) || slackThreadIsDone(row)) { result.skipped++; continue; }
+        if (!allowed || checkedVersion !== version || row?.starter_id !== userId || getSlackThreadParticipant(row.channel_id, row.thread_ts, userId)?.hidden_ms > 0 || !isSlackThreadEligible(row) || (slackThreadIsDone(row) && getSlackThreadParticipant(row.channel_id, row.thread_ts, userId)?.dismissed_ms > 0)) { result.skipped++; continue; }
         if (!setSlackThreadDone(row.channel_id, row.thread_ts, userId, true)) { result.skipped++; continue; }
         markDone(userId, row.channel_id, row.thread_ts);
         // setSlackThreadDone durably queues root checks. The existing bounded marker worker
