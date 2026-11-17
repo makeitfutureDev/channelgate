@@ -6,6 +6,10 @@
   checks as Activity. The call stays open and running work continues. New threads started by
   voice belong to their caller, so they can appear in Activity and be completed there too.
 
+- When a voice-dispatched task finishes in a conversation the call has since left, the voice
+  only announces that an answer is waiting there and offers to switch back, instead of reading
+  the result into the current conversation.
+
 - Play the voice-call audio straight from the AudioContext again: routing it through a media
   element (added earlier today for phones) caused lag and crackle. A looping silent track now
   holds the phone's audio session instead, so a locked screen still keeps the call.

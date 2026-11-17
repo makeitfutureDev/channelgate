@@ -368,16 +368,28 @@ test("run_task posts the spoken request, runs a turn as the caller in the bound 
   await f.manager.end(call.id, "U_MINE", "test over");
 });
 
-test("a task finishing after the call moved elsewhere says where it ran", async () => {
+test("a task finishing after the call moved elsewhere is announced without its result, which check_tasks still returns", async () => {
   await channel(); await channel("C_SALES");
-  const f = fixture({ runner: async (args) => { await tick(30); return { content: "Pipeline summarized.", engine: "claude" }; } });
+  const f = fixture({ runner: async (args) => { await tick(30); return { content: "Pipeline summarized: revenue up 12%.", engine: "claude" }; } });
   const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_SALES", threadTs: "44.000001", client: f.client });
   const session = FakeSession.instances[0]; session.live();
   session.emit("tool_call", { id: "c1", name: "run_task", args: { request: "Summarize" } });
   await tick(5);
   session.emit("tool_call", { id: "c2", name: "switch_conversation", args: { id: "C_WORK:55.000001" } });
   await tick(60);
-  assert.match(session.texts.at(-1), /^\[gateway\] Task 1 \(in #c_sales, not the current conversation\) finished/);
+  const notice = session.texts.at(-1);
+  assert.match(notice, /^\[gateway\] Task 1 \("Summarize"\) in #c_sales has finished, but the call is no longer in that conversation\. Do NOT read its result now/);
+  assert.doesNotMatch(notice, /revenue up 12%/, "the content stays out of the announcement");
+  session.emit("tool_call", { id: "c3", name: "check_tasks", args: {} });
+  await tick();
+  assert.match(session.responses.at(-1).response.tasks[0].summary, /revenue up 12%/);
+  assert.match(session.options.systemInstruction, /a conversation the call has LEFT, do not read the result/);
+  // Back in the thread the task ran in, a result is relayed in full.
+  session.emit("tool_call", { id: "c4", name: "switch_conversation", args: { id: "C_SALES:44.000001" } });
+  await tick(20);
+  session.emit("tool_call", { id: "c5", name: "run_task", args: { request: "Summarize again" } });
+  await tick(60);
+  assert.match(session.texts.at(-1), /^\[gateway\] Task 2 finished\. Result: Pipeline summarized: revenue up 12%/);
   await f.manager.end(call.id, "U_MINE");
 });
 
