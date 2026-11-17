@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show shared agent conversations in each participant’s Activity. Add personal Hide and a Hidden
+  view with Show; your next original message restores a hidden conversation, while other people’s
+  activity leaves it hidden. Shared completion remains with the starter.
+
 - Make the voice call a pure relay between the caller and the channel agent: the voice is told it
   is the phone line, not the agent, must assume nothing beyond the messages it has read and what
   tools return, and must hand every question it cannot answer from a message to the agent with

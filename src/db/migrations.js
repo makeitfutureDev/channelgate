@@ -1359,4 +1359,24 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 56,
+    up(db) {
+      // Visibility belongs to each participant; starter_id remains the completion authority.
+      db.exec(`
+        CREATE TABLE slack_thread_participants (
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          hidden_ms INTEGER NOT NULL DEFAULT 0,
+          last_own_message_ts TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY(channel_id, thread_ts, user_id),
+          FOREIGN KEY(channel_id, thread_ts) REFERENCES slack_threads(channel_id, thread_ts) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_slack_thread_participants_user ON slack_thread_participants(user_id, channel_id, thread_ts);
+        INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts)
+          SELECT channel_id,thread_ts,starter_id,thread_ts FROM slack_threads WHERE starter_id!='';
+      `);
+    },
+  },
 ];

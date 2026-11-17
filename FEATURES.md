@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Shared Activity participation and personal Hide (2026-11-17)
+
+An indexed agent conversation appears in Activity for its starter and each authorized person who
+sends a new original human message in it, including replies without an agent mention. The starter
+remains the owner of shared Done/Reopen and Later actions. Participants can open the thread,
+pin it and keep their own comments, subject to current channel, private-membership and sudo access.
+
+**Hide** removes a conversation only from the signed-in person's ordinary Activity views and
+pinned rows. A **Hidden** view offers **Show**; the next newer original message from that same
+person also restores it. Other people's messages, bots, reactions, edits and duplicate/delayed
+messages cannot restore it. Hide survives reconnects and restarts and never stops work, changes
+completion, or affects another person's list. Mark All Done affects only visible threads the
+viewer started. Existing indexed starters are migrated automatically; additional participants
+are collected from new messages after installation, without a historical transcript scan.
+
 ## Activity call history (2026-11-16)
 
 Activity has a **Calls** page for the signed-in person's completed agent calls, newest first,

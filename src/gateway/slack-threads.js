@@ -1,6 +1,7 @@
-// Personal App Home thread index. Ownership comes from the Slack root or an admitted fork's
-// durable creation record, never from a follow-up participant. Runtime state stays in its
-// existing tables; this index keeps bounded root previews and explicit completion/outcome facts.
+// Personal Activity index. Ownership comes from the Slack root or an admitted fork's
+// durable creation record; participants have independent visibility without acquiring ownership.
+// Runtime state stays in its existing tables; this index keeps bounded root previews and
+// explicit completion/outcome facts.
 import { getDb, fromJson } from "../db/index.js";
 import { slackThreadFor, isSlackTs } from "../slack/thread-keys.js";
 import { messageHasCompletionReaction } from "./completion-reactions.js";
@@ -24,6 +25,7 @@ export function indexSlackFork({ channelId, slug, threadTs, sourceThreadTs, crea
     .run(channelId, threadTs, slug, creatorId, String(title || "Fork").replace(/\s+/g, " ").trim().slice(0, 160), at, at, sourceThreadTs, botUserId);
   const row = getSlackThread(channelId, threadTs);
   if (row?.starter_id !== creatorId || row.fork_source_ts !== sourceThreadTs || row.fork_bot_user_id !== botUserId) return null;
+  ensureSlackThreadOwnerParticipant(row);
   notifyThreadChanged({ channelId, threadTs });
   return row;
 }
@@ -55,6 +57,7 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
     last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
     .run(channelId, root.ts, slug, owner, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);
   const current = getSlackThread(channelId, root.ts);
+  ensureSlackThreadOwnerParticipant(current);
   if (!previous || ["starter_id", "title", "slug", "agent_engaged", "last_message_ms"].some((key) => previous[key] !== current[key])) {
     notifyThreadChanged({ channelId, threadTs: root.ts });
   }
@@ -77,7 +80,7 @@ export function renameSlackThread({ channelId, threadTs, title, eventTs } = {}) 
   return Boolean(changed);
 }
 
-export async function trackSlackThread(client, { channelId, slug, threadKey, messageTs }) {
+export async function trackSlackThread(client, { channelId, slug, threadKey, messageTs, participantId = "" }) {
   const threadTs = slackThreadFor(threadKey);
   if (!threadTs) return;
   try {
@@ -87,6 +90,7 @@ export async function trackSlackThread(client, { channelId, slug, threadKey, mes
       if (!root || !indexSlackThread({ channelId, slug, root, agentEngaged: true })) return;
     }
     markSlackThreadEngaged(channelId, threadTs);
+    if (participantId) recordSlackThreadParticipation(channelId, threadTs, participantId, messageTs);
     // Discovery updates activity; the raw human-message observer owns reopening.
     const at = Math.floor(Number(messageTs) * 1000);
     if (Number.isFinite(at)) getDb().prepare(`UPDATE slack_threads SET updated_ms=MAX(updated_ms,?),
@@ -184,8 +188,54 @@ export function skipSlackThreadCandidate({ channelId, slug, threadTs }) {
   notifyThreadChanged({ channelId, threadTs });
 }
 
+function ensureSlackThreadOwnerParticipant(row) {
+  if (!row?.starter_id) return;
+  getDb().prepare(`INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts)
+    VALUES(?,?,?,?) ON CONFLICT DO NOTHING`).run(row.channel_id, row.thread_ts, row.starter_id, row.thread_ts);
+}
+
+export function getSlackThreadParticipant(channelId, threadTs, userId) {
+  return getDb().prepare("SELECT * FROM slack_thread_participants WHERE channel_id=? AND thread_ts=? AND user_id=?")
+    .get(channelId, threadTs, userId) || null;
+}
+
+export function isSlackThreadParticipant(channelId, threadTs, userId) {
+  return Boolean(userId && getDb().prepare(`SELECT 1 FROM slack_thread_participants p
+    JOIN slack_threads t USING(channel_id,thread_ts)
+    WHERE p.channel_id=? AND p.thread_ts=? AND p.user_id=? AND t.starter_id!=''`)
+    .get(channelId, threadTs, userId));
+}
+
+// Call only for an authorized, original human message. An own-message watermark and the
+// hide time fence both Slack envelope duplicates and a delayed first indexing of that message.
+export function recordSlackThreadParticipation(channelId, threadKey, userId, messageTs) {
+  const threadTs = slackThreadFor(threadKey);
+  if (!userId || !threadTs || !isSlackTs(messageTs)) return false;
+  const changed = getDb().prepare(`INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts)
+    SELECT channel_id,thread_ts,?,? FROM slack_threads WHERE channel_id=? AND thread_ts=? AND starter_id!=''
+    ON CONFLICT(channel_id,thread_ts,user_id) DO UPDATE SET
+      last_own_message_ts=excluded.last_own_message_ts,
+      hidden_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>hidden_ms THEN 0 ELSE hidden_ms END
+    WHERE CAST(excluded.last_own_message_ts AS REAL)>CAST(last_own_message_ts AS REAL)`)
+    .run(userId, String(messageTs), channelId, threadTs).changes;
+  if (changed) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(changed);
+}
+
+export function setSlackThreadHidden(channelId, threadTs, userId, hidden, at = Date.now()) {
+  if (!Number.isSafeInteger(at) || at <= 0 || !isSlackThreadParticipant(channelId, threadTs, userId)) return false;
+  const changed = getDb().prepare(`UPDATE slack_thread_participants SET hidden_ms=CASE WHEN ? THEN
+    MAX(?,hidden_ms,CAST(CAST(last_own_message_ts AS REAL)*1000 AS INTEGER)) ELSE 0 END
+    WHERE channel_id=? AND thread_ts=? AND user_id=?`)
+    .run(hidden ? 1 : 0, at, channelId, threadTs, userId).changes;
+  if (changed) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(changed);
+}
+
 export function slackThreadsForUser(userId) {
-  return getDb().prepare("SELECT * FROM slack_threads WHERE starter_id=? ORDER BY updated_ms DESC,thread_ts DESC").all(userId);
+  return getDb().prepare(`SELECT t.*,p.hidden_ms,p.last_own_message_ts FROM slack_threads t
+    JOIN slack_thread_participants p USING(channel_id,thread_ts)
+    WHERE p.user_id=? AND t.starter_id!='' ORDER BY t.updated_ms DESC,t.thread_ts DESC`).all(userId);
 }
 
 // Reconstruct runtime state without importing the engine/spawn graph into App Home.

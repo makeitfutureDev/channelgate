@@ -6,7 +6,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, getUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { indexSlackThread, indexSlackFork, getSlackThread, setSlackThreadLater, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
+const { indexSlackThread, indexSlackFork, getSlackThread, recordSlackThreadParticipation, setSlackThreadHidden, setSlackThreadLater, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
 const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
@@ -1454,4 +1454,73 @@ test("call post links refuse sudo threads and recheck revocation during permalin
   await started.promise;
   await setUser("U_MINE", { approved: false }); gate.resolve();
   assert.equal((await pending).status, 403);
+});
+
+
+test("participants share Activity, hide independently, reopen themselves and cannot complete someone else's work", async (t) => {
+  const f = await fixture(t);
+  await f.root();
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_OTHER", "101.000001");
+  const owner = await f.login(), participant = await f.login("U_OTHER");
+  const feed = async (session) => (await f.request(session.url + "/api/threads", { headers: session.headers })).json();
+  const action = (session, operation, body, headers = session.post) => f.request(session.url + "/api/" + operation,
+    { method: "POST", headers, body: JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", ...body }) });
+  assert.equal((await feed(participant)).rows[0].canComplete, false);
+  assert.equal((await feed(owner)).rows[0].canComplete, true);
+  assert.equal((await f.request(participant.url + "/open/C_WORK/100.000001", { headers: participant.headers })).status, 303);
+  for (const operation of ["completion", "later"]) assert.equal((await action(participant, operation, { done: true, later: true })).status, 403);
+  for (const [operation, body] of [["pin", { pinned: true }], ["comment", { comment: "My private note" }]]) {
+    assert.equal((await action(participant, operation, body)).status, 200);
+  }
+  assert.equal((await action(participant, "hide", { hidden: true, userId: "U_MINE" })).status, 200);
+  assert.equal((await feed(participant)).rows[0].hidden, true);
+  assert.equal((await feed(owner)).rows[0].hidden, false);
+  assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, 0);
+  assert.equal(f.markerCalls.length, 0);
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_MINE", String(Date.now() / 1000 + 1));
+  assert.equal((await feed(participant)).rows[0].hidden, true, "other authors never restore this viewer");
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_OTHER", "101.000001");
+  assert.equal((await feed(participant)).rows[0].hidden, true, "old duplicate cannot undo Hide");
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_OTHER", (Date.now() / 1000 + 2).toFixed(6));
+  assert.equal((await feed(participant)).rows[0].hidden, false);
+  assert.equal((await action(participant, "hide", { hidden: true })).status, 200);
+  assert.equal((await action(participant, "hide", { hidden: false })).status, 200);
+  assert.equal((await feed(participant)).rows[0].hidden, false);
+  const bulk = await action(participant, "completion-all", { confirmed: true });
+  assert.equal((await bulk.json()).marked, 0);
+  setSlackThreadHidden("C_WORK", "100.000001", "U_MINE", true);
+  const ownerBulk = await action(owner, "completion-all", { confirmed: true });
+  assert.equal((await ownerBulk.json()).marked, 0, "bulk does not complete hidden work");
+});
+
+test("Hide requires participation, current private membership and CSRF", async (t) => {
+  const f = await fixture(t);
+  await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
+  f.members.set("G_PRIVATE", ["U_MINE", "U_OTHER"]);
+  const other = await f.login("U_OTHER");
+  const hide = (body = {}, headers = other.post) => f.request(other.url + "/api/hide", { method: "POST", headers,
+    body: JSON.stringify({ channelId: "G_PRIVATE", threadTs: "100.000001", hidden: true, ...body }) });
+  assert.equal((await hide()).status, 403, "membership alone is not participation");
+  recordSlackThreadParticipation("G_PRIVATE", "100.000001", "U_OTHER", "101.000001");
+  assert.equal((await hide({}, { ...other.post, "X-CG-CSRF": "wrong" })).status, 403);
+  assert.equal((await hide({}, { ...other.post, Origin: "https://other.example" })).status, 403);
+  assert.equal((await hide({ hidden: "true" })).status, 400);
+  assert.equal((await hide()).status, 200);
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  assert.equal((await hide({ hidden: false })).status, 403);
+  assert.deepEqual((await (await f.request(other.url + "/api/threads", { headers: other.headers })).json()).rows, []);
+});
+
+test("participant streams receive personal Hide and Show immediately", async (t) => {
+  const f = await fixture(t);
+  await f.root();
+  recordSlackThreadParticipation("C_WORK", "100.000001", "U_OTHER", "101.000001");
+  const other = await f.login("U_OTHER");
+  const stream = await f.request(other.url + "/stream", { headers: other.headers });
+  const reader = stream.body.getReader(); t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows[0].hidden, false);
+  setSlackThreadHidden("C_WORK", "100.000001", "U_OTHER", true);
+  assert.equal((await nextEvent(reader)).rows[0].hidden, true);
+  setSlackThreadHidden("C_WORK", "100.000001", "U_OTHER", false);
+  assert.equal((await nextEvent(reader)).rows[0].hidden, false);
 });

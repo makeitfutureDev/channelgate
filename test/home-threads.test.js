@@ -6,7 +6,7 @@ ensureTestEnv();
 const { getDb, toJson } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
-const { getSlackThread, indexSlackThread, indexSlackFork, slackThreadRootOwner, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
+const { getSlackThread, setSlackThreadHidden, indexSlackThread, indexSlackFork, slackThreadRootOwner, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
 const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
@@ -711,6 +711,7 @@ test("local Activity snapshots cap visible data and flag partial results", async
   const c = await channel();
   const insert = getDb().prepare("INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,agent_engaged) VALUES(?,?,?,?,?,?,?,1)");
   for (let n = 0; n < 1001; n++) insert.run(c.channelId, `${100 + n}.000001`, c.slug, "U_MINE", "Task", n, n);
+  getDb().exec("INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts) SELECT channel_id,thread_ts,starter_id,thread_ts FROM slack_threads");
   const snapshot = await activityThreadSnapshot(client, "U_MINE", { pageSize: 10000 });
   assert.equal(snapshot.total, 1000); assert.equal(snapshot.rows.length, 1000);
   assert.equal(snapshot.truncated, true); assert.equal(snapshot.pages, 1);
@@ -1725,4 +1726,28 @@ test("fork titles use the new child label and explicit child renames survive his
   const snapshot = await activityThreadSnapshot(client, "U_MINE", { search: "New fork thread name" });
   assert.deepEqual(snapshot.rows.map(row => row.title), ["New fork thread name"]);
   assert.equal(getSlackThread(c.channelId, "100.000001").title, "Old source title");
+});
+
+
+test("Hide during a bulk root read wins over Mark All Done", async () => {
+  const c = await channel(); root(c, "100.000001");
+  const read = client.conversations.replies;
+  client.conversations.replies = async (args) => {
+    setSlackThreadHidden(c.channelId, "100.000001", "U_MINE", true);
+    return read(args);
+  };
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 0, skipped: 1, failed: 0 });
+  assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
+});
+
+test("hidden history has its own capacity and cannot evict visible Activity", async () => {
+  const c = await channel(); root(c, "100.000001");
+  for (let i = 0; i < 1000; i++) {
+    const ts = `${200 + i}.000001`; root(c, ts);
+    setSlackThreadHidden(c.channelId, ts, "U_MINE", true);
+  }
+  const snapshot = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses", pageSize: 1000, includeHidden: true });
+  assert.equal(snapshot.rows.length, 1001);
+  assert.equal(snapshot.rows.filter((row) => !row.hidden_ms).length, 1);
+  assert.equal(snapshot.rows.find((row) => !row.hidden_ms).thread_ts, "100.000001");
 });

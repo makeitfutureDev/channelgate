@@ -654,6 +654,11 @@ async function ensureUserKnown(client, userId) {
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
 export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null, queuedForkHandle = null } = {}) {
+  // Capture original-message provenance before canonical hydration. Reaction and edit
+  // adapters synthesize requests with another timestamp; they are not new human replies.
+  const activityParticipantId = ["message", "app_mention"].includes(event.type) && !event.edited
+    && !event.bot_id && !event.app_id && event.user !== botUserId
+    && [undefined, "file_share", "thread_broadcast", "me_message"].includes(event.subtype) ? event.user : "";
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -1682,7 +1687,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // Discovery is optional preflight behind queue ownership and visible progress. A slow
       // Slack root lookup must not leave a request outside durable Stop/restart handling.
       if (!questionSubmissionId && !syntheticFork && !queuedForkHandle) {
-        await trackSlackThread(client, { channelId: event.channel, slug: entry.slug, threadKey: replyTs || threadKey, messageTs: event.ts });
+        await trackSlackThread(client, { channelId: event.channel, slug: entry.slug, threadKey: replyTs || threadKey, messageTs: event.ts,
+          participantId: activityParticipantId });
       }
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages
       // for context. Gated on the persistent has-ever-had-a-session marker (not "no current
