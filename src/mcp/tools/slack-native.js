@@ -14,6 +14,7 @@ import { channelHistory, threadReplies } from "../../slack/read.js";
 import { downloadChannelFile, formatBytes, uploadsSubFor } from "../../slack/download.js";
 import { resolveSlackConfig } from "../../config/settings.js";
 import { effectiveWorkDir } from "../../gateway/folders.js";
+import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
 import { platformOfConversation } from "../../platforms/ids.js";
 
@@ -229,7 +230,7 @@ export function register(server, ctx) {
       let opened;
       try {
         const meta = await loadMeta();
-        opened = await openConfinedFile(effectiveWorkDir(slug, { ...(meta || {}), _slug: slug }), relative);
+        opened = await openConfinedFile(channelFileRoot(slug, meta), relative);
       } catch (e) {
         return text(`Sharing refused: ${String(e?.message || e)}`);
       }

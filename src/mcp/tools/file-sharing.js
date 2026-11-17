@@ -16,7 +16,7 @@
 // uploads, HubSpot and the rest of the Composio surface in one step.
 import { z } from "zod";
 
-import { effectiveWorkDir } from "../../gateway/folders.js";
+import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { openConfinedFile } from "../../gateway/confined-file.js";
 import { stageFileForComposio, COMPOSIO_STAGE_MAX_BYTES, COMPOSIO_WORKBENCH_STAGE_MAX_BYTES } from "../../gateway/composio-files.js";
 import { composioUrl } from "../../gateway/mcp-catalog.js";
@@ -38,7 +38,7 @@ import { logEvent } from "../../util/logger.js";
 import { platformOfConversation } from "../../platforms/ids.js";
 
 function workspaceFor(slug, meta) {
-  return effectiveWorkDir(slug, { ...(meta || {}), _slug: slug });
+  return channelFileRoot(slug, meta);
 }
 
 function clean(error) {

@@ -34,6 +34,18 @@ at the kernel.
   `permissions.additionalDirectories` (both variants, so Claude's file tools may work there) and
   the run preamble names each mounted folder and its mode; nothing else outside the named folders
   is mounted. A `/sudo` host turn adds nothing — the daemon account sees the host already.
+- **Visible on every file door.** The Slack file explorer (📂 Files) lists the channel's
+  additional folders first at the working folder's root as `🗂️ <name> · mounted <host path>`
+  (`· read-only` when so), each a browseable branch addressed as `@mounts/<name>/…` with the
+  working folder's own confinement (traversal, escaping symlinks and unknown mount names
+  refused; Up from a mount's top level returns to the root). Preview, share, send-as-DM,
+  browser download/edit/upload grants, public links, Composio staging, mail attachments and the
+  `workspace_list` / `workspace_read` / `workspace_search` tools all resolve the same
+  `@mounts/<name>` paths through one root (`src/gateway/channel-file-root.js`). A read-only
+  mount refuses every write on every door with the mount named — the daemon writes on the host,
+  not through the container's mount, so the explorer enforces the mode itself. A mount's name is
+  its folder's basename (`-2`, `-3` on collisions); a vanished mount is shown without controls.
+  The admin UI's *Additional folders* rows keep the path visible beside the mode selector.
 - **Symlinks on top.** Once a folder is mounted, `ln -s /host/shared shared` inside the working
   folder resolves in the container; the agent may create such links on request. A link to a
   folder that is not mounted is broken there, and the `gateway-usage` administration reference

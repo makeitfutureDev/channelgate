@@ -14,6 +14,7 @@ const { App, LogLevel } = pkg;
 
 import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, getUser, setUser, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
+import { channelFileRoot } from "../gateway/channel-file-root.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { modeLabel, isAuthorized, canManage, modeSettingsPatch } from "../gateway/modes.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
@@ -336,7 +337,8 @@ export async function fileExplorerContext(client, { channelId, userId, expectedS
     const members = await listConversationMemberIds(client, channelId);
     if (!members.includes(userId)) throw new Error("You are no longer a member of this channel.");
   }
-  return { entry, meta, userIsAdmin, userIsApproved, root: effectiveWorkDir(entry.slug, meta) };
+  // The working folder plus the channel's additional folders as named mounts (channel-file-root.js).
+  return { entry, meta, userIsAdmin, userIsApproved, root: channelFileRoot(entry.slug, meta) };
 }
 
 export async function handleMenuCommand({ command, ack, respond, client }) {

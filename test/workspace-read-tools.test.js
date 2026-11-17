@@ -61,7 +61,12 @@ test.before(async () => {
   await symlink(outside, path.join(workdir, "escape.txt"));
   await setUser("U_WORKSPACE_READ", { name: "Workspace Reader", approved: true, isAdmin: false });
   await upsertChannelEntry(channelId, { name: slug, type: "channel", isDM: false });
-  await saveChannelMeta(slug, { channelId, platform: "slack", workDir: workdir, allowBash: false, autoMode: false, adminMode: false });
+  // An additional folder beside the work folder (src/gateway/extra-folders.js): reachable as
+  // `@mounts/shared` through the same tools, with the same confinement.
+  await mkdir(path.join(workspaceRoot, "shared", "sub"), { recursive: true });
+  await writeFile(path.join(workspaceRoot, "shared", "sub", "note.txt"), "mounted needle\n");
+  await symlink(outside, path.join(workspaceRoot, "shared", "escape.txt"));
+  await saveChannelMeta(slug, { channelId, platform: "slack", workDir: workdir, allowBash: false, autoMode: false, adminMode: false, extraFolders: [{ path: path.join(workspaceRoot, "shared"), mode: "ro" }] });
 });
 
 for (const engine of ["claude", "codex"]) {
@@ -97,6 +102,19 @@ for (const engine of ["claude", "codex"]) {
       const escaped = resultText(await client.callTool({ name: "workspace_read", arguments: { path: "escape.txt" } }));
       assert.match(escaped, /refused.*points outside/i);
       assert.doesNotMatch(escaped, /must not leak/);
+
+      // The additional folder: listed at the root, readable and searchable under its prefix,
+      // confined exactly like the work folder.
+      assert.match(listed, /dir\t@mounts\/shared/);
+      const mounted = resultText(await client.callTool({ name: "workspace_list", arguments: { path: "@mounts/shared" } }));
+      assert.match(mounted, /dir\t@mounts\/shared\/sub/);
+      assert.match(mounted, /unavailable\t@mounts\/shared\/escape\.txt/);
+      assert.equal(resultText(await client.callTool({ name: "workspace_read", arguments: { path: "@mounts/shared/sub/note.txt" } })), "mounted needle\n");
+      assert.match(resultText(await client.callTool({ name: "workspace_search", arguments: { query: "mounted needle" } })), /@mounts\/shared\/sub\/note\.txt:1:mounted needle/);
+      const mountEscape = resultText(await client.callTool({ name: "workspace_read", arguments: { path: "@mounts/shared/escape.txt" } }));
+      assert.match(mountEscape, /refused.*points outside the mounted folder/i);
+      assert.doesNotMatch(mountEscape, /must not leak/);
+      assert.match(resultText(await client.callTool({ name: "workspace_read", arguments: { path: "@mounts/nope/x" } })), /No additional folder named/);
     });
   });
 }
