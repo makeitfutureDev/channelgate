@@ -2,6 +2,16 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make the voice call a pure relay between the caller and the channel agent: the voice is told it
+  is the phone line, not the agent, must assume nothing beyond the messages it has read and what
+  tools return, and must hand every question it cannot answer from a message to the agent with
+  `run_task`. A call opened from a thread reads up to 40 of its messages before it starts. A call
+  at a channel's top level no longer opens a placeholder thread: the first spoken request is
+  posted as a normal channel message whose thread the agent answers in and the call follows.
+  On phones the call now behaves like a call: a screen wake lock while the call is up, playback
+  through a media element so a locked screen keeps the audio session, lock-screen call controls,
+  and leaving the page only suspends the call for 45 seconds instead of hanging up.
+
 - Sort Activity channel groups by their latest conversation activity, updating their order live.
 
 - Add Activity → Calls with private completed-call history, duration, estimated voice cost,

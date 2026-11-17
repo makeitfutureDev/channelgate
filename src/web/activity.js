@@ -408,7 +408,11 @@ export function createActivityRouter({
     try {
       const { session } = await context(req);
       if (!csrfOk(req, session)) return unavailable(res, 403);
-      const ended = await callsFor().end(req.params.callId, session.ownerId, "the caller hung up");
+      // `grace=1` is the browser's pagehide beacon: a phone locking its screen or an app going to
+      // the background fires it like a closing tab, so the call is only ended if nothing resumes.
+      const calls = callsFor();
+      if (req.query?.grace === "1" && typeof calls.suspend === "function") return res.json({ ok: calls.suspend(req.params.callId, session.ownerId) });
+      const ended = await calls.end(req.params.callId, session.ownerId, "the caller hung up");
       return res.json({ ok: ended });
     } catch (error) { return unavailable(res, error.status || 404); }
   });
