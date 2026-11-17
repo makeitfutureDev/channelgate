@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix Composio file staging on consumer (MCP) keys handing out keys whose file Drive, Gmail and
+  Slack could not retrieve (storage HTTP 404): the gateway now uploads through the workbench's
+  checked upload helper from the sandbox's own `/tmp` instead of naming a key on the s3fs mount,
+  and verifies the stored object is retrievable before returning the key. A file that cannot be
+  fetched fails the staging call with the status instead of reporting success.
+
 - Keep Activity signed in across gateway restarts: sessions now persist in the database (only the
   cookie secret's hash is stored), and a passkey sign-in lasts thirty days instead of twelve hours.
   Slack-link launches and admin hand-offs keep the twelve-hour session.
