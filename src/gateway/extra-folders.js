@@ -17,7 +17,7 @@ import path from "node:path";
 import { realpathSync, statSync } from "node:fs";
 
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
-import { forbiddenWorkDirReason } from "./workdir-boundary.js";
+import { sensitiveWorkDirRoots } from "./workdir-boundary.js";
 
 export const EXTRA_FOLDER_MODES = ["rw", "ro"];
 export const MAX_EXTRA_FOLDERS = 16;
@@ -73,10 +73,13 @@ export function validateExtraFolder(candidate, { slug = "", workDir = "", others
     isDir = false;
   }
   if (!isDir) return refuse("is not a directory", { prefix: "", subject: real });
-  // The same trees the work folder may never be: it is mounted the same way. Another conversation's
-  // DEFAULT folder is refused outright — the work folder's "link to that shared setup" exception
-  // has no meaning for an extra mount; another channel's CUSTOM project folder stays allowed.
-  const forbidden = forbiddenWorkDirReason(real, { slug });
+  // Only the daemon's own trees are refused (home itself, the gateway root with the database and
+  // config, ~/.ssh, ~/.claude, ~/.codex, container storage, the hidden artifact trees, and any
+  // parent of those). ANY conversation folder is allowed — another channel's default folder
+  // included, instructions, memory and uploads with it: mounting it is an admin's explicit decision
+  // that this channel's members may see that conversation (Tiberiu, 2026-11-17). The workspace
+  // root itself still falls out as a parent of the artifact tree it contains.
+  const forbidden = forbiddenExtraFolderRootReason(real);
   if (forbidden) return refuse(`is ${forbidden}`, { subject: real });
   const wd = workDir ? realOrResolved(workDir) : "";
   if (wd && overlaps(wd, real)) {
@@ -91,6 +94,14 @@ export function validateExtraFolder(candidate, { slug = "", workDir = "", others
     if (overlaps(otherPath, real)) return refuse(`overlaps the additional folder ${otherPath}; a folder and its parent cannot both be mounted`, { subject: real });
   }
   return { path: real };
+}
+
+function forbiddenExtraFolderRootReason(real) {
+  const roots = sensitiveWorkDirRoots();
+  for (const root of roots) if (real === root.path) return root.exact ? `${root.reason} itself` : root.reason;
+  for (const root of roots) if (!root.exact && within(root.path, real)) return `inside ${root.reason}`;
+  for (const root of roots) if (within(real, root.path)) return `a parent of ${root.reason}`;
+  return "";
 }
 
 function realOrResolved(p) {

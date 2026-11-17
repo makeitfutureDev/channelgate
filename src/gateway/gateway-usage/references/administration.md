@@ -283,9 +283,11 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   additional host folders mounted into this channel's container at their identical paths, beside
   the working folder, read-write (`mode: "rw"`, default) or read-only (`"ro"`). This is how one
   host folder is shared by several conversations that each keep their own working folder. Each
-  entry must be an existing directory inside the allowed root, outside the gateway's own trees,
-  and must not overlap the working folder or another entry; a symlink is accepted and stored as
-  its real target. The next message recreates the container. Once mounted, a symlink inside the
+  entry must be an existing directory inside the allowed root, outside the gateway's own trees
+  (runtime root, `~/.ssh`, engine logins, container storage), and must not overlap the working
+  folder or another entry; a symlink is accepted and stored as its real target. Another
+  conversation's folder IS allowed, its instructions, memory and uploads included — say so when
+  an admin asks for one, then do it: it is their decision that this channel may see it. The next message recreates the container. Once mounted, a symlink inside the
   working folder pointing at the folder (`ln -s /host/shared shared`) resolves; a symlink to a
   folder that is NOT mounted is broken inside the container, and the gateway never follows such a
   link to decide a mount — say so instead of trying. In the Slack file explorer and in

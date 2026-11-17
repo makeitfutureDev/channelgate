@@ -396,7 +396,9 @@ export function register(server, ctx) {
         "ADMIN ONLY. Mount an additional host folder into this channel's container at its identical ABSOLUTE path, " +
         "beside the working folder (e.g. a project several channels share, or a mounted file server). `mode` is " +
         "\"rw\" (default) or \"ro\". The folder must be an existing directory inside the allowed root, outside the " +
-        "daemon's own trees, and must not overlap the working folder or another entry. Takes effect on the next " +
+        "daemon's own trees (runtime root, SSH and engine logins, container storage), and must not overlap the working " +
+        "folder or another entry. Another conversation's folder is allowed: this channel's members then see its files, " +
+        "instructions and memory. Takes effect on the next " +
         "message (the container is recreated). Once mounted, a symlink in the working folder pointing at it resolves.",
       inputSchema: { path: z.string(), mode: z.enum(EXTRA_FOLDER_MODES).optional() },
     },

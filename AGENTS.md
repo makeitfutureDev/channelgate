@@ -406,8 +406,10 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   their identical absolute paths, ONLY the channel's work folder, its clean workspace, its
   artifact dir (`~/ChannelGate/.runtime/<platform>/<slug>`, which also backs `/tmp` and
   `/var/tmp`) and the channel's admin-declared **additional folders** (`meta.extraFolders`,
-  `src/gateway/extra-folders.js`: each an existing real directory inside the allowlisted root,
-  validated like the work folder, never overlapping it or each other, read-write or read-only,
+  `src/gateway/extra-folders.js`: each an existing real directory inside the allowlisted root
+  that is none of the daemon's own trees — any conversation folder is allowed, another channel's
+  default folder included, as the admin's explicit sharing decision — never overlapping the work
+  folder or each other, read-write or read-only,
   re-checked at every spawn and failing the spawn closed when it no longer passes; a symlink is
   never what decides a mount — the daemon stores and mounts the link's real target), plus the
   read-only control socket, the channel's OWN read-only egress socket

@@ -27,14 +27,18 @@ at the kernel.
   member), `add_channel_folder` (admin; an approval card in channels that are not in Admin mode)
   and `remove_channel_folder` (admin, automatic). Every change is a `channel_meta_changed` audit
   event. Up to 16 entries.
-- **Validated like the working folder, at every door.** An entry must be an absolute path to an
-  existing directory that realpath-resolves inside the allowlisted root, outside the daemon's own
-  trees (`src/gateway/workdir-boundary.js`: home itself, gateway root, `~/.ssh`, `~/.claude`,
-  `~/.codex`, container storage, artifact trees, the workspace root, another conversation's
-  DEFAULT folder or a parent of any of these). It may not equal, contain or sit inside the
+- **Validated at every door; any conversation folder is allowed.** An entry must be an absolute
+  path to an existing directory that realpath-resolves inside the allowlisted root and is none of
+  the daemon's own trees (`sensitiveWorkDirRoots` in `src/gateway/workdir-boundary.js`: the home
+  directory itself, the gateway root with the database and config, `~/.ssh`, `~/.claude`,
+  `~/.codex`, container storage, the hidden artifact trees, or a parent of any of these — which
+  rules out the `~/ChannelGate` workspace root). It may not equal, contain or sit inside the
   channel's working folder, and two entries may not overlap each other — a host tree visible at
-  two container paths is a mount alias Codex's sandbox refuses. Another conversation's CUSTOM
-  project folder stays allowed. A symlink is accepted and stored as its REAL target: the daemon
+  two container paths is a mount alias Codex's sandbox refuses. ANY other folder is allowed,
+  another conversation's DEFAULT folder included (its `CLAUDE.md`, `.claude/`, `MEMORY.md`,
+  `memory/` and `uploads/` with it): mounting it is the admin's explicit decision that this
+  channel's members may see that conversation, read-only or read-write as selected (decision
+  2026-11-17). A symlink is accepted and stored as its REAL target: the daemon
   never follows a link it finds in an agent-writable tree to decide a mount
   (`assertSafeBindSource`), so a symlink an agent plants in the work folder can never become one.
 - **Re-checked at every spawn; fails closed.** The runtime resolver re-validates every stored
