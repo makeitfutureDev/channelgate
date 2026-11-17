@@ -536,9 +536,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     pinnedBody.dataset.groupBy = groupBy;
     const channelHue = (id) => { let hash = 0; for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0; return hash % 8; };
     const channelName = (row) => String(row.channelName || "Conversation");
-    const compareChannel = (a, b) => channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
     const filtered = ended ? [] : rows.filter(matches);
+    // Rank whole channel cards by their newest visible conversation, on every snapshot.
+    const channelActivity = new Map();
+    for (const row of filtered) {
+      channelActivity.set(row.channelId, Math.max(channelActivity.get(row.channelId) || 0, Number(row.lastMessageMs) || 0));
+    }
+    const compareChannel = (a, b) => channelActivity.get(b.channelId) - channelActivity.get(a.channelId)
+      || channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
     const compareRows = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || newest(a, b);
     // Individual pins lead the conversations inherited from a channel pin, within each channel.

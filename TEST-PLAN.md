@@ -956,7 +956,7 @@ Slack icon, and the action buttons became icons.
   an approved viewer with mixed-status threads in Alpha and Beta channels plus duplicate-name
   channels with different IDs; no Slack messages or engine calls are required.
 - Action: open Activity at 1440×1000 and 390×844 in both themes, select **Group by → Channel**.
-  Pass: alphabetical channel headings with visible counts; distinct channel IDs stay separate;
+  Pass: channel headings ordered by newest visible conversation activity with visible counts; distinct channel IDs stay separate;
   each channel is a separate rounded card with a tinted header (channel dot, name, count) and
   its conversations indented under a tree line with status-colored nodes; header text is
   vertically centered; adjacent cards have different colors; the Status/Last/Actions columns
@@ -966,7 +966,8 @@ Slack icon, and the action buttons became icons.
   a separate viewer without a saved preference also defaults to Channel. Verify existing users
   without a preference and new users both start in Channel; an explicit saved Status preference
   survives reload and a fresh login. Switch back to Status and verify the existing group order.
-  Live snapshots update rows and grouping without losing filters or actions. Failed saves keep
+  Live snapshots move the most recently active channel card first in each pinned/ordinary section
+  without losing filters or actions. Equal activity timestamps use channel name then ID. Failed saves keep
   the old view, display retry guidance, and permit retry; expired/revoked sessions disable the
   selector and clear private rows. Forged owner fields cannot change another viewer; invalid
   values, missing cookie, foreign Origin, bad CSRF and revoked admission reject writes.

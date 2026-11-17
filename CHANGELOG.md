@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Sort Activity channel groups by their latest conversation activity, updating their order live.
+
 - Add Activity → Calls with private completed-call history, duration, estimated voice cost,
   expandable summaries and links to visited threads. History starts with newly completed calls.
 
