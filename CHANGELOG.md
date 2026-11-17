@@ -16,7 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## 0.6.4 — hotfix candidate, pending approval
+## 0.6.4 — candidate, pending approval
 
 - Mount additional host folders into a channel's container beside its working folder, read-write
   or read-only, so several conversations can share one directory while keeping their own working
