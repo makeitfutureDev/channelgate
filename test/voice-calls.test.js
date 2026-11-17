@@ -193,6 +193,27 @@ test("at a channel's top level the first spoken task is posted as a new channel 
   assert.match(f.memories[0].text, /worked in #c_work "Build the export and run the tests"; tasks: "Build the export and run the tests" \(done\), "Then deploy it" \(done\)$/);
 });
 
+test("the in-flight task cap is per conversation: a fourth task in one thread is refused while another thread starts at once", async () => {
+  await channel(); await channel("C_SALES");
+  let release; const held = new Promise((resolve) => { release = resolve; });
+  const started = [];
+  const f = fixture({ runner: async (args) => { started.push(args); await held; return { content: "ok", engine: "claude" }; } });
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client });
+  const session = FakeSession.instances[0]; session.live();
+  for (const id of ["a", "b", "c", "d"]) { session.emit("tool_call", { id, name: "run_task", args: { request: `Task ${id}` } }); await tick(10); }
+  assert.equal(session.responses.find((r) => r.id === "c").response.status, "started");
+  assert.match(session.responses.find((r) => r.id === "d").response.error, /Three tasks are already in progress in this conversation.*switch to another conversation/);
+  session.emit("tool_call", { id: "s", name: "switch_conversation", args: { id: "C_SALES:44.000001" } });
+  await tick(20);
+  session.emit("tool_call", { id: "e", name: "run_task", args: { request: "Task e" } });
+  await tick(20);
+  assert.equal(session.responses.find((r) => r.id === "e").response.status, "started", "another conversation is not held back by the first one's backlog");
+  assert.equal(started.length, 2, "one turn per thread runs; the rest of #c_work's tasks wait on its own queue");
+  assert.deepEqual(started.map((r) => r.threadKey).sort(), ["44.000001", "55.000001"]);
+  release(); await tick(60);
+  await f.manager.end(call.id, "U_MINE");
+});
+
 test("a top-level segment with nothing said is left silently, one with speech is posted into the channel", async () => {
   await channel(); await channel("C_SALES");
   const f = fixture();

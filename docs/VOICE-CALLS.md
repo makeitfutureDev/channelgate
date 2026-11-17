@@ -111,7 +111,9 @@ cards in the thread. Open the thread in Slack to answer them.
 ## Limits
 
 - One call per person at a time (a new call replaces the previous one), at most eight calls per
-  gateway, at most twenty tasks per call and three in progress at once.
+  gateway, at most twenty tasks per call and three in progress per conversation (tasks in
+  different conversations run in parallel; tasks in the same one wait on its queue like typed
+  messages).
 - The list shows up to 20 conversations per request; the voice starts with the eight most
   recent open ones and asks for more when needed.
 - A call ends after 60 minutes, after five minutes without audio, on hang-up, when the voice is

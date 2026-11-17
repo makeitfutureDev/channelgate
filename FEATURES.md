@@ -249,7 +249,10 @@ that an answer is waiting there and offer to switch back — the content stays i
 for `check_tasks` or after switching, 2026-11-17), `check_tasks`, `read_thread` and `end_call`. `voice_call`
 is an interactive user origin that is deliberately **not escalatable**: an admin's spoken task
 runs as Worker and answers tool prompts through the thread's approval cards. One call per person;
-at most eight per gateway; a call ends after 60 minutes, after five silent minutes, on hang-up,
+at most eight per gateway; at most twenty tasks per call and three in flight per conversation
+(2026-11-17: the cap is per thread, so a backlog in one conversation never holds back a task for
+another — those run in parallel, bounded only by the global run slots); a call ends after 60
+minutes, after five silent minutes, on hang-up,
 on `end_call`, or when the voice service drops. On every end the current thread receives the
 summary (duration, tasks, estimated voice cost, the other conversations visited and the last
 segment's transcript), the `usage` ledger gets a `gemini-live` / `voice-call` row priced from
