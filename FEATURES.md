@@ -222,8 +222,10 @@ an existing thread gets "joined by voice call" and its recent messages come back
 `run_task` (posts the spoken request into the current thread as "🎙️ *Name (voice call):* …" — or
 as the new channel message above — and runs an ordinary engine turn there **authored by the
 caller**, origin `voice_call`, the thread's run queue, live progress, the usual footer, then
-reports the result back as a `[gateway]` message that says where it ran if the call has moved
-on), `check_tasks`, `read_thread` and `end_call`. `voice_call`
+reports the result back as a `[gateway]` message; when the call has since moved to another
+conversation the message carries no result and instructs the voice to announce in one sentence
+that an answer is waiting there and offer to switch back — the content stays in the task summary
+for `check_tasks` or after switching, 2026-11-17), `check_tasks`, `read_thread` and `end_call`. `voice_call`
 is an interactive user origin that is deliberately **not escalatable**: an admin's spoken task
 runs as Worker and answers tool prompts through the thread's approval cards. One call per person;
 at most eight per gateway; a call ends after 60 minutes, after five silent minutes, on hang-up,

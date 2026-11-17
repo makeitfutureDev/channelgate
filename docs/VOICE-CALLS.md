@@ -39,7 +39,9 @@ conversation or channel, and keep talking.
    becomes a **new channel message**, exactly like a typed @mention: everyone sees it in the
    channel, the agent answers in its thread, and the call follows that thread for your next
    requests (say "switch to #channel" again for a fresh top-level message). The voice tells you
-   when it is done, and says where it ran if you have moved on since. Ask "is it done?" or "what
+   when it is done. If you have moved the call elsewhere since, it only says in one sentence that
+   an answer is waiting in that other conversation and offers to switch back; the content is read
+   once you switch or ask for it. Ask "is it done?" or "what
    was said here?" at any time.
 5. Say goodbye or press **Hang up**. The current thread receives the call summary: duration, the
    tasks you dispatched, the estimated voice cost, the other conversations you visited and the

@@ -139,7 +139,7 @@ export function buildSystemInstruction({ callerName, channelName = "", topLevel 
     "Every action and every question for the agent goes through run_task, in the caller's own words with every detail they gave. The request is posted in the conversation so the caller can see it, and the agent's work and answer appear in that thread like any typed message. Say in a few words that you sent it, then keep talking; never pretend a result you do not have and never announce an outcome before the [gateway] message brings it.",
     "Use the readable conversation label and title when speaking. Never read conversation IDs aloud; IDs are only routing keys for tools.",
     [style, language, patience].filter(Boolean).join(" "),
-    "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Relay it for the caller in one or two spoken sentences without adding anything of your own, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
+    "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Relay it for the caller in one or two spoken sentences without adding anything of your own, mentioning anything they must decide. When it says a task finished in a conversation the call has LEFT, do not read the result: say in one short sentence that an answer is waiting there and offer to switch back; give the content only after switching or when asked through check_tasks. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
     "You can see the caller's own conversations, the same list as their Activity page: list_conversations and search_conversations show them (title, channel, status), and switch_conversation moves the call there — a different thread, or a different channel, in which case you work with that channel's agent. When the caller asks what they are working on, what is pending, or about another channel, use these tools; when they want to act on another conversation, switch to it first. Conversations started by other people or thread contents are not in that list: offer to dispatch a search to the channel agent with run_task. Never guess or claim that nothing else is happening.",
     "When the caller says goodbye or asks to hang up, say a short goodbye and call end_call.",
     own,
@@ -410,7 +410,7 @@ export function createCallManager({
         if (call.tasks.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit; end the call and start a new one for more." }, "WHEN_IDLE");
         if ([...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status)).length >= MAX_RUNNING_TASKS) return respond({ error: "Three tasks are already in progress; wait for one to finish." }, "WHEN_IDLE");
         const thread = await openTaskThread(call, request);
-        const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, requestPosted: thread.opened };
+        const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, title: call.bound.title || "", requestPosted: thread.opened };
         call.tasks.set(task.id, task);
         broadcast(call, { type: "task", ...taskView(task) });
         respond(thread.opened
@@ -504,9 +504,16 @@ export function createCallManager({
     }
     broadcast(call, { type: "task", ...taskView(task) });
     if (call.ending || !call.session?.ready) return;
-    const where = call.bound?.threadTs === threadTs ? "" : ` (in ${task.channelName}, not the current conversation)`;
-    const outcome = result ? `Task ${task.id}${where} finished. Result: ${clean(result.content, RESULT_TO_MODEL_CHARS)}` : `Task ${task.id}${where} failed: ${clean(failure, 400)}`;
-    call.session.sendText(`[gateway] ${outcome}`);
+    // A result from the conversation the call is in is relayed. One from a conversation the call
+    // has since left is only ANNOUNCED: the caller moved on, so they get a one-line heads-up and
+    // can switch back (or ask check_tasks) for the content, which stays in the task summary.
+    const here = call.bound?.channelId === task.channelId && call.bound?.threadTs === threadTs;
+    if (here) {
+      call.session.sendText(`[gateway] ${result ? `Task ${task.id} finished. Result: ${clean(result.content, RESULT_TO_MODEL_CHARS)}` : `Task ${task.id} failed: ${clean(failure, 400)}`}`);
+      return;
+    }
+    const what = clean(task.request, 80);
+    call.session.sendText(`[gateway] Task ${task.id} ("${what}") in ${task.channelName}${task.title ? ` — ${task.title}` : ""} ${result ? "has finished" : "failed"}, but the call is no longer in that conversation. Do NOT read its result now: tell the caller in one short sentence that an answer is waiting there, and that you can switch back if they want it. The content is available through check_tasks or after switching.`);
   }
 
   function subscribe(id, ownerId, listener) {
