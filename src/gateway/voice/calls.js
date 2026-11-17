@@ -35,6 +35,8 @@ import { effectiveWorkDir } from "../folders.js";
 import { memoryEnabled, updateChannelMemory } from "../channel-memory.js";
 import { createGeminiLiveSession, estimateVoiceCost } from "./gemini-live.js";
 import { saveCallHistory } from "./history.js";
+import { completeThreadForCaller, recordVoiceThreadRequest } from "../../slack/thread-done-action.js";
+import { indexSlackVoiceThread } from "../slack-threads.js";
 
 export const VOICE_CALL_ORIGIN = "voice_call";
 export const VOICE_ENGINE = "gemini-live";
@@ -55,7 +57,7 @@ const STATUS_FILTERS = Object.freeze(["open", "working", "waiting", "error", "id
 export const TOOL_DECLARATIONS = Object.freeze([
   {
     name: "run_task", nonBlocking: true,
-    description: "Hand the channel agent a task OR a question in the conversation the call is currently in. The channel agent is the only source of truth: use this for every action and for every question whose answer is not literally in a message you have read. It runs in that channel's own environment with its files, tools, memory and credentials, and may take minutes. When the call is at the top level of a channel (no thread yet), the request is posted as a new message in the channel and the call follows its thread. Returns immediately; the result arrives later as a message starting with [gateway].",
+    description: "Hand the channel agent a task OR a question in the conversation the call is currently in. The channel agent is the only source of truth: use this for every agent action except explicit mark_thread_done completion, and for every question whose answer is not literally in a message you have read. It runs in that channel's own environment with its files, tools, memory and credentials, and may take minutes. When the call is at the top level of a channel (no thread yet), the request is posted as a new message in the channel and the call follows its thread. Returns immediately; the result arrives later as a message starting with [gateway].",
     parameters: { type: "object", properties: { request: { type: "string", description: "The complete request or question, in the caller's words, with every detail they gave." } }, required: ["request"] },
   },
   {
@@ -95,6 +97,13 @@ export const TOOL_DECLARATIONS = Object.freeze([
     } },
   },
   {
+    name: "mark_thread_done",
+    description: "Mark the current thread Done only when the caller explicitly asks to close/complete it. Only its starter may do this; participants can Hide it in Activity instead. Use the exact conversation id from the current binding or list; switch to a different requested thread first. This saves shared completion and mirrors the Slack checkmark, does not cancel running tasks, delete messages, or end the call. Report only the returned outcome.",
+    parameters: { type: "object", properties: {
+      id: { type: "string", description: "Exact current conversation id, channel:thread timestamp. Must match the thread the call is in." },
+    }, required: ["id"] },
+  },
+  {
     name: "end_call",
     description: "Hang up. Call this only after the caller said goodbye or asked to end the call, after you said a short goodbye.",
     parameters: { type: "object", properties: {} },
@@ -122,7 +131,7 @@ const PATIENCE_RULES = Object.freeze({
   patient: "The caller may pause mid-thought. Wait for them to finish; if a pause runs long, ask gently whether they are done rather than answering a half-sentence.",
 });
 
-export function buildSystemInstruction({ callerName, channelName = "", topLevel = false, agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
+export function buildSystemInstruction({ callerName, channelName = "", conversationId = "", topLevel = false, agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
   const prefs = preferences || {};
   const style = Object.hasOwn(STYLE_RULES, prefs.style) ? STYLE_RULES[prefs.style] : STYLE_RULES.brief;
   const language = prefs.language ? `Speak ${prefs.language} by default; if the caller switches language, follow them.` : "Speak the language the caller uses.";
@@ -136,11 +145,13 @@ export function buildSystemInstruction({ callerName, channelName = "", topLevel 
   return [
     `You are the voice connection between ${callerName}${isAdmin ? " (an organization admin)" : ""} and ${agentName}, the ChannelGate agent working in their Slack conversations. You are NOT that agent and you do not have its knowledge, files, tools or memory: you are the phone line between the caller and the agent running in the current conversation. ${bound ? `The call is currently in the Slack conversation ${channelName}${topLevel ? ", at the channel's top level: the first task you dispatch is posted as a new message in the channel and the call then follows that thread" : ""}.` : "The call is not in any conversation yet: ask which one to open, or offer the list below."} Everything you dispatch runs in the current conversation as a visible message there, and everything said is logged there when the call moves on or ends.`,
     "Assume nothing. You know exactly three things: this briefing, the messages you have read with read_thread (or that are quoted below), and what tools return. Never infer, extend, complete or guess beyond them, and never present a plausible answer as fact. When you report what a conversation contains, say only what its messages literally say and attribute it (\"the agent wrote…\", \"you asked…\"). If the caller asks for any detail, status, reason, file, number or decision that is not in a message you have read, do not answer from your own knowledge: dispatch the question to the channel agent with run_task, say that you asked it, and relay its reply when the [gateway] message arrives. If the caller refers to something earlier than the messages you have, call read_thread with a larger limit first, then run_task if it is still not there.",
-    "Every action and every question for the agent goes through run_task, in the caller's own words with every detail they gave. The request is posted in the conversation so the caller can see it, and the agent's work and answer appear in that thread like any typed message. Say in a few words that you sent it, then keep talking; never pretend a result you do not have and never announce an outcome before the [gateway] message brings it.",
+    "Every action and every question for the agent goes through run_task, except the explicit thread-completion action described below, in the caller's own words with every detail they gave. The request is posted in the conversation so the caller can see it, and the agent's work and answer appear in that thread like any typed message. Say in a few words that you sent it, then keep talking; never pretend a result you do not have and never announce an outcome before the [gateway] message brings it.",
     "Use the readable conversation label and title when speaking. Never read conversation IDs aloud; IDs are only routing keys for tools.",
     [style, language, patience].filter(Boolean).join(" "),
     "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Relay it for the caller in one or two spoken sentences without adding anything of your own, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
-    "You can see the caller's own conversations, the same list as their Activity page: list_conversations and search_conversations show them (title, channel, status), and switch_conversation moves the call there — a different thread, or a different channel, in which case you work with that channel's agent. When the caller asks what they are working on, what is pending, or about another channel, use these tools; when they want to act on another conversation, switch to it first. Conversations started by other people or thread contents are not in that list: offer to dispatch a search to the channel agent with run_task. Never guess or claim that nothing else is happening.",
+    "You can see the caller's own conversations, the same list as their Activity page: list_conversations and search_conversations show them (title, channel, status), and switch_conversation moves the call there — a different thread, or a different channel, in which case you work with that channel's agent. When the caller asks what they are working on, what is pending, or about another channel, use these tools; when they want to act on another conversation, switch to it first. Conversations you have not participated in or their thread contents are not in that list: offer to dispatch a search to the channel agent with run_task. Never guess or claim that nothing else is happening.",
+    "When the caller explicitly asks to close this thread or mark a conversation Done, use mark_thread_done directly, not run_task. Resolve an ambiguous reference first; for another thread switch to it first. Use the exact current conversation id and mention its readable title/channel in your spoken acknowledgement. Only say it is Done if the tool returns done:true; if markerPending:true, explain that completion was saved and the Slack checkmark will retry. A denial is not completion: explain that only the starter can close it and participants can use Hide in Activity. Never infer completion from an agent saying its task finished. Marking Done does not cancel running work or hang up; continue the call unless asked to end it.",
+    conversationId ? `Current conversation id for mark_thread_done: ${conversationId} (routing key only, never read aloud).` : "",
     "When the caller says goodbye or asks to hang up, say a short goodbye and call end_call.",
     own,
     recent,
@@ -308,6 +319,14 @@ export function createCallManager({
       if (bound.threadTs) return { threadTs: bound.threadTs, opened: false };
       const posted = await post(call.client, { conversationId: bound.channelId, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(request)}` });
       if (!posted?.messageId) throw httpError(502, "Could not post the request in the channel.");
+      // This is an admitted caller request posted by the gateway, not an arbitrary bot root.
+      // Save its creator now so Activity and Done can verify the bot-authored root later.
+      let botUserId = call.botUserId;
+      if (!botUserId && typeof call.client.auth?.test === "function") {
+        try { const identity = await call.client.auth.test(); if (identity?.ok !== false) botUserId = identity?.user_id || ""; } catch { /* completion will fail closed without verified provenance */ }
+      }
+      if (botUserId) indexSlackVoiceThread({ channelId: bound.channelId, slug: bound.slug, threadTs: posted.messageId,
+        creatorId: call.ownerId, botUserId, title: request });
       if (call.ending || call.bound !== bound) throw httpError(404, "The call moved before the task could start.");
       bound.threadTs = posted.messageId;
       if (!bound.title) bound.title = clean(request, 160);
@@ -336,7 +355,7 @@ export function createCallManager({
     const call = {
       id, ownerId, client, teamId, botUserId, callerName, isAdmin: user.isAdmin === true, model: c.model, startedMs, lastActivityMs: startedMs, status: "connecting",
       bound: null, visited: [], segmentStart: 0, listeners: new Set(), transcript: [], transcriptTruncated: false,
-      tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
+      doneActions: new Map(), tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
     };
     calls.set(id, call);
     let context = { text: "" };
@@ -353,7 +372,7 @@ export function createCallManager({
     try {
       call.session = createSession({
         apiKey: c.apiKey, model: c.model, voice: c.voice, tools: TOOL_DECLARATIONS, patience: preferences.patience,
-        systemInstruction: buildSystemInstruction({ callerName, channelName: call.bound?.channelName || "", topLevel: Boolean(call.bound) && !call.bound.threadTs, isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
+        systemInstruction: buildSystemInstruction({ callerName, conversationId: call.bound?.threadTs ? `${call.bound.channelId}:${call.bound.threadTs}` : "", channelName: call.bound?.channelName || "", topLevel: Boolean(call.bound) && !call.bound.threadTs, isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
       });
     } catch (error) {
       calls.delete(id);
@@ -414,7 +433,7 @@ export function createCallManager({
         call.tasks.set(task.id, task);
         broadcast(call, { type: "task", ...taskView(task) });
         respond(thread.opened
-          ? { status: "started", task: task.id, conversation: call.bound.channelName, note: "Posted as a new message in the channel; the call now follows that thread." }
+          ? { status: "started", task: task.id, conversation: call.bound.channelName, id: `${call.bound.channelId}:${thread.threadTs}`, note: "Posted as a new message in the channel; the call now follows that thread." }
           : { status: "started", task: task.id, conversation: call.bound.channelName }, "SILENT");
         void dispatch(call, task);
         return;
@@ -436,11 +455,37 @@ export function createCallManager({
       }
       if (name === "switch_conversation") {
         const target = await resolveSwitch(call, args);
-        if (call.bound && call.bound.channelId === target.channelId && target.threadTs && call.bound.threadTs === target.threadTs) return respond({ switched: false, note: "The call is already in that conversation.", conversation: call.bound.channelName });
+        if (call.bound && call.bound.channelId === target.channelId && target.threadTs && call.bound.threadTs === target.threadTs) return respond({ switched: false, note: "The call is already in that conversation.", id: `${call.bound.channelId}:${call.bound.threadTs}`, conversation: call.bound.channelName });
         const result = await bind(call, target);
         return respond({ switched: true, conversation: result.channelName, title: result.title, topLevel: result.topLevel,
           ...(result.topLevel ? { note: "The call is at the top level of the channel: the next run_task is posted as a new channel message and the call follows its thread." } : {}),
-          recentMessages: result.context.messages.slice(-10) }, "INTERRUPT");
+          id: result.threadTs ? `${target.channelId}:${result.threadTs}` : "", recentMessages: result.context.messages.slice(-10) }, "INTERRUPT");
+      }
+      if (name === "mark_thread_done") {
+        if (typeof id !== "string" || !id) return respond({ error: "A completion request needs its tool call id." });
+        if (!call.doneActions.has(id)) {
+          if (call.doneActions.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its completion-action limit." });
+          const target = call.bound;
+          const targetId = typeof args?.id === "string" ? args.id : "";
+          const assertCurrent = () => {
+            if (call.ending || calls.get(call.id) !== call || !target?.threadTs || call.bound !== target
+              || targetId !== `${target.channelId}:${target.threadTs}`) throw new Error("Choose the exact current thread before marking it Done. The call may have moved or ended.");
+          };
+          // Retain the receipt for provider redelivery; the same tool id cannot re-close a
+          // thread that was reopened after the original request succeeded.
+          const action = (async () => {
+            assertCurrent();
+            const result = await completeThreadForCaller(call.client, { channelId: target.channelId, threadTs: target.threadTs,
+              userId: call.ownerId, assertCurrent });
+            await log("voice_thread_done", { id: call.id, channelId: target.channelId, threadTs: target.threadTs,
+              ownerId: call.ownerId, done: result.done, alreadyDone: result.alreadyDone }).catch(() => {});
+            return { ...result, id: targetId, conversation: target.channelName,
+              note: result.done ? "Completion saved. Running work continues and the call stays open."
+                : "The thread was reopened while completion was being saved; it is open now." };
+          })().catch((error) => ({ error: clean(error?.message || "Could not mark the thread Done", 300) }));
+          call.doneActions.set(id, action);
+        }
+        return respond(await call.doneActions.get(id));
       }
       if (name === "end_call") {
         respond({ status: "ending" });
@@ -463,7 +508,12 @@ export function createCallManager({
     task.handle = handle;
     let status = null, result = null, failure = "";
     try {
-      if (!task.requestPosted) await post(client, { conversationId: channelId, threadKey: threadTs, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(task.request)}` });
+      const posted = !task.requestPosted
+        ? await post(client, { conversationId: channelId, threadKey: threadTs, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(task.request)}` })
+        : { messageId: threadTs };
+      if (!posted?.messageId) throw new Error("Could not post the spoken request in the thread.");
+      await recordVoiceThreadRequest(client, { channelId, threadTs, messageTs: posted.messageId, userId: ownerId,
+        assertCurrent: () => { if (call.ending || calls.get(call.id) !== call) throw new Error("The call ended before the task started."); } });
       await queue.acquire(runKey, handle, () => { task.status = "queued"; broadcast(call, { type: "task", ...taskView(task) }); });
       if (handle.aborted || call.ending) throw Object.assign(new Error("call ended before the task started"), { name: "AbortError" });
       task.status = "running"; broadcast(call, { type: "task", ...taskView(task) });
@@ -553,7 +603,7 @@ export function createCallManager({
     touch(call);
     if (!result.unchanged) call.session.sendText(result.topLevel
       ? `[gateway] The caller moved this active call using the dashboard. You are now at the top level of ${result.channelName}: the next run_task is posted as a new channel message and the call follows its thread. You have read no messages here.`
-      : `[gateway] The caller moved this active call using the dashboard. You are now in ${result.channelName}, thread ${result.threadTs}${result.title ? ` — ${result.title}` : ""}. Use this conversation for subsequent tasks. The messages you have read there, oldest first (use read_thread for more):\n${result.context.text || "No recent messages."}`);
+      : `[gateway] The caller moved this active call using the dashboard. You are now in ${result.channelName}, thread ${result.threadTs}, conversation id ${channelId}:${result.threadTs}${result.title ? ` — ${result.title}` : ""}. Use this conversation for subsequent tasks. The messages you have read there, oldest first (use read_thread for more):\n${result.context.text || "No recent messages."}`);
     return { id, bound: boundView(call), switched: !result.unchanged };
   }
 

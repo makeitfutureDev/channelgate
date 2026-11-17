@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Mark threads Done by voice (2026-11-17)
+
+- Automated: `test/voice-calls.test.js` exercises direct completion without engine dispatch,
+  follow-up and Slack marker state, exact-target routing, starter-only authority including admin
+  participants, root mismatch, private membership/revocation during reads, moving/hanging up
+  during reads, duplicate tool IDs after Reopen, already-Done idempotence, marker failure,
+  new voice-created thread completion, and closing followed by a new spoken task reopening it. `test/slack-voice-ownership.test.js` covers durable
+  creation provenance, bot identity, spoofed roots, tombstones, ownership collisions and migration.
+- Live voice gate `VOICE-THREAD-DONE-01`: approved starter opens an owned thread from Activity,
+  says “Mark this thread done,” and observes Gemini call `mark_thread_done` for the exact bound
+  conversation. Expect saved Done, updated Activity, Slack root checkmark, no dispatched agent
+  task, and the call still connected. Start a thread by a spoken harmless task and close it too.
+  Say “The agent finished” without requesting completion: it must stay open. Ask to close a
+  different thread: resolve ambiguity and switch first. A participant (including an admin) cannot
+  close someone else's thread and is told to use personal Hide in Activity.
+- Negative control-plane fixture: invalid/unknown/unbound target, revoked approval/private
+  membership, non-admin sudo thread, or a call moved/ended during awaited root reads must fail
+  without a completion write. A duplicate original tool ID after Reopen must not close again.
+  Simulate Slack marker failure: completion remains saved, marker retries, voice reports this
+  distinction. Marking Done while an engine task runs must not cancel that work.
+- Completion itself is engine-independent (no Claude/Codex process is launched); live Gemini
+  speech recognition/tool selection and actual Slack/browser evidence remain a separate acceptance
+  gate. Creating the private case or passing fake-session tests is not live acceptance.
+
 ## Shared Activity participation and personal Hide (2026-11-17)
 
 - Automated: `test/slack-thread-participants.test.js` covers migration/backfill, original-event

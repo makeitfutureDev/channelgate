@@ -1,4 +1,4 @@
-// Personal Activity index. Ownership comes from the Slack root or an admitted fork's
+// Personal Activity index. Ownership comes from the Slack root or an admitted fork/voice root's
 // durable creation record; participants have independent visibility without acquiring ownership.
 // Runtime state stays in its existing tables; this index keeps bounded root previews and
 // explicit completion/outcome facts.
@@ -21,10 +21,27 @@ export function indexSlackFork({ channelId, slug, threadTs, sourceThreadTs, crea
     VALUES(?,?,?,?,?,?,?,1,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
     starter_id=excluded.starter_id,title=excluded.title,agent_engaged=1,
     fork_source_ts=excluded.fork_source_ts,fork_bot_user_id=excluded.fork_bot_user_id
-    WHERE slack_threads.starter_id='' AND slack_threads.fork_source_ts=''`)
+    WHERE slack_threads.starter_id='' AND slack_threads.fork_source_ts='' AND slack_threads.voice_bot_user_id=''`)
     .run(channelId, threadTs, slug, creatorId, String(title || "Fork").replace(/\s+/g, " ").trim().slice(0, 160), at, at, sourceThreadTs, botUserId);
   const row = getSlackThread(channelId, threadTs);
   if (row?.starter_id !== creatorId || row.fork_source_ts !== sourceThreadTs || row.fork_bot_user_id !== botUserId) return null;
+  ensureSlackThreadOwnerParticipant(row);
+  notifyThreadChanged({ channelId, threadTs });
+  return row;
+}
+
+// Called only after the voice manager successfully creates a Slack root for its authenticated
+// caller. Root text and mentions never establish caller ownership of a bot message.
+export function indexSlackVoiceThread({ channelId, slug, threadTs, creatorId, botUserId, title }) {
+  if (!channelId || !slug || !isSlackTs(threadTs) || !creatorId || !botUserId || creatorId === botUserId) return null;
+  const at = Math.floor(Number(threadTs) * 1000);
+  getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,agent_engaged,voice_bot_user_id)
+    VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
+    starter_id=excluded.starter_id,title=excluded.title,agent_engaged=1,voice_bot_user_id=excluded.voice_bot_user_id
+    WHERE slack_threads.starter_id='' AND slack_threads.fork_source_ts='' AND slack_threads.voice_bot_user_id=''`)
+    .run(channelId, threadTs, slug, creatorId, String(title || "Voice conversation").replace(/\s+/g, " ").trim().slice(0, 160), at, at, botUserId);
+  const row = getSlackThread(channelId, threadTs);
+  if (row?.starter_id !== creatorId || row.voice_bot_user_id !== botUserId || row.fork_source_ts) return null;
   ensureSlackThreadOwnerParticipant(row);
   notifyThreadChanged({ channelId, threadTs });
   return row;
@@ -37,6 +54,9 @@ export function slackThreadRootOwner(channelId, root) {
   const row = getSlackThread(channelId, root.ts);
   if (row?.fork_source_ts) {
     return row.fork_bot_user_id === root.user && (root.bot_id || root.subtype === "bot_message") ? row.starter_id : "";
+  }
+  if (row?.voice_bot_user_id) {
+    return row.voice_bot_user_id === root.user && (root.bot_id || root.subtype === "bot_message") ? row.starter_id : "";
   }
   return !root.bot_id && root.subtype !== "bot_message" ? root.user : "";
 }
@@ -52,7 +72,7 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
   getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,root_done,last_message_ms,agent_engaged)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
     starter_id=excluded.starter_id,
-    title=CASE WHEN session_title!='' THEN session_title WHEN fork_source_ts!='' THEN title ELSE excluded.title END,slug=excluded.slug,
+    title=CASE WHEN session_title!='' THEN session_title WHEN fork_source_ts!='' OR voice_bot_user_id!='' THEN title ELSE excluded.title END,slug=excluded.slug,
     agent_engaged=MAX(agent_engaged,excluded.agent_engaged),
     last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
     .run(channelId, root.ts, slug, owner, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);

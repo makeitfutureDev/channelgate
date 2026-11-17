@@ -41,7 +41,14 @@ conversation or channel, and keep talking.
    requests (say "switch to #channel" again for a fresh top-level message). The voice tells you
    when it is done, and says where it ran if you have moved on since. Ask "is it done?" or "what
    was said here?" at any time.
-5. Say goodbye or press **Hang up**. The current thread receives the call summary: duration, the
+5. Say **“mark this thread done”** or **“close this conversation”** to complete it directly.
+   You must be the thread's starter with current access. For another conversation, open it first;
+   the voice resolves ambiguous references and names the conversation in its acknowledgement.
+   Completion updates Activity and the Slack root checkmark without dispatching a task, cancelling
+   work or ending the call. If Slack cannot add the checkmark immediately, Done stays saved and
+   the marker retries. “The agent finished” alone does not request completion. Participants can
+   use personal Hide in Activity instead. A new spoken task in the thread reopens it. New threads started by a spoken task belong to the caller.
+6. Say goodbye or press **Hang up**. The current thread receives the call summary: duration, the
    tasks you dispatched, the estimated voice cost, the other conversations you visited and the
    last segment's transcript. One line about the call (date, duration, conversations, tasks) is
    saved to your DM memory, so your personal agent remembers what you were working on.

@@ -64,7 +64,7 @@ function fixture(overrides = {}) {
 
 beforeEach(async () => {
   resetActivityStateForTests();
-  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "usage", "events"]) getDb().exec(`DELETE FROM ${table}`);
+  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "usage", "events", "thread_overrides", "followup_done"]) getDb().exec(`DELETE FROM ${table}`);
   await setUser("U_MINE", { approved: true, isAdmin: false, name: "Tiberiu" });
   await setUser("U_NOPE", { approved: false, isAdmin: false, name: "Stranger" });
   saveSettings({ voiceCallsEnabled: false, geminiApiKey: "" });
@@ -899,4 +899,189 @@ test("hangup duration excludes slow accounting and a failed summary post still s
   assert.equal(saved.durationMs, 20_000); assert.equal(saved.threads[0].durationMs, 20_000);
   assert.equal(saved.threads[0].messageTs, "");
   assert.ok(f.logs.some(([event, data]) => event === "voice_call_error" && data.stage === "summary"));
+});
+
+async function doneFixture(t, { owner = "U_MINE", type = "channel", ...managerOverrides } = {}) {
+  const { indexSlackThread } = await import("../src/gateway/slack-threads.js");
+  const entry = await channel("C_WORK", { type });
+  const root = { ts: "55.000001", user: owner, text: "Closeable thread" };
+  indexSlackThread({ channelId: "C_WORK", slug: entry.slug, root, agentEngaged: true });
+  const f = fixture(managerOverrides);
+  f.client.conversations.replies = async () => ({ messages: [root] });
+  f.client.conversations.members = async () => ({ members: ["U_MINE"] });
+  f.client.auth = { test: async () => ({ user_id: "B_VOICE_DONE" }) };
+  f.markers = [];
+  f.client.reactions = { add: async (args) => { f.markers.push(args); return { ok: true }; }, remove: async () => ({ ok: true }) };
+  f.call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: root.ts, client: f.client });
+  t.after(() => f.manager.end(f.call.id, "U_MINE"));
+  f.session = FakeSession.instances[0]; f.session.live();
+  f.root = root; f.entry = entry;
+  return f;
+}
+async function completionResponse(f, id, args = { id: "C_WORK:55.000001" }) {
+  f.session.emit("tool_call", { id, name: "mark_thread_done", args });
+  for (let i = 0; i < 100; i++) {
+    const response = f.session.responses.find((r) => r.id === id);
+    if (response) return response.response;
+    await tick(5);
+  }
+  assert.fail("completion tool did not respond");
+}
+
+test("voice completion uses the caller's existing Done state and keeps the call open without an engine task", async (t) => {
+  const { getSlackThread, setSlackThreadDone } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t);
+  const result = await completionResponse(f, "done1", { id: "C_WORK:55.000001", userId: "U_NOPE" });
+  assert.equal(result.done, true); assert.equal(result.markerPending, false);
+  assert.equal(result.id, "C_WORK:55.000001"); assert.equal(result.title, f.root.text);
+  assert.ok(getSlackThread("C_WORK", f.root.ts).done_ms > 0);
+  assert.ok(getDb().prepare("SELECT 1 FROM followup_done WHERE user_id='U_MINE' AND thread_key=?").get(`C_WORK::${f.root.ts}`));
+  assert.equal(f.markers[0].timestamp, f.root.ts); assert.equal(f.markers[0].name, "white_check_mark");
+  assert.equal(f.runs.length, 0); assert.equal(f.manager.size(), 1);
+  assert.equal(f.logs.find(([name]) => name === "voice_thread_done")[1].ownerId, "U_MINE");
+  const stamp = getSlackThread("C_WORK", f.root.ts).done_ms;
+  assert.equal((await completionResponse(f, "done2")).alreadyDone, true);
+  assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, stamp, "already-done requests keep the saved watermark");
+  setSlackThreadDone("C_WORK", f.root.ts, "U_MINE", false);
+  f.session.responses = [];
+  assert.equal((await completionResponse(f, "done1")).done, true, "redelivery returns the original receipt");
+  assert.ok(getSlackThread("C_WORK", f.root.ts).done_ms < 0, "redelivery cannot re-close a reopened thread");
+});
+
+test("voice completion requires an exact current target and refuses another starter even for an admin", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t, { owner: "U_OTHER" });
+  await setUser("U_MINE", { isAdmin: true });
+  assert.match((await completionResponse(f, "foreign")).error, /starter/);
+  for (const [id, target] of [["wrong", "C_OTHER:55.000001"], ["missing", undefined], ["malformed", 55]]) {
+    assert.match((await completionResponse(f, id, { id: target })).error, /exact current thread/);
+  }
+  assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, 0);
+  assert.equal(f.markers.length, 0);
+  const top = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client });
+  const session = FakeSession.instances.at(-1); session.live();
+  const topFixture = { session };
+  assert.match((await completionResponse(topFixture, "top", { id: "C_WORK:55.000001" })).error, /exact current thread/);
+  await f.manager.end(top.id, "U_MINE");
+});
+
+test("voice completion rechecks authorization after Slack root reads", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t);
+  f.client.conversations.replies = async () => {
+    await setUser("U_MINE", { approved: false });
+    return { messages: [f.root] };
+  };
+  assert.match((await completionResponse(f, "revoked")).error, /current conversation access/);
+  assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, 0);
+  assert.equal(f.markers.length, 0);
+});
+
+test("voice completion refuses mismatched roots and lost private membership", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t, { type: "group" });
+  f.client.conversations.replies = async () => ({ messages: [{ ...f.root, user: "U_OTHER" }] });
+  assert.match((await completionResponse(f, "root-changed")).error, /starter/);
+  f.client.conversations.replies = async () => {
+    f.client.conversations.members = async () => ({ members: [] });
+    return { messages: [f.root] };
+  };
+  assert.match((await completionResponse(f, "membership-lost")).error, /current conversation access/);
+  assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, 0);
+});
+
+test("voice completion refuses a call that moved or ended while its root read awaited", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  for (const action of ["move", "end"]) {
+    const f = await doneFixture(t);
+    await channel("C_SALES");
+    let release, reading;
+    const started = new Promise((resolve) => { reading = resolve; });
+    f.client.conversations.replies = async () => { reading(); await new Promise((resolve) => { release = resolve; }); return { messages: [f.root] }; };
+    const pending = completionResponse(f, "await-" + action);
+    await started;
+    if (action === "move") await f.manager.switchConversation(f.call.id, "U_MINE", { channelId: "C_SALES" });
+    else await f.manager.end(f.call.id, "U_MINE");
+    release();
+    assert.match((await pending).error, /moved or ended/);
+    assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, 0);
+    await f.manager.end(f.call.id, "U_MINE");
+  }
+});
+
+test("voice completion reports durable Done with a pending Slack marker rather than losing the choice", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t);
+  f.client.reactions.add = async () => { throw new Error("Slack unavailable"); };
+  const result = await completionResponse(f, "marker-error");
+  assert.equal(result.done, true); assert.equal(result.markerPending, true);
+  assert.ok(getSlackThread("C_WORK", f.root.ts).completion_marker_retry_ms > 0);
+});
+
+test("voice briefing routes explicit completion to the direct tool and never infers acceptance from task success", () => {
+  const prompt = buildSystemInstruction({ callerName: "Member", channelName: "#work", conversationId: "C_WORK:55.000001" });
+  assert.match(prompt, /use mark_thread_done directly, not run_task/);
+  assert.match(prompt, /Never infer completion from an agent saying its task finished/);
+  assert.match(prompt, /Current conversation id for mark_thread_done: C_WORK:55\.000001/);
+  assert.match(prompt, /Only say it is Done if the tool returns done:true/);
+  assert.deepEqual(TOOL_DECLARATIONS.find((tool) => tool.name === "mark_thread_done").parameters.required, ["id"]);
+});
+
+test("a thread created during the voice call records caller ownership and can be completed directly", async (t) => {
+  const { getSlackThread, slackThreadRootOwner } = await import("../src/gateway/slack-threads.js");
+  await channel();
+  const f = fixture();
+  const botUserId = "B_VOICE_CREATED";
+  f.client.auth = { test: async () => ({ user_id: botUserId }) };
+  f.client.reactions = { add: async () => ({ ok: true }), remove: async () => ({ ok: true }) };
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client, botUserId });
+  t.after(() => f.manager.end(call.id, "U_MINE"));
+  f.session = FakeSession.instances[0]; f.session.live();
+  f.session.emit("tool_call", { id: "start-task", name: "run_task", args: { request: "Reply with the canary" } });
+  await tick(30);
+  const rootTs = f.manager.get(call.id).bound.threadTs;
+  const root = { ts: rootTs, user: botUserId, bot_id: "B_APP", text: "Voice request" };
+  f.client.conversations.replies = async () => ({ messages: [root] });
+  assert.equal(slackThreadRootOwner("C_WORK", root), "U_MINE");
+  assert.equal(getSlackThread("C_WORK", rootTs).title, "Reply with the canary");
+  const runs = f.runs.length;
+  assert.equal((await completionResponse(f, "finish-created", { id: `C_WORK:${rootTs}` })).done, true);
+  assert.equal(f.runs.length, runs, "completion does not dispatch another task");
+  assert.equal(f.manager.size(), 1);
+});
+
+test("voice reports a concurrent Reopen during marker delivery as open", async (t) => {
+  const { getSlackThread, setSlackThreadDone } = await import("../src/gateway/slack-threads.js");
+  const f = await doneFixture(t);
+  f.client.reactions.add = async () => { setSlackThreadDone("C_WORK", f.root.ts, "U_MINE", false); return { ok: true }; };
+  const result = await completionResponse(f, "reopened-during-marker");
+  assert.equal(result.done, false);
+  assert.match(result.note, /open now/);
+  assert.ok(getSlackThread("C_WORK", f.root.ts).done_ms < 0);
+});
+
+test("voice refuses an unindexed thread or sudo thread after caller demotion", async (t) => {
+  const { getSlackThread } = await import("../src/gateway/slack-threads.js");
+  const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
+  const f = await doneFixture(t);
+  await setUser("U_MINE", { isAdmin: true });
+  await setThreadSudo(f.entry.slug, f.root.ts, true);
+  f.client.conversations.replies = async () => { await setUser("U_MINE", { isAdmin: false }); return { messages: [f.root] }; };
+  assert.match((await completionResponse(f, "sudo-demoted")).error, /current conversation access/);
+  assert.equal(getSlackThread("C_WORK", f.root.ts).done_ms, 0);
+  getDb().prepare("DELETE FROM slack_threads WHERE channel_id=? AND thread_ts=?").run("C_WORK", f.root.ts);
+  assert.match((await completionResponse(f, "unknown")).error, /starter/);
+});
+
+test("a new successfully posted spoken request reopens Done and resumes work in the same call", async (t) => {
+  const { getSlackThread, slackThreadIsDone } = await import("../src/gateway/slack-threads.js");
+  const postedTs = (Date.now() / 1000 + 1).toFixed(6);
+  const f = await doneFixture(t, { post: async () => ({ messageId: postedTs }) });
+  assert.equal((await completionResponse(f, "close-before-new-work")).done, true);
+  f.session.emit("tool_call", { id: "new-work", name: "run_task", args: { request: "Please continue with the next change" } });
+  await tick(40);
+  assert.equal(slackThreadIsDone(getSlackThread("C_WORK", f.root.ts)), false);
+  assert.equal(getDb().prepare("SELECT 1 FROM followup_done WHERE user_id='U_MINE' AND thread_key=?").get(`C_WORK::${f.root.ts}`), undefined);
+  assert.equal(f.runs.length, 1);
+  assert.equal(f.manager.size(), 1);
 });
