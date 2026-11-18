@@ -160,3 +160,28 @@ These gateway MCP tools use the signed current-run conversation and author conte
 **Scope and result:** Advertised only for trusted authenticated Slack foreground turns with a real Slack thread key. Saves a pending card/form for the requesting user and returns an acknowledgement, not answers. The gateway queues a continuation only after Submit.
 
 **Limits:** Question IDs and option values must be unique in their respective scopes. Single choice supports at most 4 options, multi at most 10; text accepts no options. Message presentation supports at most 4 questions. Only one distinct pending request per requesting user/thread is admitted. Custom answer text is capped at 2,000 characters. Continue only independent work; do not infer a selected default or use this tool for permission approval.
+
+
+## call_user
+
+**Required:** `reason` (1–160 characters, a non-sensitive call reason shown on the lock screen).
+**Optional:** `in_minutes` (integer 0–10080, default 0).
+
+```json
+{"reason":"Review this conversation", "in_minutes":1}
+```
+
+**Scope and result:** Requests an incoming call to the authenticated person's registered iPhone,
+about the current thread. The requester must have current write access. An owner/admin approval
+card confirms the reason and delay, even under Auto. Recipient and thread are bound to the
+verified run context; the model cannot select another person or conversation. API/agent
+principals and SSH sessions cannot initiate the call. A delayed invitation is persisted and
+checked again when due. Return the submission/schedule result, then end the turn.
+
+**Limits:** Requires the companion iPhone app, opt-in device registration, enabled voice calls and
+administrator-configured APNs credentials. Apple accepting a push does not establish delivery or
+answer. Invitations expire after 45 seconds; one phone can accept the single-use token, with
+access rechecked before starting the existing voice session as that person. One pending
+invitation per person, at least one minute between requests, at most ten requests per hour.
+Overdue calls more than one minute late fail rather than ring after a long outage. See
+[voice calls](/docs/voice-calls) for setup and live testing.

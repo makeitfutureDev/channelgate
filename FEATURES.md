@@ -7050,3 +7050,28 @@ upgrade host Node before updating; rebuilding the image alone does not upgrade t
 ## Agent-proposed bulk thread forks
 
 Foreground Slack agents can propose 1–10 titled discussion forks with exact opening prompts. One durable requester/admin approval card is mandatory even in Auto mode; the full proposal must fit its 2400-character preview. After approval, the daemon queues behind the source turn, creates independent native sessions from the same context, indexes each in Activity, and posts child/source links. Normal access, engine, license and run-slot gates apply. Sudo and code-channel sources are refused. Pending proposals deduplicate, clicks execute once, and partial creations retain their IDs; interrupted execution fails closed without automatically recreating threads.
+
+## Incoming iPhone voice calls (branch implementation, 2026-11-18)
+
+An authenticated conversation member can ask the agent to `call_user` in its current thread.
+The existing durable owner/admin approval card confirms the reason and optional one-time delay;
+Auto mode never supplies that approval. Recipients and conversation IDs come from the verified
+run context, not model arguments. API and delivered-agent principals cannot initiate calls.
+
+People opt in from the iPhone app and register an owner-scoped VoIP token through their Activity
+session. Administrators configure the APNs team, key, bundle ID and private .p8 key under Incoming
+iPhone calls; listings expose key presence, never key contents or device tokens. Sandbox and
+production registrations use Apple's corresponding servers. APNs acceptance means invitation
+submission, never that someone answered. Invalidated device tokens are removed.
+
+Invitations persist across restarts, ring for 45 seconds, and carry a hashed-at-rest, one-use
+answer/decline token. Acceptance rechecks current access and starts the existing voice call as the
+answering person in the recorded thread. Only one phone can answer. Declined, missed and failed
+invitations produce a thread notice. Owner-scoped device deletion and scheduled-call cancellation
+are available through the Activity API. Admission limits one pending invitation per person, at
+least one minute between invitations, and ten invitations per hour. A delayed call more than one
+minute late fails instead of surprising the user hours later after downtime.
+
+The implementation requires the companion iOS app and a correctly configured Apple APNs key.
+Live Apple delivery, lock-screen answer/decline and engine acceptance remain release checks;
+local fixtures are not claims of a production call.

@@ -14676,6 +14676,41 @@ Live acceptance (pending, run separately with Claude and Codex in an authorized 
   off/revoked authority before approval must prevent the append. Restore only fixture grants
   and keys. A mock MCP test does not establish a live SSH login or human approval.
 
+## Incoming iPhone calls — branch acceptance (2026-11-18)
+
+Automated: `node --test test/incoming-calls.test.ts test/incoming-calls-tools.test.ts
+ test/incoming-calls-routes.test.ts` (one command, join the lines); `npm run check:types`;
+`npm run check:static`; `npm run secret-scan`; full `npm run test:coverage` and
+`npm run test:security-coverage`. Exercise ES256 signatures and VoIP headers, real local HTTP/2
+request/response framing with sandbox/production selection, owner-only listings and deletion,
+malformed registration, expired/replayed tokens, two-phone answer races, failed acceptance,
+invalidated APNs tokens, rate limits, revoked access and restart-safe one-time scheduling.
+
+Live acceptance, separately for Claude and Codex (not yet executed on this branch):
+
+1. In an isolated test conversation, authorize a human participant; use a separate unauthorized
+   person and a second registered phone for negative/race fixtures. Configure a real APNs key in
+   the admin UI and the correct bundle/team. Save, reload and confirm the private key stays blank
+   while its presence is shown. Never paste credentials into a prompt or test evidence.
+2. Sign in to the companion iPhone app, enable Incoming calls, and verify Registered status.
+   Ask the selected engine: "Call me in one minute about this conversation." Confirm the
+   reason/delay on the approval card, then lock the phone. Expect exactly one incoming CallKit
+   call after the delay. Answer; verify two-way audio and that spoken work is posted only in the
+   originating thread as the answering user. Hang up and confirm the normal transcript.
+3. Repeat and decline. Expect no voice session and one declined notice in the source thread.
+   Repeat without answering: expect one missed notice after expiry. Approval denial must send
+   no push. Repeat with channel Auto enabled: still require a human approval click.
+4. Revoke the person's channel access or disable incoming calls before a scheduled ring.
+   Expect no usable invitation; a captured answer token must fail after revocation/expiry.
+   Answer simultaneously on two phones: exactly one voice call may start. No endpoint may list
+   another user's devices or use a forged recipient/thread. API/agent principals must be denied.
+5. Schedule a call, restart only the isolated test daemon before its due time, and verify delivery
+   once after restart; a stale overdue invitation must fail rather than ring late. Cancel a queued
+   call through the owner API and confirm no push. An invalidated APNs token must be removed,
+   with failure reported rather than a false ringing/answered claim.
+
+Pass requires observed evidence for each engine and scenario. Apple/APNs tests need operator
+credentials and a merged/deployed candidate; record blocked or unexecuted cases explicitly.
 
 ## Container startup: stale rootless Podman systemd scope
 

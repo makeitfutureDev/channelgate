@@ -4302,6 +4302,12 @@ function readSettingsForm() {
     defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
     ...collectTerminalHarnesses(),
+    iosCallsEnabled: document.getElementById("set-ios-calls-enabled").checked,
+    ...(document.getElementById("set-apns-team-id").value.trim() ? { apnsTeamId: document.getElementById("set-apns-team-id").value.trim() } : {}),
+    ...(document.getElementById("set-apns-key-id").value.trim() ? { apnsKeyId: document.getElementById("set-apns-key-id").value.trim() } : {}),
+    apnsBundleId: document.getElementById("set-apns-bundle-id").value.trim() || "com.makeitfuture.channelgate",
+    ...(document.getElementById("set-apns-private-key").value.trim() ? { apnsPrivateKey: document.getElementById("set-apns-private-key").value.trim() } : {}),
+    clearApnsPrivateKey: document.getElementById("clear-apns-private-key").checked,
     voiceCallsEnabled: document.getElementById("set-voice-calls-enabled").checked,
     ...(tokenValue(document.getElementById("set-gemini-api-key")) ? { geminiApiKey: tokenValue(document.getElementById("set-gemini-api-key")) } : {}),
     ...(document.getElementById("clear-gemini-api-key").classList.contains("armed") ? { clearGeminiApiKey: true } : {}),
@@ -4372,6 +4378,14 @@ function readSettingsForm() {
 }
 
 function paintSettings(s) {
+  const iphone = s.iosCalls || {};
+  document.getElementById("set-ios-calls-enabled").checked = iphone.enabled === true;
+  document.getElementById("set-apns-team-id").value = iphone.teamId || "";
+  document.getElementById("set-apns-key-id").value = iphone.keyId || "";
+  document.getElementById("set-apns-bundle-id").value = iphone.bundleId || "com.makeitfuture.channelgate";
+  document.getElementById("set-apns-private-key").value = "";
+  document.getElementById("clear-apns-private-key").checked = false;
+  document.getElementById("apns-key-state").textContent = iphone.hasPrivateKey ? "stored" : "not configured";
   const voice = s.voiceCalls || {};
   document.getElementById("set-voice-calls-enabled").checked = voice.enabled === true;
   document.getElementById("gemini-api-key-state").textContent = tokenState(voice.hasApiKey, voice.apiKeyLast4);

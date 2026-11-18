@@ -25,6 +25,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: TypeScript module boundaries
+        run: npm run check:types
       - name: Static syntax and formatting invariants
         run: npm run check:static
       # Runs the full suite with coverage floors enforced (see test:coverage in package.json).

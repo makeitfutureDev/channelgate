@@ -1104,3 +1104,21 @@ test("a new successfully posted spoken request reopens Done and resumes work in 
   assert.equal(f.runs.length, 1);
   assert.equal(f.manager.size(), 1);
 });
+
+
+test("an answered incoming call greets with its recorded reason only once the phone audio is ready", async () => {
+  await channel();
+  const f = fixture();
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client, teamId: "T_WORK", openingReason: "Review this conversation" });
+  const voice = FakeSession.instances[0];
+  assert.equal(voice.texts.length, 0);
+  assert.equal(f.manager.audio(call.id, "U_MINE", Buffer.alloc(320)), false);
+  voice.live();
+  assert.equal(voice.texts.length, 0, "provider readiness alone must not speak before the phone is listening");
+  f.manager.audio(call.id, "U_MINE", Buffer.alloc(320));
+  assert.equal(voice.texts.length, 1);
+  assert.match(voice.texts[0], /Review this conversation/);
+  f.manager.audio(call.id, "U_MINE", Buffer.alloc(320));
+  assert.equal(voice.texts.length, 1, "later audio never repeats the opening");
+  await f.manager.end(call.id, "U_MINE");
+});

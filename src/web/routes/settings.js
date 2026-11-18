@@ -1,3 +1,4 @@
+import { parsePushKey } from "../../gateway/voice/apns.ts";
 import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
@@ -247,6 +248,27 @@ export function createSettingsRouter({
         if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
         if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
       }
+      if (Object.hasOwn(body, "iosCallsEnabled")) {
+        if (typeof body.iosCallsEnabled !== "boolean") return res.status(400).json({ error: "iosCallsEnabled must be a boolean" });
+        patch.iosCallsEnabled = body.iosCallsEnabled;
+      }
+      for (const field of ["apnsTeamId", "apnsKeyId"]) {
+        if (!Object.hasOwn(body, field)) continue;
+        if (typeof body[field] !== "string" || !/^[A-Z0-9]{10}$/.test(body[field])) return res.status(400).json({ error: `${field} must be a 10-character Apple identifier` });
+        patch[field] = body[field];
+      }
+      if (Object.hasOwn(body, "apnsBundleId")) {
+        if (typeof body.apnsBundleId !== "string" || body.apnsBundleId.length > 200 || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(body.apnsBundleId)) return res.status(400).json({ error: "Invalid APNs bundle ID" });
+        patch.apnsBundleId = body.apnsBundleId;
+      }
+      if (Object.hasOwn(body, "apnsPrivateKey")) {
+        if (typeof body.apnsPrivateKey !== "string") return res.status(400).json({ error: "APNs key must be text" });
+        if (body.apnsPrivateKey.trim()) {
+          try { parsePushKey(body.apnsPrivateKey.trim()); } catch { return res.status(400).json({ error: "Use a valid APNs P-256 .p8 key" }); }
+          patch.apnsPrivateKey = body.apnsPrivateKey.trim();
+        }
+      }
+      if (body.clearApnsPrivateKey === true) patch.apnsPrivateKey = "";
       // ── Voice calls ──────────────────────────────────────────────────────────
       // Optional and independent of the engines. An empty key box keeps the stored key; only an
       // explicit clear removes it. Model and voice are validated against the closed lists.

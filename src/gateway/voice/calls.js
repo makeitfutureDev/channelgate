@@ -343,7 +343,7 @@ export function createCallManager({
     return pending;
   }
 
-  async function start({ ownerId, channelId = "", threadTs = "", client, teamId = "", botUserId = "" }) {
+  async function start({ ownerId, channelId = "", threadTs = "", client, teamId = "", botUserId = "", openingReason = "" }) {
     const c = config();
     if (!c.enabled || !c.apiKey) throw httpError(503, "Voice calls are not configured. An administrator enables them under Settings → Voice calls.");
     if (!ownerId || !client) throw httpError(400, "A call needs a caller.");
@@ -357,6 +357,7 @@ export function createCallManager({
     const id = crypto.randomBytes(12).toString("base64url");
     const call = {
       id, ownerId, client, teamId, botUserId, callerName, isAdmin: user.isAdmin === true, model: c.model, startedMs, lastActivityMs: startedMs, status: "connecting",
+      openingReason: clean(openingReason, 160),
       bound: null, visited: [], segmentStart: 0, listeners: new Set(), transcript: [], transcriptTruncated: false,
       doneActions: new Map(), tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
     };
@@ -584,6 +585,11 @@ export function createCallManager({
     if (!call || call.ownerId !== ownerId) throw httpError(404, "That call is not active.");
     touch(call); resume(call);
     if (!call.session?.ready) return false;
+    if (call.openingReason) {
+      const reason = call.openingReason;
+      call.openingReason = "";
+      call.session.sendText(`[gateway] The person answered an incoming call. Its approved reason is ${JSON.stringify(reason)}. Briefly greet them and explain this reason, then listen. Do not perform a task until they ask. The phone audio path is now ready.`);
+    }
     return call.session.sendAudio(chunk);
   }
 
