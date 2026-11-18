@@ -41,8 +41,8 @@ test("admin UI consumes server model manifests and keeps exact versions as its o
 
 const { effortsForModel } = await import("../src/engines/registry.js");
 
-test("GPT-6.2 fallback efforts exclude unsupported none and unverified ultra", () => {
+test("GPT-6.2 fallback efforts match the verified Codex 0.170.0 catalog", () => {
   for (const model of ["gpt-6.2-astra", "gpt-6.2-sol"]) {
-    assert.deepEqual(effortsForModel("codex", model), ["low", "medium", "high", "xhigh", "max"]);
+    assert.deepEqual(effortsForModel("codex", model), ["low", "medium", "high", "xhigh", "max", "ultra"]);
   }
 });
