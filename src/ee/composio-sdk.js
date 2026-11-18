@@ -2,8 +2,10 @@
 // only a session-scoped MCP URL plus non-secret metadata. Connected accounts are keyed by the
 // stable external identity in Composio, while SQLite keeps per-thread remote session mappings.
 import { requireComposioSdkEntitlement } from "./composio-entitlement.js";
+import { createHash } from "node:crypto";
 import { Composio } from "@composio/core";
-import { getComposioSdkApiKey } from "../config/settings.js";
+import { getComposioSdkApiKey, getComposioSdkPolicy } from "../config/settings.js";
+import { composioSessionPolicy } from "../config/composio-sdk-policy.js";
 import {
   composioIdentity,
   composioSessionKey,
@@ -79,14 +81,17 @@ export async function resolveSdkSession({
   const source = kind === "user" ? "sdk-user" : "sdk-channel";
   const sdk = client || productionClient();
 
-  return singleFlight(sessionKey, async () => {
+  const prepared = await singleFlight(sessionKey, async () => {
+    const policy = composioSessionPolicy(getComposioSdkPolicy());
+    const policyFingerprint = JSON.stringify(policy);
     const stored = getComposioSession(sessionKey);
     if (stored) {
       try {
-        const resumed = endpointFrom(
-          await sdk.sessions.use(stored.sessionId, { mcp: true }),
-          source
-        );
+        const session = await sdk.sessions.use(stored.sessionId, { mcp: true });
+        // Apply current policy before exposing any tools, including sessions persisted before
+        // these controls existed. A failed update must not return an unrestricted old endpoint.
+        await session.update({ ...policy, manageConnections: { enable: Boolean(manageConnections) } });
+        const resumed = endpointFrom(session, source);
         saveComposioSession({
           sessionKey,
           identityId,
@@ -96,7 +101,7 @@ export async function resolveSdkSession({
           sessionId: resumed.sessionId,
           mcpUrl: resumed.url,
         });
-        return resumed;
+        return { endpoint: resumed, policyFingerprint };
       } catch (error) {
         if (!isMissingSession(error)) throw error;
         deleteComposioSession(sessionKey);
@@ -107,6 +112,7 @@ export async function resolveSdkSession({
       await sdk.sessions.create(identityId, {
         mcp: true,
         manageConnections: Boolean(manageConnections),
+        ...policy,
       }),
       source
     );
@@ -119,6 +125,15 @@ export async function resolveSdkSession({
       sessionId: created.sessionId,
       mcpUrl: created.url,
     });
-    return created;
+    return { endpoint: created, policyFingerprint };
   });
+  // Every caller checks after awaiting the shared preparation. A settings save can happen
+  // while Composio is in flight, including before a second caller joins that older request.
+  // Keep the mapping for the next attempt, but never expose its stale policy to either caller.
+  if (prepared.policyFingerprint !== JSON.stringify(composioSessionPolicy(getComposioSdkPolicy()))) {
+    throw new Error("Composio SDK policy changed while preparing the session; retry the run");
+  }
+  // The remote URL survives policy updates. Include a value-free revision so warm engine
+  // processes reconnect and discover changed account-selection/tool schemas on the next turn.
+  return { ...prepared.endpoint, policyDigest: `sha256:${createHash("sha256").update(prepared.policyFingerprint).digest("hex")}` };
 }

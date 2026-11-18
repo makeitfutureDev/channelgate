@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Enable multiple accounts per app in Composio SDK sessions, with explicit account selection,
+  a configurable account limit and an administrator-managed app allowlist under Integrations.
+  Existing sessions receive the current policy before their next run; connected accounts remain saved.
+
 - Publish Apple's app-site association at `/.well-known/apple-app-site-association` so the
   ChannelGate iPhone app can sign in with the gateway's Activity passkeys. Public, plain JSON,
   no redirect; 404 until an administrator enters the app identifiers (Settings → *iPhone app

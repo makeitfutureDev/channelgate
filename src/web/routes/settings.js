@@ -6,6 +6,7 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { hasComposioSdkEntitlement } from "../../ee/composio-entitlement.js";
+import { normalizeComposioSdkPolicy } from "../../config/composio-sdk-policy.js";
 import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../../ee/update-entitlement.js";
 import { Router } from "express";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
@@ -343,6 +344,10 @@ export function createSettingsRouter({
       if (typeof body.composioMode === "string" && COMPOSIO_MODES.includes(body.composioMode)) patch.composioMode = body.composioMode;
       if (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim()) patch.composioSdkApiKey = body.composioSdkApiKey.trim();
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
+      if (Object.hasOwn(body, "composioSdkPolicy")) {
+        try { patch.composioSdkPolicy = normalizeComposioSdkPolicy(body.composioSdkPolicy); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (Object.hasOwn(body, "logoColor")) {
