@@ -37,12 +37,14 @@ local SSH keys and known_hosts remain channel-specific. Host `/sudo` runs use th
 stated in their resolved runtime preamble.
 
 For an exact public SSH hostname or IPv4/IPv6 address not yet in this channel's `egressRawHosts`, use
-`allow_channel_ssh_host`. The gateway posts a durable card that any currently authorized
+`allow_channel_ssh_host` with the actual SSH `port` (22 when unspecified). The gateway posts a durable card that any currently authorized
 channel member with write access may approve; neither admin rights nor `/sudo` are needed.
 The card persists across restarts and is never auto-approved. End the turn while it is pending.
 Once approved, retry with `-i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes` and
 `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.
-The existing host list enables TCP ports 22, 5432 and 6543; the card names that scope.
+An explicit `port` opens only that exact host:port; the card and saved action name it.
+For a custom port, for example 32921, pass `port: 32921` and retry SSH with `-p 32921`.
+Omitting `port` preserves the legacy TCP ports 22, 5432 and 6543 and cannot open a custom port.
 Network must remain on and private/loopback/metadata addresses remain blocked. Approval
 adds no SSH key, secret host grant, private route, or open network. Use the isolated VPN or
 operator paths below when the destination is private.

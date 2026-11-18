@@ -11,6 +11,9 @@
   while retaining each platform account's own permissions.
 - Repair older self-completed Slack threads remaining in Active after the shared participation upgrade.
 
+- Fix SSH approvals for custom ports: agents can request an exact public host and TCP port,
+  and the approval card opens only that destination. Existing host grants keep their legacy ports.
+
 - Fix Composio file staging on consumer (MCP) keys handing out keys whose file Drive, Gmail and
   Slack could not retrieve (storage HTTP 404): the gateway now uploads through the workbench's
   checked upload helper from the sandbox's own `/tmp` instead of naming a key on the s3fs mount,

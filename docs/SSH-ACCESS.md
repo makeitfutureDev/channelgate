@@ -250,7 +250,8 @@ egress proxy (image spec 1.6.0). An SSH session is inside that container, so the
   container, which has no route: `ssh -L 5432:db.example.com:5432 acme-app` fails. Forwards to
   container-local ports (`ssh -L 3000:localhost:3000 acme-app`) and every `-R` forward are
   unchanged. Reach an external database through the channel's VPN/database helper, or ask an admin
-  to declare its host as a raw host (`egressRawHosts`, ports 22/5432/6543) and connect from inside.
+  to approve its exact host and SSH port using `allow_channel_ssh_host` and connect from inside
+  using `cg-egress-connect` as the SSH ProxyCommand (and `-p` for a custom port).
 - **Outbound SSH goes through a helper.** `git clone git@github.com:org/repo.git` works in a
   session as is: `GIT_SSH_COMMAND` runs `ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect
   %h %p'`, which asks the proxy for a raw tunnel. The proxy allows one only to `github.com:22` and

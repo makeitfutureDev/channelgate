@@ -151,7 +151,7 @@ test("public IPv4 and IPv6 literals are approved without DNS and become raw tunn
     assert.throws(() => assertValidSwapRuleFields({ hosts: [host] }));
   }
   assert.deepEqual(assertValidEgressRawHosts(["[2001:4860:4860::8888]", "8.8.8.8"]), ["2001:4860:4860::8888", "8.8.8.8"]);
-  for (const host of ["10.0.0.1", "127.0.0.1", "169.254.169.254", "fc00::1", "::1", "::ffff:127.0.0.1", "999.1.1.1", "8.8.8.8:22", "2001:4860:4860::8888%eth0"]) {
+  for (const host of ["10.0.0.1", "127.0.0.1", "169.254.169.254", "fc00::1", "::1", "::ffff:127.0.0.1", "999.1.1.1", "2001:4860:4860::8888%eth0"]) {
     assert.throws(() => assertValidEgressRawHosts([host]), /not a raw destination/);
     assert.ok(!rawPassthroughFor({ egressRawHosts: [host] }).some(rule => rule.host === host));
   }
@@ -172,7 +172,7 @@ test("an admin-scoped Azure SQL destination opens only 1433 while network is on"
   assert.deepEqual((await checkDestination({ ...destination, mode: "on" })).tunnel, true);
   assert.equal((await checkDestination({ ...destination, mode: "off" })).ok, false);
   assert.equal((await checkDestination({ ...destination, port: 5432, mode: "on" })).tunnel, false);
-  for (const invalid of ["*.database.windows.net:1433", "localhost:1433", "10.0.0.1:1433", "sql.example.com:1434", "sql.example.com:22"]) {
+  for (const invalid of ["*.database.windows.net:1433", "localhost:1433", "10.0.0.1:1433", "sql.example.com:0", "sql.example.com:65536", "sql.example.com:1.5"]) {
     assert.throws(() => assertValidEgressRawHosts([invalid]), /not a raw destination/);
     assert.deepEqual(rawPassthroughFor({ egressRawHosts: [invalid] }), [{ host: "github.com", port: 22 }]);
   }
@@ -206,4 +206,33 @@ test("scoped SQL grants preserve legacy hosts, IPv6 literals and pinned public-a
   const ctx = await fixture({ egressRawHosts: hosts });
   await addApprovedEgressHost(ctx, "new-ssh.example.com", { lookup: publicLookup });
   assert.deepEqual((await store.getChannelMeta(ctx.slug)).egressRawHosts, [...hosts, "new-ssh.example.com"]);
+});
+
+
+test("custom SSH ports are exact, survive existing legacy grants and retain destination protections", async () => {
+  const { rawPassthroughFor } = await import("../src/gateway/egress/service.js");
+  const { checkDestination } = await import("../src/gateway/egress/policy.js");
+  const ctx = await fixture({ egressRawHosts: ["ssh.example.com"] });
+  const prepared = await prepareEgressHost(ctx, "SSH.EXAMPLE.COM", { port: 32921, lookup: publicLookup });
+  assert.deepEqual(prepared, { host: "ssh.example.com", port: 32921, alreadyAllowed: false });
+  assert.deepEqual((await store.getChannelMeta(ctx.slug)).egressRawHosts, ["ssh.example.com"]);
+  assert.equal(await addApprovedEgressHost(ctx, prepared.host, { port: prepared.port, lookup: publicLookup }), "ssh.example.com:32921");
+  assert.equal((await prepareEgressHost(ctx, prepared.host, { port: 32921, lookup: publicLookup })).alreadyAllowed, true);
+  const fresh = await fixture({ egressRawHosts: [] });
+  for (const host of ["ssh.example.com", "2001:4860:4860::8888"]) {
+    await addApprovedEgressHost(fresh, host, { port: 32921, lookup: publicLookup });
+    const rawPassthrough = rawPassthroughFor(await store.getChannelMeta(fresh.slug));
+    assert.deepEqual(rawPassthrough.filter(rule => rule.host === host), [{ host, port: 32921 }]);
+    const input = { hostname: host, port: 32921, mode: "on", rawPassthrough, lookup: publicLookup };
+    assert.equal((await checkDestination(input)).tunnel, true);
+    for (const port of [22, 5432, 6543, 32922]) assert.equal((await checkDestination({ ...input, port })).tunnel, false);
+    assert.equal((await checkDestination({ ...input, mode: "off" })).ok, false);
+    assert.equal((await checkDestination({ ...input, hostname: "other.example.com" })).tunnel, false);
+  }
+  assert.deepEqual((await store.getChannelMeta(fresh.slug)).egressRawHosts, ["ssh.example.com:32921", "[2001:4860:4860::8888]:32921"]);
+  for (const port of [0, -1, 65536, 1.5, "32921", null]) {
+    await assert.rejects(prepareEgressHost(fresh, "ssh.example.com", { port, lookup: async () => assert.fail("invalid port must not reach DNS") }), /integer TCP port/);
+  }
+  await assert.rejects(addApprovedEgressHost(fresh, "private.example.com", { port: 32921,
+    lookup: async () => [{ address: "10.0.0.1", family: 4 }] }), /which channels may not reach/);
 });

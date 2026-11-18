@@ -166,7 +166,7 @@ export function assertValidSwapRuleFields({ hosts, headers, format } = {}) {
 }
 
 // The channel meta's `egressRawHosts` (admin API or approved worker request): a host alone gets
-// the legacy SSH/Postgres ports, while an exact `host:1433` entry gets only Azure SQL's port.
+// the legacy SSH/Postgres ports, while an exact `host:port` entry gets only that TCP port.
 // The proxy's policy re-filters tolerantly on read.
 // Raw tunnels carry SSH/PostgreSQL/Azure SQL bytes, not credential substitutions. Public IP literals
 // are valid here without widening the DNS-only secret-host rule above.
@@ -180,7 +180,7 @@ export function parseRawDestination(value) {
   const scoped = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(raw);
   const host = normalizeHost(scoped ? scoped[1] : raw);
   const port = scoped ? Number(scoped[2]) : null;
-  if (!isValidRawHost(host) || (port !== null && (port !== 1433 || host.includes("*")))) return null;
+  if (!isValidRawHost(host) || (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535 || host.includes("*")))) return null;
   return { host, port, value: port === null ? host : `${isIP(host) === 6 ? `[${host}]` : host}:${port}` };
 }
 
@@ -189,7 +189,7 @@ export function assertValidEgressRawHosts(value) {
   const inputs = listOf(value);
   const parsed = inputs.map(parseRawDestination);
   const badIndex = parsed.findIndex((entry) => entry === null);
-  if (badIndex !== -1) throw new Error(`"${inputs[badIndex]}" is not a raw destination — use a public host or an exact public host:1433 entry.`);
+  if (badIndex !== -1) throw new Error(`"${inputs[badIndex]}" is not a raw destination — use a public host or an exact public host:port entry (TCP port 1–65535).`);
   const list = [...new Set(parsed.map((entry) => entry.value))];
   if (list.length > MAX_RAW_HOSTS) throw new Error(`At most ${MAX_RAW_HOSTS} raw hosts per channel.`);
   return list;
