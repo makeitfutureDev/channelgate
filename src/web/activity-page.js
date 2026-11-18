@@ -1262,16 +1262,15 @@ function settingsBrowser(config, browser, theme, connections) {
       const c = data.connections, cards = [];
       cards.push(connections.mount());
       if (config.connectionsNew && c.composioMode === "sdk") return cards;
-      const composio = card("Composio · your account", "Your own apps (Gmail, Calendar, HubSpot, …) as composio-user. Only your runs use it, in every conversation.");
-      if (c.composioMode === "sdk") composio.append(node("p", "settings-copy", "Your apps are connected through the list above. Each connection belongs to your personal account."));
-      else {
+      if (c.composioMode !== "sdk") {
+        const composio = card("Composio · your account", "Your own apps (Gmail, Calendar, HubSpot, …) as composio-user. Only your runs use it, in every conversation.");
         composio.append(row(c.composio.configured ? "Connected" + (c.composio.last4 ? " · ••••" + c.composio.last4 : "") : "Not connected", c.composio.label,
           c.composio.configured ? [button("Remove", confirmThen("Remove your Composio account? Runs in progress stop using it.", { action: "composio.remove" }), "settings-button danger")] : []));
         composio.append(form([field(c.composio.configured ? "Replace token" : "Token", input("token", { type: "password", max: 4096, placeholder: c.composio.configured ? "Leave blank to keep the current token" : "" })),
           field("Label", input("label", { value: c.composio.label, max: 80, placeholder: "e.g. Work account" }), "Optional. Shown here and in Slack Settings.")],
         "Save", (v) => ({ action: "composio.save", token: v.token, label: v.label })));
+        cards.push(composio);
       }
-      cards.push(composio);
 
       const email = card("Email accounts", "Mailboxes only your runs read and send from. Saving logs in to IMAP and SMTP first; passwords are never shown again.");
       for (const account of c.email) {
@@ -1282,8 +1281,9 @@ function settingsBrowser(config, browser, theme, connections) {
       if (!c.email.length) email.append(node("p", "settings-empty", "No email accounts."));
       const current = editing?.kind === "email" ? editing.value : null;
       const v = (key, fallback = "") => current ? String(key.split(".").reduce((o, k) => o?.[k], current) ?? fallback) : fallback;
-      email.append(node("h3", "", current ? "Edit " + current.name : "Add an account"));
-      email.append(form([
+      const emailEditor = node("details", "settings-email-editor"); emailEditor.open = Boolean(current);
+      emailEditor.append(node("summary", "", current ? "Edit " + current.name : "Add an email account"));
+      emailEditor.append(form([
         ...(current ? [] : [field("Name", input("name", { max: 40, placeholder: "work" }), "Lowercase letters, digits and dashes.")]),
         field("Address", input("address", { type: "email", value: v("address"), max: 254 })),
         field("Display name", input("displayName", { value: v("displayName"), max: 120 })),
@@ -1293,7 +1293,7 @@ function settingsBrowser(config, browser, theme, connections) {
         field("SMTP user", input("smtpUser", { value: v("smtp.user"), max: 254 }), "Blank uses the IMAP user."), field("SMTP password", input("smtpPassword", { type: "password", max: 1024, placeholder: current ? "Leave blank to keep" : "Blank uses the IMAP password" })),
       ], current ? "Save changes" : "Connect", (values) => ({ action: "email.save", ...values, ...(current ? { name: current.name } : {}) }),
       current ? { cancel: () => { editing = null; render(); } } : {}));
-      cards.push(email);
+      email.append(emailEditor); cards.push(email);
       return cards;
     },
     mcps() {
@@ -1670,6 +1670,35 @@ select.settings-input{height:32px}
 .settings-button:disabled{opacity:.5;cursor:default}
 .settings-button.primary{background:var(--orange);border-color:var(--orange);color:var(--brand-ink)}
 .settings-button.danger{color:var(--danger)}.settings-button.ghost{background:transparent}
+.connections-card>.settings-row:first-child{border-top:0;padding-top:0;align-items:flex-start}
+.connections-card .settings-row-actions{flex-wrap:wrap}
+.connections-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0}
+.connections-toolbar>.settings-input{max-width:320px;min-width:0}
+.connections-tabs{display:flex;gap:4px;padding:4px;background:var(--panel-dark);border:1px solid var(--line-soft);border-radius:9px;flex-shrink:0}
+.connections-tabs button{border:0;background:transparent;color:var(--muted);padding:7px 12px;border-radius:6px;font:12.5px var(--font)}
+.connections-tabs button[aria-pressed=true],.connections-tabs button[aria-selected=true]{background:var(--panel-2);color:var(--ink);box-shadow:0 1px 3px #0002}
+.connections-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin:12px 0}
+.connection-app-card{display:flex;align-items:center;gap:14px;width:100%;min-height:100px;padding:18px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer;min-width:0}
+.connection-app-card:hover{border-color:var(--orange);background:var(--hover)}
+.connection-app-card:focus-visible{outline:2px solid var(--orange);outline-offset:3px}
+.connection-app-text{min-width:0}
+.connection-app-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 42px;width:42px;height:42px;border-radius:11px;background:var(--panel-2);color:var(--orange);font-size:17px;font-weight:700}
+.connection-app-name{display:block;font-size:14px;font-weight:600;overflow-wrap:anywhere;margin-bottom:7px}
+.connection-app-status{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.connection-detail{margin-top:18px}
+.connection-detail>.settings-row:first-child{padding:16px 0}
+.connection-account-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-top:1px solid var(--line-soft);flex-wrap:wrap}
+.connection-account-row>.settings-row-text{flex:1 1 180px}
+.connection-account-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.connection-delete-confirm{flex-basis:100%;padding:14px;border:1px solid color-mix(in srgb,var(--danger) 40%,var(--line));border-radius:8px;background:var(--panel-dark)}
+.connection-delete-confirm:empty{display:none}
+.connection-delete-confirm .settings-copy{color:var(--ink-2);margin-bottom:12px}
+.connection-delete-confirm button+button{margin-left:8px}
+.connections-selection:empty{display:none}
+.connections-selection .settings-form{padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel-dark);margin:18px 0}
+.connections-selection .settings-form h3{grid-column:1/-1;margin:0}
+@media(max-width:640px){.connections-toolbar{align-items:stretch;flex-direction:column}.connections-toolbar>.settings-input{max-width:none}.connections-tabs{align-self:flex-start}.connections-card{padding:14px}.connection-app-card{min-height:90px}.connection-delete-confirm button{max-width:100%;white-space:normal;height:auto;min-height:32px}.connection-account-actions{width:100%}}
+.settings-email-editor{margin-top:16px}.settings-email-editor summary{cursor:pointer;font-weight:500;font-size:13px}
 .settings-skill-list{display:flex;flex-direction:column;max-height:420px;overflow:auto;margin:10px 0;border:1px solid var(--line);border-radius:8px}
 .settings-skill{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--line-soft)}
 .settings-skill[hidden]{display:none}.settings-skill-text{display:flex;flex-direction:column;min-width:0}

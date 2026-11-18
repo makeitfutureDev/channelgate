@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Redesign Activity Connections around searchable app cards and account details. Let users confirm
+  deletion of their own private Composio connections in SDK and supported personal-token mode.
+
 - Remove the legacy skillsmanager.uk Toolbox connection from personal, channel and organization
   settings, token tools and all engine MCP setup. Upgrade removes saved legacy credentials;
   Composio and Make.com MCP connections remain available.

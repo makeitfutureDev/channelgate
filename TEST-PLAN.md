@@ -2,6 +2,29 @@
 
 ## Activity Connections settings (2026-11-18)
 
+- App overview/detail revision: browser coverage requires Connected cards with account counts,
+  app search, app detail/back navigation, SDK All apps paging and alias flow, and no personal-token
+  catalog request. Test desktop and phone in light/dark themes with long account identities.
+- Deletion coverage: choose one private account, cancel confirmation without mutation, confirm
+  once and require exact account-ID deletion, duplicate suppression, visible provider failure,
+  refreshed account counts, and session-expiry cleanup. The server must reject missing CSRF,
+  foreign Origin, forged owner/workspace/body, shared/foreign/unverified accounts, identity/token
+  changes and revoked sessions; provider success must be explicit, not inferred from an empty body.
+- Live `ACT-CONNECTIONS-04` (engine-independent browser): using two disposable personal identities,
+  connect two accounts to one app. Search/open that app, cancel then confirm one removal. Require
+  only that ID removed, the other account retained, and direct requests against the other user's
+  ID refused. Repeat in SDK mode and supported personal-token mode. Restore fixture setup.
+  Real user connections must never be deleted as acceptance fixtures.
+- Provider deletion canary (2026-11-18): created pending Gmail connections only under an isolated
+  QA identity, verified PRIVATE ownership, verified the Activity SDK deletion service and absence
+  on a fresh provider read, and verified exact-ID removal through the provider connection manager.
+  The connection manager reported `initiated` despite successful removal; a fresh same-session
+  account list is therefore required to confirm personal-token deletion. All pending fixture
+  accounts and the remote session were cleaned up. No existing user account or mailbox was touched.
+- Tool-level permission research: Composio session `tools.<toolkit>.enable`/`disable` and tag
+  filters are provider-enforced on session execution, not direct project-key calls. This revision
+  does not add a tool permission editor or change existing session tool policy.
+
 - Automated: `test/activity-connections.test.js` verifies owner-filtered catalog paging and custom
   apps, restrictive/empty policy, real provider underscore slugs, no-auth/legacy metadata,
   credential/error filtering, Enterprise/Personal-mode gates, connection ownership, private defaults,

@@ -2,8 +2,9 @@
 
 ## Activity connection management (2026-11-18)
 
-Activity → Settings → Connections lists the signed-in person's Composio applications and accounts,
-with identity, alias, status and a refresh action. It uses the same personal identity as their
+Activity → Settings → Connections opens an application grid with Connected and SDK All apps views,
+search and account counts. Select an app to see its connected accounts, identities, aliases and
+status; SDK users can connect another account from that detail view. It uses the same personal identity as their
 agent runs. Personal-token mode shows the apps Composio publishes for that token, identifies
 partial/unavailable results, and retains the token editor; adding apps in this dashboard requires
 SDK mode. Saving or removing a token immediately refreshes its account list.
@@ -13,6 +14,12 @@ choose an alias and continue to Composio's hosted authorization page. The gatewa
 account limits and Enterprise entitlement apply. No-auth apps need no connection. New connections
 are private to that person; successful authorization is established by refreshing provider account
 status, never by trusting callback query strings. The browser receives no project key or MCP URL.
+Users can delete a private connection from its app detail after an explicit confirmation. The
+server rechecks the current identity, ownership, connection type and Activity authorization before
+removal; shared and unverified accounts cannot be deleted here. SDK deletion uses provider account
+IDs, while personal-token deletion uses the token-scoped connection manager when supported. This
+removes the Composio connection, not the upstream Gmail/Slack account or the ChannelGate user.
+Provider failures stay visible and the account list refreshes after successful removal.
 Both pages retain Activity cookie, workspace, revocation and CSRF checks. The admin Users page
 continues to provide authorized per-user inventory separately.
 
