@@ -1065,3 +1065,33 @@ test("both engines propose one mandatory durable fork card carrying exact prompt
     assert.equal(body.durableAction.sourceSessionId, `source-${engine}`);
   }
 });
+
+
+test("both engines bind custom SSH ports to durable human approval even when the hostname is already allowed", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressRawHosts: ["8.8.8.8"] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `egress-port-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8", port: 32921 } })), awaitingCard);
+      });
+      assert.equal(approvalRequests.length, 1);
+      const request = approvalRequests[0].body;
+      assert.deepEqual(request.durableAction.args, { host: "8.8.8.8", port: 32921 });
+      assert.match(request.toolInput.details, /TCP port 32921 only/);
+      assert.equal(request.requiredTier, "worker");
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["8.8.8.8"]);
+      const saved = await applySaved(request, "U_CTRL_MEMBER");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["8.8.8.8", "8.8.8.8:32921"]);
+      approvalRequests.length = 0;
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8", port: 32921 } })), /allowed/);
+      });
+      assert.equal(approvalRequests.length, 0);
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
+});

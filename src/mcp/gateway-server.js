@@ -330,7 +330,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // authors in this channel, which is the posture every other card relies on — so it keeps its card.
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
-    ["allow_channel_ssh_host", { authz: "worker", details: ({ host }) => `Allow raw TCP connections to ${host} for THIS channel on ports 22 (SSH), 5432 and 6543 (PostgreSQL)? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
+    ["allow_channel_ssh_host", { authz: "worker", details: ({ host, port }) => `Allow raw TCP connections to ${host} for THIS channel on ${port === undefined ? "ports 22 (SSH), 5432 and 6543 (PostgreSQL)" : `TCP port ${port} only`}? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
@@ -531,8 +531,8 @@ export function createGatewayMcpServer(ctx) {
         let hostAlreadyAllowed = false;
         if (name === "allow_channel_ssh_host") {
           try {
-            const prepared = await prepareEgressHost(ctx, args?.host);
-            args = { host: prepared.host };
+            const prepared = await prepareEgressHost(ctx, args?.host, { port: args?.port });
+            args = { host: prepared.host, ...(prepared.port === undefined ? {} : { port: prepared.port }) };
             hostAlreadyAllowed = prepared.alreadyAllowed;
           } catch (error) {
             return text(`Couldn't request SSH egress: ${error.message}`);

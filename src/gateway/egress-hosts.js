@@ -17,7 +17,7 @@ export async function isChannelWorker(channelId, slug, userId) {
   });
 }
 
-export async function prepareEgressHost(ctx, value, { lookup } = {}) {
+export async function prepareEgressHost(ctx, value, { lookup, port } = {}) {
   if (!ctx.principalTrusted || !(await isChannelWorker(ctx.channelId, ctx.slug, ctx.createdBy))) {
     throw new Error("Only an authorized channel member with write access can request SSH egress.");
   }
@@ -25,14 +25,20 @@ export async function prepareEgressHost(ctx, value, { lookup } = {}) {
   if (meta.allowNetwork !== true) throw new Error("Network access is off for this channel.");
   const host = normalizeHost(value);
   if (!isValidDestinationHost(host)) throw new Error("Use one exact hostname or public IP address, without wildcards, a URL, or a port.");
-  const result = await checkDestination({ hostname: host, port: 22, mode: "on", rawPassthrough: [{ host, port: 22 }], lookup });
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+    throw new Error("Use an integer TCP port from 1 to 65535.");
+  }
+  const destination = port === undefined ? host : `${host.includes(":") ? `[${host}]` : host}:${port}`;
+  const checkedPort = port ?? 22;
+  const result = await checkDestination({ hostname: host, port: checkedPort, mode: "on", rawPassthrough: [{ host, port: checkedPort }], lookup });
   if (!result.ok) throw new Error(result.reason);
-  assertValidEgressRawHosts([...(meta.egressRawHosts || []), host]);
-  return { host, alreadyAllowed: (meta.egressRawHosts || []).includes(host) };
+  assertValidEgressRawHosts([...(meta.egressRawHosts || []), destination]);
+  return { host, ...(port === undefined ? {} : { port }), alreadyAllowed: (meta.egressRawHosts || []).includes(destination) };
 }
 
 export async function addApprovedEgressHost(ctx, value, options) {
-  const { host } = await prepareEgressHost(ctx, value, options);
+  const { host, port } = await prepareEgressHost(ctx, value, options);
+  const destination = port === undefined ? host : `${host.includes(":") ? `[${host}]` : host}:${port}`;
   if (!(await isChannelWorker(ctx.channelId, ctx.slug, ctx.createdBy))) throw new Error("The requester no longer has write access in this channel.");
   let before;
   const after = await patchChannelMeta(ctx.slug, (current) => {
@@ -40,8 +46,8 @@ export async function addApprovedEgressHost(ctx, value, options) {
       throw new Error("This channel no longer permits SSH egress.");
     }
     before = current;
-    return { egressRawHosts: assertValidEgressRawHosts([...(current.egressRawHosts || []), host]) };
+    return { egressRawHosts: assertValidEgressRawHosts([...(current.egressRawHosts || []), destination]) };
   });
   await logChannelPolicyChange({ channelId: ctx.channelId, slug: ctx.slug, actor: ctx.createdBy, before, after, source: "mcp" });
-  return host;
+  return destination;
 }

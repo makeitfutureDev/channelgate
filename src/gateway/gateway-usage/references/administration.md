@@ -162,11 +162,11 @@ These channel modes do not leave the container. The separate organization-admin-
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
   cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
   tunnelled only to `github.com:22` and hosts in this channel's `egressRawHosts`. For a new
-  public SSH server, call `allow_channel_ssh_host` with the exact hostname or public IP address. It posts a durable
+  public SSH server, call `allow_channel_ssh_host` with the exact hostname or public IP address and the actual SSH `port` (use 22 if unspecified). It posts a durable
   approval card: any authorized channel member with write access may approve, without `/sudo`
   or an admin. End the turn while pending; after approval retry with the existing key. The card
-  adds this host for TCP 22, 5432 and 6543, preserves existing hosts, and never enables Network
-  or permits private addresses. Do not switch to `/sudo` just to bypass this approval. Point raw clients at the proxy — for `ssh`/`git@…`:
+  adds only that host:port, preserves existing grants, and never enables Network
+  or permits private addresses. Omitting `port` retains the legacy 22/5432/6543 grant, which does not cover a custom SSH port. For port 32921, request `{host: "ssh.example.com", port: 32921}` and retry SSH with `-p 32921` and the ProxyCommand. A connection closing before authentication does not test the SSH key. Do not switch to `/sudo` just to bypass this approval. Point raw clients at the proxy — for `ssh`/`git@…`:
   `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
   operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
   still succeed while it is off — that is not permission. If the switch is off and a task needs

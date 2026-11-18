@@ -1838,7 +1838,7 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
 
 - [x] Admin-scoped Azure SQL raw tunnel: `test/egress-hosts.test.js` and `test/egress-service.test.js`
   verify that `host:1433` creates only the exact 1433 tunnel, is refused with Network off, and
-  rejects wildcards, private hosts and other scoped ports.
+  rejects scoped wildcards, private hosts and invalid port numbers.
 - [ ] Live Claude and Codex acceptance (SQL-RAW-01): use exclusive disposable equivalents of
   `cg-testing-claude-bash` and `cg-testing-codex-bash` with Network on and an owned public
   SQL Server/Azure SQL fixture at `<sql-host>:1433`, a readable database password Secret and
@@ -1849,7 +1849,7 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
   Require a real read-only result through CONNECT with no `/sudo` or `rawNetwork`.
   Turn Network off and require a `network-off` refusal on a new connection; restore it,
   remove only the scoped grant and require that a new connection is no longer a raw tunnel.
-  Exact-host matching, private/mixed DNS refusal and a worker's inability to request port 1433
+  Exact-host matching, private/mixed DNS refusal and a worker's inability to grant any new port without human approval
   are covered by automated regressions. Restore the fixture's initial settings and record
   each engine's live evidence separately; automated tests do not establish a live SQL login.
 
@@ -14577,3 +14577,25 @@ Live acceptance (pending, run separately with Claude and Codex in an authorized 
   transcript scan in the new boot log. Record elapsed startup time rather than assuming a fixed
   machine-independent SLA. This runs before engine selection, so Claude/Codex turns are not
   required to prove migration admission; existing session repair tests cover both formats.
+
+
+## Exact SSH port approvals (2026-11-18)
+
+- Automated: `test/egress-hosts.test.js`, `test/egress-service.test.js` and
+  `test/mcp-control-plane-approval.test.js` cover canonical public DNS/IPv6 host:port entries,
+  legacy omitted-port grants, exact raw tunnel matching, invalid ports, private addresses,
+  Network off, and durable human approvals binding port 32921 in both Claude and Codex contexts,
+  including Auto and a hostname already approved on legacy ports.
+- Live Claude and Codex acceptance (pending, not executed): use exclusive disposable equivalents
+  of `cg-testing-claude-bash` and `cg-testing-codex-bash`, Worker + Network on, an approved
+  non-admin author, a controlled public SSH fixture on port 32921, a verified host key and an
+  existing test key. Ask: "Connect to the prepared SSH fixture on port 32921; request approval
+  for that exact host and port if needed." Require `allow_channel_ssh_host` with `port:32921`,
+  a card naming TCP 32921 only, and no mutation before a human click (also in Auto mode).
+  Approve as another authorized worker; require the exact `host:32921` grant, preserved settings,
+  then successful SSH through the ProxyCommand with `-p 32921`. Other hosts/ports must not gain
+  raw tunnels. Repeat after a pre-existing legacy hostname grant: 32921 still needs approval.
+  Restart the disposable gateway before deciding a fresh card; the saved port must survive and
+  replay must not change/widen it. Invalid ports/private or mixed DNS must refuse, and Network
+  off/revoked authority before approval must prevent the append. Restore only fixture grants
+  and keys. A mock MCP test does not establish a live SSH login or human approval.
