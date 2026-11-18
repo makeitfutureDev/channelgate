@@ -263,7 +263,7 @@ test("the ssh toolset is the control plane minus the thread-bound tools; ssh_ses
   const full = await names("full");
   const ssh = await names(SSH_TOOLSET);
   const review = await names("memory-review");
-  const threadBound = ["run_in_background", "run_agent_in_background", "report_progress", "request_approval", "permission_prompt"];
+  const threadBound = ["call_user", "run_in_background", "run_agent_in_background", "report_progress", "request_approval", "permission_prompt"];
   for (const name of threadBound) {
     assert.ok(full.includes(name) || name === "report_progress", `${name} is a turn's`);
     assert.ok(!ssh.includes(name), `${name} has no thread to speak into over SSH`);
