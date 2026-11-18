@@ -1,3 +1,4 @@
+import { incomingCalls, getIncomingCallList } from "../gateway/voice/incoming.ts";
 // A private user dashboard: ten-minute Slack launch grant -> path-scoped browser session.
 // Ordinary routes use Activity cookies only. The explicit admin shortcut can mint the owner's
 // Activity session from a verified, linked administrator browser session; API keys never qualify.
@@ -81,6 +82,7 @@ export function activityCallPath(channelId, threadTs = "") {
   return ACTIVITY_NEXT_PATTERN.test(path) ? path : "";
 }
 
+/** @param {{baseUrl?: string, ownerId: string, teamId: string, now?: number, next?: string}} options */
 export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, teamId, now = Date.now(), next = "" } = {}) {
   const base = baseFor(baseUrl);
   if (!base || !ownerId || !teamId) return "";
@@ -156,9 +158,11 @@ export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
   now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100, drainTimeoutMs = 30_000,
-  calls = null, voiceAvailable = voiceCallsAvailable,
+  calls = /** @type {object | null} */ (null), voiceAvailable = voiceCallsAvailable, incoming = /** @type {ReturnType<typeof incomingCalls> | null} */ (null),
 } = {}) {
   const callsFor = () => calls || defaultCallManager();
+  const incomingFor = () => incoming || incomingCalls();
+  if (!incoming) incomingFor().start();
   const linkedIds = new Map();
   const combinedRefreshKey = (ownerId) => JSON.stringify([refreshKey(ownerId), configVersion,
     ...(linkedIds.get(ownerId) || []).map(id => listPlatformThreadsForUser(id))]);
@@ -375,6 +379,56 @@ export function createActivityRouter({
       if (!target) return unavailable(res, 400);
       return res.redirect(303, `/activity/${encodeURIComponent(req.params.id)}${activityCallPath(target.channelId, target.threadTs)}`);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
+  });
+  router.get("/:id/api/devices", async (req, res) => {
+    try { const { session } = await context(req); return res.json({ devices: incomingFor().listDevices(session.ownerId) }); }
+    catch (e) { return unavailable(res, e.status || 403); }
+  });
+  router.post("/:id/api/devices", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      return res.json(incomingFor().registerDevice(session.ownerId, req.body || {}));
+    } catch (e) { return res.status(e.status || 400).json({ error: e.status === 401 || e.status === 403 ? "Activity is unavailable." : e.message }); }
+  });
+  router.delete("/:id/api/devices/:deviceId", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      return res.json(incomingFor().removeDevice(session.ownerId, req.params.deviceId));
+    } catch (e) { return unavailable(res, e.status || 403); }
+  });
+  router.get("/:id/api/incoming-calls", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      const rows = getIncomingCallList(session.ownerId);
+      return res.json({ calls: rows });
+    } catch (e) { return unavailable(res, e.status || 403); }
+  });
+  router.delete("/:id/api/incoming-calls/:invitationId", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      return res.json(incomingFor().cancel(session.ownerId, req.params.invitationId));
+    } catch (e) { return unavailable(res, e.status || 403); }
+  });
+  router.post("/:id/call/accept", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      const identity = getBotIdentity() || {};
+      const call = await incomingFor().accept(session.ownerId, req.body?.token, target => callsFor().start({
+        ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client,
+        teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" }));
+      return res.json(call);
+    } catch (e) { return res.status(e.status || 503).json({ error: "The call invitation is unavailable or could not connect." }); }
+  });
+  router.post("/:id/call/decline", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      return res.json(await incomingFor().decline(session.ownerId, req.body?.token));
+    } catch (e) { return res.status(e.status || 404).json({ error: "The call invitation is unavailable." }); }
   });
   router.post("/:id/call/start", async (req, res) => {
     try {

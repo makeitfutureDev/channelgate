@@ -1492,4 +1492,25 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 62,
+    up(db) {
+      db.exec(`
+        CREATE TABLE user_devices (
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, token TEXT NOT NULL,
+          bundle_id TEXT NOT NULL, environment TEXT NOT NULL, name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL, last_seen_ms INTEGER NOT NULL,
+          UNIQUE(token,bundle_id,environment)
+        );
+        CREATE INDEX idx_user_devices_owner ON user_devices(owner_id);
+        CREATE TABLE incoming_calls (
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL, token_hash TEXT NOT NULL, title TEXT NOT NULL,
+          status TEXT NOT NULL, created_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL,
+          call_id TEXT NOT NULL DEFAULT '', notified INTEGER NOT NULL DEFAULT 0, notice_claim_ms INTEGER NOT NULL DEFAULT 0, ring_ms INTEGER NOT NULL
+        );
+        CREATE INDEX idx_incoming_calls_owner ON incoming_calls(owner_id, created_ms);
+      `);
+    },
+  },
 ];

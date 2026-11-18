@@ -878,6 +878,18 @@
                   <label class="field"><span>Voice model</span><select id="set-voice-call-model"></select></label>
                   <label class="field"><span>Voice</span><select id="set-voice-call-voice"></select></label>
                 </div>
+                <div class="setcard" id="iphone-calls-card">
+                  <h4>Incoming iPhone calls · Beta</h4>
+                  <p class="desc">Let an agent ask to call the requesting person in its current thread. Each invitation requires approval and expires after 45 seconds. Enable voice calls above, then configure an Apple APNs key with VoIP permission for your app.</p>
+                  <label class="toggle"><input type="checkbox" id="set-ios-calls-enabled" /> Enable incoming iPhone calls</label>
+                  <label class="field"><span>Apple team ID</span><input id="set-apns-team-id" maxlength="10" placeholder="3J929KZ29B" /></label>
+                  <label class="field"><span>APNs key ID</span><input id="set-apns-key-id" maxlength="10" /></label>
+                  <label class="field"><span>iPhone bundle ID</span><input id="set-apns-bundle-id" maxlength="200" /></label>
+                  <label class="field"><span>APNs .p8 private key <em class="state" id="apns-key-state"></em></span>
+                    <textarea id="set-apns-private-key" rows="4" autocomplete="off" placeholder="Paste the .p8 contents; leave blank to keep the stored key"></textarea>
+                  </label>
+                  <label class="toggle"><input type="checkbox" id="clear-apns-private-key" /> Remove the stored APNs key</label>
+                </div>
                 <div class="setcard" id="perplexity-research-card">
                   <h4>Perplexity research</h4>
                   <p class="desc">Let agents delegate research through your Perplexity subscription. This is a gateway-wide shared login for research only, using the unofficial Perplexity web bridge.</p>

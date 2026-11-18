@@ -3743,3 +3743,11 @@ Keep container cgroups inside the delegated daemon service, preserve private tem
 ### Added — bulk discussion forks
 
 - Agents can propose multiple topic forks in one approval card. Approved forks inherit the source context, appear separately in Activity and link back to a parent index; duplicate clicks and partial failures are handled explicitly.
+
+## Unreleased — incoming iPhone calls
+
+- Add approval-gated agent calls to the requesting person's iPhone, with optional durable delay,
+  owner-scoped registration, single-use answer/decline invitations and APNs VoIP delivery.
+- Add private APNs configuration and lifecycle notices; existing voice calls handle accepted calls.
+- Add strict TypeScript modules using Node 24's built-in type stripping, CI type checking and
+  mixed JavaScript/TypeScript static checks and test discovery. No runtime dependency is added.

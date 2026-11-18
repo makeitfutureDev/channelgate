@@ -603,6 +603,13 @@ export function getVoiceCallConfig() {
     voice: VOICE_CALL_VOICES.includes(s.voiceCallVoice) ? s.voiceCallVoice : VOICE_CALL_VOICES[0],
   };
 }
+// iPhone/APNs settings are private; listings expose presence only.
+export function getIosCallConfig() {
+  const s = getSettings();
+  return { enabled: s.iosCallsEnabled === true, teamId: String(s.apnsTeamId || ""),
+    keyId: String(s.apnsKeyId || ""), bundleId: String(s.apnsBundleId || "com.makeitfuture.channelgate"),
+    privateKey: String(s.apnsPrivateKey || "") };
+}
 export function voiceCallsAvailable() {
   const c = getVoiceCallConfig();
   return c.enabled && Boolean(c.apiKey);
@@ -1307,6 +1314,8 @@ export function settingsForApi() {
       enabled: perplexity.enabled,
       hasSessionToken: Boolean(perplexity.sessionToken),
     },
+    iosCalls: { enabled: getIosCallConfig().enabled, teamId: getIosCallConfig().teamId, keyId: getIosCallConfig().keyId,
+      bundleId: getIosCallConfig().bundleId, hasPrivateKey: Boolean(getIosCallConfig().privateKey) },
     voiceCalls: {
       enabled: getVoiceCallConfig().enabled,
       hasApiKey: Boolean(getVoiceCallConfig().apiKey),

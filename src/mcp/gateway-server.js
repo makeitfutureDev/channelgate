@@ -1,3 +1,4 @@
+import { registerIncomingCallTool } from "../gateway/voice/incoming-tool.ts";
 // Gateway control MCP server. Injected into every gated run, scoped to the current principal by a
 // daemon-signed, expiring capability. Exposes scheduling tools (anyone allowed in the channel) and
 // channel-admin tools to manage the channel's MCP allowlist (admins only). Tool registrations live
@@ -141,7 +142,7 @@ export function normalizeToolset(value) {
  * `engine` / `toolset` / `progressReport` are the reader's own environment values; the signed
  * claim wins whenever it is present, so a bearer alone fixes the tool surface.
  */
-export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progressReport = false, daemon = null, verifyCapability = null } = {}) {
+export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progressReport = false, daemon = /** @type {ReturnType<typeof createDirectDaemonIpc> | ReturnType<typeof createHttpDaemonIpc> | null} */ (null), verifyCapability = null } = {}) {
   const channelId = claims.channelId || "";
   const slug = claims.slug || "";
   const claimedAuthor = claims.authorId || "";
@@ -436,6 +437,8 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // requester and answered on their access, so the requester (or an admin) confirms the exact text
     // on a card first. The daemon re-runs the access gate itself; the click is the human factor
     // against an injected "ask #sales for …" — never auto-approved, in Auto mode too.
+    ["call_user", { authz: "worker", tier: "owner", details: ({ reason, in_minutes = 0 }) =>
+      `Ring your registered iPhone ${in_minutes ? `in ${in_minutes} minutes` : "now"} for this conversation: ${summarize(String(reason || ""), 160)}. The call can access only conversations you are currently allowed to open.` }],
     ["send_agent_message", { authz: "any", tier: "owner", details: ({ to, message }) =>
       `Send a message to the agent in ${summarize(String(to || ""))} on your behalf:\n${summarize(String(message || ""), 1200)}\nIts reply will be posted back into this thread.` }],
     ["archive_code_channel", { authz: "any", tier: "", details: ({ summary }) => `Archive this code channel${summary ? " after posting the wrap-up" : ""}. History and artifact tabs stay readable and searchable; the task branch stays on disk.` }],
@@ -596,7 +599,7 @@ export function createGatewayMcpServer(ctx) {
   if (ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET) {
     registerWorkspaceRead(server, ctx);
     registerSchedules(server, ctx);
-    if (ctx.toolset === "full") registerBackground(server, ctx);
+    if (ctx.toolset === "full") { registerBackground(server, ctx); registerIncomingCallTool(server, ctx); }
     registerChannelAdmin(server, ctx);
     registerEgressHosts(server, ctx);
     registerChannelDatabase(server, ctx);

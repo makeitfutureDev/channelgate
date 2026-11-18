@@ -39,7 +39,7 @@ function coverageFlags() {
 }
 
 const files = readdirSync(testDir)
-  .filter((name) => name.endsWith(".test.js"))
+  .filter((name) => /\.test\.(?:js|ts)$/.test(name))
   .sort()
   .map((name) => path.join("test", name));
 

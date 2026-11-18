@@ -5,7 +5,7 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "author": "Tiberiu Socaci (MAKEITFUTURE S.R.L.)",
   "type": "module",
-  "description": "ChannelGate — a self-hosted daemon that runs coding agents (Claude Code, Codex) inside your team chat (Slack, Microsoft Teams, Google Chat) in per-conversation sandboxed folders, with per-user Composio tokens and an admin UI.",
+  "description": "ChannelGate \u2014 a self-hosted daemon that runs coding agents (Claude Code, Codex) inside your team chat (Slack, Microsoft Teams, Google Chat) in per-conversation sandboxed folders, with per-user Composio tokens and an admin UI.",
   "keywords": [
     "channelgate",
     "ai-agent",
@@ -48,7 +48,8 @@
     "whisper:install": "node scripts/install-whisper.mjs",
     "build:image": "node scripts/build-image.mjs",
     "vscode": "node scripts/open-vscode.mjs",
-    "vpn": "node scripts/channel-vpn.mjs"
+    "vpn": "node scripts/channel-vpn.mjs",
+    "check:types": "tsc --noEmit"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -65,8 +66,10 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "acorn": "8.19.0",
-    "acorn-globals": "7.0.1"
+    "acorn-globals": "7.0.1",
+    "typescript": "5.9.3"
   },
   "overrides": {
     "qs": "6.16.1"

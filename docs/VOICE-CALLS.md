@@ -178,3 +178,49 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
   actions.
 - `src/slack/call-button.js` + `src/slack/footer.js` — the reply-menu button and its private
   launch.
+
+## Incoming iPhone calls
+
+On the incoming-calls feature branch, set up **Settings → Incoming iPhone calls** after enabling
+voice calls. Supply your Apple team ID, APNs key ID, iPhone bundle ID and the private `.p8` text.
+The key must support APNs VoIP for that app. Keep it on the gateway; never put it in the iPhone
+bundle, source control, prompts or logs. Empty key input preserves the stored key; use Remove
+stored APNs key to clear it. Enable the capability only when the companion app is ready.
+
+In the iPhone app, sign in and turn on **Incoming calls** from the bell menu. Debug installations
+register for APNs sandbox; distributed Release apps register for production and must be signed
+with the corresponding production push entitlement. Tokens are not ordinary notification tokens.
+Each phone lists its registration status; disabling the feature unregisters that phone.
+
+Ask either supported engine in your conversation: **Call me in one minute about this thread.**
+The `call_user` tool accepts `reason` and optional integer `in_minutes` (0–10080). Approve the
+card now; the saved delayed invitation survives a restart. There is no arbitrary-recipient
+parameter. The requester or an admin must confirm every call, even under Auto. This is separate
+from a recurring schedule: each recurring call still needs its own approval. At most one incoming
+invitation can be pending for a person. On answer, the existing voice service rechecks conversation
+access and uses that person's identity. No voice session starts merely because the phone rings.
+
+Activity API (authenticated Activity session plus same-origin and CSRF checks for writes):
+
+- `POST /activity/:id/api/devices`: `{platform:"ios",kind:"voip",token,bundleId,environment,name}`.
+  `environment` is `sandbox` or `production`; the bundle must match administrator configuration.
+- `GET /activity/:id/api/devices`: this person's device IDs/names/environment/last-seen only.
+- `DELETE /activity/:id/api/devices/:deviceId`: unregister only this person's device.
+- `GET /activity/:id/api/incoming-calls`: recent invitations without answer tokens.
+- `DELETE /activity/:id/api/incoming-calls/:invitationId`: cancel an unstarted delayed call.
+- `POST /activity/:id/call/accept` and `/call/decline`: `{token}` from the VoIP push. Owner-scoped,
+  single-use and valid only while ringing (45 seconds). Accept returns the normal call/start
+  result for the invitation's recorded conversation. No client-supplied conversation is trusted.
+
+The daemon's five-second worker processes delayed invitations and notices. A schedule over one
+minute late fails instead of ringing after prolonged downtime. Notices are retried on connector
+failure. A process crash after posting a notice but before recording success may produce a
+notification retry; do not treat chat notices as an exactly-once transport. Apple may also delay or
+reject a push: delivery submission is not proof of receipt or answer.
+
+TypeScript modules use erasable syntax and explicit `.ts` imports, which Node >=24.0.0 runs
+without a build step. `npm run check:types` performs strict checking; CI also runs it on Node
+24.0.0. Static/security checks inspect stripped source, and test discovery includes `.test.ts`.
+Release source archives and Git-based install/update retain those source files. Container helpers
+remain JavaScript: the image's closure bundler copies explicit relative imports verbatim; no new
+APNs or private-key code is staged into a conversation container.
