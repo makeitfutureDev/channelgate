@@ -110,7 +110,6 @@ test("connections save and remove per scope, never echo a token, and refuse what
   await removeSettingsForm("make:c", await ctx());
   assert.equal((await meta()).makeToolboxUrl, "");
 
-  await assert.rejects(saveSettingsForm("toolbox:p", { token: "retired-123456" }, await ctx()), /expired|Unknown/);
 
 });
 

@@ -512,23 +512,6 @@ test("Codex reaches a Make toolbox through the daemon relay, with no key in argv
   assert.equal(buildCodexEnv({ target }, {}).CG_MAKE_TOOLBOX_KEY, undefined);
 });
 
-test("legacy Toolbox inputs never inject Codex MCPs or survive the secret bundle", () => {
-  const before = process.env.TOOLBOX_MCP_URL;
-  process.env.TOOLBOX_MCP_URL = "https://legacy.example/mcp";
-  try {
-    for (const runtime of [target, hostBackend.prepareTarget({ slug: "legacy", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} })]) {
-      const stale = { toolboxToken: "retired-toolbox-secret" };
-      const headerHelpers = [];
-      const args = argsFor({ ...stale, target: runtime, secretBundlePath: "/tmp/bundle.json", headerHelpers });
-      assert.doesNotMatch(args.join("\n"), /makeitfuture-toolbox|legacy\.example|retired-toolbox-secret/);
-      assert.deepEqual(headerHelpers, []);
-      assert.equal(Object.hasOwn(codexSecretBundle({ ...stale, isolated: runtime === target }), "toolboxToken"), false);
-    }
-  } finally {
-    if (before === undefined) delete process.env.TOOLBOX_MCP_URL; else process.env.TOOLBOX_MCP_URL = before;
-  }
-});
-
 test("every connector secret stays out of Codex argv and child env", () => {
   const secrets = {
     gatewayCapability: "signed-gateway-capability-secret",

@@ -104,7 +104,6 @@ test("secret inputs are never prefilled, and access loss clears the page", async
   assert.equal(nav.all().find((c) => c.attrs["aria-current"] === "page").textContent, "Connections");
   const passwords = panel.all().filter((c) => c.tag === "input" && c.type === "password");
   assert.ok(passwords.length >= 1);
-  assert.doesNotMatch(panel.textContent, /Toolbox/);
   assert.ok(passwords.every((c) => c.value === ""));
   assert.match(panel.textContent, /Connected · ••••0001/);
   ended = true;

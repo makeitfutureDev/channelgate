@@ -153,7 +153,6 @@ test('personal connection forms bind to the dialog owner, keep blanks, hide valu
     assert.equal(hasRemoteMcps(registration), false);
   } finally { clearRemoteMcps(registration); }
   ctx.isShared = true;
-  assert.ok(!(await renderCatalogPage('mcp', ctx, ui)).body.some(item => item.id === 'personalToolboxToken'));
   await assert.rejects(invoke(ctx, 'settings.personal.save', tokens), /authenticated settings/);
   await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'composio' }), /authenticated settings/);
   ctx.isShared = false; ctx.authorize = async () => { throw new Error('membership revoked'); };

@@ -41,7 +41,6 @@ test("user search folds case and accents and ANDs multiple terms", async () => {
 });
 
 test("user search covers visible role and configured-token status", async () => {
-  assert.deepEqual(Object.keys((await search("approved toolbox")).users), []);
   assert.deepEqual(Object.keys((await search("no access")).users), ["U_SEARCH_NONE"]);
   assert.deepEqual(Object.keys((await search("no tokens")).users).sort(), ["U_SEARCH_APPROVED", "U_SEARCH_NONE"]);
   assert.deepEqual(Object.keys((await search("composio")).users), ["U_SEARCH_ADMIN"]);

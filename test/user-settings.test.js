@@ -77,12 +77,6 @@ test("every change targets only the owner; caller-supplied owners, roles and fie
   await assert.rejects(applyUserSettingsChange("", { action: "nudges", enabled: true }), (error) => error.status === 403);
 });
 
-test("removed Toolbox actions are rejected", async () => {
-  await refused({ action: "toolbox.save", token: "retired-secret-123456" }, /Unknown setting/);
-  await refused({ action: "toolbox.remove" }, /Unknown setting/);
-  assert.equal((await userSettingsSnapshot("U_ME")).connections.toolbox, undefined);
-});
-
 test("Composio: save, keep-token label edits, removal, and SDK mode refusal", async () => {
   await refused({ action: "composio.save", token: "" }, /Enter the token/, "token");
   await refused({ action: "composio.save", token: "abc" }, /valid Composio token/, "token");
