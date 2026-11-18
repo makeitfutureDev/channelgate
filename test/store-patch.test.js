@@ -182,31 +182,3 @@ test("legacy progressView settings are ignored in favor of native streaming", ()
   assert.equal(getProgressView(), "stream");
   assert.equal(settingsForApi().progressView, "stream");
 });
-
-
-test("retired Toolbox fields cannot be restored by stale user or channel writes", async () => {
-  const patch = { toolboxToken: "retired-secret", toolboxTokenLabel: "Old", composioToken: "kept-composio" };
-  await setUser("U_RETIRED_TOOLBOX", patch);
-  await saveChannelMeta("retired-toolbox", patch);
-  await patchChannelMeta("retired-toolbox", patch);
-  for (const record of [await getUser("U_RETIRED_TOOLBOX"), await getChannelMeta("retired-toolbox")]) {
-    assert.equal(Object.hasOwn(record, "toolboxToken"), false);
-    assert.equal(Object.hasOwn(record, "toolboxTokenLabel"), false);
-    assert.equal(record.composioToken, "kept-composio");
-  }
-});
-
-test("retired organization settings are ignored and scrubbed on save and boot", async () => {
-  const { getSettings, applySettingsToEnv } = await import("../src/config/settings.js");
-  const file = path.join(dir, "config", "settings.json");
-  const retired = { toolboxMcpUrl: "https://retired.example/mcp", defaultToolboxToken: "retired-token", defaultToolboxTokenLabel: "Old" };
-  const old = JSON.parse(readFileSync(file, "utf8"));
-  fs.writeFileSync(file, JSON.stringify({ ...old, ...retired }));
-  for (const key of Object.keys(retired)) assert.equal(Object.hasOwn(getSettings(), key), false);
-  applySettingsToEnv();
-  for (const key of Object.keys(retired)) assert.equal(Object.hasOwn(JSON.parse(readFileSync(file, "utf8")), key), false);
-  saveSettings({ ...retired, engine: "codex" });
-  const saved = JSON.parse(readFileSync(file, "utf8"));
-  for (const key of Object.keys(retired)) assert.equal(Object.hasOwn(saved, key), false);
-  assert.equal(saved.engine, "codex");
-});

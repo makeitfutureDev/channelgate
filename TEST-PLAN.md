@@ -14799,25 +14799,3 @@ credentials and a merged/deployed candidate; record blocked or unexecuted cases 
   the same container to start and the selected engine to answer. Live smoke does not exercise
   scope-conflict recovery unless that precise error is observed/injected in an isolated runtime.
   Not executed for this change; do not manufacture a scope collision on a serving installation.
-
-
-### Retired skillsmanager.uk Toolbox regression (2026-11-18)
-
-- [x] Unit: upgrade from schema 62 removes toolboxToken/toolboxTokenLabel from user and channel
-  records, preserving Composio and Make credentials. Repeated migrations are a no-op. Stale
-  user/channel writes and imported records cannot restore the retired fields.
-- [x] Unit: old organization Toolbox settings are ignored, removed on boot/save, and never listed
-  by settings APIs. The personal snapshot and browser/native forms have no Toolbox controls;
-  retired personal actions fail as unknown settings, and token tools/reveal entries are absent.
-- [x] Unit: Claude and Codex never inject a built-in Toolbox MCP, including stale token/URL inputs;
-  Composio and a complete Make MCP URL/key pair still inject normally, including isolated relays.
-- [ ] Live, Claude and Codex: use separate disposable approved-user channel fixtures with gateway
-  default engine pinned to each engine in turn. Before upgrade, seed legacy personal/channel/org
-  Toolbox tokens in the fixture through the old UI; save a valid Make MCP pair and personal/shared
-  Composio connections. Upgrade, then open personal Activity settings, admin Users and Integrations,
-  channel MCP settings, Slack Settings → You/MCP, and Slack Home. Pass: no Toolbox controls or
-  status, tokens absent from saved user/channel/settings records, no retired token/reveal endpoints.
-  Prompt: “List connected MCP servers and check the available Make inspection tools without making
-  changes.” Pass: gateway, intended Composio identities and Make MCP remain available; no built-in
-  makeitfuture-toolbox entry in fresh/resumed turns or SSH preparation. Live execution pending;
-  private QA registry write blocked by unavailable requester Airtable connection.

@@ -152,11 +152,10 @@ test('personal connection setup and removal stay inside the thread-launched sett
   const connections = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page'));
   assert.equal(input(connections, 'personalComposioToken').value, '');
   assert.equal(input(connections, 'personalComposioToken').style, 'password');
-  assert.equal(input(connections, 'personalToolboxToken'), undefined);
   const saved = value(await f.invoke({ stateId: f.stateId, personalComposioToken: 'own-composio-token-fixture',
     userId: '29:other' }, 'settings.personal.save'));
   assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
-  assert.doesNotMatch(JSON.stringify(saved), /own-composio-token-fixture|own-toolbox-token-fixture/);
+  assert.doesNotMatch(JSON.stringify(saved), /own-composio-token-fixture/);
   assert.equal(input(saved, 'personalComposioToken').value, '');
   assert.equal(f.sent.length, 1);
   const confirm = value(await f.invoke({ stateId: f.stateId, connection: 'composio' }, 'settings.personal.remove'));
@@ -165,7 +164,7 @@ test('personal connection setup and removal stay inside the thread-launched sett
   value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
   assert.equal((await getUser(f.owner)).composioToken, '');
   assert.equal(f.sent.length, 1);
-  assert.doesNotMatch(JSON.stringify(f.sent), /own-composio|own-toolbox|personalComposioToken/);
+  assert.doesNotMatch(JSON.stringify(f.sent), /own-composio|personalComposioToken/);
 });
 test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();

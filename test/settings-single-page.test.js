@@ -36,7 +36,7 @@ test("a card is searched together with its section's title and description", () 
 const INDEX = [
   { id: "connection-0", section: "connection", sectionTitle: "Connection", sectionDesc: "Slack credentials", title: "Slack credentials (Socket Mode)", text: "Bot User OAuth Token xoxb App-Level Token" },
   { id: "connection-1", section: "connection", sectionTitle: "Connection", sectionDesc: "Slack credentials", title: "Public URL", text: "the daemon’s externally-reachable base URL" },
-  { id: "integrations-0", section: "integrations", sectionTitle: "Integrations", sectionDesc: "Composio endpoints", title: "MCP server URLs", text: "Composio Skills Toolbox" },
+  { id: "integrations-0", section: "integrations", sectionTitle: "Integrations", sectionDesc: "Composio endpoints", title: "MCP server URLs", text: "Composio" },
   { id: "system-0", section: "system", sectionTitle: "System", sectionDesc: "danger zone", title: "Danger zone", text: "restart daemon disconnect slack" },
 ];
 

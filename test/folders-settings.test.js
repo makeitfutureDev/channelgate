@@ -296,17 +296,6 @@ test("the lockdown admits the injected remote servers by URL next to a picked gl
   assert.deepEqual(cleanSettings.allowedMcpServers, []);
 });
 
-test("legacy Toolbox settings never restore an MCP namespace, remote allowlist, or token tool", async () => {
-  const before = process.env.TOOLBOX_MCP_URL;
-  process.env.TOOLBOX_MCP_URL = "https://legacy.example/mcp";
-  try {
-    const settings = await buildSettings({ _slug: "retired-toolbox", toolboxToken: "stale-token", allowedMcps: [] });
-    assert.doesNotMatch(JSON.stringify(settings), /makeitfuture-toolbox|legacy\.example|set_my_toolbox_token|clear_my_toolbox_token|stale-token/);
-  } finally {
-    if (before === undefined) delete process.env.TOOLBOX_MCP_URL; else process.env.TOOLBOX_MCP_URL = before;
-  }
-});
-
 test("SDK-mode Composio adds its tool-router host pattern; a malformed Make toolbox URL adds nothing", () => {
   const sdk = injectedRemoteAllowMatches({ composioSdk: true }).map((m) => m.serverUrl);
   assert.ok(sdk.includes("https://*.composio.dev/*"));

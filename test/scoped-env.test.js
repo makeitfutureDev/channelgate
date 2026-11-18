@@ -70,7 +70,7 @@ test("a personal secret belongs to one person and is invisible to another", asyn
 test("an unverified principal never receives anyone's personal secrets", async () => {
   await patchUserEnv(ALICE, { set: { name: "NPM_TOKEN", value: "npm-alice-token-1234" } });
   // The HTTP run API authenticates its key, not the author it names — so naming Alice must not
-  // hand the caller Alice's credentials. Same rule as the personal Composio/Toolbox tokens.
+  // hand the caller Alice's credentials. Same rule as the personal Composio tokens.
   assert.deepEqual(await resolveUserEnv(ALICE, { untrustedPrincipal: true }), {});
   const { env } = await resolveRunEnv({ meta: {}, authorId: ALICE, untrustedPrincipal: true });
   assert.ok(!("NPM_TOKEN" in env), "personal scope is withheld from an untrusted principal");

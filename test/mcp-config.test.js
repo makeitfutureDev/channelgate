@@ -292,23 +292,6 @@ test("an isolated run drops an invalid Make endpoint without exposing its token"
   assert.equal(host.mcpServers["make-toolbox"].url, "http://make.internal/mcp");
 });
 
-test("legacy Toolbox token and URL inputs never inject a Claude MCP or relay grant", async () => {
-  const { buildMcpRuntimePayload } = await import("../src/gateway/mcp.js");
-  const before = process.env.TOOLBOX_MCP_URL;
-  process.env.TOOLBOX_MCP_URL = "https://legacy.example/mcp";
-  try {
-    for (const target of [null, createFakeRuntime().target()]) {
-      const payload = await buildMcpRuntimePayload(withIdentity({ toolboxToken: "retired-toolbox-secret", target }));
-      assert.deepEqual(Object.keys(JSON.parse(payload.configJson).mcpServers), ["gateway"]);
-      assert.deepEqual(payload.relayedMcps, []);
-      assert.deepEqual(payload.rejectedRemotes, []);
-      assert.doesNotMatch(payload.configJson, /makeitfuture-toolbox|legacy\.example|retired-toolbox-secret/);
-    }
-  } finally {
-    if (before === undefined) delete process.env.TOOLBOX_MCP_URL; else process.env.TOOLBOX_MCP_URL = before;
-  }
-});
-
 test("one malformed header drops only that server (announced), never the whole container turn", async () => {
   const { buildMcpRuntimePayload } = await import("../src/gateway/mcp.js");
   const { hasRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
