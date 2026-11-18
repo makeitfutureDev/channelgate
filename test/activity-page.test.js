@@ -218,7 +218,7 @@ test("page shows the agent name safely and pins only a saved explicit theme", ()
   assert.match(activityPage({ sessionId: "s", csrf: "c", logoColor: "#ff0000" }).html,
     /<span class="agent-mark" aria-hidden="true"><svg viewBox="0 0 48 48"[^>]*><rect[^>]*fill="#ff0000"/,
     "an explicit deployment color remains supported");
-  assert.match(hostile, /<th scope="col" data-col="actions" draggable="true"[^>]*><span class="col-label">Actions<\/span><\/th>/);
+  assert.match(hostile, /<th scope="col" data-col="actions" draggable="true"[^>]*><span class="col-label">Actions<\/span><span class="col-resize"[^>]*aria-label="Resize the Actions column"/);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, /agent-name">ChannelGate</);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "light" }).html, /<html lang="en" data-theme="light">/);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "dark" }).html, /<html lang="en" data-theme="dark">/);
@@ -1049,7 +1049,7 @@ test("saved column order reorders every row, and the Columns dialog saves a stag
   const posts = requests.filter((r) => r.url.endsWith("/api/columns"));
   assert.equal(posts.length, 1, "one save while saving");
   assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
-  assert.deepEqual(JSON.parse(posts[0].options.body), { order: staged, widths: { conversation: 300 } }, "invalid stored widths are dropped, valid ones kept");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { order: staged, widths: { conversation: 300, actions: 999 } }, "invalid stored widths are dropped, valid ones kept");
   assert.equal(elements["columns-save"].textContent, "Saving…");
   stream.snapshot([row()], { columns: { order: [...order], widths: {} }, columnsVersion: 9 });
   assert.deepEqual(classes()[2], "comment-cell", "a live snapshot cannot undo a layout being saved");

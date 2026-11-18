@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Let viewers resize Activity's Actions column and save its width. Widen the default so all
+  six desktop action buttons fit on one row, including Call.
+
 - Retry a stopped rootless Podman container's startup twice when its previous systemd scope
   is still loaded. Stop cancels the retry wait; other startup errors still fail immediately.
 

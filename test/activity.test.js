@@ -1407,12 +1407,12 @@ test("Activity column layout persists per viewer and rejects malformed layouts, 
   const mine = await f.login(), other = await f.login("U_OTHER");
   const endpoint = mine.url + "/api/columns";
   const defaults = ["conversation", "comment", "channel", "status", "last", "actions"];
-  const custom = { order: ["status", "conversation", "actions", "last", "comment", "channel"], widths: { conversation: 420, comment: 240 } };
+  const custom = { order: ["status", "conversation", "actions", "last", "comment", "channel"], widths: { conversation: 420, comment: 240, actions: 260 } };
   const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
   assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {} });
   const send = (body, headers = mine.post) => f.request(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
   for (const body of [{}, { order: defaults }, { widths: {} }, { order: defaults.slice(1), widths: {} }, { order: [...defaults.slice(1), "conversation"].concat("x"), widths: {} },
-    { order: ["conversation", "conversation", "channel", "status", "last", "actions"], widths: {} }, { order: defaults, widths: [] }, { order: defaults, widths: { actions: 200 } },
+    { order: ["conversation", "conversation", "channel", "status", "last", "actions"], widths: {} }, { order: defaults, widths: [] }, { order: defaults, widths: { actions: 187 } }, { order: defaults, widths: { actions: 1601 } },
     { order: defaults, widths: { conversation: 119 } }, { order: defaults, widths: { conversation: 1601 } }, { order: defaults, widths: { comment: 100.5 } }, { order: defaults, widths: { comment: "200" } }]) {
     assert.equal((await send(body)).status, 400, JSON.stringify(body));
   }
