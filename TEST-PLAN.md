@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Completed Activity order (2026-11-18)
+
+- Automated: `test/activity-page.test.js` exercises the served browser script with interleaved
+  channels, inverted message/completion times, individual/channel pins, missing legacy timestamps,
+  search, live re-completion and independent optional grouping. `test/activity.test.js` verifies
+  completion timestamps in REST/SSE, reaction evidence, agent outcomes and Reopen/Done cycles.
+  `test/activity-completed-browser.test.js` verifies the actual page at 1440px and 390px,
+  including live reordering, optional grouping, reload defaults and viewport fit. Existing pin
+  and shared-completion browser regressions verify Reopen leaves Completed and restores pins in
+  Active. These are local fixtures, not production acceptance.
+- Acceptance `ACTIVITY-COMPLETED-ORDER-01` (engine-independent: browser display and stored
+  completion metadata do not depend on engine output): use a disposable Activity viewer with
+  participating conversations A/B/C across two channels, including Slack and a linked native
+  platform. Save Channel grouping and pin A's channel. Complete B, A, C in that order while their
+  message times run in the opposite order. Open Completed on desktop and phone: require one list
+  C/A/B, Group by None, no channel cards or pinned section. Search then clear; require the same
+  order. Complete another conversation in a second page and require it first through SSE without
+  reload. Reopen B and complete it again: B must move first. Switch Completed to Channel, then
+  return to Active: the saved Active grouping must remain Channel. Reload and reopen Completed:
+  require None and descending completion order. Legacy rows without completion times follow
+  timestamped rows. Restore only the disposable fixture's state. Live deployment acceptance is
+  pending until recorded; local browser fixtures do not establish production deployment.
+
 ## Composio SDK multi-account and app policy (2026-11-18)
 
 - Automated: `test/composio-sdk.test.js` exercises the installed SDK create/GET/PATCH wire contract,
@@ -14688,3 +14711,28 @@ Live acceptance, separately for Claude and Codex (not yet executed on this branc
 
 Pass requires observed evidence for each engine and scenario. Apple/APNs tests need operator
 credentials and a merged/deployed candidate; record blocked or unexecuted cases explicitly.
+
+## Container startup: stale rootless Podman systemd scope
+
+- Engine-independent daemon fixture: `test/container-lifecycle.test.js`, the injected fake
+  container CLI and clock; scratch runtime only. This runs before Claude/Codex spawn and cannot
+  depend on the selected engine. No live channel configuration or real systemd scopes are changed.
+- Setup: an existing exited, install-owned container with matching image/mount fingerprints;
+  inject the full `unable to start unit "libpod-<64 hex>.scope" ... Unit <same unit> was already
+  loaded or has a fragment file.` error into `start`.
+- Action: resolve readiness as a normal accepted turn would. Fail the first start, then succeed;
+  repeat with two failures then success and with persistent failure.
+- Pass: same container starts after delays of 1s then 2s, at most three starts; success marks it
+  running and persistent failure retains the final CLI error. No recreation, stop, removal or
+  volume deletion occurs. Concurrent preparations share one retry sequence through the mutex.
+- Negative cases: permission/cgroup-delegation errors, unrelated or mismatched unit names,
+  Docker and rootful Podman fail after one start with no delay. Stop during the backoff rejects
+  promptly as an explicit abort, makes no additional start attempt, and releases the mutex for
+  a later turn. Stop while the failed CLI attempt resolves prevents entering the backoff.
+- Run: `node --test test/container-lifecycle.test.js`. This deterministic fault-injection
+  acceptance proves retry behavior; it does not claim reproduction of a live systemd failure.
+- Optional live release smoke for both Claude and Codex: on exclusive disposable Worker fixtures,
+  stop the idle container without deleting HOME, send “Reply with STARTUP-READY”, and require
+  the same container to start and the selected engine to answer. Live smoke does not exercise
+  scope-conflict recovery unless that precise error is observed/injected in an isolated runtime.
+  Not executed for this change; do not manufacture a scope collision on a serving installation.

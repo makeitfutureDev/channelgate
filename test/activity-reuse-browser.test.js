@@ -630,6 +630,8 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#threads tr").count(), 1, "self-Done moves from pins to Completed");
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#threads tr").length === 0);
+  await page.getByRole("button", { name: /^Active/ }).click();
   await page.locator("#pinned-threads tr").waitFor();
   assert.equal(await page.locator("#pinned-threads tr").count(), 1, "Reopen restores the saved pin preference");
   await page.getByRole("button", { name: /^Active/ }).click();
@@ -780,11 +782,12 @@ test("Activity channel pins collect future open threads, retain empty channels a
   }
   await page.locator("#group-by").selectOption("channel");
   await page.getByRole("button", { name: /^Completed/ }).click();
-  assert.equal(await page.locator("#pinned-threads tr").count(), 2, "all open inherited pins stay visible across tabs");
+  assert.equal(await page.locator("#pinned-threads tr").count(), 0, "Completed excludes pinned open work");
   assert.equal(await page.locator("#threads tr").count(), 1, "completed channel work remains in the ordinary Completed view");
   await page.locator("#search").fill("no matches");
   assert.equal(await page.locator("#pinned-section").isVisible(), false);
   await page.locator("#search").fill("");
+  await page.getByRole("button", { name: /^Active/ }).click();
   roots.push({ ts: "400.000005", user: ownerId, text: "Future pinned channel conversation" });
   indexSlackThread({ channelId, slug: entry.slug, root: roots.at(-1), agentEngaged: true });
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 3);
@@ -800,6 +803,8 @@ test("Activity channel pins collect future open threads, retain empty channels a
   assert.equal(await page.locator("#pinned-threads tr").count(), 0, "self-Done leaves both explicit and inherited pins");
   await page.getByRole("button", { name: /^Completed/ }).click();
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
+  await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: /^Active/ }).click();
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 1);
   assert.equal(await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).count(), 1,
     "Reopen restores the saved explicit pin");

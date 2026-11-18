@@ -59,13 +59,14 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const pinnedBody = el("pinned-threads"), pinnedChannelList = el("pinned-channels");
   const pendingChannels = new Set(), channelNodes = new Map();
   let pinnedChannels = [];
-  const isPinned = (row) => !row.hidden && !(row.status === "done" && row.dismissed) && (row.pinned || row.channelPinned);
+  const isPinned = (row) => filter !== "done" && !row.hidden && !(row.status === "done" && row.dismissed) && (row.pinned || row.channelPinned);
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
   const grouping = el("group-by");
   let groupBy = defaultGrouping, groupByVersion = -1, savingGrouping = false;
+  let completedGroupBy = "none";
   const allDoneButton = el("mark-all-done"), allDoneDialog = el("all-done-dialog");
   const historyButton = el("load-history");
   let loadingHistory = false, moreHistory = true;
@@ -153,6 +154,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   async function saveGrouping() {
     if (ended || savingGrouping) return;
     const selected = grouping.value;
+    if (filter === "done") {
+      if (["none", "status", "channel"].includes(selected)) completedGroupBy = selected;
+      render();
+      return;
+    }
     if (!["status", "channel"].includes(selected)) return;
     savingGrouping = true; grouping.disabled = true;
     actionMessage = "";
@@ -525,6 +531,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     }
   }
   function render() {
+    const currentGrouping = filter === "done" ? completedGroupBy : groupBy;
     const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0, hidden: 0 };
     for (const row of rows) { if (row.hidden) { counts.hidden++; continue; } counts[row.status]++; if (row.status !== "done") counts.open++; if (row.status !== "later" && !(row.status === "done" && row.dismissed)) counts.active++; }
     for (const button of tabs.querySelectorAll("button")) {
@@ -535,12 +542,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     el("summary").textContent = counts.active + " visible · " + counts.done + " done · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
     const rank = (status) => status === "done" ? groupOrder.length + 1 : status === "later" ? groupOrder.length : groupOrder.indexOf(status);
     grouping.disabled = ended || savingGrouping;
-    if (!savingGrouping) grouping.value = groupBy;
-    body.dataset.groupBy = groupBy;
-    pinnedBody.dataset.groupBy = groupBy;
+    if (el("group-none")) el("group-none").hidden = el("group-none").disabled = filter !== "done";
+    if (!savingGrouping) grouping.value = currentGrouping;
+    body.dataset.groupBy = currentGrouping;
+    pinnedBody.dataset.groupBy = currentGrouping;
     const channelHue = (id) => { let hash = 0; for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0; return hash % 8; };
     const channelName = (row) => String(row.channelName || "Conversation");
-    const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
+    const groupKey = (row) => currentGrouping === "channel" ? row.channelId : row.status;
     const filtered = ended ? [] : rows.filter(matches);
     // Rank whole channel cards by their newest visible conversation, on every snapshot.
     const channelActivity = new Map();
@@ -550,17 +558,18 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const compareChannel = (a, b) => channelActivity.get(b.channelId) - channelActivity.get(a.channelId)
       || channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
-    const compareRows = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || newest(a, b);
+    const latest = filter === "done" ? (a, b) => (Number(b.completedMs) || 0) - (Number(a.completedMs) || 0) || newest(a, b) : newest;
+    const compareRows = (a, b) => (currentGrouping === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || latest(a, b);
     // Individual pins lead the conversations inherited from a channel pin, within each channel.
-    const comparePinned = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0)
+    const comparePinned = (a, b) => (currentGrouping === "channel" ? compareChannel(a, b) : 0)
       || Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
-      || (groupBy === "channel" ? rank(a.status) - rank(b.status) : 0) || newest(a, b);
+      || (currentGrouping === "channel" ? rank(a.status) - rank(b.status) : 0) || latest(a, b);
     const pinned = filtered.filter(isPinned).sort(comparePinned);
     const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
-    const groupPinned = groupBy === "channel";
+    const groupPinned = currentGrouping === "channel";
     // A stable hue per channel, nudged when it would match the card directly above it.
     const hues = new Map();
-    for (const section of groupBy === "channel" ? [pinned, ordinary] : []) {
+    for (const section of currentGrouping === "channel" ? [pinned, ordinary] : []) {
       let previous = -1;
       for (const row of section) {
         if (hues.has(section === pinned ? "p" + row.channelId : row.channelId)) continue;
@@ -569,7 +578,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
         hues.set(section === pinned ? "p" + row.channelId : row.channelId, hue); previous = hue;
       }
     }
-    if (groupBy === "channel") body.dataset.cards = ""; else delete body.dataset.cards;
+    if (currentGrouping === "channel") body.dataset.cards = ""; else delete body.dataset.cards;
     if (groupPinned) pinnedBody.dataset.cards = ""; else delete pinnedBody.dataset.cards;
     const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
@@ -603,10 +612,10 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const saved = isPinned(row);
       const localIndex = saved ? index : index - pinned.length;
       const sectionRows = saved ? pinned : ordinary, sizes = saved ? pinnedGroupSize : groupSize;
-      if ((!saved || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
+      if (currentGrouping !== "none" && (!saved || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (currentGrouping === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
       else delete entry.tr.dataset.group;
       // Channel groups render as cards: a per-channel hue, and the closing row rounds the card off.
-      if (groupBy === "channel" && (!saved || groupPinned)) {
+      if (currentGrouping === "channel" && (!saved || groupPinned)) {
         entry.tr.dataset.hue = String(hues.get(saved ? "p" + row.channelId : row.channelId));
         if (localIndex === sectionRows.length - 1 || groupKey(sectionRows[localIndex + 1]) !== groupKey(row)) entry.tr.dataset.groupEnd = "";
         else delete entry.tr.dataset.groupEnd;
@@ -661,7 +670,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       if (target.children[localIndex] !== entry.tr) target.insertBefore(entry.tr, target.children[localIndex] || null);
     });
     const query = search.value.trim().toLocaleLowerCase();
-    const channels = ended || filter === "hidden" ? [] : pinnedChannels.filter((entry) => !query || entry.channelName.toLocaleLowerCase().includes(query)
+    const channels = ended || filter === "hidden" || filter === "done" ? [] : pinnedChannels.filter((entry) => !query || entry.channelName.toLocaleLowerCase().includes(query)
       || pinned.some((row) => row.channelId === entry.channelId))
       .sort((a, b) => a.channelName.localeCompare(b.channelName) || a.channelId.localeCompare(b.channelId));
     const visibleChannels = new Set(channels.map((entry) => entry.channelId));
@@ -1726,7 +1735,7 @@ ${callsView ? `<section class="calls-page" aria-label="Call history"><div class=
 <dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Slack main messages get ✅; Google Chat and Teams completion is saved in Activity. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
-<div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
+<div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option id="group-none" value="none" hidden disabled>None</option><option value="channel">Channel</option><option value="status">Status</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>

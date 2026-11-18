@@ -294,6 +294,7 @@ export function createActivityRouter({
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         comment: Object.hasOwn(comments, JSON.stringify([row.channel_id, row.thread_ts])) ? comments[JSON.stringify([row.channel_id, row.thread_ts])] : "",
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
+        completedMs: row.status === "done" ? Math.max(0, row.done_ms || 0, row.root_done ? row.root_reaction_ms || 0 : 0) : 0,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
       pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable || external.unavailable), truncated: Boolean(data.truncated || external.truncated), total: data.total + external.rows.length, updatedAt: now(),

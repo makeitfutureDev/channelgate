@@ -86,7 +86,7 @@ for (const width of [1440, 390]) {
 
     // Reopen restores the owner's automatic dismissal, but keeps the participant's manual Hide.
     await action(mine, "Reopen").click();
-    await mine.locator("#pinned-threads tr:not(.s-done)").waitFor();
+    await empty(mine);
     await filter(mine, "active").click();
     await mine.locator("#pinned-threads tr:not(.s-done)").waitFor();
     await action(mine, "Mark done").waitFor();

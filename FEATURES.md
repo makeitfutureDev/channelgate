@@ -1,5 +1,14 @@
 # ChannelGate — Features
 
+## Completed Activity in completion order (2026-11-18)
+
+Completed opens as a single ungrouped list, most recently completed first, including pinned
+conversations. It uses the saved Done/reaction time rather than the last message time; reopening
+and completing again gives the conversation its new position. Historical completions without a
+known timestamp follow dated completions. Optional Channel/Status grouping applies only to the
+current Completed page; other views retain the viewer's saved grouping. Reloading restores the
+ungrouped Completed default. REST and live snapshots carry completion time across all platforms.
+
 ## Composio SDK accounts and available apps (2026-11-18)
 
 Settings → Integrations exposes the SDK session policy for both personal and shared identities.
@@ -7020,6 +7029,16 @@ leaf cgroup PID current/max/event counts. Leaf counts do not establish effective
 The probe never reconfigures/recreates the runtime, retries, reads argv/environment/credentials or
 extends the recovery deadline; unavailable probes remain explicitly unavailable. Bounded snapshot
 facts are retained with the run-error event. No container image rebuild is needed for this reducer.
+
+## Container restart after a transient systemd scope conflict
+
+When restarting an existing stopped rootless Podman container, the daemon recognizes the exact
+`libpod-<container-id>.scope` already-loaded error and retries the same `start` after 1 and 2
+seconds, at most three attempts. The per-container mutex stays held, Stop cancels the wait, and
+exhaustion reports the last CLI error. No container or volume is removed, no systemd configuration
+is changed, and unrelated errors, Docker and rootful runtimes are not retried. This recovery is
+engine-independent: it finishes before an engine process is spawned. No runtime image rebuild is
+required.
 
 ## Node 24 runtime baseline
 
