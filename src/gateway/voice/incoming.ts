@@ -50,7 +50,7 @@ export function createIncomingCalls(deps: Dependencies = {}) {
     db.prepare("UPDATE incoming_calls SET notified=0 WHERE notified=2 AND notice_claim_ms<?").run(now() - 60_000);
     db.prepare("UPDATE incoming_calls SET status='missed' WHERE status='ringing' AND expires_ms<=?").run(now());
     db.prepare("UPDATE incoming_calls SET status='failed' WHERE status='accepting' AND expires_ms<?").run(now() - 60_000);
-    db.prepare("DELETE FROM incoming_calls WHERE created_ms<? AND status NOT IN ('ringing','accepting')").run(now() - 7 * 86400_000);
+    db.prepare("DELETE FROM incoming_calls WHERE created_ms<? AND status NOT IN ('scheduled','ringing','accepting') AND notified=1").run(now() - 7 * 86400_000);
   }
   async function flushNotices() {
     expire();

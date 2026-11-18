@@ -163,3 +163,10 @@ test("disabling incoming calls while ringing prevents a voice session from start
   await assert.rejects(service.accept(target.ownerId, token, async () => { started = true; return { id: "BAD" }; }), /unavailable/);
   assert.equal(started, false);
 });
+
+test("a seven-day scheduled call survives retention sweeps until its due delivery", async () => {
+  const f = fixture(); f.calls.registerDevice(target.ownerId, registration);
+  await f.calls.request(target, "Next week", 10080);
+  f.tick(7 * 86400_000 + 5000); await f.calls.flushNotices();
+  assert.equal(f.pushes.length, 1);
+});
