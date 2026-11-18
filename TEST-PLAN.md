@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Completed Activity order (2026-11-18)
+
+- Automated: `test/activity-page.test.js` exercises the served browser script with interleaved
+  channels, inverted message/completion times, individual/channel pins, missing legacy timestamps,
+  search, live re-completion and independent optional grouping. `test/activity.test.js` verifies
+  completion timestamps in REST/SSE, reaction evidence, agent outcomes and Reopen/Done cycles.
+  `test/activity-completed-browser.test.js` verifies the actual page at 1440px and 390px,
+  including live reordering, optional grouping, reload defaults and viewport fit. Existing pin
+  and shared-completion browser regressions verify Reopen leaves Completed and restores pins in
+  Active. These are local fixtures, not production acceptance.
+- Acceptance `ACTIVITY-COMPLETED-ORDER-01` (engine-independent: browser display and stored
+  completion metadata do not depend on engine output): use a disposable Activity viewer with
+  participating conversations A/B/C across two channels, including Slack and a linked native
+  platform. Save Channel grouping and pin A's channel. Complete B, A, C in that order while their
+  message times run in the opposite order. Open Completed on desktop and phone: require one list
+  C/A/B, Group by None, no channel cards or pinned section. Search then clear; require the same
+  order. Complete another conversation in a second page and require it first through SSE without
+  reload. Reopen B and complete it again: B must move first. Switch Completed to Channel, then
+  return to Active: the saved Active grouping must remain Channel. Reload and reopen Completed:
+  require None and descending completion order. Legacy rows without completion times follow
+  timestamped rows. Restore only the disposable fixture's state. Live deployment acceptance is
+  pending until recorded; local browser fixtures do not establish production deployment.
+
 ## Composio SDK multi-account and app policy (2026-11-18)
 
 - Automated: `test/composio-sdk.test.js` exercises the installed SDK create/GET/PATCH wire contract,
