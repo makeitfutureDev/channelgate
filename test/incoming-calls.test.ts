@@ -155,3 +155,11 @@ test("default admission requires both current channel authorization and actual t
   await saveChannelMeta(entry.slug, { channelId: target.channelId, access: "none", isDM: false });
   await assert.rejects(service.request(target, "Review"), /access/);
 });
+test("disabling incoming calls while ringing prevents a voice session from starting", async () => {
+  let enabled = true, token = "", started = false;
+  const service = createIncomingCalls({ config: () => ({ ...config, enabled }), voiceEnabled: () => true, authorize: async () => true,
+    send: async (_c, _d, payload) => { token = String(payload.token); return { status: 200, reason: "" }; }, notify: async () => {} });
+  service.registerDevice(target.ownerId, registration); await service.request(target, "Review"); enabled = false;
+  await assert.rejects(service.accept(target.ownerId, token, async () => { started = true; return { id: "BAD" }; }), /unavailable/);
+  assert.equal(started, false);
+});

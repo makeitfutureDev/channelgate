@@ -156,10 +156,11 @@ export function createIncomingCalls(deps: Dependencies = {}) {
     if (!db.prepare("UPDATE incoming_calls SET status=? WHERE id=? AND status='ringing' AND expires_ms>?").run(status, row.id, now()).changes) throw error("Call invitation was already handled.", 409);
     return row;
   }
-  async function accept<T extends { id: string }>(ownerId: string, token: string, start: (target: InviteTarget) => Promise<T>): Promise<T> {
+  async function accept<T extends { id: string }>(ownerId: string, token: string, start: (target: InviteTarget, reason: string) => Promise<T>): Promise<T> {
+    if (!pushConfigReady(config()) || !voiceEnabled()) throw error("Call invitation is unavailable.", 404);
     const row = await claim(ownerId, token, "accepting");
     try {
-      const call = await start(targetOf(row));
+      const call = await start(targetOf(row), row.title);
       getDb().prepare("UPDATE incoming_calls SET status='accepted',call_id=?,notified=1 WHERE id=?").run(call.id, row.id);
       return call;
     } catch (e) {

@@ -417,8 +417,8 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       if (!csrfOk(req, session)) return unavailable(res, 403);
       const identity = getBotIdentity() || {};
-      const call = await incomingFor().accept(session.ownerId, req.body?.token, target => callsFor().start({
-        ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client,
+      const call = await incomingFor().accept(session.ownerId, req.body?.token, (target, reason) => callsFor().start({
+        ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, openingReason: reason, client,
         teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" }));
       return res.json(call);
     } catch (e) { return res.status(e.status || 503).json({ error: "The call invitation is unavailable or could not connect." }); }
