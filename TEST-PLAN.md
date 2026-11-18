@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Shared outbound SSH identity (2026-11-18)
+
+- Automated: `test/agent-ssh-identity.test.js` checks atomic concurrent creation, stable reuse,
+  permissions, corrupt/incomplete/mismatched and linked-file refusals, and actual OpenSSH public
+  derivation, fingerprint and signature verification. `test/container-lifecycle.test.js` verifies
+  the identical read-only source for different channels/platforms/project and admin scopes,
+  separate HOME volumes, correct CLI mount arguments, and the changed mount fingerprint.
+  `test/runtime-access-facts.test.js` verifies current public/private paths in normal/clean and
+  host preambles without claiming the gateway database or whole config is mounted.
+- Live `AGENT-SSH-SHARED-01` (Claude and Codex): use `cg-testing-claude-bash` and
+  `cg-testing-codex-bash`, admitted QA author, Worker mode, existing runtime image. After deploying,
+  ask in each: “Give me the public SSH key I should install on my server. Use the shared gateway
+  key and do not generate anything.” Compare exact `.pub` bytes and SHA256 fingerprints. Stop/start
+  and recreate the disposable QA containers, repeat in a new thread, and require the same key.
+  Repeat in admin scope and with Lean enabled; the per-run resolved path must stay authoritative.
+  Evidence must contain only public keys/fingerprints, never private bytes. Unrelated HOME files
+  and known_hosts remain different. Pass only when both engines return the same persisted key.
+- Live `AGENT-SSH-SHARED-02` (Claude and Codex): prepare an operator-owned disposable public SSH
+  server and least-privileged fixture account, with its independently verified host fingerprint.
+  Install only the shared `.pub` into that account. In each Worker fixture, turn Network on and
+  approve that exact host/port using the existing egress flow, then ask: “Use the shared gateway
+  SSH key to run whoami and hostname on our fixture; keep host-key checks on.” Require successful
+  authentication using the shared `-i` path and the channel proxy. An operator checks that writes
+  to the central mounted pair fail read-only without changing its bytes. In a third unapproved
+  fixture and with Network off, require an egress refusal and no fallback key or network bypass.
+  Never use a customer production server as this fixture. Restore the fixtures' prior settings.
+- Live acceptance is pending until these exact engine/fixture runs are recorded. Local automated
+  checks establish format, persistence and mount planning, not a live daemon/container deployment.
+
 ## Combined Activity across platforms (2026-11-18)
 
 - User picker regression: `test/ai-testing-picker-browser.test.js` runs the shared picker and

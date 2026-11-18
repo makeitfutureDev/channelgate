@@ -53,6 +53,7 @@ import { startExternalUsageScan } from "./gateway/external-usage.js";
 import { startDriveSync, handleDriveSyncIpc } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
+import { ensureAgentSshIdentity } from "./config/agent-ssh.js";
 import { acquireSingletonLock } from "./util/singleton.js";
 import { requestShutdown, restartExitCode } from "./gateway/shutdown.js";
 import { RestartCoordinator } from "./gateway/restart.js";
@@ -232,6 +233,8 @@ async function main() {
   // relying on create-time modes.
   const { failed: hardenFailed } = hardenRuntimeFiles();
   assertRuntimeHardening({ failed: hardenFailed });
+  // The same outbound SSH identity is used by every channel, including direct-host sudo turns.
+  ensureAgentSshIdentity();
   // Host metrics belong to the daemon, never to an engine container. Sampling is asynchronous
   // and failure is reported on the admin page without holding up chat or startup.
   void Promise.resolve().then(() => startSystemHealth()).catch(() => console.error("[system-health] collector startup failed"));

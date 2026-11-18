@@ -1,5 +1,19 @@
 # ChannelGate — Features
 
+## One outbound SSH identity across channels (2026-11-18)
+
+Each gateway creates one persistent Ed25519 keypair and mounts its dedicated directory read-only
+at `~/.ssh/channelgate` in every project/admin channel container. Agents return the same
+`id_ed25519.pub` line in every channel and connect with ordinary `ssh -i`; no SSH MCP service is
+required. Per-run instructions identify the exact shared key, including in clean mode and `/sudo`
+host runs. Existing local keys, SSH configuration and known_hosts remain separate. The key
+survives container restarts/recreation and is included in the encrypted configuration backup.
+
+The shared private key is readable/copyable by container shell users; the mount prevents modifying
+the central pair. Network switches, per-channel server approvals and host-key verification still
+apply. Key creation is atomic across concurrent preparations; incomplete or unsafe existing pairs
+fail closed instead of being replaced. Separate gateway installations create separate keys.
+
 ## Combined Activity across Slack, Google Chat and Teams (2026-11-18)
 
 The existing personal Activity dashboard also lists new Google Chat and Microsoft Teams agent

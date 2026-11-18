@@ -14,10 +14,11 @@ import { acquireKeyedLock } from "../../util/keyed-lock.js";
 import { containerLabels, containerName, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
 import { buildHistorySeedArgs, historyMounts, historySeedMarker } from "./history.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
-import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { CONTAINER_AGENT_SSH_DIR, CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
 import { extraFolderMounts } from "../../gateway/extra-folders.js";
+import { agentSshDir, ensureAgentSshIdentity } from "../../config/agent-ssh.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -143,14 +144,16 @@ export function parseInspectLine(line) {
 // Identical absolute paths on both sides are LOAD-BEARING: session transcripts, /resume, git
 // worktrees and every absolute path the model prints have to stay valid in the daemon too.
 //
-// What is never mounted: the gateway root, config/, gateway.db, the per-channel metadata folder,
-// the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
-// the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
-// container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
+// What is never mounted: the gateway root, the whole config/, gateway.db, the per-channel metadata folder,
+// the daemon checkout, and the operator's ~/.claude or ~/.codex directories. Sources under the
+// gateway root include the clean workspace (for clean mode), the read-only MCP socket directory
+// and the dedicated shared SSH identity below. The Codex auth FILE is a legacy credential
 // mount, and only outside the egress proxy (legacy bridge mode, or an API-key login): it is the
 // resolved real file — see credentials.js for why it is a file and not a dir. Behind the proxy
-// Codex is relayed and nothing credential-shaped is mounted.
-// The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
+// Codex is relayed. The deliberately shared outbound SSH keypair is a separate read-only
+// config/agent-ssh subdirectory mounted at ~/.ssh/channelgate in every channel and runtime scope.
+// It is readable/copyable by container shell users; it conveys no egress or destination grant.
+// A wider exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
 // `/tmp` and `/var/tmp` are mounts rather than tmpfs so a stop cannot empty them
@@ -218,6 +221,7 @@ export function buildMounts(base) {
     // After /tmp: destinations are applied deepest-last, so this lands on top of the /tmp volume.
     ...codexSocketMount(base),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
+    { kind: "agent-ssh", type: "bind", source: agentSshDir(), target: CONTAINER_AGENT_SSH_DIR, mode: "ro" },
     ...(base.container?.sharedHistory === true ? historyMounts(base) : []),
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
@@ -433,6 +437,9 @@ export function createContainerLifecycle({
   // ensureUp's mutex, BEFORE the fingerprint is computed, so what we compare is what we created.
   function settleTarget(target, { caps, img, env = process.env }) {
     const c = target.container;
+    // Publish a complete keypair before any CLI can auto-create its bind source. Validation on
+    // reuse fails closed on a damaged identity rather than handing out a replacement key.
+    ensureAgentSshIdentity();
     c.imageId = img.id;
     c.imageVersion = img.version;
     c.cgroupLimits = caps.cgroupLimits;

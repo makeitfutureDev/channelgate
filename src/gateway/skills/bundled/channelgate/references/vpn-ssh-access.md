@@ -28,11 +28,19 @@ calls for Option 2 or an operator handoff; never weaken validation to make it fi
 
 ## Public SSH from an ordinary channel container
 
+Use this gateway's shared keypair at `~/.ssh/channelgate/id_ed25519` (public file `.pub`).
+When asked for the agent's SSH public key for another server, return that `.pub` line exactly;
+every channel mounts the same identity read-only. Never generate another key or fall back to an
+old channel key when asked for the gateway key. Report a missing mount. The shared private key
+is intentionally readable by container shell users; never print or upload it. Other HOME files,
+local SSH keys and known_hosts remain channel-specific. Host `/sudo` runs use the shared key path
+stated in their resolved runtime preamble.
+
 For an exact public SSH hostname or IPv4/IPv6 address not yet in this channel's `egressRawHosts`, use
 `allow_channel_ssh_host`. The gateway posts a durable card that any currently authorized
 channel member with write access may approve; neither admin rights nor `/sudo` are needed.
 The card persists across restarts and is never auto-approved. End the turn while it is pending.
-Once approved, retry with the existing key and
+Once approved, retry with `-i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes` and
 `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.
 The existing host list enables TCP ports 22, 5432 and 6543; the card names that scope.
 Network must remain on and private/loopback/metadata addresses remain blocked. Approval

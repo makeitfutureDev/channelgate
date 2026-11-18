@@ -17,6 +17,7 @@ const { currentInstallId } = await import("../src/runtimes/container/names.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { configDir, gatewayRoot, runtimeSocketDir, cleanWorkspaceFolder, codexEngineHome } = await import("../src/config/paths.js");
 const { CODEX_CONTAINER_AUTH_FILE } = await import("../src/runtimes/container/credentials.js");
+const { agentSshDir, ensureAgentSshIdentity } = await import("../src/config/agent-ssh.js");
 
 const SETTINGS = {
   enabled: true, defaultBackend: "container", cli: "auto", image: "channelgate/runtime:latest",
@@ -64,16 +65,20 @@ async function warmed(h, t, { fingerprint = null, mountFingerprint = null } = {}
   return t;
 }
 
-test("mounts: nothing under the gateway root but the clean workspace, the MCP socket dir and the Codex auth file — and nothing under config/", () => {
+test("mounts: only the shared SSH identity subtree is mounted from config, read-only", () => {
   const t = target("mounts-chan");
-  const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
+  const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir(), agentSshDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "agent-ssh", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
     if (mount.type === "volume" || mount.type === "tmpfs") continue;
     assert.ok(path.isAbsolute(mount.source), `${mount.kind} mount source must be absolute`);
-    assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
+    if (mount.kind === "agent-ssh") {
+      assert.deepEqual(mount, { kind: "agent-ssh", type: "bind", source: agentSshDir(), target: "/home/agent/.ssh/channelgate", mode: "ro" });
+    } else {
+      assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
+    }
     const underRoot = mount.source === gatewayRoot() || mount.source.startsWith(`${gatewayRoot()}${path.sep}`);
     if (!underRoot) continue;
     assert.ok(
@@ -101,6 +106,30 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   }
 });
 
+test("the same read-only keypair is prepared for different channels, platforms and author scopes", async () => {
+  const identity = ensureAgentSshIdentity();
+  const homes = new Set();
+  for (const [platform, runtimeScope] of [["slack", "project"], ["slack", "admin"], ["googlechat", "project"], ["msteams", "project"]]) {
+    const t = resolveRuntime(`ssh-${platform}-${runtimeScope}`, {
+      platform, channelId: `C_SHARED_${platform}`, adminMode: runtimeScope === "admin", cleanMode: true,
+    }, { isAdminAuthor: runtimeScope === "admin", settings: SETTINGS });
+    const h = harness();
+    await h.lifecycle.ensureUp(t);
+    const mount = t.container.mounts.find((m) => m.kind === "agent-ssh");
+    assert.equal(mount.source, identity.dir);
+    assert.equal(mount.target, "/home/agent/.ssh/channelgate");
+    assert.equal(mount.mode, "ro");
+    assert.ok(h.fake.last("run").includes(`${identity.dir}:/home/agent/.ssh/channelgate:ro`));
+    assert.equal(ensureAgentSshIdentity().fingerprint, identity.fingerprint, "container preparation never changes identity");
+    homes.add(t.container.homeVolume);
+    h.reaper.stopTimer();
+  }
+  assert.equal(homes.size, 4, "only the SSH key is shared, not the channel HOME volumes");
+  const t = target("ssh-old-mount");
+  const old = { ...t, container: { ...t.container, mounts: t.container.mounts.filter((m) => m.kind !== "agent-ssh") } };
+  assert.notEqual(containerMountFingerprint(t), containerMountFingerprint(old), "an old container must be recreated to gain the mount");
+});
+
 // The operator-home grant: a Full-access (adminMode) channel, while the gateway-wide switch is
 // on, gets the daemon user's whole home read-write at its identical path — with the container
 // engine's own storage masked out — and NOTHING else changes for any other channel.
@@ -110,7 +139,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { isAdminAuthor: true, settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "agent-ssh", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");

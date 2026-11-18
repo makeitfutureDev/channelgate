@@ -5,6 +5,7 @@ import { realpathSync } from "node:fs";
 import { gatewayRoot, dbFile } from "../config/paths.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
 import { describeExtraFolders, extraFolderDirectories } from "./extra-folders.js";
+import { agentSshDir } from "../config/agent-ssh.js";
 
 function canonicalHostPath(value) {
   try { return realpathSync(value); } catch { return path.resolve(value); }
@@ -48,6 +49,17 @@ function cleanModeNote(clean) {
     return "Clean mode for this attempt: **disabled**. Clean mode is not suppressing optional capabilities for this attempt. This does not prove that any optional account is configured or connected; inspect the actually exposed tools and their results before making that claim.";
   }
   return "Clean mode for this attempt is unknown because the resolved run mode was not supplied. Do not infer it from missing tools alone.";
+}
+
+export function agentSshAccessNote(target) {
+  const mount = target?.container?.mounts?.find((entry) => entry.kind === "agent-ssh");
+  const dir = target?.backend === "host" ? agentSshDir() : mount?.target;
+  if (!dir) return "";
+  return `Shared outbound SSH identity: use \`${dir}/id_ed25519\` with \`ssh -i\` and \`IdentitiesOnly=yes\`. `
+    + `When asked for the agent's public key to install on a server, read and return \`${dir}/id_ed25519.pub\`; this is the same key in every channel on this gateway. `
+    + "Do not generate a channel-specific replacement or fall back to another key if it is missing; report the missing shared mount. Never print, upload or share the private key. "
+    + (mount ? "The keypair directory is mounted read-only; the rest of HOME remains channel-specific. " : "")
+    + "The key does not grant network access or approve a server. Follow this channel's current network and SSH destination policy.";
 }
 
 function networkPolicyNote(allowNetwork, { host = false, enforced = false, rawNetwork = false } = {}) {
@@ -106,6 +118,7 @@ export function runtimeAccessPreamble(target, { clean, allowNetwork, dangerously
     + permissionBypassNote(dangerouslySkip)
     + containerAccessNote(target) + "\n"
     + gatewayStoreAccessNote(target) + "\n"
+    + agentSshAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
     + networkPolicyNote(allowNetwork, { host: target?.backend === "host", enforced: networkEnforcedFor(target), rawNetwork: target?.container?.egress?.rawNetwork === true }) + "\n"

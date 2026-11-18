@@ -1,5 +1,49 @@
 # SSH access to channel containers
 
+## Shared outbound SSH key
+
+For agents connecting **to other servers**, every channel on one gateway shares one Ed25519
+identity. The daemon creates it once under `<gateway-root>/config/agent-ssh/` and mounts only
+that directory, read-only, at `/home/agent/.ssh/channelgate`. Other HOME files and existing local
+SSH keys, configuration and known_hosts remain separate. Project/admin containers, scheduled and
+background runs use the same key; recreated containers retain it. A `/sudo` host run uses the
+same host-side identity, whose path is supplied in its runtime preamble.
+
+Ask an agent in any channel for its public key, or read:
+
+```sh
+cat ~/.ssh/channelgate/id_ed25519.pub
+```
+
+Add that single line to the intended remote account's `~/.ssh/authorized_keys`. Then connect with
+the normal SSH client (substitute the authorized account and server):
+
+```sh
+ssh -i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes \
+  -o BatchMode=yes -o ConnectTimeout=15 \
+  -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p' user@server.example.com
+```
+
+Keep SSH host-key verification enabled. This key does not approve a destination or enable the
+channel's Network switch; existing per-channel egress approvals still apply. It is distinct from
+developers' personal keys for SSH **into** ChannelGate described below. Separate gateway
+installations generate separate identities; this is not one vendor-wide private key.
+
+The shared private key is intentionally readable by anyone with shell access in an agent
+container. A read-only mount prevents modifying the central pair, not copying it. Never paste,
+upload or log the private key. Grant the public key only the remote account access intended for
+all authorized channels. Existing per-channel keys are retained for migration; agents return the
+shared `.pub` file by default and do not generate replacements.
+
+The first upgraded run recreates old containers to add the new mount using the existing lease
+drain rules. No container-image rebuild is needed for this host-side bind mount. Startup and
+container preparation validate the pair; incomplete, corrupt or linked files fail closed instead
+of silently rotating the key. Preserve `config/agent-ssh/` when moving or restoring a gateway;
+`npm run backup` includes it in the encrypted config backup. Losing the entire directory requires
+restoring it from backup to retain access already configured on servers.
+
+## Developer access into channel containers
+
 Developers can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards —
 inside the channel container selected for their current role, matching their own ordinary chat
 turns, without any account on the gateway host and without any container ever listening on a
