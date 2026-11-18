@@ -2949,7 +2949,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   snapshot, or the bundled fallback on a cold start.
 - **Codex defaults include GPT-6.2 Astra and Sol:** the bundled picker and browser fallback
   offer `gpt-6.2-astra` and `gpt-6.2-sol`; inherited `:astra` and `:sol` shortcuts follow
-  the latest stable family in the active catalog. These fallback entries offer low through max
+  the latest stable family in the active catalog. These fallback entries offer low through ultra
   reasoning, excluding `none`. Fable 5.2 remains a Claude choice (`claude-fable-5-2`).
   Successful authenticated CLI discovery still determines the live catalog; a bundled choice
   does not establish account access. Existing saved model pins and custom shortcuts remain valid.
