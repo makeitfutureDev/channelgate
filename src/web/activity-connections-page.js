@@ -3,10 +3,12 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
   const { document, fetch } = browser;
   let root, data, ended = false, listGeneration = 0, catalogGeneration = 0, timer;
   let apps = [], nextCursor = null, query = "", loadingApps = false, appsFailed = false, posting = false;
-  let catalog, catalogStatus, more, search, selection, selectedApp, detailApp;
+  let catalog, catalogStatus, pager, previous, next, pageLabel, search, selection, selectedApp, detailApp;
+  const pageSize = 24;
+  let page = 0, cursors = [null], pageLoaded = false;
   let tab = connectionsNew ? "all" : "connected";
   const names = { gmail: "Gmail", slack: "Slack", googlecalendar: "Google Calendar", googlesheets: "Google Sheets", googledrive: "Google Drive", googledocs: "Google Docs", microsoft_teams: "Microsoft Teams", hubspot: "HubSpot", linkedin: "LinkedIn", onedrive: "OneDrive", clickup: "ClickUp", sharepoint: "SharePoint", airtable: "Airtable", outlook: "Outlook", make: "Make" };
-  const appName = slug => names[slug] || String(slug || "Application").replace(/[_-]+/g, " ").replace(/\b\w/g, letter => letter.toUpperCase());
+  const appName = slug => Object.prototype.hasOwnProperty.call(names, slug) ? names[slug] : String(slug || "Application").replace(/[_-]+/g, " ").replace(/\b\w/g, letter => letter.toUpperCase());
   const node = (tag, className = "", text = "") => {
     const item = document.createElement(tag); item.className = className; item.textContent = text; return item;
   };
@@ -41,22 +43,45 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
     head.append(text); root.append(head); return head;
   }
   const accountsFor = slug => (Array.isArray(data?.accounts) ? data.accounts : []).filter(account => account.app === slug);
-  function icon(name) {
+  function logoUrl(app) {
+    if (typeof app.logo === "string" && app.logo.length <= 2048 && /^https:\/\/(logos|assets)\.composio\.dev\/[a-zA-Z0-9_./-]+$/.test(app.logo) && !app.logo.split("/").some(part => part === ".." || part === ".")) {
+      try {
+        const url = new browser.URL(app.logo);
+        if (url.protocol === "https:" && ["logos.composio.dev", "assets.composio.dev"].includes(url.hostname) && !url.port && !url.username && !url.password && !url.search && !url.hash && /^\/[a-zA-Z0-9_./-]+$/.test(url.pathname) && !url.pathname.split("/").some(part => part === ".." || part === ".")) return url.href;
+      } catch { /* Use the canonical logo below when provider metadata is invalid. */ }
+    }
+    return typeof app.slug === "string" && /^[a-z0-9_][a-z0-9_-]{0,99}$/.test(app.slug) ? "https://logos.composio.dev/api/" + app.slug : null;
+  }
+  function icon(app, name) {
     const item = node("span", "connection-app-icon", name.split(/\s+/).map(word => word[0]).join("").slice(0, 2).toUpperCase());
-    item.setAttribute("aria-hidden", "true"); return item;
+    item.setAttribute("aria-hidden", "true");
+    const source = logoUrl(app);
+    if (source) {
+      const image = node("img", "connection-app-logo");
+      image.alt = ""; image.setAttribute("aria-hidden", "true"); image.loading = "lazy"; image.decoding = "async"; image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => { item.replaceChildren(); item.textContent = name.split(/\s+/).map(word => word[0]).join("").slice(0, 2).toUpperCase(); });
+      image.src = source; item.replaceChildren(image);
+    }
+    return item;
+  }
+  function resetPages() { page = 0; cursors = [null]; apps = []; nextCursor = null; pageLoaded = false; }
+  function connectedApps() {
+    const slugs = [...new Set((Array.isArray(data?.accounts) ? data.accounts : []).map(account => account.app))];
+    return slugs.map(slug => ({ slug, name: appName(slug) })).filter(app => (app.name + " " + app.slug).toLowerCase().includes(query.toLowerCase())).sort((left, right) => left.name.localeCompare(right.name));
   }
   function controlsLocked() {
     for (const item of root.querySelectorAll("button,input")) item.disabled = posting || ended || item.dataset.blocked === "true";
-    if (more) more.disabled = posting || loadingApps || ended;
+    if (previous) previous.disabled = posting || loadingApps || ended || page === 0;
+    if (next) next.disabled = posting || loadingApps || ended || appsFailed || (tab === "all" ? !nextCursor : (page + 1) * pageSize >= connectedApps().length);
   }
   function renderApps() {
     if (!catalog || detailApp || ended) return;
     catalog.replaceChildren();
     let visible;
     if (tab === "connected") {
-      const slugs = [...new Set((Array.isArray(data.accounts) ? data.accounts : []).map(account => account.app))];
-      visible = slugs.map(slug => ({ slug, name: appName(slug) })).filter(app => (app.name + " " + app.slug).toLowerCase().includes(query.toLowerCase()));
-      visible.sort((left, right) => left.name.localeCompare(right.name));
+      const connected = connectedApps();
+      page = Math.min(page, Math.max(0, Math.ceil(connected.length / pageSize) - 1));
+      visible = connected.slice(page * pageSize, (page + 1) * pageSize);
     } else visible = apps;
     for (const app of visible) {
       const name = app.name || appName(app.slug), accounts = accountsFor(app.slug);
@@ -65,28 +90,32 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
       card.setAttribute("aria-label", "View " + name + " connections");
       const text = node("span", "connection-app-text");
       text.append(node("span", "connection-app-name", name), node("span", "connection-app-status", accounts.length ? accounts.length + (accounts.length === 1 ? " account" : " accounts") + " · " + active + " active" : "Not connected"));
-      card.append(icon(name), text); catalog.append(card);
+      card.append(icon(app, name), text); catalog.append(card);
     }
-    if (!visible.length && !loadingApps && !appsFailed) catalog.append(node("p", "settings-empty", query ? "No applications match your search." : tab === "connected" ? "No applications are connected to your account yet." : "No applications are available."));
-    if (more) more.hidden = tab !== "all" || !nextCursor;
+    if (!visible.length && !loadingApps && !appsFailed) catalog.append(node("p", "settings-empty", tab === "all" && (page || nextCursor) ? "No applications on this page." : query ? "No applications match your search." : tab === "connected" ? "No applications are connected to your account yet." : "No applications are available."));
+    if (pageLabel) pageLabel.textContent = "Page " + (page + 1);
+    if (pager) pager.hidden = tab === "connected" ? connectedApps().length <= pageSize : !page && !nextCursor && !loadingApps;
     controlsLocked();
   }
-  async function loadApps(append = false) {
+  async function loadApps(targetPage = page) {
     if (ended || posting || detailApp || tab !== "all") return;
-    const generation = ++catalogGeneration, cursor = append ? nextCursor : null;
+    const generation = ++catalogGeneration, cursor = cursors[targetPage];
+    page = targetPage; pageLoaded = false;
     loadingApps = true; appsFailed = false; catalogStatus.replaceChildren(node("span", "", "Loading applications…"));
-    if (!append) { apps = []; nextCursor = null; catalog.replaceChildren(); }
-    controlsLocked();
+    apps = []; nextCursor = null; renderApps();
     try {
       const result = await request("/api/connections/apps?query=" + encodeURIComponent(query) + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
       if (ended || generation !== catalogGeneration) return;
-      const seen = new Set(apps.map(app => app.slug));
-      for (const app of Array.isArray(result.apps) ? result.apps : []) if (!seen.has(app.slug)) { apps.push(app); seen.add(app.slug); }
-      nextCursor = result.nextCursor || null; catalogStatus.replaceChildren();
+      const seen = new Set();
+      for (const app of Array.isArray(result.apps) ? result.apps : []) if (app && typeof app.slug === "string" && !seen.has(app.slug) && apps.length < pageSize) { apps.push(app); seen.add(app.slug); }
+      nextCursor = typeof result.nextCursor === "string" && result.nextCursor !== cursor && !cursors.slice(0, targetPage + 1).includes(result.nextCursor) ? result.nextCursor : null;
+      cursors = cursors.slice(0, targetPage + 1);
+      if (nextCursor) cursors.push(nextCursor);
+      pageLoaded = true; catalogStatus.replaceChildren();
     } catch (error) {
       if (ended || generation !== catalogGeneration) return;
       appsFailed = true;
-      catalogStatus.replaceChildren(node("span", "settings-error", error.message), button("Retry applications", () => { void loadApps(append); }));
+      catalogStatus.replaceChildren(node("span", "settings-error", error.message), button("Retry applications", () => { void loadApps(targetPage); }));
     } finally {
       if (!ended && generation === catalogGeneration) { loadingApps = false; renderApps(); }
     }
@@ -110,24 +139,32 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
     if (data.mode !== "sdk") tab = "connected";
     const toolbar = node("div", "connections-toolbar"), tabs = node("div", "connections-tabs"); tabs.setAttribute("aria-label", "Application views");
     const connectedCount = new Set((Array.isArray(data.accounts) ? data.accounts : []).map(account => account.app)).size;
-    const connected = button("Connected (" + connectedCount + ")", () => { if (posting || ended) return; tab = "connected"; query = ""; renderOverview(); });
+    const connected = button("Connected (" + connectedCount + ")", () => { if (posting || ended) return; tab = "connected"; query = ""; resetPages(); renderOverview(); });
     connected.setAttribute("aria-pressed", String(tab === "connected")); tabs.append(connected);
     if (data.mode === "sdk") {
-      const all = button("All apps", () => { if (posting || ended) return; tab = "all"; query = ""; renderOverview(); });
+      const all = button("All apps", () => { if (posting || ended) return; tab = "all"; query = ""; resetPages(); renderOverview(); });
       all.setAttribute("aria-pressed", String(tab === "all")); tabs.append(all);
     }
     search = node("input", "settings-input connections-search"); search.type = "search"; search.placeholder = "Search applications"; search.value = query; search.setAttribute("aria-label", "Search applications");
     catalogStatus = node("p", "settings-copy"); catalogStatus.setAttribute("role", "status"); catalogStatus.setAttribute("aria-live", "polite");
     catalog = node("div", "connections-grid"); selection = node("div", "connections-selection");
-    more = button("Load more applications", () => { if (!loadingApps) void loadApps(true); }); more.hidden = true;
+    pager = node("div", "connections-pagination"); pager.setAttribute("aria-label", "Applications pagination");
+    previous = button("Previous", () => { if (posting || ended || loadingApps || page === 0) return; if (tab === "all") void loadApps(page - 1); else { page--; renderApps(); } });
+    next = button("Next", () => {
+      if (posting || ended || loadingApps || appsFailed) return;
+      if (tab === "all") { if (nextCursor) void loadApps(page + 1); }
+      else if ((page + 1) * pageSize < connectedApps().length) { page++; renderApps(); }
+    });
+    pageLabel = node("span", "connections-page-label", "Page " + (page + 1)); pageLabel.setAttribute("aria-live", "polite");
+    pager.append(previous, pageLabel, next);
     search.addEventListener("input", () => {
       if (posting || ended) return;
-      query = search.value.trim(); catalogGeneration++; browser.clearTimeout(timer); loadingApps = false; appsFailed = false;
+      query = search.value.trim(); catalogGeneration++; browser.clearTimeout(timer); loadingApps = false; appsFailed = false; resetPages();
       if (tab === "connected") renderApps();
-      else { apps = []; nextCursor = null; catalog.replaceChildren(); more.hidden = true; timer = browser.setTimeout(() => { void loadApps(); }, 250); }
+      else { catalog.replaceChildren(); catalogStatus.replaceChildren(); pager.hidden = true; timer = browser.setTimeout(() => { void loadApps(); }, 250); }
     });
-    toolbar.append(tabs, search); root.append(toolbar, catalogStatus, catalog, more);
-    if (tab === "all") void loadApps(); else renderApps();
+    toolbar.append(tabs, search); root.append(toolbar, catalogStatus, catalog, pager);
+    if (tab === "all" && !pageLoaded) void loadApps(); else renderApps();
   }
   function renderDetail(app) {
     if (posting || ended) return;
@@ -135,7 +172,7 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
     root.replaceChildren();
     root.append(button("Back to apps", () => { if (!posting && !ended) renderOverview(); }));
     const name = app.name || appName(app.slug), head = heading(name, app.description || "Manage your connected accounts for " + name + ".");
-    head.className += " connection-detail"; head.children[0].children[0].prepend?.(icon(name));
+    head.className += " connection-detail"; head.children[0].children[0].prepend?.(icon(app, name));
     if (data.mode === "sdk" && data.canAdd) {
       const canConnect = app.canConnect !== false;
       const connect = button("Connect new", () => { if (canConnect) select({ ...app, name, canConnect: true }); }, "settings-button primary");
@@ -207,7 +244,7 @@ export function activityConnectionsBrowser({ base, csrf, connectionsNew = false 
   async function load(returnToApp) {
     if (ended || posting) return;
     const generation = ++listGeneration; catalogGeneration++; browser.clearTimeout(timer);
-    data = undefined; apps = []; selectedApp = undefined; detailApp = undefined; nextCursor = null;
+    data = undefined; selectedApp = undefined; detailApp = undefined; resetPages();
     root.replaceChildren(node("p", "settings-copy", "Loading your connections…"));
     try {
       const result = await request("/api/connections");
