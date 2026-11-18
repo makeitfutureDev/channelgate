@@ -229,7 +229,7 @@ function consumerFixture({ listing = [{ id: "gmail_owned", account_type: "PRIVAT
       if (call.name === "COMPOSIO_SEARCH_TOOLS") return { data: { session: { id: "session" } } };
       const entry = call.arguments.toolkits[0];
       const accounts = removed ? [] : listing;
-      if (entry.action === "remove" && outcome === "removed") removed = true;
+      if (entry.action === "remove" && ["removed", "initiated"].includes(outcome)) removed = true;
       return { data: { results: { gmail: { toolkit: "gmail", status: entry.action === "list" ? "active" : outcome, accounts } } } };
     } };
   } };
@@ -289,4 +289,9 @@ test("personal errors and unconfirmed remove outcomes never report deletion or e
   const consumer = consumerFixture({ outcome: "ak_private_fixture consumer-secret error" });
   await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ connect: consumer.connect })), error => error.status === 503 && !/consumer-secret|private_fixture/.test(error.message));
   await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ getUser: async () => ({}), connect: () => assert.fail("no organization fallback") })), error => error.status === 409);
+});
+test("provider's initiated remove status succeeds only after the exact account disappears", async () => {
+  const consumer = consumerFixture({ outcome: "initiated" });
+  assert.deepEqual(await deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ connect: consumer.connect })), { deleted: true });
+  assert.deepEqual(consumer.calls.slice(1).map(call => call.arguments.toolkits[0].action), ["list", "remove", "list"]);
 });
