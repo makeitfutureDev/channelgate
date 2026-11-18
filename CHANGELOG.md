@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Publish Apple's app-site association at `/.well-known/apple-app-site-association` so the
+  ChannelGate iPhone app can sign in with the gateway's Activity passkeys. Public, plain JSON,
+  no redirect; 404 until an administrator enters the app identifiers (Settings → *iPhone app
+  identifiers for passkeys*, or `GATEWAY_APPLE_APP_IDS`).
+
 - Use one persistent outbound SSH key across all channels on a gateway. Each agent container
   mounts the dedicated pair read-only in `~/.ssh/channelgate` and returns the same public key.
   Connections use ordinary SSH and retain existing channel-specific network/server approvals.

@@ -844,6 +844,19 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   fixture preferences. Private QA cases `REPLY-MENTIONS-01` and `REPLY-MENTIONS-02` cover both engines. Teams and Google
   Chat live testing remains on the existing owner hold; their mocked delivery checks are separate.
 
+## Apple app-site association (2026-11-18)
+
+- Automated (engine-independent): `test/apple-app-site-association.test.js` — strict id parsing
+  and deduplication; 404 `application/json` `no-store` without configuration; 200 JSON with the
+  configured apps from `GATEWAY_APPLE_APP_IDS`, settings winning over the environment, served with
+  a foreign Host header and without a session; the admin PUT refuses a malformed id (400), stores
+  the normalised list and lists it back.
+- Live: `curl -sI https://<public host>/.well-known/apple-app-site-association` → `HTTP/2 200`,
+  `content-type: application/json`, no `location`; the body is the JSON object; then
+  `https://app-site-association.cdn-apple.com/a/v1/<public host>` returns the same object (the
+  CDN refreshes within hours). On the iPhone, the app's passkey sign-in offers the gateway's
+  passkeys.
+
 ## Activity passkey sign-in (2026-11-13)
 
 - Engine-independent: enrollment, credential verification and Activity session issuance happen in

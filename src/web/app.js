@@ -28,7 +28,7 @@ import { createConversationSettingsRouter } from './conversation-settings.js';
 import { createActivityRouter, createActivityBrowserLoginHandler } from "./activity.js";
 import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/sessions.js";
 import { poolStats } from "../engines/session-pool.js";
-import { getEngine, isEngineEnabled } from "../config/settings.js";
+import { getAppleAppIds, getEngine, isEngineEnabled } from "../config/settings.js";
 import { resumeCommandFor } from "../engines/registry.js";
 import { createAdminAuthRouter } from "./admin-auth.js";
 import { authMiddleware, noPasswordLockdown, handleLogin, handleLogout, authEnabled, isAuthenticated, isApiPath } from "./auth.js";
@@ -105,6 +105,16 @@ export function createWebApp({
   // over the raw body). Both authenticate themselves and are mounted before the admin session
   // middleware and the shared JSON parser (the webhook needs the raw bytes).
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
+  // Apple's app-site association: iOS fetches it (through Apple's CDN) to let the ChannelGate
+  // iPhone app use this host's Activity passkeys. Public by design, no redirect, plain JSON; a
+  // deployment that configured no app id answers 404 so the CDN never caches a wrong file.
+  app.get("/.well-known/apple-app-site-association", (_req, res) => {
+    const apps = getAppleAppIds();
+    res.set("Cache-Control", apps.length ? "public, max-age=3600" : "no-store");
+    res.type("application/json");
+    if (!apps.length) return res.status(404).send(JSON.stringify({ error: "No Apple app identifiers are configured on this gateway." }));
+    return res.send(JSON.stringify({ webcredentials: { apps } }));
+  });
 
   const jsonParser = express.json({ limit: "1mb" });
   const parsesOwnBody = (p) => p.startsWith("/api/runs") || p.startsWith("/file-download") || p.startsWith("/file-editor") || p.startsWith("/file-upload") || p.startsWith("/conversation-settings") || p.startsWith("/activity") || p.startsWith("/approve/") || p.startsWith("/f/") || p === "/api/skills/webhook/github" || p === "/mcp/skills";

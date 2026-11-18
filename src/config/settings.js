@@ -31,6 +31,7 @@ const ENV_MAP = {
   toolboxMcpUrl: "TOOLBOX_MCP_URL",
   publicUrl: "GATEWAY_PUBLIC_URL",
   platformUrl: "CHANNELGATE_PLATFORM_URL",
+  appleAppIds: "GATEWAY_APPLE_APP_IDS",
 };
 
 export function getSettings() {
@@ -273,6 +274,28 @@ export function teamsMessagingEndpoint() {
 export function getPublicUrl() {
   const s = getSettings();
   return normalizePublicUrl(s.publicUrl || process.env.GATEWAY_PUBLIC_URL || "");
+}
+
+// Apple app identifiers (`<Team ID>.<bundle id>`) published at
+// `/.well-known/apple-app-site-association` so an iPhone app with the matching
+// `webcredentials:<public host>` entitlement may use this gateway's Activity passkeys. A list,
+// comma or newline separated, in settings (`appleAppIds`) or `GATEWAY_APPLE_APP_IDS`. Nothing
+// here is secret: Apple's CDN republishes the file. Unset → the endpoint answers 404.
+export const APPLE_APP_ID_PATTERN = /^[A-Z0-9]{10}\.[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/;
+export function parseAppleAppIds(value) {
+  const seen = new Set(), ids = [];
+  for (const raw of String(value || "").split(/[\s,]+/)) {
+    const id = raw.trim();
+    if (!id || seen.has(id)) continue;
+    if (!APPLE_APP_ID_PATTERN.test(id)) return null;
+    seen.add(id); ids.push(id);
+  }
+  return ids;
+}
+export function getAppleAppIds() {
+  const s = getSettings();
+  const configured = typeof s.appleAppIds === "string" && s.appleAppIds.trim() ? s.appleAppIds : process.env.GATEWAY_APPLE_APP_IDS || "";
+  return parseAppleAppIds(configured) || [];
 }
 
 // Link-based approvals: whether an approval card is ALSO delivered as signed, single-use URLs in
@@ -1208,6 +1231,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    appleAppIds: getAppleAppIds().join(", "),
     logoColor: getLogoColor(),
     trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
