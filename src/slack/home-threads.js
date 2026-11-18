@@ -10,6 +10,7 @@ import { listConversationMemberIds } from "./members.js";
 import { listPendingApprovals } from "./approvals.js";
 import { clearDone, markDone } from "../gateway/followups.js";
 import { syncThreadDoneMarker } from "./thread-done-marker.js";
+import { notifyThreadChanged } from "../gateway/thread-changes.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, getSlackThreadParticipant, indexSlackThread, slackThreadRootOwner, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
@@ -152,6 +153,12 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
       ? await reader.inspect(client, row.channel_id, row.thread_ts, { force })
       : await inspectThreadCompletion(client, row.channel_id, row.thread_ts);
     const root = inspected.root;
+    const currentAccess = await accessContext(client, userId);
+    const currentEntry = await getChannelEntry(row.channel_id);
+    if (!await currentAccess.allows(currentEntry && { ...currentEntry, channelId: row.channel_id }, row.thread_ts)) {
+      eligible.delete(key);
+      return false;
+    }
     if (slackThreadRootOwner(row.channel_id, root) !== row.starter_id) {
       if (slackThreadRootOwner(row.channel_id, root)) indexSlackThread({ channelId: row.channel_id, slug: row.slug, root });
       else skipSlackThreadCandidate({ channelId: row.channel_id, slug: row.slug, threadTs: row.thread_ts });
@@ -160,7 +167,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
     }
     updateSlackThreadRootCompletion(row.channel_id, root, inspected);
     const current = getSlackThread(row.channel_id, row.thread_ts);
-    Object.assign(row, current, { status: slackThreadStatus(current, runtime) });
+    Object.assign(row, current, getSlackThreadParticipant(row.channel_id, row.thread_ts, userId), { status: slackThreadStatus(current, runtime) });
     verified.add(key);
     return true;
   };
@@ -278,8 +285,61 @@ async function discoverLiveRoots(client, userId, access, channels, now, rootRead
   return { unavailable, attempted };
 }
 
-// The web feed reads local state plus bounded repair of missing live roots. It never scans
-// historical conversations; Open resolves a permalink after fresh click-time authorization.
+// Historical checks predate personal dismissal. Read only indexed, completed rows still
+// missing that one-time reconciliation; ordinary refreshes stop reading once it is consumed.
+const historicalCompletionReads = new WeakMap();
+async function repairHistoricalCompletion(client, userId, access, now, deadline) {
+  let reads = historicalCompletionReads.get(client);
+  if (!reads) { reads = new Map(); historicalCompletionReads.set(client, reads); }
+  let attempted = 0, unavailable = false;
+  for (const row of eligibleSlackThreadsForUser(userId)) {
+    if (row.historical_completion_checked || row.dismissed_ms || row.hidden_ms || !slackThreadIsDone(row)) continue;
+    if (attempted >= HISTORY_BATCH || Date.now() >= deadline) break;
+    const entry = await getChannelEntry(row.channel_id);
+    if (!await access.allows(entry && { ...entry, channelId: row.channel_id }, row.thread_ts)) continue;
+    const key = `${row.channel_id}::${row.thread_ts}`;
+    let state = reads.get(key);
+    if (!state?.pending && !state?.root && state?.retryAt > now()) { unavailable = true; continue; }
+    attempted++;
+    if (!state?.pending && !state?.root) {
+      if (reads.size >= 1000) {
+        const oldest = [...reads].find(([, value]) => !value.pending);
+        if (!oldest) break;
+        reads.delete(oldest[0]);
+      }
+      state ||= { pending: null, retryAt: 0, root: null, progress: {} };
+      state.pending = inspectThreadCompletion(client, row.channel_id, row.thread_ts, { maxPages: 20, deadline, progress: state.progress })
+        .catch(() => null).then((inspected) => {
+          state.root = inspected;
+          if (inspected) notifyThreadChanged({ channelId: row.channel_id, threadTs: row.thread_ts });
+          return inspected;
+        })
+        .finally(() => { state.pending = null; state.retryAt = now() + LIVE_ROOT_RETRY_MS; });
+      reads.set(key, state);
+    }
+    const inspected = await awaitLiveRoot(state, deadline - Date.now());
+    if (inspected === ROOT_READ_TIMED_OUT) { unavailable = true; break; }
+    // No side effects run in the background promise. Recheck current access before consuming
+    // a completed read, even when a prior snapshot timed out or another viewer shared it.
+    access = await accessContext(client, userId);
+    const currentEntry = await getChannelEntry(row.channel_id);
+    if (!inspected || !await access.allows(currentEntry && { ...currentEntry, channelId: row.channel_id }, row.thread_ts)) {
+      unavailable = true;
+      continue;
+    }
+    if (slackThreadRootOwner(row.channel_id, inspected.root) !== row.starter_id) {
+      state.root = null;
+      unavailable = true;
+      continue;
+    }
+    updateSlackThreadRootCompletion(row.channel_id, inspected.root, inspected);
+    reads.delete(key);
+  }
+  return { attempted, unavailable: unavailable || access.unavailable };
+}
+
+// The web feed reads local state plus bounded root/legacy-completion repairs. Open resolves
+// a permalink after fresh click-time authorization.
 export async function activityThreadSnapshot(client, userId, requested = {}, { now = Date.now, rootReadBudgetMs = 2000 } = {}) {
   const view = requested.filter === "all-statuses" ? { ...normalizeThreadView(requested), filter: "all-statuses" } : normalizeThreadView(requested);
   const search = String(requested.search || "").trim().slice(0, 200);
@@ -287,9 +347,11 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   const pageSize = Number.isSafeInteger(size) && size > 0 ? Math.min(size, 1000) : 100;
   let access = await accessContext(client, userId);
   const channels = new Map((await listChannels()).map((entry) => [entry.channelId, entry]));
+  const repairDeadline = Date.now() + rootReadBudgetMs;
   const discovery = await discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs);
+  const repair = await repairHistoricalCompletion(client, userId, access, now, repairDeadline);
   // A content read may outlive membership/rank changes. Never render with its pre-read cache.
-  if (discovery.attempted) access = await accessContext(client, userId);
+  if (discovery.attempted || repair.attempted) access = await accessContext(client, userId);
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const workingSince = slackThreadWorkingSince();
   const authorized = [];
@@ -325,7 +387,7 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   const page = Math.min(view.page, pages - 1);
   return { ...view, search, pageSize, page, pages, total: filtered.length,
     rows: filtered.filter((row, index) => (index >= page * pageSize && index < (page + 1) * pageSize)
-      || (requested.includeHidden && row.hidden_ms > 0) || (view.filter === "all-statuses" && row.status === "done" && row.dismissed_ms > 0) || isPinned(row)), unavailable: discovery.unavailable || access.unavailable, truncated };
+      || (requested.includeHidden && row.hidden_ms > 0) || (view.filter === "all-statuses" && row.status === "done" && row.dismissed_ms > 0) || isPinned(row)), unavailable: discovery.unavailable || repair.unavailable || access.unavailable, truncated };
 }
 
 // Only local display state participates: unchanged Activity pages never poll Slack history.
