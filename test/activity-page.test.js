@@ -638,6 +638,39 @@ test("Activity defaults to Channel before snapshots and preserves an explicit St
   assert.equal(elements.threads.children[0].dataset.group, "Working · 1");
 });
 
+test("Completed defaults to one ungrouped list sorted by completion, including pins and live updates", async () => {
+  const { elements: e, stream, requests } = browser(() => new Promise(() => {}));
+  const fixtures = [
+    { ...row("done", "older completion"), channelId: "C2", threadTs: "2", lastMessageMs: 9000, completedMs: 200, dismissed: false, pinned: true },
+    { ...row("done", "latest completion"), threadTs: "3", lastMessageMs: 1000, completedMs: 400 },
+    { ...row("done", "middle completion"), threadTs: "4", lastMessageMs: 5000, completedMs: 300 },
+    { ...row("done", "legacy completion"), threadTs: "5", lastMessageMs: 10000 },
+    { ...row("idle", "active work"), threadTs: "6" },
+  ];
+  const select = (filter) => e.filters.fire("click", { target: e.filters.children.find((b) => b.dataset.filter === filter) });
+  const titles = () => e.threads.children.map((tr) => tr.children[0].textContent);
+  stream.snapshot(fixtures, { groupBy: "channel", groupByVersion: 1, pinnedChannels: [{ channelId: "C2", channelName: "Pinned channel" }] });
+  select("done");
+  assert.equal(e["group-by"].value, "none");
+  assert.equal(e.threads.dataset.groupBy, "none");
+  assert.equal(e.threads.dataset.cards, undefined);
+  assert.deepEqual(titles(), ["latest completion", "middle completion", "older completion", "legacy completion"]);
+  assert.ok(e.threads.children.every((tr) => tr.dataset.group === undefined));
+  assert.equal(e["pinned-threads"].children.length, 0);
+  assert.equal(e["pinned-section"].hidden, true);
+  e.search.value = "middle"; e.search.fire("input");
+  assert.deepEqual(titles(), ["middle completion"]);
+  e.search.value = ""; e.search.fire("input");
+  stream.snapshot(fixtures.map((r) => r.threadTs === "2" ? { ...r, completedMs: 500 } : r), { groupBy: "status", groupByVersion: 2 });
+  assert.equal(e["group-by"].value, "none", "saved grouping snapshots do not replace the Completed default");
+  assert.equal(titles()[0], "older completion", "re-completing moves a conversation first");
+  e["group-by"].value = "channel"; e["group-by"].fire("change"); await flush();
+  assert.equal(e.threads.dataset.groupBy, "channel", "grouping remains optional within Completed");
+  assert.equal(requests.filter((r) => r.url.endsWith("/group-by")).length, 0, "Completed grouping does not overwrite other views");
+  select("active");
+  assert.equal(e["group-by"].value, "status", "other views keep the viewer's saved preference");
+});
+
 test("channel grouping keeps channel ids distinct, sorts within channels and filters group counts", async () => {
   const { elements, stream, requests } = browser((url, options) => url.endsWith("/group-by")
     ? Promise.resolve(response({ groupBy: JSON.parse(options.body).groupBy, groupByVersion: 1 })) : new Promise(() => {}));
@@ -674,9 +707,9 @@ test("channel grouping keeps channel ids distinct, sorts within channels and fil
   assert.deepEqual(groups(), ["Beta · 2", undefined]);
   elements.search.value = ""; elements.search.fire("input");
   elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
-  assert.deepEqual(titles(), ["completed"]); assert.deepEqual(groups(), ["Alpha · 1"]);
+  assert.deepEqual(titles(), ["completed"]); assert.deepEqual(groups(), [undefined]);
   stream.snapshot(rows, { groupBy: "status", groupByVersion: 2 });
-  assert.deepEqual(groups(), ["Done · 1"]);
+  assert.deepEqual(groups(), [undefined]);
   assert.equal(elements.threads.dataset.cards, undefined, "status grouping keeps the flat table");
   assert.equal(elements.threads.children[0].dataset.hue, undefined);
   assert.equal(elements.threads.children[0].dataset.groupEnd, undefined);
@@ -838,11 +871,13 @@ test("channel pins promote all open conversations once across status filters, re
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "open") });
   assert.equal(e["pinned-threads"].children.length, 3, "All open includes Later inherited work plus the explicit Done pin");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "done") });
-  assert.equal(e["pinned-threads"].children.length, 3, "open channel pins persist across tabs; inherited Done work returns to regular completed rows");
+  assert.equal(e["pinned-threads"].children.length, 0, "Completed combines pinned and ordinary Done rows");
+  assert.equal(e.threads.children.length, 2, "Completed excludes pinned open work");
   assert.equal(e.threads.children[0].children[0].textContent, "Done task");
   e.search.value = "absent"; e.search.fire("input");
   assert.equal(e["pinned-section"].hidden, true);
   e.search.value = ""; e.search.fire("input");
+  e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "active") });
   b.stream.snapshot([], { pinnedChannels: [channel] });
   assert.equal(e["pinned-section"].hidden, false);
   assert.equal(e["pinned-channels"].hidden, false, "empty pinned channels retain an accessible unpin control");
@@ -1073,9 +1108,10 @@ test("another person's Done remains in Active and pinned; my Done only appears u
   assert.equal(elements.threads.children.length, 0, "my completion cannot be promoted by an explicit pin");
   assert.equal(elements.filters.children.find((b) => b.dataset.filter === "active").children[0].textContent, "1");
   elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
-  assert.equal(elements.threads.children.length, 1);
-  assert.match(elements.threads.children[0].textContent, /Completed by me/);
-  assert.equal(elements.threads.children[0].children[5].children[1].children[0].textContent, "Reopen");
+  assert.equal(elements.threads.children.length, 2);
+  assert.equal(elements["pinned-threads"].children.length, 0);
+  const mineRow = elements.threads.children.find((tr) => tr.textContent.includes("Completed by me"));
+  assert.equal(mineRow.children[5].children[1].children[0].textContent, "Reopen");
 });
 
 test("acknowledging an already shared-Done row sends Done true and dismisses only my Active row", async () => {

@@ -156,6 +156,27 @@ async function nextEvent(reader, event = "threads") {
   } finally { clearTimeout(timer); }
 }
 
+test("Activity exposes completion time across REST, live snapshots and explicit reopen cycles", async (t) => {
+  const f = await fixture(t); await f.root();
+  const mine = await f.login();
+  const snapshot = async () => (await (await f.request(mine.url + "/api/threads", { headers: mine.headers })).json()).rows[0];
+  assert.equal((await snapshot()).completedMs, 0);
+  const first = Date.now();
+  setSlackThreadDone("C_WORK", "100.000001", "U_MINE", true, first);
+  assert.equal((await snapshot()).completedMs, first);
+  const response = await f.request(mine.url + "/stream", { headers: mine.headers });
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows[0].completedMs, first);
+  recordSlackThreadOutcome("C_WORK", "100.000001", { error: true });
+  assert.equal((await snapshot()).completedMs, first, "later agent activity preserves completion time");
+  setSlackThreadDone("C_WORK", "100.000001", "U_MINE", false, first + 100);
+  assert.equal((await snapshot()).completedMs, 0);
+  setSlackThreadDone("C_WORK", "100.000001", "U_MINE", true, first + 200);
+  assert.equal((await snapshot()).completedMs, first + 200);
+  getDb().prepare("UPDATE slack_threads SET done_ms=0,root_done=1,root_reaction_ms=? WHERE channel_id='C_WORK'").run(first + 300);
+  assert.equal((await snapshot()).completedMs, first + 300, "reaction completions carry their observed timestamp");
+});
+
 test("Activity group order persists per viewer across sessions and streams without changing authority", async (t) => {
   const f = await fixture(t);
   const mine = await f.login(), other = await f.login("U_OTHER");
@@ -1609,6 +1630,8 @@ test("combined Activity lists linked Chat and Teams threads, isolates viewers an
       assert.equal((await f.request(other.url + '/api/' + operation, { method: 'POST', headers: other.post, body })).status, 403, operation);
     }
     assert.equal(getPlatformThread(c.channel, c.thread).status, 'done');
+    const completed = (await snapshot(mine)).rows.find(r => r.platform === c.platform);
+    assert.equal(completed.completedMs, getPlatformThread(c.channel, c.thread).done_ms);
   }
   roster.set('googlechat', []);
   data = await snapshot(mine);
