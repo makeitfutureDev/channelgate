@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const RESERVED = new Set(["gateway", "composio", "composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox", "__proto__", "constructor", "prototype"]);
+const RESERVED = new Set(["gateway", "composio", "composio-user", "composio-agent", "make-toolbox", "__proto__", "constructor", "prototype"]);
 const NAME = /^[a-zA-Z0-9_.-]{1,160}$/;
 const OBJECT = (value) => value && typeof value === "object" && !Array.isArray(value);
 const own = (object, name) => OBJECT(object) && Object.hasOwn(object, name) ? object[name] : undefined;

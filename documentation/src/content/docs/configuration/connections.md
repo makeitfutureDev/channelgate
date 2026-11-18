@@ -15,7 +15,6 @@ Connected apps give an agent access to services such as email, calendars, drives
 
 In Personal connection mode, the agent's Composio token resolves **conversation → organization default**. The requester's personal token remains separate. Shared Composio is suppressed in one-to-one DMs, where the requesting person's connection is the relevant identity.
 
-The Toolbox integration has its own token chain: **conversation → active user → organization default**. Do not assume that every connector uses Composio's scope rules.
 
 ## Configure a shared app identity
 

@@ -69,7 +69,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       ] },
       { title: 'Variables & connections', rows: [
         '`/secrets` opens Variables. Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
-        'Open **MCPs** in `/settings` to manage conversation connections and **My connections** for your personal Composio or Toolbox token. Enter tokens only in the window. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
+        'Open **MCPs** in `/settings` to manage conversation connections and **My connections** for your personal Composio token. Enter tokens only in the window. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
         'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
         'Connect a mailbox under `/settings` → **MCPs** → **Email accounts**: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.',
       ] },

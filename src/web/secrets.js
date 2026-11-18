@@ -20,7 +20,6 @@ const READERS = {
     slackSigningSecret: (s) => s.slackSigningSecret,
     slackAdminUserToken: (s) => s.slackAdminUserToken,
     defaultComposioToken: (s) => s.defaultComposioToken,
-    defaultToolboxToken: (s) => s.defaultToolboxToken,
     // Legacy shared Skills GitHub token (kept revealable for rollback/export only).
     skillsGithubToken: (s) => s.skillsGithubToken,
     skillsPublishGithubToken: (s) => s.skillsPublishGithubToken,
@@ -52,11 +51,9 @@ const READERS = {
   },
   user: {
     composioToken: (u) => u.composioToken,
-    toolboxToken: (u) => u.toolboxToken,
   },
   channel: {
     composioToken: (m) => m.composioToken,
-    toolboxToken: (m) => m.toolboxToken,
     makeToolboxKey: (m) => m.makeToolboxKey,
   },
 };

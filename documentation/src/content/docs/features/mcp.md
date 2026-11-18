@@ -7,7 +7,7 @@ Model Context Protocol (MCP) servers expose tools the agent can call: searching 
 
 ## Select a connection for the conversation
 
-Administrators configure the native engine MCP inventory and assign optional connections through **Cloud MCP**. Conversation settings separate these selected servers from built-in gateway controls and credential-backed Composio, Toolbox, and Make connections.
+Administrators configure the native engine MCP inventory and assign optional connections through **Cloud MCP**. Conversation settings separate these selected servers from built-in gateway controls and credential-backed Composio and Make connections.
 
 A typical workflow is:
 
@@ -40,4 +40,4 @@ Related: [MCP server configuration](/docs/configuration/mcp-servers), [connected
 - [Engine-specific MCP connection controls](/docs/controls/mcp-connections)
 - [External skills library endpoint](/docs/features/skills-library-mcp)
 - [Enterprise Composio SDK mode](/docs/features/composio-sdk)
-- [Toolbox and Make connections](/docs/features/toolbox-and-make)
+- [Make connections](/docs/features/make-mcp)

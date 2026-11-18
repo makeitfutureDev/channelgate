@@ -8,7 +8,7 @@ ensureTestEnv();
 
 const [
   { buildSettings, ensureChannelFolder },
-  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, toolboxUrl, injectedRemoteAllowMatches },
+  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, injectedRemoteAllowMatches },
   { channelSettingsFile, channelAdminSettingsFile, gatewayRoot },
 ] = await Promise.all([
   import("../src/gateway/folders.js"),
@@ -286,7 +286,7 @@ test("the lockdown admits the injected remote servers by URL next to a picked gl
   const picked = { name: "aioutreach", namespace: "mcp__aioutreach", match: { serverUrl: "https://mcp.example.test/aioutreach" } };
   const settings = await buildSettings({ _slug: "claude-remote-allow", cleanMode: false, allowedMcps: [picked], makeToolboxUrl: "https://hook.eu2.make.com/mcp/example" });
   const urls = settings.allowedMcpServers.filter((m) => m.serverUrl).map((m) => m.serverUrl);
-  for (const url of [composioUrl(), toolboxUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
+  for (const url of [composioUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
     assert.ok(urls.includes(url), `missing serverUrl entry for ${url}`);
   }
   assert.ok(settings.allowedMcpServers.some((m) => m.serverName === composioRef().name));
@@ -294,6 +294,17 @@ test("the lockdown admits the injected remote servers by URL next to a picked gl
 
   const cleanSettings = await buildSettings({ _slug: "claude-remote-allow-clean", cleanMode: true, allowedMcps: [picked] });
   assert.deepEqual(cleanSettings.allowedMcpServers, []);
+});
+
+test("legacy Toolbox settings never restore an MCP namespace, remote allowlist, or token tool", async () => {
+  const before = process.env.TOOLBOX_MCP_URL;
+  process.env.TOOLBOX_MCP_URL = "https://legacy.example/mcp";
+  try {
+    const settings = await buildSettings({ _slug: "retired-toolbox", toolboxToken: "stale-token", allowedMcps: [] });
+    assert.doesNotMatch(JSON.stringify(settings), /makeitfuture-toolbox|legacy\.example|set_my_toolbox_token|clear_my_toolbox_token|stale-token/);
+  } finally {
+    if (before === undefined) delete process.env.TOOLBOX_MCP_URL; else process.env.TOOLBOX_MCP_URL = before;
+  }
 });
 
 test("SDK-mode Composio adds its tool-router host pattern; a malformed Make toolbox URL adds nothing", () => {

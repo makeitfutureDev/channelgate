@@ -66,7 +66,7 @@ export const CONTAINER_EGRESS_CONNECT = "/opt/channelgate/bin/cg-egress-connect"
 // who exec'd into a container by hand.
 //
 // Spec 1.6.0: the bridge and secret-env-bridge carry the `remote-mcp` socket service (the daemon
-// relays Composio and the toolboxes, so a container holds no remote MCP credential); the broker
+// relays Composio and the Make connection, so a container holds no remote MCP credential); the broker
 // forwards CG_MCP_SERVICE / CG_MCP_SOCKET. An older image's broker would drop the service
 // selection, which is why this is a contract bump and not only a toolchain change. The same spec
 // also ships the egress forwarder (bin/cg-egress.mjs) that cg-init starts under CG_EGRESS=proxy:

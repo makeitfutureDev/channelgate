@@ -33,8 +33,8 @@ creates a pending authorization (`status: "initiated"`) instead of reporting not
 reserved for a toolkit the search tool already shows as connected there, or for a connection the
 user explicitly asked for. An inventory request never authorizes initiating connections.
 
-The gateway may also inject the privileged MakeItFuture toolbox according to its channel → user →
-organization token precedence. Clean runs and reduced-tool memory reviews omit optional identities.
+The gateway may also inject a configured Make MCP connection for the conversation.
+Clean runs and reduced-tool memory reviews omit optional identities.
 
 The daemon builds a fresh explicit MCP config for each spawn and uses strict MCP mode. A channel's
 selected MCPs plus daemon-injected servers are the whole set; locally configured host MCPs are not

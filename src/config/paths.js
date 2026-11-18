@@ -55,7 +55,7 @@ export function logsDir() {
   return path.join(gatewayRoot(), "logs");
 }
 // Short-lived per-run files that carry credentials (the Claude --mcp-config payload embeds the
-// author's Composio/Skills/Toolbox tokens). Deliberately under the gateway root rather than the
+// author's Composio tokens). Deliberately under the gateway root rather than the
 // OS tmpdir: every channel's sandbox read-denies this root, while the shared tmpdir is readable
 // by any same-user process — including another channel's agent, which auto-approves Read.
 export function runTmpDir() {

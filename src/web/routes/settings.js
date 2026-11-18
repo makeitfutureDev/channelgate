@@ -371,7 +371,6 @@ export function createSettingsRouter({
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
-      if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (Object.hasOwn(body, "logoColor")) {
         const color = normalizeLogoColor(body.logoColor);
         if (!color) return res.status(400).json({ error: "Logo color must be a six-digit hex color, such as #ff642f" });
@@ -417,12 +416,9 @@ export function createSettingsRouter({
       // have none). Set on a non-empty value; clear explicitly with the *Clear flags.
       if (typeof body.defaultComposioToken === "string" && body.defaultComposioToken) patch.defaultComposioToken = body.defaultComposioToken.trim();
       if (body.clearDefaultComposioToken === true) patch.defaultComposioToken = "";
-      if (typeof body.defaultToolboxToken === "string" && body.defaultToolboxToken) patch.defaultToolboxToken = body.defaultToolboxToken.trim();
-      if (body.clearDefaultToolboxToken === true) patch.defaultToolboxToken = "";
       // Owner labels (who the shared org-default token authenticates as). Not secret — a plain
       // string that always round-trips; an empty string clears it.
       if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
-      if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
       // Legacy shared GitHub credential stays readable for rollback compatibility, but source
       // sync no longer consumes it. New source credentials live on each source row.
       if (typeof body.skillsGithubToken === "string" && body.skillsGithubToken.trim()) patch.skillsGithubToken = body.skillsGithubToken.trim();
@@ -1028,7 +1024,7 @@ export function createSettingsRouter({
 
   // Optional capabilities available to the requested engine. Claude uses `claude mcp list`;
   // Codex uses its active app-server inventory so product-injected app families are included.
-  // Gateway/Composio/Skills/Toolbox built-ins are excluded from this per-channel picker.
+  // Gateway/Composio/Make built-ins are excluded from this per-channel picker.
   router.get("/mcp/available", async (req, res, next) => {
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();

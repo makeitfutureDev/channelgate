@@ -15,6 +15,9 @@
 export const DEAD_RECORD_FIELDS = Object.freeze([
   // Skills Manager MCP token (channel meta and user records). Retired with that integration.
   "skillsToken",
+  // Retired built-in Toolbox connection. Imported records cannot restore its credentials.
+  "toolboxToken",
+  "toolboxTokenLabel",
 ]);
 
 // Returns the record without any dead field. The same object is returned untouched when there is
@@ -24,5 +27,16 @@ export function stripDeadFields(record) {
   if (!DEAD_RECORD_FIELDS.some((field) => Object.hasOwn(record, field))) return record;
   const out = { ...record };
   for (const field of DEAD_RECORD_FIELDS) delete out[field];
+  return out;
+}
+
+// settings.json is separate from record storage. Ignore old fields on read and strip them on
+// every save so a stale browser or imported settings cannot restore the retired integration.
+const DEAD_SETTINGS_FIELDS = Object.freeze(["toolboxMcpUrl", "defaultToolboxToken", "defaultToolboxTokenLabel"]);
+export function stripDeadSettings(settings) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return settings;
+  if (!DEAD_SETTINGS_FIELDS.some((field) => Object.hasOwn(settings, field))) return settings;
+  const out = { ...settings };
+  for (const field of DEAD_SETTINGS_FIELDS) delete out[field];
   return out;
 }

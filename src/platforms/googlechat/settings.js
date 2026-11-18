@@ -16,7 +16,7 @@ export const googleChatSettingsPages = ({ isDM = false } = {}) => GOOGLECHAT_SET
 // Slack's You page edits a person's own connections and variables in the modal. A Chat card is
 // posted into the space, so the same items live behind the private browser form instead.
 function youPage(ctx, ui) {
-  return { body: [ui.heading('You'), ui.text('Only your runs use these, in every conversation: your own Composio and Toolbox accounts, your custom connections, your email accounts and your personal variables.'),
+  return { body: [ui.heading('You'), ui.text('Only your runs use these, in every conversation: your own Composio account, your custom connections, your email accounts and your personal variables.'),
     ui.text('They hold credentials, so they open in your private browser settings and are never shown in this conversation.'),
     ui.buttons([ui.execute('Open my private settings', 'settings.private', { page: 'you' }, 'none')])], actions: [] };
 }

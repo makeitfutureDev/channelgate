@@ -74,7 +74,7 @@ function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRunt
   // The same token also rides every socket-bridged entry (the SDK-mode Composio sessions and, on an
   // isolated target, the relayed remotes), so it is replaced wherever it appears. A relayed remote's
   // credential is NOT in the JSON any more (it is in the daemon's relay registry), so its URL +
-  // header digest is added instead: a rotated Composio/toolbox token must still retire the warm
+  // header digest is added instead: a rotated Composio/Make token must still retire the warm
   // process, exactly as it did when the token itself was part of the JSON.
   const fingerprintView = structuredClone(parsed);
   const stableCapability = JSON.stringify({

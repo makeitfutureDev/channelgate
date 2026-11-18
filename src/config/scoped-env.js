@@ -17,7 +17,7 @@ import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/featur
 //   • organization → settings.json `orgEnv` (already 0600, already where the org Composio and
 //     run-API secrets live, and NOT in config/settings.js's ENV_MAP, so it can never be copied
 //     into the daemon's own process.env).
-//   • person      → the `users` row's JSON blob (`data.env`), beside composioToken/toolboxToken,
+//   • person      → the `users` row's JSON blob (`data.env`), beside composioToken,
 //     the personal credentials that were already there.
 //
 // PRECEDENCE at spawn is organization → person → channel, most specific last (mergeRunEnv). The
@@ -84,7 +84,7 @@ export async function patchUserEnv(userId, { set = null, remove = "", actor = ""
 
 // A person's secrets are only ever resolved for a principal the platform AUTHENTICATED. The HTTP
 // run API authenticates its key, not the `author` it names, so an untrusted caller gets nothing
-// here — the same rule that already withholds the personal Composio and Toolbox tokens
+// here — the same rule that already withholds the personal Composio tokens
 // (gateway/access-grants.js). Passing the flag in rather than reading it back keeps one source.
 export async function resolveUserEnv(userId, { untrustedPrincipal = false } = {}) {
   if (!userId || untrustedPrincipal) return {};

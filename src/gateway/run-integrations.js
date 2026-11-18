@@ -1,10 +1,10 @@
-// The integrations a run receives — the author's and the channel's Composio identities, the
-// toolbox tokens, the Make toolbox — resolved in ONE place for every caller that prepares an
+// The integrations a run receives — the author's and the channel's Composio identities and
+// the Make toolbox — resolved in ONE place for every caller that prepares an
 // engine environment: a chat turn (run.js) and an interactive SSH session (ssh-session.js), which
 // must be the same environment or "it works in Slack but not over SSH" is the bug. Moved out of
 // run.js verbatim; run.js re-exports the Composio resolvers so their existing importers stay put.
-import { getComposioToken, getToolboxToken, getUser, isAdmin, isApproved } from "../config/store.js";
-import { getComposioMode, getDefaultComposioToken, getDefaultToolboxToken } from "../config/settings.js";
+import { getComposioToken, getUser, isAdmin, isApproved } from "../config/store.js";
+import { getComposioMode, getDefaultComposioToken } from "../config/settings.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { canManage } from "./modes.js";
@@ -13,14 +13,6 @@ import { resolveCustomMcpsForRun } from "./custom-mcps.js";
 import { emailAccountSecrets } from "./email-accounts.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
-
-export function resolveTokenSource({ clean, channelToken, userToken, defaultToken, noOrg }) {
-  if (clean) return { token: "", source: "clean" };
-  if (channelToken) return { token: channelToken, source: "channel" };
-  if (userToken) return { token: userToken, source: "user" };
-  if (!noOrg && defaultToken) return { token: defaultToken, source: "org" };
-  return { token: "", source: noOrg ? "none-no-org-default" : "none" };
-}
 
 // Composio is intentionally different from the other token-backed integrations: expose the active
 // author's identity and the gateway's shared identity at the same time instead of choosing one.
@@ -142,7 +134,6 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     untrustedPrincipal,
     needsApproval: composioMode === "sdk" && !clean,
     loadComposioToken: getComposioToken,
-    loadToolboxToken: getToolboxToken,
     loadIsAdmin: isAdmin,
     loadIsApproved: isApproved,
   });
@@ -163,7 +154,6 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     noOrg,
     isDM: Boolean(meta.isDM || meta.type === "im"),
   });
-  const toolbox = resolveTokenSource({ clean, channelToken: meta.toolboxToken, userToken: userIdentity.toolboxToken, defaultToken: getDefaultToolboxToken(), noOrg });
   const composioUserToken = composio.user.token;
   const composioToken = composio.shared.token;
   const composioUserEndpoint = composio.user.endpoint;
@@ -200,8 +190,8 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
   // output redactor carries them anyway so no reply, stream or job log can ever echo one.
   const emailSecrets = [...emailAccountSecrets(meta.emailAccounts), ...emailAccountSecrets(authorRecord?.emailAccounts)];
   return {
-    userIdentity, composio, toolbox, identities,
-    composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken: toolbox.token,
+    userIdentity, composio, identities,
+    composioUserToken, composioToken, composioUserEndpoint, composioEndpoint,
     makeToolboxUrl, makeToolboxKey, customMcps, emailSecrets,
     composioIdentityPrefix: composioIdentityPreamble(identities),
   };

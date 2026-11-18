@@ -143,11 +143,11 @@ async function page(session, ctx) {
   const personal = await getUser(ctx.ownerId);
   const connection = (label, configured, action, key) => `<li class="row"><div class="row-main"><strong>${label}</strong><span class="badge${configured ? ' on' : ''}">${configured ? 'Configured' : 'Not configured'}</span></div>${configured ? rowAction(session, action, `<input type="hidden" name="connection" value="${key}">`, 'Disconnect') : ''}</li>`;
   const connections = `<section><h2>Channel connections</h2><p class="lead">Shared by everyone in this conversation. Leave a field blank to keep what is stored.</p>`
-    + list([connection('Composio', ctx.meta.composioToken, 'settings.connections.remove', 'composio'), connection('Toolbox', ctx.meta.toolboxToken, 'settings.connections.remove', 'toolbox'), connection('Make MCP', ctx.meta.makeToolboxUrl && ctx.meta.makeToolboxKey, 'settings.connections.remove', 'make')])
-    + fold('Set or rotate channel tokens', form(session, 'settings.connections.save', input('composioToken', 'Composio token', { password: true }) + input('composioTokenLabel', 'Composio account label') + input('toolboxToken', 'Toolbox token', { password: true, wide: true }) + input('makeToolboxUrl', 'Make MCP server URL') + input('makeToolboxKey', 'Make MCP token', { password: true }), 'Save connections'))
+    + list([connection('Composio', ctx.meta.composioToken, 'settings.connections.remove', 'composio'), connection('Make MCP', ctx.meta.makeToolboxUrl && ctx.meta.makeToolboxKey, 'settings.connections.remove', 'make')])
+    + fold('Set or rotate channel tokens', form(session, 'settings.connections.save', input('composioToken', 'Composio token', { password: true }) + input('composioTokenLabel', 'Composio account label') + input('makeToolboxUrl', 'Make MCP server URL') + input('makeToolboxKey', 'Make MCP token', { password: true }), 'Save connections'))
     + `</section><section><h2>My connections</h2><p class="lead">Used only for your own requests. Leave a field blank to keep what is stored.</p>`
-    + list([connection('Composio', personal?.composioToken, 'settings.personal.remove', 'composio'), connection('Toolbox', personal?.toolboxToken, 'settings.personal.remove', 'toolbox')])
-    + fold('Set or rotate my tokens', form(session, 'settings.personal.save', input('personalComposioToken', 'Personal Composio token', { password: true }) + input('personalToolboxToken', 'Personal Toolbox token', { password: true }), 'Save my connections')) + '</section>';
+    + list([connection('Composio', personal?.composioToken, 'settings.personal.remove', 'composio')])
+    + fold('Set or rotate my tokens', form(session, 'settings.personal.save', input('personalComposioToken', 'Personal Composio token', { password: true }), 'Save my connections')) + '</section>';
   // Email accounts: masked rows only (the list shape carries no password) and inputs that are
   // never prefilled, so no mailbox password is ever part of a rendered attribute.
   const accounts = [

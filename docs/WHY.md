@@ -62,7 +62,7 @@ hours** — recurring cron and one-time "run at" schedules, announced and thread
 Runaway schedules are rejected by a minimum-interval floor. Opt-in, single-thread **no-response
 nudges** gently check back on a quiet thread.
 
-**Per-person tools, never shared.** Each teammate's **Composio / Skills / Toolbox tokens** are
+**Per-person tools, never shared.** Each teammate's **Composio tokens** are
 injected only into their own messages and re-resolved every turn — so when someone else replies in
 a shared thread, the work runs with *their* access, not the starter's. Sensitive channels can
 refuse the org-wide default tokens entirely.
@@ -96,7 +96,7 @@ skills, modes, schedules, and the audit view — applied live, no restart.
 | **Runs** | Headless Claude Code (or OpenAI Codex) as a local daemon |
 | **Surfaces** | Channel @mention · DM · Slack Assistant panel · App Home |
 | **Isolation** | A container per conversation (own home, only its folder mounted), MCP allowlist, memory off |
-| **Tools** | Per-author Composio / Skills / Toolbox tokens; per-channel MCP + skills |
+| **Tools** | Per-author Composio tokens; per-channel MCP + skills |
 | **Automation** | Background jobs (restart-durable), recurring + one-time schedules |
 | **Memory** | Folder-scoped `MEMORY.md` per channel (no cross-channel bleed) |
 | **Observability** | Usage ledger + Audit view; streaming progress; live to-do checklist |
@@ -173,7 +173,7 @@ for direct daemon-account host execution, is isolated to one thread, and refuses
 
 ### 3.3 Credentials are personal, access is governed
 
-Each teammate's integration tokens (Composio, Skills, Toolbox) are injected **per message, scoped
+Each teammate's Composio tokens are injected **per message, scoped
 to that message's author**, and re-resolved every turn — when a colleague replies in the same
 thread, the work runs with *their* access, not the thread-starter's. Tokens are never written into
 channel folders, never shared, never logged. On top of that sits an approval-based access model:
@@ -511,7 +511,7 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
   is only defensible if any single conversation going wrong is contained by design.
 
 #### Per-author token injection (never shared, never on disk, never logged)
-- **What:** Composio/Skills/Toolbox tokens are resolved per message author and injected at spawn
+- **What:** Composio tokens are resolved per message author and injected at spawn
   via `--mcp-config`; a different author replying re-resolves with *their* token.
 - **Value:** everyone acts in downstream systems as themselves — audit trails in the connected
   systems stay truthful, and no one inherits a colleague's access by replying in a thread.

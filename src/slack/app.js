@@ -12,7 +12,7 @@ import { createFileFormNavigation } from "./file-form-navigation.js";
 import pkg from "@slack/bolt";
 const { App, LogLevel } = pkg;
 
-import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, getUser, setUser, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
+import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, getUser, setUser, isAdmin, isApproved, listChannels, getComposioToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { channelFileRoot } from "../gateway/channel-file-root.js";
 import { effectiveMeta } from "../gateway/run.js";
@@ -38,13 +38,12 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
 import { sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
-import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
 import { personalSkillPicker } from "../gateway/user-settings.js";
@@ -82,7 +81,7 @@ import {
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
   CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, escapeMrkdwn,
-  CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
+  CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
   CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID, CUSTOM_MCP_AUTH_BLOCK_ID, CUSTOM_MCP_HEADERS_BLOCK_ID, CUSTOM_MCP_QUERY_BLOCK_ID, parseCustomMcpPairs,
@@ -102,7 +101,7 @@ import {
   CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
   SETTINGS_DEFAULT_VALUE, SETTINGS_NONE_VALUE,
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
-  CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
+  TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
 import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normalizeCustomMcpUrl, patchCustomMcps } from "../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
@@ -1065,22 +1064,22 @@ export async function saveSettingsForm(key, values, ctx) {
   const refuse = (field, error) => ({ field, error: String(error).slice(0, 150) });
   const token = values.token || "";
   if (token && token.length < 6) return refuse("token", "That doesn't look like a valid token.");
-  if (kind === "composio" || kind === "toolbox") {
+  if (kind === "composio") {
     if (scope === "c") {
-      const form = kind === "composio" ? { composioToken: token, composioTokenLabel: values.label ?? undefined } : { toolboxToken: token };
-      if (!token && (kind === "toolbox" || !meta.composioToken)) return refuse("token", "Enter the token.");
+      const form = { composioToken: token, composioTokenLabel: values.label ?? undefined };
+      if (!token && !meta.composioToken) return refuse("token", "Enter the token.");
       const resolved = connectionSettingsPatch(meta, form);
       if (Object.keys(resolved.errors).length) return refuse("token", Object.values(resolved.errors)[0]);
       await patchAuditedChannelSettings(entry, clicker, resolved.patch);
       await logEvent("channel_connections_updated", { channel: meta.channelId, slug: entry.slug, connections: resolved.changed, author: clicker });
-      return { notice: `✅ Saved the channel's ${kind === "composio" ? "Composio account" : "Toolbox token"}.` };
+      return { notice: `✅ Saved the channel's Composio account.` };
     }
     const user = (await getUser(clicker)) || {};
-    const field = kind === "composio" ? "composioToken" : "toolboxToken";
-    if (!token && !(kind === "composio" && user.composioToken)) return refuse("token", "Enter the token.");
-    await setUser(clicker, { ...(token ? { [field]: token } : {}), ...(kind === "composio" && values.label !== undefined ? { composioTokenLabel: values.label } : {}) });
+    const field = "composioToken";
+    if (!token && !user.composioToken) return refuse("token", "Enter the token.");
+    await setUser(clicker, { ...(token ? { [field]: token } : {}), ...(values.label !== undefined ? { composioTokenLabel: values.label } : {}) });
     await logEvent("user_connection_updated", { user: clicker, connection: kind });
-    return { notice: `✅ Saved your ${kind === "composio" ? "Composio account" : "Toolbox token"}.` };
+    return { notice: `✅ Saved your Composio account.` };
   }
   if (kind === "make") {
     if (!values.url) return refuse("url", "Enter the Make MCP server URL.");
@@ -1166,18 +1165,18 @@ export async function removeSettingsForm(key, ctx) {
   const { entry, meta, clicker } = ctx;
   const { kind, scope } = assertSettingsFormAllowed(key, ctx);
   const name = String(key).split(":").slice(2).join(":");
-  if (scope === "c" && ["composio", "toolbox", "make"].includes(kind)) {
-    const patch = kind === "composio" ? { composioToken: "" } : kind === "toolbox" ? { toolboxToken: "" } : { makeToolboxUrl: "", makeToolboxKey: "" };
+  if (scope === "c" && ["composio", "make"].includes(kind)) {
+    const patch = kind === "composio" ? { composioToken: "" } : { makeToolboxUrl: "", makeToolboxKey: "" };
     await patchAuditedChannelSettings(entry, clicker, patch);
-    const connection = { composio: "Composio token", toolbox: "Toolbox token", make: "Make MCP connection" }[kind];
+    const connection = { composio: "Composio token", make: "Make MCP connection" }[kind];
     await logEvent("channel_connection_removed", { channel: meta.channelId, slug: entry.slug, connection, author: clicker });
     return `🗑️ Removed the channel's ${connection}.`;
   }
-  if (scope === "p" && ["composio", "toolbox"].includes(kind)) {
-    await setUser(clicker, kind === "composio" ? { composioToken: "" } : { toolboxToken: "" });
+  if (scope === "p" && kind === "composio") {
+    await setUser(clicker, { composioToken: "" });
     revokeRemoteMcpsForAuthor(clicker);
     await logEvent("user_connection_removed", { user: clicker, connection: kind });
-    return `🗑️ Removed your ${kind === "composio" ? "Composio account" : "Toolbox token"}.`;
+    return `🗑️ Removed your Composio account.`;
   }
   if (kind === "cm") {
     if (scope === "c") await removeChannelCustomMcp(entry.slug, name, { actor: `<@${clicker}>` });
@@ -1277,11 +1276,8 @@ function channelSettingsSnapshot(meta = {}) {
       composioChannel: maskedCredential(meta.composioToken),
       composioTokenLabel: String(meta.composioTokenLabel || ""),
       composioOrg: maskedCredential(getDefaultComposioToken()),
-      toolboxChannel: maskedCredential(meta.toolboxToken),
-      toolboxOrg: maskedCredential(getDefaultToolboxToken()),
       makeToolboxUrl: String(meta.makeToolboxUrl || ""),
       makeToolboxKey: maskedCredential(meta.makeToolboxKey),
-      toolboxUrl: toolboxUrl(),
       noDefaultTokens: Boolean(effective.noDefaultTokens),
     },
     cloudMcp: {
@@ -1461,7 +1457,6 @@ function runtimeNotice(scope, { engine, model, effort }, resolvedEngine) {
 export function connectionSettingsPatch(current = {}, form = {}) {
   const errors = {};
   if (form.composioToken && form.composioToken.length < 6) errors[CONNECTION_COMPOSIO_BLOCK_ID] = "That doesn't look like a valid Composio token.";
-  if (form.toolboxToken && form.toolboxToken.length < 6) errors[CONNECTION_TOOLBOX_BLOCK_ID] = "That doesn't look like a valid Toolbox token.";
   if (form.makeToolboxKey && form.makeToolboxKey.length < 6) errors[CONNECTION_MAKE_KEY_BLOCK_ID] = "That doesn't look like a valid Make MCP token.";
   if (Object.keys(errors).length) return { errors, patch: null, changed: [] };
   let make;
@@ -1476,11 +1471,9 @@ export function connectionSettingsPatch(current = {}, form = {}) {
   const patch = { ...make };
   if (form.composioToken) patch.composioToken = form.composioToken;
   if (typeof form.composioTokenLabel === "string") patch.composioTokenLabel = form.composioTokenLabel.trim();
-  if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
   const changed = [
     form.composioToken ? "Composio" : "",
     typeof patch.composioTokenLabel === "string" && patch.composioTokenLabel !== String(current.composioTokenLabel || "") ? "Composio label" : "",
-    form.toolboxToken ? "Toolbox" : "",
     form.makeToolboxKey || form.makeToolboxUrl !== String(current.makeToolboxUrl || "") ? "Make MCP" : "",
   ].filter(Boolean);
   return { errors: {}, patch, changed };
@@ -1676,7 +1669,6 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   snapshot.my = {
     composio: maskedCredential(viewer.composioToken),
     composioLabel: String(viewer.composioTokenLabel || ""),
-    toolbox: maskedCredential(viewer.toolboxToken),
   };
   // What only one page needs is resolved only for that page: the member roster costs Slack API
   // calls, the Cloud MCP catalog a slow probe on a cold cache.
@@ -2590,14 +2582,12 @@ async function connectAndWire(app) {
         return;
       }
 
-      if ([CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID, CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID].includes(actionId)) {
+      if ([CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID, CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID].includes(actionId)) {
         const patch = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID
           ? { composioToken: "" }
-          : actionId === CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID
-            ? { toolboxToken: "" }
-            : { makeToolboxUrl: "", makeToolboxKey: "" };
+          : { makeToolboxUrl: "", makeToolboxKey: "" };
         meta = await patchAuditedChannelSettings(entry, clicker, patch);
-        const connection = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID ? "Composio token" : actionId === CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID ? "Toolbox token" : "Make MCP connection";
+        const connection = actionId === CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID ? "Composio token" : "Make MCP connection";
         await logEvent("channel_connection_removed", { channel: state.channelId, slug: entry.slug, connection, author: clicker });
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: `🗑️ Removed the channel's ${connection}.` }));
         return;
@@ -3438,7 +3428,7 @@ async function connectAndWire(app) {
           { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n• Switch runtime: \`/model\` — channel or one thread → harness → model → effort` } },
         ],
       connections: async () => {
-        const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
+        const cTok = await getComposioToken(userId);
         const connLine = (label, mine, fallback, note) => mine
           ? `✅ *${label}* — your account`
           : fallback ? `⚪ *${label}* — using the org default`
@@ -3456,7 +3446,7 @@ async function connectAndWire(app) {
                 ? "⚪ *Composio agent (composio-agent)* — organization default (a channel token takes precedence)"
                 : "❌ *Composio agent (composio-agent)* — no organization default (a channel may still provide one)",
             ];
-        const conns = [...composioLines, connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"), "🛠 *Gateway control* — always on (schedules, channel admin, workdir)"].join("\n");
+        const conns = [...composioLines, "🛠 *Gateway control* — always on (schedules, channel admin, workdir)"].join("\n");
         return [
           { type: "divider" },
           { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },

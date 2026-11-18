@@ -8,7 +8,7 @@ const { activityPage } = await import("../src/web/activity-page.js");
 test("Connections controller runs in a real browser with SDK authorization and personal-token display", { skip: !process.env.CG_BROWSER_MODULE, timeout: 40_000 }, async t => {
   const app = express(); app.use(express.json());
   let mode = "sdk", ended = false; const posts = [], catalogRequests = [];
-  app.get("/activity/fixture/api/settings", (_req, res) => res.json({ connections: { composioMode: mode, composio: { configured: true, last4: "1234", label: "My account" }, toolbox: { configured: false }, email: [] } }));
+  app.get("/activity/fixture/api/settings", (_req, res) => res.json({ connections: { composioMode: mode, composio: { configured: true, last4: "1234", label: "My account" }, email: [] } }));
   app.get("/activity/fixture/api/connections", (_req, res) => ended ? res.status(401).json({}) : res.json({ mode, canAdd: mode === "sdk", accounts: [{ app: "gmail", alias: "work", account: "<img src=x onerror=alert(1)>", status: "ACTIVE" }], policy: { multiAccount: true, maxAccountsPerToolkit: 5 } }));
   app.get("/activity/fixture/api/connections/apps", (req, res) => {
     catalogRequests.push(req.query);

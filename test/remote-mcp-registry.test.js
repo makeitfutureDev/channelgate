@@ -16,7 +16,7 @@ test("a registration answers per jti and name, returns copies, and is gone once 
   assert.deepEqual(hit, servers["composio-user"]);
   hit.headers["x-consumer-api-key"] = "tampered";
   assert.equal(lookupRemoteMcp("jti-a", "composio-user", NOW + 1).headers["x-consumer-api-key"], "ck_user_secret", "callers get a copy");
-  assert.equal(lookupRemoteMcp("jti-a", "makeitfuture-toolbox", NOW + 1), null, "a name the run was not given");
+  assert.equal(lookupRemoteMcp("jti-a", "ungranted-remote", NOW + 1), null, "a name the run was not given");
   assert.equal(lookupRemoteMcp("jti-other", "composio-user", NOW + 1), null, "another capability's jti");
   assert.deepEqual(remoteMcpRegistryStats(NOW + 1), { registrations: 1, servers: 2, sweeping: true });
   clearRemoteMcps("jti-a");

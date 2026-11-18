@@ -13,7 +13,7 @@ A person being approved does not give them the admin web password. Conversely, w
 
 ## Personal configuration
 
-Users can have personal Composio and Toolbox tokens, environment variables, and personal grants. Listings show credential presence and masked suffixes. Blank credential fields retain the current value; removal uses the explicit clear action.
+Users can have personal Composio tokens, environment variables, and personal grants. Listings show credential presence and masked suffixes. Blank credential fields retain the current value; removal uses the explicit clear action.
 
 When investigating a connector issue, confirm both the intended identity and the connected service account. An account marker does not prove that a particular provider connection is active.
 

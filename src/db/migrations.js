@@ -1513,4 +1513,23 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 63,
+    up(db) {
+      // Retire the built-in Toolbox credentials in persisted records. Keep this field list
+      // fixed: future retirements append migrations rather than changing history.
+      for (const [table, idColumn] of [["users", "user_id"], ["channel_meta", "slug"]]) {
+        const save = db.prepare(`UPDATE ${table} SET data = ? WHERE ${idColumn} = ?`);
+        for (const row of db.prepare(`SELECT ${idColumn} AS id, data FROM ${table}`).all()) {
+          let record;
+          try { record = JSON.parse(row.data); } catch { continue; }
+          if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+          if (!["toolboxToken", "toolboxTokenLabel"].some(key => Object.hasOwn(record, key))) continue;
+          delete record.toolboxToken;
+          delete record.toolboxTokenLabel;
+          save.run(JSON.stringify(record), row.id);
+        }
+      }
+    },
+  },
 ];

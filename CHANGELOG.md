@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Remove the legacy skillsmanager.uk Toolbox connection from personal, channel and organization
+  settings, token tools and all engine MCP setup. Upgrade removes saved legacy credentials;
+  Composio and Make.com MCP connections remain available.
+
 - Add an application/account inventory to Activity Settings → Connections and a searchable,
   paginated SDK app picker with private authorization links and account aliases. Personal-token
   mode shows connected apps and refreshes them when the token changes.

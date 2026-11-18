@@ -403,8 +403,6 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["set_my_reply_mentions", { authz: "any", details: AUTOMATIC }],
     ["set_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["clear_my_composio_token", { authz: "any", details: AUTOMATIC }],
-    ["set_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
-    ["clear_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
     ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
     ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
     // Making a secret READABLE puts its raw value in containers where people can read it; once

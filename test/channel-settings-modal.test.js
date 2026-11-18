@@ -41,8 +41,6 @@ import {
   CONNECTION_MAKE_KEY_BLOCK_ID,
   CONNECTION_MAKE_URL_ACTION_ID,
   CONNECTION_MAKE_URL_BLOCK_ID,
-  CONNECTION_TOOLBOX_ACTION_ID,
-  CONNECTION_TOOLBOX_BLOCK_ID,
   RUNTIME_EFFORT_ACTION_ID,
   runtimeSelectTarget,
   SETTINGS_DEFAULT_VALUE,
@@ -103,8 +101,6 @@ const snapshot = {
     composioMode: "personal",
     composioChannel: { configured: true, last4: "c123" },
     composioOrg: { configured: true, last4: "o123" },
-    toolboxChannel: { configured: false, last4: "" },
-    toolboxOrg: { configured: true, last4: "t123" },
     makeToolboxUrl: "https://example.test/mcp",
     makeToolboxKey: { configured: true, last4: "m123" },
     noDefaultTokens: false,
@@ -252,8 +248,8 @@ test("each Settings page renders its part of the channel setup", () => {
 
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
   const forms = elements(mcp).filter((element) => element.action_id === "cg_channel_settings_form_open").map((element) => parseActionValue(element.value).f);
-  assert.deepEqual(forms, ["composio:c", "make:c", "toolbox:c"], "Composio, Make toolbox and Toolbox each edit in place");
-  for (const heading of ["Composio", "Make toolbox", "Toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
+  assert.deepEqual(forms, ["composio:c", "make:c"], "Composio and Make toolbox edit in place");
+  for (const heading of ["Composio", "Make toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
 });
 
 test("Diagnostics shows this thread's resume commands for the gateway host and for a shell inside the container, escaped", () => {
@@ -365,14 +361,12 @@ test("connection editor never prefills saved credentials and parses only newly s
   const submitted = {
     state: { values: {
       [CONNECTION_COMPOSIO_BLOCK_ID]: { [CONNECTION_COMPOSIO_ACTION_ID]: { value: "new-composio" } },
-      [CONNECTION_TOOLBOX_BLOCK_ID]: { [CONNECTION_TOOLBOX_ACTION_ID]: { value: "new-toolbox" } },
       [CONNECTION_MAKE_URL_BLOCK_ID]: { [CONNECTION_MAKE_URL_ACTION_ID]: { value: "https://eu1.make.celonis.com/mcp/server/abc" } },
       [CONNECTION_MAKE_KEY_BLOCK_ID]: { [CONNECTION_MAKE_KEY_ACTION_ID]: { value: "new-make-key" } },
     } },
   };
   assert.deepEqual(readConnectionsForm(submitted), {
     composioToken: "new-composio",
-    toolboxToken: "new-toolbox",
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/abc",
     makeToolboxKey: "new-make-key",
   });
@@ -463,13 +457,11 @@ test("runtime mutation validation rejects cross-engine models and normalizes def
 test("blank connection inputs preserve stored tokens while explicit values rotate only their own fields", () => {
   const current = {
     composioToken: "old-composio",
-    toolboxToken: "old-toolbox",
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/current",
     makeToolboxKey: "old-make-key",
   };
   const unchanged = connectionSettingsPatch(current, {
     composioToken: "",
-    toolboxToken: "",
     makeToolboxUrl: current.makeToolboxUrl,
     makeToolboxKey: "",
   });
@@ -478,12 +470,10 @@ test("blank connection inputs preserve stored tokens while explicit values rotat
 
   const rotated = connectionSettingsPatch(current, {
     composioToken: "new-composio",
-    toolboxToken: "",
     makeToolboxUrl: current.makeToolboxUrl,
     makeToolboxKey: "",
   });
   assert.equal(rotated.patch.composioToken, "new-composio");
-  assert.equal(rotated.patch.toolboxToken, undefined);
   assert.deepEqual(rotated.changed, ["Composio"]);
 });
 
@@ -871,7 +861,6 @@ test("native You and MCP pages show the scoped account list beneath Composio and
   const you = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you" });
   const at = (view, text) => view.blocks.findIndex((block) => block.text?.text?.includes(text));
   assert.ok(at(you, "gmail — Work") > at(you, "Composio"));
-  assert.ok(at(you, "gmail — Work") < at(you, "Toolbox"));
   assert.match(rendered(you), /Personal connections|viewer@example.test/);
   const refresh = elements(you).find((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID);
   assert.equal(parseActionValue(refresh.value).u, state.ownerId);

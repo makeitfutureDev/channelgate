@@ -110,11 +110,8 @@ test("connections save and remove per scope, never echo a token, and refuse what
   await removeSettingsForm("make:c", await ctx());
   assert.equal((await meta()).makeToolboxUrl, "");
 
-  await saveSettingsForm("toolbox:p", { token: "tb-personal-123456" }, await ctx());
-  assert.equal((await store.getUser("U_MEMBER")).toolboxToken, "tb-personal-123456");
-  await removeSettingsForm("toolbox:p", await ctx());
-  assert.equal((await store.getUser("U_MEMBER")).toolboxToken, "");
-  assert.equal((await saveSettingsForm("toolbox:c", { token: "abc" }, await ctx())).field, "token", "too short");
+  await assert.rejects(saveSettingsForm("toolbox:p", { token: "retired-123456" }, await ctx()), /expired|Unknown/);
+
 });
 
 test("a conversation's custom MCP servers need a manager; the viewer's own do not", async () => {
@@ -294,8 +291,8 @@ test("every page, in every role and with every inline form open, passes Block Ki
     focusMember: { id: "U5", approved: true, use: true, manage: false, inChannel: true },
     vpn: { configured: false, state: "unconfigured" },
     resume: { inThread: true, command: "codex resume 019a7c2e" },
-    connections: { composioMode: "personal", composioChannel: masked("t5zq"), composioTokenLabel: "Team", toolboxChannel: { configured: false }, toolboxOrg: masked("aaaa"), makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: masked("mkey"), toolboxUrl: "https://toolbox.example/mcp" },
-    my: { composio: masked("9f2a"), composioLabel: "me", toolbox: { configured: false } },
+    connections: { composioMode: "personal", composioChannel: masked("t5zq"), composioTokenLabel: "Team", makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: masked("mkey") },
+    my: { composio: masked("9f2a"), composioLabel: "me" },
     customMcps: { channel: [{ name: "linear", serverName: "custom-linear", url: "https://mcp.linear.app/mcp", tokenLast4: "ABCD" }], personal: [{ name: "notes", serverName: "my-notes", url: "https://notes.example/mcp", tokenLast4: "WXYZ" }] },
     cloudMcp: { claude: { ready: true, options: Array.from({ length: 120 }, (_, i) => ({ key: `srv-${i}`, label: `Server ${i}` })), selected: ["srv-1"], inherited: ["drive"] }, codex: { ready: false } },
     secrets: [{ name: long, last4: "beef", protected: true, hosts: ["a.example", "b.example"] }, { name: "GMAIL_APP_PASSWORD", last4: "rzhb", protected: false }],
@@ -315,7 +312,7 @@ test("every page, in every role and with every inline form open, passes Block Ki
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true },
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true, canEditOrgSecrets: true, canManageCloudMcp: true, canEnableAdmin: true },
   ];
-  const forms = ["composio:c", "make:c", "toolbox:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "toolbox:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN"];
+  const forms = ["composio:c", "make:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN"];
   const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
     for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "diagnostics", "you"]) {

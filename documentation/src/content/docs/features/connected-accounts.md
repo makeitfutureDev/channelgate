@@ -37,4 +37,4 @@ Related: [connection settings](/docs/configuration/connections), [MCP](/docs/fea
 
 ## Account references
 
-See [account and secret controls](/docs/controls/accounts-and-secrets) for the supported personal key and environment operations. Separate guides cover [Enterprise SDK mode](/docs/features/composio-sdk), [Toolbox and Make](/docs/features/toolbox-and-make), and [business workflow examples](/docs/features/business-workflows).
+See [account and secret controls](/docs/controls/accounts-and-secrets) for the supported personal key and environment operations. Separate guides cover [Enterprise SDK mode](/docs/features/composio-sdk), [Make connections](/docs/features/make-mcp), and [business workflow examples](/docs/features/business-workflows).

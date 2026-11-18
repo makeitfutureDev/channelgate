@@ -6,7 +6,7 @@ export const WORKSPACE_FIELDS = Object.freeze([
   "skills", "skillsOff", "skillTemplate", "memory", "instructions", "syncDriveFolder", "vpnService",
   "access", "manageAccess", "managers", "allowedUsers", "excludedUsers", "approvedTools", "sshUsers",
   "allowedMcps", "allowedCodexMcps", "allowedOpenCodeMcps", "customMcps", "emailAccounts", "noDefaultTokens",
-  "composioToken", "composioTokenLabel", "toolboxToken", "toolboxTokenLabel", "makeToolboxUrl", "makeToolboxKey", "env", "egressRawHosts",
+  "composioToken", "composioTokenLabel", "makeToolboxUrl", "makeToolboxKey", "env", "egressRawHosts",
   "profile", "adminMode", "allowBash", "autoMode", "cleanMode", "allowNetwork", "rawNetwork", "skillRuntimeSwap",
 ]);
 

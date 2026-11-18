@@ -156,7 +156,6 @@ test("untrusted caller-supplied principals never load personal tokens or role st
   };
   const deps = {
     loadComposioToken: loader("composio", "secret-composio"),
-    loadToolboxToken: loader("toolbox", "secret-toolbox"),
     loadIsAdmin: loader("admin", true),
     loadIsApproved: loader("approved", true),
   };
@@ -165,7 +164,7 @@ test("untrusted caller-supplied principals never load personal tokens or role st
     untrustedPrincipal: true,
     needsApproval: true,
     ...deps,
-  }), { composioToken: "", toolboxToken: "", isAdmin: false, isApproved: false });
+  }), { composioToken: "", isAdmin: false, isApproved: false });
   assert.deepEqual(calls, [], "no user credential or role store may be consulted");
 
   assert.deepEqual(await resolveRunUserIdentity({
@@ -174,11 +173,10 @@ test("untrusted caller-supplied principals never load personal tokens or role st
     ...deps,
   }), {
     composioToken: "secret-composio",
-        toolboxToken: "secret-toolbox",
     isAdmin: true,
     isApproved: true,
   });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 3);
 });
 
 test("access grants union organization, channel, and active-user tiers", () => {

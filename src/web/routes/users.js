@@ -38,7 +38,6 @@ function maskUsers(users) {
   const out = {};
   for (const [id, u] of Object.entries(users)) {
     const token = u.composioToken || "";
-    const toolbox = u.toolboxToken || "";
     out[id] = {
       name: u.name || "",
       activityPlatform: activityIdentityPlatform(id, u),
@@ -50,9 +49,6 @@ function maskUsers(users) {
       hasComposioToken: Boolean(token),
       composioTokenLast4: token ? token.slice(-4) : "",
       composioTokenLabel: u.composioTokenLabel || "",
-      hasToolboxToken: Boolean(toolbox),
-      toolboxTokenLast4: toolbox ? toolbox.slice(-4) : "",
-      toolboxTokenLabel: u.toolboxTokenLabel || "",
       // Names + last4 only, like every other secret surface. Listing them here is what makes the
       // scope administrable at all: nobody but the person can see them from chat.
       secrets: listEnvVars(u.env),
@@ -84,8 +80,7 @@ export function filterUsersForSearch(users, query) {
     const role = user.isAdmin ? "admin" : user.approved ? "approved" : "no access";
     const tokens = [
       user.hasComposioToken ? "composio c token configured set" : "",
-      user.hasToolboxToken ? "toolbox t token configured set" : "",
-      !user.hasComposioToken && !user.hasToolboxToken ? "no tokens" : "",
+      !user.hasComposioToken ? "no tokens" : "",
     ];
     const reminders = user.nudges ? "reminders on enabled" : "reminders off disabled";
     const haystack = foldSearch([user.name, id, role, reminders, ...tokens].join(" "));
@@ -307,13 +302,9 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)
         patch.composioToken = body.composioToken;
       if (body.clearComposioToken === true) patch.composioToken = "";
-      if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0)
-        patch.toolboxToken = body.toolboxToken;
-      if (body.clearToolboxToken === true) patch.toolboxToken = "";
       // Owner labels (a note for the admin — whose account the token authenticates as). Not secret;
       // a plain string that always round-trips, with an empty string clearing it.
       if (typeof body.composioTokenLabel === "string") patch.composioTokenLabel = body.composioTokenLabel.trim();
-      if (typeof body.toolboxTokenLabel === "string") patch.toolboxTokenLabel = body.toolboxTokenLabel.trim();
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
@@ -338,9 +329,8 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
         }
       }
       const saved = await setUser(userId, patch);
-      // The admin UI's "clear token" is the same revocation as clear_my_composio_token /
-      // clear_my_toolbox_token: in-flight container relays for that person's runs stop now.
-      if (patch.composioToken === "" || patch.toolboxToken === "") revokeRemoteMcpsForAuthor(userId);
+      // Clearing a personal Composio token also revokes its in-flight container relays.
+      if (patch.composioToken === "") revokeRemoteMcpsForAuthor(userId);
       res.json({
         ok: true,
         user: {
@@ -350,7 +340,6 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
           nudges: userNudgesEnabled(saved),
           replyMentions: userReplyMentionsEnabled(saved),
           hasComposioToken: Boolean(saved.composioToken),
-          hasToolboxToken: Boolean(saved.toolboxToken),
           ...cleanAccessGrants(saved),
         },
       });

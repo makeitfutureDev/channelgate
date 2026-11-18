@@ -1,5 +1,5 @@
 // The daemon-side half of the `remote-mcp` socket relay (src/mcp/socket-server.js): which
-// header-bearing remote MCP servers (Composio user/agent, the toolboxes) one run capability may
+// header-bearing remote MCP servers (Composio user/agent, the Make connection) one run capability may
 // reach, and the REAL url + headers the daemon dials them with. In memory only, in the daemon
 // process that mints the capability (src/gateway/mcp.js) and serves the socket — so the credential
 // never has to be written anywhere a container can read: the container holds only the signed
@@ -204,7 +204,7 @@ export function clearRemoteMcpsWhere(predicate) {
 }
 
 /**
- * A person removed their personal Composio or Toolbox token: drop every relay grant minted for a
+ * A person removed their personal Composio token: drop every relay grant minted for a
  * run THEY authored (any channel, any origin), so the removed token stops being usable at once
  * instead of for the rest of those capabilities' lives. Coarse on purpose — the registry does not
  * track which credential a server's header came from, and the next turn simply registers again
@@ -220,7 +220,7 @@ export function revokeRemoteMcpsForAuthor(authorId) {
  * A custom MCP connection was removed or its token/URL replaced (src/gateway/custom-mcps.js): take
  * that ONE server out of every registration whose metadata matches, so the old credential stops
  * working at the relay's next request while the rest of a live turn's servers (Composio, the
- * toolboxes) keep running. Returns how many registrations lost the server.
+ * Make connections) keep running. Returns how many registrations lost the server.
  */
 export function revokeRemoteMcpServer(predicate, name) {
   if (!validRemoteMcpName(name)) return 0;

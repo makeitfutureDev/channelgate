@@ -24,7 +24,7 @@
 //   composio-sdk  Enterprise SDK-mode Composio: args[0] is the session URL, which the capability's
 //                 `composioSessions` must grant (src/ee/composio-sdk-bridge.js).
 //   remote-mcp    a header-bearing remote MCP server (composio-user / composio-agent in token
-//                 mode, makeitfuture-toolbox, make-toolbox) relayed by the daemon: args[0] is the
+//                 mode, make-toolbox) relayed by the daemon: args[0] is the
 //                 server NAME. The capability's signed `remoteMcps` claim must name it AND the
 //                 daemon's in-memory registry (./remote-mcp-registry.js) must hold a live
 //                 registration for it under the capability's jti; the daemon then dials the real
@@ -190,7 +190,7 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     if (!SERVICES.has(frame.service)) return refuse(socket, `unsupported service "${helloString(frame.service, 40)}"`);
     // The gateway service takes no arguments. A relayed entry reaching it anyway means a broker
     // that dropped CG_MCP_SERVICE — an image older than spec 1.6.0 — and serving the control plane
-    // under a Composio/toolbox server's name would be silently wrong. Say what to do instead.
+    // under a Composio/Make server's name would be silently wrong. Say what to do instead.
     if (frame.service === "gateway" && Array.isArray(frame.args) && frame.args.length) {
       return refuse(socket, "the gateway service takes no arguments; if this came from a relayed MCP entry the channel image is older than this gateway — run `npm run build:image`");
     }

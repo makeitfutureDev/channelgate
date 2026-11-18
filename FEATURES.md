@@ -512,7 +512,7 @@ themselves, from a browser, without opening Slack Settings → You:
   same settings as the App Home toggles and `set_my_reply_mentions`) and a link to passkey
   management.
 - **Connections** — their own Composio account (`composio-user`: token + label, replace, remove;
-  informational in Composio SDK mode), their Toolbox token, and their personal email accounts
+  informational in Composio SDK mode), their personal email accounts
   (add, edit, remove; IMAP and SMTP logins are verified first, blank passwords keep the stored
   ones).
 - **MCP servers** — their personal custom MCP servers (`my-<name>`, public HTTPS only, Bearer or
@@ -1854,11 +1854,10 @@ control-plane status.
   - The searched person survives each tick's repaint. Unticking a guest, or re-ticking an excluded
     member, removes their exception, so they leave the list. A list over 60 people is cut there,
     with a line pointing to the search (Slack caps a window at 100 blocks).
-- **MCP:** Composio, Make toolbox, Toolbox, Custom MCP and (admins) Cloud MCP each have their own
+- **MCP:** Composio, Make toolbox, Custom MCP and (admins) Cloud MCP each have their own
   section.
   - Edit or Connect opens the fields in place, with the URL or label prefilled and the token box
     always empty. Remove (with a confirmation) sits inside the open form.
-  - The Toolbox row shows the gateway's Toolbox server URL; the token is per scope.
   - *Fall back to organization tokens* is one tick.
   - Cloud MCP is one multi-select per engine. A cold catalog says it is loading instead of
     blocking the page.
@@ -1881,7 +1880,7 @@ control-plane status.
 - **Schedules:** one line per schedule (▶/⏸, when, last result) with a ⋯ menu (Pause/Resume,
   Delete — which asks in place). A one-time reminder or a loop has one Cancel/Stop button that
   confirms.
-- **You:** the viewer's own Composio account, Toolbox token, custom MCP servers, variables and
+- **You:** the viewer's own Composio account, custom MCP servers, variables and
   skills, edited the same way. They apply only to runs the viewer starts, in every conversation.
 - **Inline forms.** Slack allows input fields only in a modal with a submit button. While a form is
   open the footer reads **Save** / **Close**; saving is the view submission, so a refusal appears
@@ -2811,7 +2810,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   being moved silently — the deliberate difference from `/model` → *This channel*, which does move
   it, because here both scopes are on screen together. Engine & model can be changed by every
   authorized user in this console; MCP Connections
-  rotates/removes the write-only Composio, Toolbox and Make MCP credentials plus inherited-token
+  rotates/removes the write-only Composio and Make MCP credentials plus inherited-token
   policy, and edits the Composio account label shared with the web setup form. Labels are shown
   in the summary and prefilled for editing; changing or clearing a label preserves the token.
   Only admins can see or manage Cloud MCP capabilities, independently for Claude and Codex;
@@ -3030,7 +3029,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   never silently dropped. VPN uses the existing service, reporting unavailable where that
   service does not support the Teams identifier.
   Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
-  MCPs → **My connections** saves/disconnects the owner's personal Composio and Toolbox tokens
+  MCPs → **My connections** saves/disconnects the owner's personal Composio token
   inside the settings window, without a DM or credential-bearing chat message. Disconnecting a
   personal connection revokes its live remote-MCP author grants. Public model cards cannot open
   settings pages or mutate settings; all settings actions require an authorized settings dialog.
@@ -3258,7 +3257,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Deterministic Codex MCP startup: Codex does not block a turn while its MCP servers come up — it
   takes whichever finished before it builds the first request, and a resumed turn reaches that
   point far sooner than a fresh one. So every header-bearing remote MCP (both Composio identities,
-  the Toolbox, a channel's Make toolbox) is dialled by Codex itself over its native
+  a channel's Make toolbox) is dialled by Codex itself over its native
   streamable-HTTP transport rather than bridged to stdio, and its credential is produced at
   startup by a per-run `http_headers_helper` script that reads the run's 0600 secret bundle — the
   token never appears in Codex's argv or environment. Remote servers still get
@@ -3627,7 +3626,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   organization's skills, MCP connections, channel secrets, and the gateway tools, including the
   admin ones. The surviving control-plane cards still need a human click. It gets no
   personal scope: Composio is the channel's shared `composio-agent` identity only, with no
-  `composio-user` and nobody's personal Toolbox token, secrets, skills or SSH keys. The `author` a
+  `composio-user` and nobody's personal secrets, skills or SSH keys. The `author` a
   request names is attribution only. An untrusted capability naming a real admin never borrows that
   admin's rank. Background work and schedules the run starts are owned by `api`, and their later
   runs rank the same way. `ask_questions` stays off because no person could answer it. A per-run
@@ -4399,7 +4398,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   or clear it atomically. Normal Claude and Codex turns expose it as `make-toolbox`; clean mode
   removes it. Claude carries the key only in the mode-0600 temporary MCP config, while Codex uses a
   daemon-root 0600 secret bundle read by the local remote-MCP broker. The same broker protects
-  signed gateway capability plus legacy Composio and Toolbox credentials: Codex argv carries only the bundle
+  signed gateway capability plus Composio credentials: Codex argv carries only the bundle
   path + logical key, and the Codex process environment receives no connector secret. The global
   child-env boundary admits exact reviewed engine variables only, never broad vendor prefixes.
   → TEST-PLAN: MCP injection & tokens.
@@ -4447,7 +4446,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `mcp__composio-user` and `mcp__composio-agent`; each emitted server sets
   `default_tools_approval_mode:"approve"`. Codex mirrors both named approval configurations.
   The lockdown's `allowedMcpServers` names every injected server AND lists each remote one by URL
-  (Composio, Toolbox, the channel's Make toolbox; `*.composio.dev` in SDK mode):
+  (Composio and the channel's Make toolbox; `*.composio.dev` in SDK mode):
   Claude Code matches remote servers by URL as soon as the list holds any `serverUrl` entry — a
   picked global server adds one — and a name entry alone then no longer admits them (2026-09-04:
   Composio silently "blocked by enterprise policy" in a channel with a picked server).
@@ -4507,8 +4506,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
     Admin-only, because its blast radius is every channel and every author admitted there.
   - **person** — a credential belonging to the human, not to any room. Injected only into runs
     that person AUTHORED, in every conversation they talk in, and into nobody else's turn in those
-    same conversations. Stored on the `users` row (`data.env`), beside the personal Composio and
-    Toolbox tokens.
+    same conversations. Stored on the `users` row (`data.env`), beside the personal Composio token.
   - **channel** — the conversation's own CLI logins, below, unchanged.
 - **Precedence is organization → person → channel, most specific last.** The channel deliberately
   outranks the person: a channel's secrets ARE its project identity, and a personal token silently
@@ -4518,8 +4516,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   only) so the agent can say which account it acted as.
 - **The personal scope is withheld from an unauthenticated principal.** The HTTP run API
   authenticates its key, not the `author` it names, so that caller can never borrow someone's
-  personal secret by naming them — the same rule that already withholds their personal Composio and
-  Toolbox tokens. The organization and channel scopes are not identity claims and still apply.
+  personal secret by naming them — the same rule that already withholds their personal Composio tokens. The organization and channel scopes are not identity claims and still apply.
 - **The warm pool keys on the merged digest**, so a process started for one author is never reused
   for another's message in the same thread while still holding the first author's secrets. Clean
   mode injects none of the three, for the same reason it injects no MCP servers or skills.
@@ -4741,12 +4738,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   → TEST-PLAN: Security (Composio isolation) + MCP injection & tokens.
 - Per-run MCP config: the **gateway control MCP** is always injected (scheduling + channel-admin
   tools, scoped to the channel/author, run outside the sandbox); personal/shared **Composio** and
-  embedded **Toolbox** (`makeitfuture-toolbox`) are injected only when their tokens resolve. Skills
+  the configured **Make MCP** are injected only when their credentials resolve. Skills
   are never an MCP server: they come from the gateway's own catalog as files (Skills platform
   below). → TEST-PLAN: MCP injection & tokens.
 - Token resolution: Personal-mode Composio is two paths (**user only** plus **channel →
   org-default**); SDK mode replaces both active paths with stable user/channel identities without
-  mutating saved tokens. Toolbox retains **channel → user → org-default**. Tokens can be
+  mutating saved tokens. Personal Composio tokens can be
   set via `set_my_*_token` or the admin UI; org-default tokens and the write-only SDK key live in
   Settings → Integrations.
 - Per-channel opt-out of the org-default token fallback (`meta.noDefaultTokens`): a sensitive channel
@@ -5209,7 +5206,7 @@ are retired, bullet by bullet; everything else stands.
   same session through its own `codex` wrapper (QA-0925: over SSH it had no gateway MCP, no Composio
   and no secrets): the session also writes `codex-args.sh` — exactly the `-c mcp_servers.*` /
   `apps.*` overrides a chat turn's Codex gets, with a Codex-minted gateway capability and the
-  Composio/toolbox credentials in a 0600 `codex-secrets.json` their header helpers read, never argv
+  Composio/Make credentials in a 0600 `codex-secrets.json` their header helpers read, never argv
   — and the wrapper sources the secrets, prepends the overrides and, when started from HOME, `/` or
   a parent of the channel folder, starts Codex in the channel folder (its `AGENTS.md`); a turn's
   sandbox/approval flags are not carried, the developer answers Codex's own prompts. As in a turn,
@@ -5401,9 +5398,9 @@ are retired, bullet by bullet; everything else stands.
   container cannot see. An unbindable socket path (over the 100-byte `sockaddr_un` budget, a
   read-only root) logs one line and never fails the boot — container runs then fail closed with
   their own message. → TEST-PLAN: Container runtime (v0.8 P1).
-- **A remote MCP credential never enters a channel container (container-secrets P1).** The four
+- **A remote MCP credential never enters a channel container (container-secrets P1).** The three
   header-bearing remote servers a run may receive — `composio-user` and `composio-agent` (legacy
-  token mode and an explicit `endpoint.url` + `endpoint.headers`), `makeitfuture-toolbox` and
+  token mode and an explicit `endpoint.url` + `endpoint.headers`), and
   `make-toolbox` — used to reach a containerized engine WITH their token: Claude's `cg-mcp-*.json`
   and Codex's per-run secret bundle (plus its `http_headers_helper` scripts) sit in the artifact
   dir, which the container bind-mounts read-write, so any process in the box could read them. On an
@@ -5420,7 +5417,7 @@ are retired, bullet by bullet; everything else stands.
   connections stay open, and a turn that merely reused a warm process drops its own unused grant.
   An SSH refresh releases the previous preparation's grants (a `claude` already running keeps
   its relays through its open connections); the developer's last session ending drops them all;
-  clearing a personal Composio or Toolbox token (`clear_my_*_token`, or the admin UI) drops every
+  clearing a personal Composio token (`clear_my_*_token`, or the admin UI) drops every
   grant minted for that person's runs at once. A hello is relayed only when the claim names the
   server AND the daemon holds a live registration for it; at most 8 relay connections per grant
   and server exist at once (a slot is held until the upstream dial has settled, so hello-then-hang-up
@@ -5436,8 +5433,8 @@ are retired, bullet by bullet; everything else stands.
   refused with the rebuild remedy instead of serving the control plane under a relayed name. Codex's container bundle now holds ONLY
   `gatewayCapability` and no headers helper is written; an SSH session's `mcp.json` and Codex
   bundle follow the same rule. The warm pool's fingerprint carries a value-free sha256 digest of
-  each relayed URL + header, so a rotated Composio or toolbox token still retires the warm process.
-  A remote the relay cannot carry — plain http (a `COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override) or
+  each relayed URL + header, so a rotated Composio or Make token still retires the warm process.
+  A remote the relay cannot carry — plain http (a `COMPOSIO_MCP_URL` override) or
   a malformed header (not text, over 8 KB, a line break, a bad name, more than 16) — is dropped
   from an isolated run on its own and named in the skipped-MCP note; the rest of the turn is
   unaffected and the token is never handed to the container instead. Host (sudo) targets keep the direct http entries and headers
@@ -5669,7 +5666,7 @@ are retired, bullet by bullet; everything else stands.
   `appendFile*` / `writePrivate` / `writeSecretFile` call whose path mentions `artifactDir`,
   `runArtifactRoot`, `sshUserDir`, `sshUsersDir`, `channelArtifactDir` or a name derived from one
   (to a fixpoint, per file) fails the check when its content mentions `composioUserToken`,
-  `composioToken`, `toolboxToken`, `makeToolboxKey`, `relay.token`, `resolvedRunEnv` or
+  `composioToken`, `makeToolboxKey`, `relay.token`, `resolvedRunEnv` or
   `realValues`; a reviewed exception says `static-check: allow-secret-artifact-write <why>` (today
   only the VS Code token file, which holds the relay placeholder behind the proxy). The retired
   `src/mcp/remote-secret-bridge.js` and its `mcp-remote` runtime helper are gone: since the P1
@@ -5839,7 +5836,7 @@ are retired, bullet by bullet; everything else stands.
   total cost remain intact, and the footer continues to name the governing configured variant.
   → TEST-PLAN: primary model attribution.
 - Clean mode (per channel / DM): run bare for the lowest token cost — no MCP servers injected
-  (gateway control, Composio, Toolbox), no optional granted skills copied, no skills-favorites block, and no
+  (gateway control, Composio, Make MCP), no optional granted skills copied, no skills-favorites block, and no
   per-author tokens. The per-run `--mcp-config` is empty + `--strict-mcp-config` (so global servers
   are replaced by nothing) and the lockdown's `allowedMcpServers` is empty; Codex skips its gateway
   `-c mcp_servers.*` injection. Loads as close to the model's base prompt as the harness allows.
@@ -5879,7 +5876,7 @@ are retired, bullet by bullet; everything else stands.
   scope, never the command. The Overview page carries the same queue with Approve/Deny buttons and a
   scope picker. → TEST-PLAN: Modes & approvals.
 - Reveal-able token fields: every gateway token input (Slack bot/app/signing, org-default
-  Composio/Skills/Toolbox, per-channel and per-user tokens) shows its stored value masked (first
+  Composio, per-channel and per-user tokens) shows its stored value masked (first
   few + last 4 chars) with an eye toggle (inline SVG) to reveal the full token. Token values are
   returned only to the authenticated admin session; on save a token is overwritten only when a new
   one is actually typed (an untouched masked field keeps the stored value). → TEST-PLAN: Admin UI.
@@ -5954,12 +5951,12 @@ are retired, bullet by bullet; everything else stands.
   time, conversation (+slug), author (+id), engine · model, task kind, tokens in/out/total,
   provider-reported cost / estimated Standard API-equivalent value, and duration. Client-only.
   → TEST-PLAN: Admin UI (redesign).
-- **Users** is a table (Name / Slack ID / role chips / enabled personal Skills count / C·T token state) with a
+- **Users** is a table (Name / Slack ID / role chips / enabled personal Skills count / Composio token state) with a
   wider right-side edit drawer (up to 640px; stacked above the table on narrower screens). It edits
-  display name, Approved/Admin, personal grants and the two token fields with per-user Save
+  display name, Approved/Admin, personal grants and the Composio token field with per-user Save
   (unchanged PUT semantics); "+ Add user" reveals the add form. A debounced search calls
   `GET /api/users?q=…` and matches case/accent-insensitively across name, Slack ID, visible role,
-  and configured Composio/Toolbox token status. The browser keeps its full user directory separate
+  and configured Composio token status. The browser keeps its full user directory separate
   from the server-filtered table so conversation access editors never inherit a search subset;
   out-of-order responses are ignored and filtering out the selected row closes its drawer.
   Skills counts match saved personal grants, including unavailable saved skills, and refresh after Save.
@@ -5986,7 +5983,7 @@ are retired, bullet by bullet; everything else stands.
   Sections: **Connection** (Slack bot tokens + status + the daemon's public URL), **Agent
   defaults** (enabled harnesses, engine, cross-engine failover, keepalive, context window, progress
   view, mention reactions, instructions, memory, schedule limits, nudges, codex rate),
-  **Access Templates**, **Integrations** (Composio/Skills/Toolbox URLs + org-default tokens),
+  **Access Templates**, **Integrations** (Composio URLs + org-default tokens),
   **License**, **Access & security** (default channel access, trusted bot apps + network domains as
   chip editors), **System** (admin password, run-API token, Reconnect Slack, and a red **danger
   zone**: reset all channels' access, remove password, restart daemon, disconnect Slack).
@@ -7105,3 +7102,13 @@ recorded and the invitation becomes ordinary history, removed by the seven-day s
 The implementation requires the companion iOS app and a correctly configured Apple APNs key.
 Live Apple delivery, lock-screen answer/decline and engine acceptance remain release checks;
 local fixtures are not claims of a production call.
+
+
+### Legacy Toolbox removal (2026-11-18)
+
+- The built-in skillsmanager.uk Toolbox connection is retired. Personal, channel and organization
+  token controls, dashboard/Slack/Teams settings, token tools, secret reveal entries and automatic
+  MCP injection are removed for every engine and spawn path. Composio and Make MCP remain available.
+- Upgrade migration removes retired credentials from stored users and channel metadata; stale
+  writes cannot restore them. Old organization settings are ignored and removed from settings.json
+  at boot or the next save. Existing environment overrides no longer select a Toolbox endpoint.

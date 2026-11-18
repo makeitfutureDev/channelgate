@@ -11,7 +11,7 @@
 //
 // The engine sees each server under a scope-prefixed name — `custom-<name>` for the channel's,
 // `my-<name>` for the author's own — so the two scopes never collide with each other, with the
-// built-in servers (gateway, composio-*, the toolboxes) or with a catalog selection, and the tool
+// built-in servers (gateway, composio-*, the Make connection) or with a catalog selection, and the tool
 // names themselves (`mcp__custom-linear__…`, `mcp__my-linear__…`) say whose connection it is.
 //
 // A run reaches them exactly like the other header-bearing remotes (src/gateway/mcp.js): in a

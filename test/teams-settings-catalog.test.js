@@ -104,17 +104,16 @@ test('shared channel cards omit private metadata and reject private-scope mutati
   }
   const connections = await renderCatalogPage('mcp', ctx, ui);
   assert.doesNotMatch(JSON.stringify(connections), /XYZ4|Private account label|Organization Composio/);
-  await invoke(ctx, 'settings.connections.save', { composioToken: '', composioTokenLabel: '', toolboxToken: '' });
+  await invoke(ctx, 'settings.connections.save', { composioToken: '', composioTokenLabel: '' });
   assert.equal((await getChannelMeta(ctx.entry.slug)).composioTokenLabel, 'Private account label');
   patchOrgEnv({ remove: 'ORG_PRIVATE_TOKEN' });
 });
 
 test('connection rotation preserves blank tokens and validates Make URLs atomically', async () => {
-  const ctx = await context({ fields: { composioToken: 'existing-composio-fixture', toolboxToken: 'existing-toolbox-fixture', makeToolboxUrl: 'https://eu1.make.com/mcp/server/catalog-fixture', makeToolboxKey: 'existing-make-fixture' } });
-  await invoke(ctx, 'settings.connections.save', { composioToken: '', toolboxToken: '', composioTokenLabel: 'Shared account', makeToolboxUrl: ctx.meta.makeToolboxUrl, makeToolboxKey: '' });
+  const ctx = await context({ fields: { composioToken: 'existing-composio-fixture', makeToolboxUrl: 'https://eu1.make.com/mcp/server/catalog-fixture', makeToolboxKey: 'existing-make-fixture' } });
+  await invoke(ctx, 'settings.connections.save', { composioToken: '', composioTokenLabel: 'Shared account', makeToolboxUrl: ctx.meta.makeToolboxUrl, makeToolboxKey: '' });
   let stored = await getChannelMeta(ctx.entry.slug);
   assert.equal(stored.composioToken, 'existing-composio-fixture');
-  assert.equal(stored.toolboxToken, 'existing-toolbox-fixture');
   assert.equal(stored.makeToolboxKey, 'existing-make-fixture');
   assert.equal(stored.composioTokenLabel, 'Shared account');
   await assert.rejects(invoke(ctx, 'settings.connections.save', { composioToken: 'new-composio-fixture', makeToolboxUrl: 'https://evil.example/mcp/server/id' }), /Make toolbox URL/);
@@ -122,7 +121,7 @@ test('connection rotation preserves blank tokens and validates Make URLs atomica
   assert.equal(stored.composioToken, 'existing-composio-fixture');
   const card = await renderCatalogPage('mcp', ctx, ui);
   assert.ok(!JSON.stringify(card).includes('existing-composio-fixture'));
-  for (const id of ['composioToken', 'toolboxToken', 'makeToolboxKey']) assert.equal(card.body.find(item => item.id === id).value, '');
+  for (const id of ['composioToken', 'makeToolboxKey']) assert.equal(card.body.find(item => item.id === id).value, '');
   await invoke(ctx, 'settings.connections.fallback', { enabled: false });
   assert.equal((await getChannelMeta(ctx.entry.slug)).noDefaultTokens, true);
   await assert.rejects(invoke(ctx, 'settings.connections.remove', { connection: 'toString' }), /Unknown connection/);
@@ -133,20 +132,18 @@ test('connection rotation preserves blank tokens and validates Make URLs atomica
 
 test('personal connection forms bind to the dialog owner, keep blanks, hide values and revoke disconnected relays', async () => {
   const ctx = await context(), other = await context();
-  const tokens = { personalComposioToken: 'personal-composio-fixture', personalToolboxToken: 'personal-toolbox-fixture' };
+  const tokens = { personalComposioToken: 'personal-composio-fixture' };
   await invoke(ctx, 'settings.personal.save', { ...tokens, ownerId: other.ownerId, actorId: other.ownerId });
   assert.equal((await getUser(ctx.ownerId)).composioToken, tokens.personalComposioToken);
   assert.equal((await getUser(other.ownerId)).composioToken, '');
   assert.equal((await getChannelMeta(ctx.entry.slug)).composioToken, '');
-  await invoke(ctx, 'settings.personal.save', { personalComposioToken: '', personalToolboxToken: '' });
-  assert.equal((await getUser(ctx.ownerId)).toolboxToken, tokens.personalToolboxToken);
+  await invoke(ctx, 'settings.personal.save', { personalComposioToken: '' });
+  assert.equal((await getUser(ctx.ownerId)).composioToken, tokens.personalComposioToken);
   const rendered = await renderCatalogPage('mcp', ctx, ui);
   assert.equal(rendered.body.find(item => item.id === 'personalComposioToken').value, '');
-  assert.equal(rendered.body.find(item => item.id === 'personalToolboxToken').value, '');
   assert.ok(!JSON.stringify(rendered).includes(tokens.personalComposioToken));
-  assert.ok(!JSON.stringify(rendered).includes(tokens.personalToolboxToken));
-  await assert.rejects(invoke(ctx, 'settings.personal.save', { personalComposioToken: 'short', personalToolboxToken: 'replacement-long-fixture' }), /six characters/);
-  assert.equal((await getUser(ctx.ownerId)).toolboxToken, tokens.personalToolboxToken);
+  await assert.rejects(invoke(ctx, 'settings.personal.save', { personalComposioToken: 'short' }), /six characters/);
+  assert.equal((await getUser(ctx.ownerId)).composioToken, tokens.personalComposioToken);
   const registration = `teams-personal-${ctx.ownerId}`;
   registerRemoteMcps({ jti: registration, exp: Date.now() + 60_000, servers: { 'composio-user': { url: 'https://example.com/mcp', headers: {} } }, meta: { authorId: ctx.ownerId } });
   try {
@@ -158,9 +155,9 @@ test('personal connection forms bind to the dialog owner, keep blanks, hide valu
   ctx.isShared = true;
   assert.ok(!(await renderCatalogPage('mcp', ctx, ui)).body.some(item => item.id === 'personalToolboxToken'));
   await assert.rejects(invoke(ctx, 'settings.personal.save', tokens), /authenticated settings/);
-  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'toolbox' }), /authenticated settings/);
+  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'composio' }), /authenticated settings/);
   ctx.isShared = false; ctx.authorize = async () => { throw new Error('membership revoked'); };
-  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'toolbox' }), /membership revoked/);
+  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'composio' }), /membership revoked/);
 });
 
 test('cloud mutations reject stale admins and inherited organization grants', async () => {

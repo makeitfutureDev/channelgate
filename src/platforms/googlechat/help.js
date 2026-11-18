@@ -45,7 +45,7 @@ const TOPICS = [
     'Use `/model` for enabled engines and providers. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Diagnostics** shows the terminal commands that resume this session.',
     '**Variables** uses a protected browser page for secret entry. Google Chat cannot mask text input, so never paste tokens or passwords into a card or message.',
     'Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
-    'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio or Toolbox tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
+    'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
     'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
     'Connect a mailbox from **MCPs** → **Email accounts** on the protected browser page: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.',
     'Use approval controls here to Approve, Deny or Request changes. Your current authority is checked.',

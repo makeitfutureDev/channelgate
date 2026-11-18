@@ -12,6 +12,8 @@ const {
   getChannelMeta,
   saveChannelMeta,
   upsertChannelEntry,
+  getUser,
+  setUser,
 } = await import("../src/config/store.js");
 
 const entry = await upsertChannelEntry("C_MAKE", {
@@ -25,6 +27,9 @@ await saveChannelMeta(entry.slug, defaultChannelMeta({
   type: "channel",
   isDM: false,
 }));
+
+const { getSettings } = await import("../src/config/settings.js");
+const { readSecret, revealableFields } = await import("../src/web/secrets.js");
 
 const probeCalls = [];
 const app = express();
@@ -168,4 +173,45 @@ test("Admin MCP Connections page exposes per-channel Make toolbox URL, key, test
   assert.match(client, /attachReveal\(makeToolboxKeyInput, \{ has: ch\.meta\.hasMakeToolboxKey/);
   assert.match(client, /revealSecret\("channel", "makeToolboxKey", ch\.slug\)/);
   assert.match(client, /makeToolboxState\.textContent = ch\.meta\.hasMakeToolboxKey \? "saved" : "not configured"/);
+});
+
+
+test("retired Toolbox fields are ignored on admin APIs and cannot be revealed", async () => {
+  const retired = { toolboxToken: "removed-legacy-token-123456", toolboxTokenLabel: "Removed account" };
+  const channel = await request("/channels/C_MAKE/meta", { method: "PUT", body: retired });
+  assert.equal(channel.response.status, 200);
+  assert.equal((await getChannelMeta(entry.slug)).toolboxToken, undefined);
+  assert.doesNotMatch(JSON.stringify(channel.json), /toolboxToken|hasToolboxToken/);
+
+  await setUser("U_RETIRED_TOOLBOX", { name: "Legacy toolbox removal", approved: true });
+  const user = await request("/users/U_RETIRED_TOOLBOX", { method: "PUT", body: retired });
+  assert.equal(user.response.status, 200);
+  assert.equal((await getUser("U_RETIRED_TOOLBOX")).toolboxToken, undefined);
+  const users = await request("/users");
+  assert.doesNotMatch(JSON.stringify(users.json), /toolboxToken|hasToolboxToken/);
+
+  const settings = await request("/settings", { method: "PUT", body: {
+    toolboxMcpUrl: "https://www.skillsmanager.uk/toolbox",
+    defaultToolboxToken: retired.toolboxToken,
+    defaultToolboxTokenLabel: retired.toolboxTokenLabel,
+  } });
+  assert.equal(settings.response.status, 200);
+  const listedSettings = await request("/settings");
+  for (const key of ["toolboxMcpUrl", "defaultToolboxToken", "defaultToolboxTokenLabel"]) {
+    assert.equal(getSettings()[key], undefined);
+    assert.equal(listedSettings.json[key], undefined);
+  }
+  for (const [scope, field] of [["settings", "defaultToolboxToken"], ["channel", "toolboxToken"], ["user", "toolboxToken"]]) {
+    assert.ok(!revealableFields(scope).includes(field));
+    await assert.rejects(readSecret({ scope, field, id: entry.slug }), /not revealable/);
+  }
+});
+
+test("dashboard and personal settings omit retired Toolbox controls while preserving Composio and Make", async () => {
+  const files = ["../public/index.html", "../public/app.js", "../src/web/activity-page.js"];
+  const texts = await Promise.all(files.map(file => readFile(new URL(file, import.meta.url), "utf8")));
+  for (const text of texts) assert.doesNotMatch(text, /skillsmanager\.uk|makeitfuture-toolbox|toolboxToken|defaultToolbox|set-toolbox|c\.toolbox|toolbox\.save|toolbox\.remove/);
+  assert.match(texts[0], /set-composio/);
+  assert.match(texts[0], /ch-make-toolbox-url/);
+  assert.match(texts[2], /composio\.save/);
 });

@@ -46,7 +46,7 @@ function fakes({ relayOk = true, lockdownFails = false, account = { emailAddress
       installRelay: async (_target, _cli, opts) => { execs.push({ bin: "relay", args: [opts.usersDir], input: "" }); return { source: "operator", expiresAt: relay.expiresAt, relay }; },
       resolveIntegrations: async ({ authorId, threadKey, clean }) => ({
         composioUserToken: clean ? "" : `cu-${authorId}`, composioToken: clean ? "" : "ca-channel", composioUserEndpoint: null, composioEndpoint: null,
-        toolboxToken: "", makeToolboxUrl: "", makeToolboxKey: "", threadKey,
+        makeToolboxUrl: "", makeToolboxKey: "", threadKey,
       }),
       resolveEnv: async (args) => {
         resolveCalls.push(args);

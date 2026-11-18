@@ -65,7 +65,7 @@ test("Claude selected names, stale URL grants and unavailable definitions are dr
   const cases = [
     [pick("gateway"), /reserved or invalid/],
     [pick("composio-agent"), /reserved or invalid/],
-    [pick("makeitfuture-toolbox"), /reserved or invalid/],
+    [pick("make-toolbox"), /reserved or invalid/],
     [pick("__proto__"), /reserved or invalid/],
     [pick("constructor"), /reserved or invalid/],
     [pick("bad\nname"), /reserved or invalid/],

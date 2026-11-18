@@ -31,21 +31,6 @@ export function composioUserRef() {
   };
 }
 
-// Toolbox (makeitfuture-toolbox) — a per-author injected MCP, identical in shape to Composio
-// Manager: each user's own token (or a channel-wide one, or the org default) is injected at spawn
-// time in the `Authorization: Bearer <token>` header, and the server is always referenced in the
-// lockdown so the injected one is permitted. URL is overridable via TOOLBOX_MCP_URL (settings.json).
-export function toolboxUrl() {
-  return process.env.TOOLBOX_MCP_URL || "https://www.skillsmanager.uk/toolbox";
-}
-export function toolboxRef() {
-  return {
-    name: "makeitfuture-toolbox",
-    namespace: "mcp__makeitfuture-toolbox",
-    allowMatch: { serverName: "makeitfuture-toolbox" },
-  };
-}
-
 // Per-channel Make MCP toolbox — the URL/key pair is injected at spawn time under one stable
 // server name. The key never lives in this catalog or a channel folder.
 export function makeToolboxRef() {
@@ -113,8 +98,6 @@ export const GATEWAY_TOOL_NAMES = [
   "set_my_reply_mentions",
   "set_my_composio_token",
   "clear_my_composio_token",
-  "set_my_toolbox_token",
-  "clear_my_toolbox_token",
   "list_secrets",
   "set_secret",
   "remove_secret",
@@ -200,7 +183,7 @@ export function gatewayToolRefs() {
 // (Slack capabilities beyond the gateway's own bot-token tools come from the Slack toolkit inside
 // the selected `mcp__composio-user` or `mcp__composio-agent` namespace — not a hosted Slack MCP.)
 export function namespacesFor(allowed = []) {
-  const out = new Set([composioUserRef().namespace, composioRef().namespace, toolboxRef().namespace, makeToolboxRef().namespace, gatewayRef().namespace]);
+  const out = new Set([composioUserRef().namespace, composioRef().namespace, makeToolboxRef().namespace, gatewayRef().namespace]);
   for (const a of allowed) if (a?.namespace) out.add(a.namespace);
   return [...out];
 }
@@ -217,17 +200,17 @@ const COMPOSIO_SDK_URL_PATTERN = "https://*.composio.dev/*";
 // still reports both Composio identities resolved while the model never sees composio-user /
 // composio-agent (#int-sales, 2026-09-04). Codex has no such allowlist and was never affected.
 export function injectedRemoteAllowMatches({ makeToolboxUrl = "", composioSdk = false } = {}) {
-  const urls = new Set([composioUrl(), toolboxUrl()]);
+  const urls = new Set([composioUrl()]);
   if (composioSdk) urls.add(COMPOSIO_SDK_URL_PATTERN);
   const make = typeof makeToolboxUrl === "string" ? makeToolboxUrl.trim() : "";
   if (/^https?:\/\//i.test(make)) urls.add(make);
   return [...urls].map((serverUrl) => ({ serverUrl }));
 }
 
-// The allowedMcpServers match objects for the lockdown (+ both Composio identities, Toolbox &
+// The allowedMcpServers match objects for the lockdown (+ both Composio identities, Make &
 // scheduler, each by name AND by URL — see injectedRemoteAllowMatches).
 export function allowMatchesFor(allowed = [], remote = {}) {
-  const out = [composioUserRef().allowMatch, composioRef().allowMatch, toolboxRef().allowMatch, makeToolboxRef().allowMatch, gatewayRef().allowMatch];
+  const out = [composioUserRef().allowMatch, composioRef().allowMatch, makeToolboxRef().allowMatch, gatewayRef().allowMatch];
   out.push(...injectedRemoteAllowMatches(remote));
   for (const a of allowed) if (a?.match) out.push(a.match);
   return out;

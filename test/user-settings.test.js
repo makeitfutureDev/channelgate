@@ -21,7 +21,7 @@ after(() => setEmailAccountVerifierForTests(null));
 beforeEach(async () => {
   getDb().exec("DELETE FROM ssh_keys");
   saveSettings({ composioMode: "personal" });
-  await setUser("U_ME", { name: "Me", approved: true, isAdmin: false, composioToken: "", composioTokenLabel: "", toolboxToken: "", customMcps: [], emailAccounts: [], env: {}, skills: [], nudges: false, replyMentions: false });
+  await setUser("U_ME", { name: "Me", approved: true, isAdmin: false, composioToken: "", composioTokenLabel: "", customMcps: [], emailAccounts: [], env: {}, skills: [], nudges: false, replyMentions: false });
   await setUser("U_OTHER", { name: "Other", approved: true, isAdmin: false, composioToken: "other-token-1234567890", env: {}, skills: [] });
   verified.length = 0;
 });
@@ -39,18 +39,16 @@ async function refused(body, pattern, field) {
 
 test("snapshot is masked: secrets are reported as configured/last4, never as values", async () => {
   await change({ action: "composio.save", token: COMPOSIO, label: "Work" });
-  await change({ action: "toolbox.save", token: "toolbox-secret-abcdef123456" });
   await change({ action: "variable.save", name: "MY_API_KEY", value: "sk-very-secret-value-9876" });
   await change({ action: "mcp.save", name: "notion", url: PUBLIC_URL, token: "mcp-bearer-secret-0000" });
   await change({ action: "email.save", name: "work", address: "me@example.com", imapHost: "imap.example.com", imapUser: "me", imapPassword: "mail-password-1111", smtpHost: "smtp.example.com" });
   const snapshot = await userSettingsSnapshot("U_ME");
   const json = JSON.stringify(snapshot);
-  for (const secret of [COMPOSIO, "toolbox-secret-abcdef123456", "sk-very-secret-value-9876", "mcp-bearer-secret-0000", "mail-password-1111"]) {
+  for (const secret of [COMPOSIO, "sk-very-secret-value-9876", "mcp-bearer-secret-0000", "mail-password-1111"]) {
     assert.ok(!json.includes(secret), `snapshot leaked ${secret}`);
   }
   assert.deepEqual(snapshot.account, { id: "U_ME", name: "Me", role: "member" });
   assert.deepEqual(snapshot.connections.composio, { configured: true, last4: "0001", label: "Work" });
-  assert.equal(snapshot.connections.toolbox.last4, "3456");
   assert.equal(snapshot.variables[0].name, "MY_API_KEY");
   assert.equal(snapshot.variables[0].exposure, "hidden");
   assert.equal(snapshot.mcps.servers[0].serverName, "my-notion");
@@ -79,7 +77,13 @@ test("every change targets only the owner; caller-supplied owners, roles and fie
   await assert.rejects(applyUserSettingsChange("", { action: "nudges", enabled: true }), (error) => error.status === 403);
 });
 
-test("Composio and Toolbox: save, keep-token label edits, removal, and SDK mode refusal", async () => {
+test("removed Toolbox actions are rejected", async () => {
+  await refused({ action: "toolbox.save", token: "retired-secret-123456" }, /Unknown setting/);
+  await refused({ action: "toolbox.remove" }, /Unknown setting/);
+  assert.equal((await userSettingsSnapshot("U_ME")).connections.toolbox, undefined);
+});
+
+test("Composio: save, keep-token label edits, removal, and SDK mode refusal", async () => {
   await refused({ action: "composio.save", token: "" }, /Enter the token/, "token");
   await refused({ action: "composio.save", token: "abc" }, /valid Composio token/, "token");
   assert.match((await change({ action: "composio.save", token: COMPOSIO })).notice, /Composio/);
@@ -88,10 +92,6 @@ test("Composio and Toolbox: save, keep-token label edits, removal, and SDK mode 
   assert.equal((await getUser("U_ME")).composioTokenLabel, "Renamed");
   await change({ action: "composio.remove" });
   assert.equal((await getUser("U_ME")).composioToken, "");
-  await refused({ action: "toolbox.save", token: "" }, /Enter the token/);
-  await change({ action: "toolbox.save", token: "toolbox-secret-abcdef123456" });
-  await change({ action: "toolbox.remove" });
-  assert.equal((await getUser("U_ME")).toolboxToken, "");
   saveSettings({ composioMode: "sdk" });
   await refused({ action: "composio.save", token: COMPOSIO }, /SDK mode/);
   assert.equal((await userSettingsSnapshot("U_ME")).connections.composioMode, "sdk");
@@ -176,7 +176,6 @@ test("authorize runs before every write and a failed recheck writes nothing", as
     { action: "nudges", enabled: true },
     { action: "replyMentions", enabled: true },
     { action: "composio.save", token: COMPOSIO },
-    { action: "toolbox.save", token: "toolbox-secret-abcdef123456" },
     { action: "variable.save", name: "API_TOKEN", value: "value-123456" },
     { action: "mcp.save", name: "notion", url: PUBLIC_URL, token: "tok-123456" },
     { action: "email.save", name: "work", address: "me@example.com", imapHost: "imap.example.com", imapUser: "me", imapPassword: "pw-123456", smtpHost: "smtp.example.com" },
@@ -186,7 +185,6 @@ test("authorize runs before every write and a failed recheck writes nothing", as
   assert.equal(me.nudges, false);
   assert.notEqual(me.replyMentions, true);
   assert.equal(me.composioToken, "");
-  assert.equal(me.toolboxToken, "");
   assert.deepEqual((await userSettingsSnapshot("U_ME")).variables, []);
   assert.deepEqual((await userSettingsSnapshot("U_ME")).mcps.servers, []);
   assert.deepEqual((await userSettingsSnapshot("U_ME")).connections.email, []);

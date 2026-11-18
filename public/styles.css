@@ -307,8 +307,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .user-card .card-head { gap: 12px; }
 .u-name { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 7px 10px; border-radius: 8px; min-width: 180px; font: inherit; }
 .token-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.u-token, .u-skillstoken, .u-toolboxtoken { flex: 1; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; border-radius: 8px; font: inherit; }
-.token-state, .skills-state, .toolbox-state, .slack-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.u-token, .u-skillstoken { flex: 1; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; border-radius: 8px; font: inherit; }
+.token-state, .skills-state, .slack-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
 .add-user { display: flex; gap: 8px; margin-bottom: 16px; }
 .add-user[hidden] { display: none; }
 .add-user input { flex: 1; max-width: 360px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; border-radius: 8px; font: inherit; }
