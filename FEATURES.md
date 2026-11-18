@@ -508,6 +508,8 @@ control-plane status.
 
 ## Google Chat reaction controls
 
+Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
+
 - Chat apps receive no interaction event for a reaction. With Settings → Google Chat → **Reaction
   events topic** set, the transport keeps one Google Workspace Events subscription per space the
   app belongs to (`google.workspace.chat.reaction.v1.created`/`deleted`, resource data included,
