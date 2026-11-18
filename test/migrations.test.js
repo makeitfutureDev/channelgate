@@ -193,3 +193,28 @@ test("Later clock upgrade queues existing postponed roots without scanning open 
     assert.ok(rows.every((r) => r.later_marker === 0));
   } finally { db.close(); }
 });
+
+
+test("v63 removes retired Toolbox credentials while preserving other connections", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter(item => item.version <= 62)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    const stored = { name: "Existing", toolboxToken: "retired-fixture-token", toolboxTokenLabel: "Old",
+      composioToken: "kept-composio", makeToolboxUrl: "https://eu1.make.com/mcp/server/fixture", makeToolboxKey: "kept-make" };
+    db.prepare("INSERT INTO users(user_id,data) VALUES(?,?)").run("U_RETIRED", JSON.stringify(stored));
+    db.prepare("INSERT INTO channel_meta(slug,data) VALUES(?,?)").run("retired", JSON.stringify(stored));
+    db.prepare("INSERT INTO users(user_id,data) VALUES(?,?)").run("U_BAD", "invalid-json");
+    const { toolboxToken, toolboxTokenLabel, ...expected } = stored;
+    runMigrations(db);
+    for (const table of ["users", "channel_meta"]) {
+      const row = db.prepare(`SELECT data FROM ${table} WHERE data LIKE '%Existing%'`).get();
+      assert.deepEqual(JSON.parse(row.data), expected);
+    }
+    assert.equal(db.prepare("SELECT data FROM users WHERE user_id='U_BAD'").get().data, "invalid-json");
+    runMigrations(db);
+    assert.equal(version(db), latest);
+  } finally { db.close(); }
+});

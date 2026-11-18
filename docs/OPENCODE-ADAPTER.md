@@ -39,7 +39,7 @@ with `--session`, model selection with `--model`, model variants with `--variant
 The adapter consumes those JSON events for text deltas, session identity, token usage, and reported
 cost; resumes with the emitted session ID; uses the shared inactivity watchdog; and cancels the
 detached process group on `AbortSignal`. It intentionally performs no MCP discovery and passes no
-gateway/Composio/Skills/Toolbox credential bundle.
+gateway/Composio credential bundle.
 
 ## Capability matrix
 

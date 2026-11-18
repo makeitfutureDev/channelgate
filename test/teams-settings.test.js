@@ -152,9 +152,9 @@ test('personal connection setup and removal stay inside the thread-launched sett
   const connections = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page'));
   assert.equal(input(connections, 'personalComposioToken').value, '');
   assert.equal(input(connections, 'personalComposioToken').style, 'password');
-  assert.equal(input(connections, 'personalToolboxToken').style, 'password');
+  assert.equal(input(connections, 'personalToolboxToken'), undefined);
   const saved = value(await f.invoke({ stateId: f.stateId, personalComposioToken: 'own-composio-token-fixture',
-    personalToolboxToken: 'own-toolbox-token-fixture', userId: '29:other' }, 'settings.personal.save'));
+    userId: '29:other' }, 'settings.personal.save'));
   assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
   assert.doesNotMatch(JSON.stringify(saved), /own-composio-token-fixture|own-toolbox-token-fixture/);
   assert.equal(input(saved, 'personalComposioToken').value, '');
@@ -164,7 +164,6 @@ test('personal connection setup and removal stay inside the thread-launched sett
   const token = confirm.actions[0].data.token;
   value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
   assert.equal((await getUser(f.owner)).composioToken, '');
-  assert.equal((await getUser(f.owner)).toolboxToken, 'own-toolbox-token-fixture');
   assert.equal(f.sent.length, 1);
   assert.doesNotMatch(JSON.stringify(f.sent), /own-composio|own-toolbox|personalComposioToken/);
 });
@@ -265,12 +264,12 @@ test('all variable scopes can be removed through normalized Teams inputs and one
 });
 test('disconnect confirmation retains the exact connection and blank credential fields', async () => {
   const f = await fixture();
-  await patchChannelMeta(f.entry.slug, { composioToken: 'disconnect-secret-fixture', toolboxToken: 'keep-toolbox-fixture' });
+  await patchChannelMeta(f.entry.slug, { composioToken: 'disconnect-secret-fixture', makeToolboxUrl: 'https://eu1.make.com/mcp/server/keep', makeToolboxKey: 'keep-make-fixture' });
   const prompt = value(await f.invoke({ stateId: f.stateId, connection: 'composio' }, 'settings.connections.remove'));
   await f.invoke(prompt.actions[0].data, 'settings.confirm');
   const stored = await getChannelMeta(f.entry.slug);
   assert.equal(stored.composioToken, '');
-  assert.equal(stored.toolboxToken, 'keep-toolbox-fixture');
+  assert.equal(stored.makeToolboxKey, 'keep-make-fixture');
 });
 test('automation pages keep later schedules reachable and native cards within bounds', async () => {
   const f = await fixture({ admin: false });

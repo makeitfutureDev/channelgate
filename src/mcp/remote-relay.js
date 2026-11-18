@@ -1,6 +1,6 @@
 // The daemon-side relay behind the `remote-mcp` socket service (src/mcp/socket-server.js): an MCP
 // Server on the container's socket whose tools are a header-bearing REMOTE MCP server (Composio
-// user/agent, the toolboxes) dialled by the daemon with the real credential. The container side is
+// user/agent, the Make connection) dialled by the daemon with the real credential. The container side is
 // the ordinary socket bridge holding only the signed run capability, so the credential never
 // crosses into a container — not in a config file, not in an env var, not in a bundle.
 //

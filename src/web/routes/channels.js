@@ -110,7 +110,6 @@ export function emailAccountBody(req) {
 export function maskChannelMeta(meta = {}) {
   const mask = (v) => ({ has: Boolean(v), last4: v ? String(v).slice(-4) : "" });
   const tok = mask(meta.composioToken);
-  const tb = mask(meta.toolboxToken);
   const mk = mask(meta.makeToolboxKey);
   return {
     ...stripDeadFields(meta),
@@ -122,9 +121,6 @@ export function maskChannelMeta(meta = {}) {
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
-    toolboxToken: undefined,
-    hasToolboxToken: tb.has,
-    toolboxTokenLast4: tb.last4,
     makeToolboxKey: undefined,
     hasMakeToolboxKey: mk.has,
     makeToolboxKeyLast4: mk.last4,
@@ -305,7 +301,7 @@ export function createChannelsRouter({
             template: meta.template || "user",
             workDirConflict: conflicts.get(c.slug) || null,
             // A DM is a channel too, so it gets the SAME masker — the copy that used to live here
-            // masked Composio and Toolbox but not the Make toolbox key or a dead field.
+            // masked Composio but not the Make toolbox key or a dead field.
             meta: maskChannelMeta(meta),
           };
         });
@@ -362,8 +358,6 @@ export function createChannelsRouter({
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
-      if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
-      if (body.clearToolboxToken === true) next_.toolboxToken = "";
       if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
         assertChannelEngineApproved(next_, effectiveMeta(next_).engine || getEngine());
       }
@@ -394,7 +388,7 @@ export function createChannelsRouter({
       // DMs aren't shown here — a DM has no per-channel settings (access is governed by the
       // user's approval in the Users tab, not allowedUsers/MCPs/skills).
       const channels = allChannels.filter((c) => !c.isDM && c.type !== "im");
-      // Per-channel Composio / Toolbox / Make toolbox secrets are NOT returned — only has*/last4
+      // Per-channel Composio / Make toolbox secrets are NOT returned — only has*/last4
       // for display. The UI fetches a value on demand via POST /secrets/reveal, which re-prompts
       // for the admin password. Only overwritten on save when a non-empty value is sent.
       for (const ch of channels) {
@@ -602,12 +596,9 @@ export function createChannelsRouter({
           // clear flag empties it.
           if (typeof body.composioToken === "string" && body.composioToken.length > 0) out.composioToken = body.composioToken.trim();
           if (body.clearComposioToken === true) out.composioToken = "";
-          if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0) out.toolboxToken = body.toolboxToken.trim();
-          if (body.clearToolboxToken === true) out.toolboxToken = "";
           // Owner labels (who the shared channel token authenticates as). Not secret — plain strings
           // that always round-trip; an empty string clears the label.
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
-          if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
           if (out.skillTemplate && out.skillTemplate !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
           if (out.syncDriveFolder && out.syncDriveFolder !== current.syncDriveFolder) requireEnterpriseFeature("driveSync");

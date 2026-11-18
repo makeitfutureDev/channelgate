@@ -7,7 +7,7 @@
 //   • the per-session MCP payload (`buildEngineMcpRuntime`, the same assembler a turn uses): the
 //     gateway control server over the socket bridge with a signed capability naming THIS developer
 //     and the reduced "ssh" toolset (no thread to report into), `composio-user` for the developer's
-//     own accounts, `composio-agent` for the channel's, the toolboxes, the channel's selected
+//     own accounts, `composio-agent` for the channel's, the Make toolbox, the channel's selected
 //     catalog servers — and, through --strict-mcp-config, nothing else: not the operator's own
 //     claude.ai connectors that a recognised account would otherwise pull in;
 //   • the run environment (`resolveEgressRunEnv` + `safeSpawnEnv`, the resolver a turn uses):
@@ -230,7 +230,7 @@ fs.writeFileSync(sidecar, folder + "\\n", { mode: 0o600 });
 
 // Codex's half of a prepared session (codex-args.sh + its bundle, in the developer's 0700 dir):
 // exactly the `-c mcp_servers.*` / `apps.*` overrides a chat turn's Codex gets, with the gateway
-// capability in a 0600 bundle — never in argv. The Composio/toolbox servers are relayed by the
+// capability in a 0600 bundle — never in argv. The Composio/Make servers are relayed by the
 // daemon (the `remote-mcp` socket service) exactly as in a turn, so the bundle holds the capability
 // and nothing else, no headers helper is written, and the relay registration made when the
 // capability was minted lives as long as the capability (SSH_CAPABILITY_TTL_MS); a refresh mints a
@@ -266,7 +266,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     clean, engine, target, allowedMcps: allowed, pluginRuntime: null, fingerprintNow: now(),
     composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
     composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
+    makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
     channelId: entry.channelId, slug: entry.slug, authorId: user.id, threadKey, origin: SSH_SESSION_ORIGIN,
     progressReport: false, principalTrusted: true,
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
@@ -280,7 +280,6 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     gatewayCapability,
     composioUserToken: integrations.composioUserToken || "",
     composioToken: integrations.composioToken || "",
-    toolboxToken: integrations.toolboxToken || "",
     makeToolboxKey: integrations.makeToolboxKey || "",
     customMcps: integrations.customMcps || {},
   });
@@ -292,7 +291,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     prompt: "", sessionId: "", isNewSession: true, cwd: target.workDir || "/", dangerouslySkip: false, writable: true, clean,
     composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
     composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-    toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
+    makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
     secretBundlePath, codexMcpPolicy: policy, gatewayCapability, gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
     target, outFile: "/dev/null", headerHelpers,
   });
@@ -398,7 +397,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
       clean, engine: "claude", target, allowedMcps: meta[adapter.mcpMetaKey] || [], pluginRuntime: null, fingerprintNow: now(),
       composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
       composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
-      toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
+      makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
       channelId: entry.channelId, slug, authorId: user.id, threadKey, origin: SSH_SESSION_ORIGIN,
       progressReport: false, principalTrusted: true,
       gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),

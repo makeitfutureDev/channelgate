@@ -4,7 +4,7 @@ import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Card state carries identifiers only; stored credentials never become input defaults.
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
-import { getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
+import { getDefaultComposioToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
 import { getChannelMeta, getUser, setUser } from '../../config/store.js';
 import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
@@ -147,22 +147,21 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (page !== 'mcp') return null;
   const meta = ctx.meta;
   const connectionSummary = ctx.isShared
-    ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nToolbox: ${meta.toolboxToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
-    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nToolbox: ${configured(meta.toolboxToken)}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}\nOrganization Toolbox: ${configured(getDefaultToolboxToken())}`;
+    ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
+    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}`;
   body.push(ui.heading('MCP connections'), ui.text(connectionSummary));
   if (ctx.publicCredentials) {
     body.push(ui.text('Add and rotate connection credentials in your private browser settings.'),
       ui.buttons([ui.execute('Open private settings', 'settings.private', { page: 'mcp' }, 'none')]));
   } else body.push(
     ui.text('Leave token fields blank to keep their stored value.'), ui.input('composioToken', 'New Composio token', ''),
-    ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''), ui.input('toolboxToken', 'New Toolbox token', ''),
+    ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''),
     ui.input('makeToolboxUrl', 'Make MCP server URL', meta.makeToolboxUrl || ''), ui.input('makeToolboxKey', 'New Make MCP token', ''),
     ui.buttons([ui.execute('Save connections', 'settings.connections.save')]));
   body.push(ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
     ui.buttons([ui.execute(meta.noDefaultTokens ? 'Enable inherited credentials' : 'Disable inherited credentials', 'settings.connections.fallback', { enabled: Boolean(meta.noDefaultTokens) }, 'none')]));
   const disconnect = [];
   if (meta.composioToken) disconnect.push(ui.execute('Disconnect Composio', 'settings.connections.remove', { connection: 'composio' }, 'none'));
-  if (meta.toolboxToken) disconnect.push(ui.execute('Disconnect Toolbox', 'settings.connections.remove', { connection: 'toolbox' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
   // Email accounts: the list is masked (hosts, ports, user names — never a password). Inputs are
@@ -180,14 +179,12 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (!ctx.isShared) {
     const personal = await getUser(ctx.ownerId);
     body.push(ui.heading('My connections'),
-      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}\nPersonal Toolbox: ${personal?.toolboxToken ? 'Configured' : 'Not configured'}`),
+      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}`),
       ui.text('These tokens apply only to your own requests. Leave a field blank to keep its stored value. In SDK mode, a saved Personal-mode Composio token is inactive.'),
       ui.input('personalComposioToken', 'New personal Composio token', ''),
-      ui.input('personalToolboxToken', 'New personal Toolbox token', ''),
       ui.buttons([ui.execute('Save my connections', 'settings.personal.save')]));
     const remove = [];
     if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
-    if (personal?.toolboxToken) remove.push(ui.execute('Disconnect my Toolbox', 'settings.personal.remove', { connection: 'toolbox' }, 'none'));
     if (remove.length) body.push(ui.buttons(remove));
     body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
       ...(ctx.publicCredentials ? [] : [ui.text('Add or update one with the email account form above, choosing "Me (personal)". It is used only for your own requests.')]));
@@ -288,13 +285,13 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     if (current.isShared || !current.ownerId) throw new Error('Personal connections require your authenticated settings window.');
     const patch = {};
     if (action === 'settings.personal.save') {
-      for (const [input, field] of [['personalComposioToken', 'composioToken'], ['personalToolboxToken', 'toolboxToken']]) {
+      for (const [input, field] of [['personalComposioToken', 'composioToken']]) {
         const value = str(data[input]);
         if (value && value.length < 6) throw new Error('Connection tokens must contain at least six characters.');
         if (value) patch[field] = value;
       }
     } else {
-      const field = { composio: 'composioToken', toolbox: 'toolboxToken' }[data.connection];
+      const field = { composio: 'composioToken' }[data.connection];
       if (!field) throw new Error('Unknown personal connection.');
       patch[field] = '';
     }
@@ -320,21 +317,20 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     return true;
   }
   if (action === 'settings.connections.save') {
-    const form = Object.fromEntries(['composioToken', 'composioTokenLabel', 'toolboxToken', 'makeToolboxUrl', 'makeToolboxKey'].map(key => [key, str(data[key])]));
-    for (const key of ['composioToken', 'toolboxToken', 'makeToolboxKey']) if (form[key] && form[key].length < 6) throw new Error('Connection tokens must contain at least six characters.');
+    const form = Object.fromEntries(['composioToken', 'composioTokenLabel', 'makeToolboxUrl', 'makeToolboxKey'].map(key => [key, str(data[key])]));
+    for (const key of ['composioToken', 'makeToolboxKey']) if (form[key] && form[key].length < 6) throw new Error('Connection tokens must contain at least six characters.');
     await current.patch(stored => {
       const patch = resolveMakeToolboxUpdate(stored, { makeToolboxUrl: form.makeToolboxUrl, makeToolboxKey: form.makeToolboxKey });
       if (form.composioToken) patch.composioToken = form.composioToken;
       if (typeof data.composioTokenLabel === 'string' && (!current.isShared || form.composioTokenLabel)) patch.composioTokenLabel = form.composioTokenLabel;
-      if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
       return patch;
     });
-    await record(current, 'channel_connections_updated', { connections: ['Composio', 'Toolbox', 'Make MCP'] });
+    await record(current, 'channel_connections_updated', { connections: ['Composio', 'Make MCP'] });
     ctx.state.tab = 'mcp'; ctx.state.notice = 'Connection settings saved.';
     return true;
   }
   if (action === 'settings.connections.remove') {
-    const patches = { composio: { composioToken: '' }, toolbox: { toolboxToken: '' }, make: { makeToolboxUrl: '', makeToolboxKey: '' } };
+    const patches = { composio: { composioToken: '' }, make: { makeToolboxUrl: '', makeToolboxKey: '' } };
     if (!Object.hasOwn(patches, data.connection)) throw new Error('Unknown connection.');
     const patch = patches[data.connection];
     await current.patch(() => patch);

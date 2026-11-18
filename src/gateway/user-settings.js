@@ -4,7 +4,6 @@
 // validation, audit lines and live-relay revocation cannot differ between surfaces. Secret
 // values are write-only: the snapshot carries configured/last4 facts and never a value.
 import { getComposioMode, userNudgesEnabled } from "../config/settings.js";
-import { toolboxUrl } from "./mcp-catalog.js";
 import { getUser, setUser } from "../config/store.js";
 import { userReplyMentionsEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
@@ -71,8 +70,6 @@ export async function userSettingsSnapshot(userId) {
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },
-      toolbox: masked(user.toolboxToken),
-      toolboxServer: String(toolboxUrl() || "").replace(/^https:\/\//, "").slice(0, 200),
       email: email.map((account) => ({ name: account.name, address: account.address, displayName: account.displayName || "",
         imap: account.imap, smtp: account.smtp, sendEnabled: account.sendEnabled !== false, verifiedAt: account.verifiedAt || "" })),
     },
@@ -145,23 +142,12 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       await logEvent("user_connection_updated", { user: userId, connection: "composio", via: "activity_settings" });
       return { notice: "Saved your Composio account. Your next run uses it." };
     }
-    case "toolbox.save": {
-      const token = str(input.token);
-      if (!token) fail("Enter the token.", "token");
-      if (token.length < 6) fail("That doesn't look like a valid Toolbox token.", "token");
+    case "composio.remove": {
       await authorize();
-      await setUser(userId, { toolboxToken: token });
-      await logEvent("user_connection_updated", { user: userId, connection: "toolbox", via: "activity_settings" });
-      return { notice: "Saved your Toolbox token. Your next run uses it." };
-    }
-    case "composio.remove":
-    case "toolbox.remove": {
-      const kind = action.split(".")[0];
-      await authorize();
-      await setUser(userId, kind === "composio" ? { composioToken: "", composioTokenLabel: "" } : { toolboxToken: "" });
+      await setUser(userId, { composioToken: "", composioTokenLabel: "" });
       revokeRemoteMcpsForAuthor(userId);
-      await logEvent("user_connection_removed", { user: userId, connection: kind, via: "activity_settings" });
-      return { notice: `Removed your ${kind === "composio" ? "Composio account" : "Toolbox token"}. Runs in progress stop using it.` };
+      await logEvent("user_connection_removed", { user: userId, connection: "composio", via: "activity_settings" });
+      return { notice: "Removed your Composio account. Runs in progress stop using it." };
     }
     case "mcp.save": {
       const name = str(input.name, 80), url = str(input.url, 2048), token = str(input.token);

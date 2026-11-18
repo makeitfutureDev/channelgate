@@ -6,9 +6,7 @@
 //   - composio-agent: the agent's OWN account — injected independently with the channel token, or
 //     the org token as fallback (the model never learns which; to it this is simply its account).
 //     Both tokens ride x-consumer-api-key headers and are never written to channel storage.
-//   - makeitfuture-toolbox: injected only when a (per-user, channel, or org-default) token is
-//     available, carrying it in the Authorization: Bearer header. (Skills come from the gateway's
-//     own catalog as files — src/gateway/skills — never from an MCP server.)
+//   - make-toolbox: injected for a complete per-channel Make URL/key pair.
 // Selected optional definitions are added by run-engine-mcp.js through the engine adapter.
 // Claude receives explicit safe definitions; ambient user/project settings remain disabled.
 //
@@ -21,7 +19,7 @@
 //
 // RELAYED REMOTES: composio-user
 // and composio-agent in token/endpoint mode always use the daemon socket so membership changes
-// cannot skip human approval. Other header-bearing remotes (the toolboxes) are plain
+// cannot skip human approval. Other header-bearing remotes (Make) are plain
 // `{type:"http", url, headers}` entries on a host target (the engine dials them itself, credential
 // in the file). On an ISOLATED target that file lives in the artifact dir every process in the
 // container can read, so there they become the SAME socket-bridge entry the SDK mode uses, with
@@ -33,7 +31,7 @@
 // still retire a process when a token rotates (src/gateway/run-engine-mcp.js).
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
+import { composioUrl } from "./mcp-catalog.js";
 import { gatewayRoot, runtimeSocketFile } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
@@ -129,7 +127,7 @@ export async function buildMcpConfig(options = {}) {
  * when there is one — the caller owns one hold on it, see registerRemoteMcps) and `rejectedRemotes` (a remote an
  * isolated run could not be given, `[{ name, reason }]`, for the caller's rejected-MCP note).
  */
-export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, channelId = "", slug = "", authorId = "", threadKey = "", admissionThreadKey, questionThreadKey, sudoSchedule = false, origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
+export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, channelId = "", slug = "", authorId = "", threadKey = "", admissionThreadKey, questionThreadKey, sudoSchedule = false, origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
@@ -148,7 +146,6 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   if (userRemote) httpRemotes["composio-user"] = userRemote;
   const sharedRemote = identities.agent ? composioHttpTarget(composioEndpoint, composioToken) : null;
   if (sharedRemote) httpRemotes["composio-agent"] = sharedRemote;
-  if (toolboxToken) httpRemotes["makeitfuture-toolbox"] = { url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
   if (makeToolboxUrl && makeToolboxKey) httpRemotes["make-toolbox"] = { url: makeToolboxUrl, headers: { Authorization: `Bearer ${makeToolboxKey}` } };
   // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, selected authentication
   // header, `publicOnly` so the relay re-checks the destination on every dial. The prefixes keep
@@ -160,7 +157,7 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   }
   // Each server is checked on its own before anything is registered. The relay dials https only
   // and carries bounded, single-line text headers; a remote that fails that (a plain-http
-  // COMPOSIO_MCP_URL / TOOLBOX_MCP_URL override, a malformed endpoint header) cannot be relayed,
+  // COMPOSIO_MCP_URL override, a malformed endpoint header) cannot be relayed,
   // and handing its credential to the container instead is exactly what this path exists to stop.
   // So THAT server alone is dropped from the relayed run and REPORTED through the same
   // rejected-MCP note an unadmittable catalog selection gets; the rest of the turn is unaffected.
@@ -274,7 +271,7 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
       if (endpoint?.mode === "sdk" && endpoint.policyDigest) relayDigest[name] = endpoint.policyDigest;
     }
   }
-  for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customRemotes)]) {
+  for (const name of ["make-toolbox", ...Object.keys(customRemotes)]) {
     const remote = httpRemotes[name];
     if (remote && !servers[name]) servers[name] = isolated || alwaysRelayed(name) ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
   }

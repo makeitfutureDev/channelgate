@@ -2,7 +2,7 @@
 // session), and that key is an ADMIN credential. Inside a run it acts as ONE fixed principal: an
 // admin of the target channel with every channel capability a message gets (Auto/Admin mode, memory,
 // skills, connectors, the gateway tools), but with no person behind it — so no personal scope: no
-// personal Composio/Toolbox token, secrets, skills or SSH keys, and the channel's/agent's Composio
+// personal Composio token, secrets, skills or SSH keys, and the channel's/agent's Composio
 // identity only. The `author` a request names is attribution only. Work that outlives the run
 // (background jobs/agents, schedules) is owned by this same principal. Per-user API keys that act
 // as a proven person are a planned follow-up.

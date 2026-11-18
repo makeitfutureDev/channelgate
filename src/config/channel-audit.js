@@ -13,7 +13,7 @@
 // before/after values.
 //
 // Two rules the allowlist below enforces by construction:
-//   • Only POLICY keys are diffed. Secrets (composioToken, toolboxToken, makeToolboxKey, the `env`
+//   • Only POLICY keys are diffed. Secrets (composioToken, makeToolboxKey, the `env`
 //     bag) are not on the list and can therefore never reach an audit row, whatever a caller passes.
 //     Environment secrets keep their own name-only audit (channel_env_set/_removed).
 //   • `skills` is reported as a COUNT, never as the list — the grant list is long, noisy, and the

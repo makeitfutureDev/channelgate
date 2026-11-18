@@ -48,7 +48,7 @@ export function teamsSettingsUi(stateId) {
       value: String(value ?? ''), choices: choices.map(item => ({ title: String(item.title || item.label || item.value).slice(0, 100), value: String(item.value) })) }),
     input: (id, label, value = '') => ({ type: 'Input.Text', id, label, value: String(value), maxLength: 8000,
       // Teams supports client-side masking as an extension to the Adaptive Card input style.
-      ...(['variableValue', 'composioToken', 'toolboxToken', 'makeToolboxKey', 'personalComposioToken', 'personalToolboxToken', 'imapPassword', 'smtpPassword'].includes(id) ? { style: 'password' } : {}) }),
+      ...(['variableValue', 'composioToken', 'makeToolboxKey', 'personalComposioToken', 'imapPassword', 'smtpPassword'].includes(id) ? { style: 'password' } : {}) }),
   };
 }
 

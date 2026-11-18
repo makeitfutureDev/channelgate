@@ -106,7 +106,7 @@
           <div class="view-head dash-head">
             <div>
               <h2>Users</h2>
-              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> / <strong>Toolbox</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
+              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
             </div>
             <div class="dash-tools">
               <div class="setsearch user-search">
@@ -1110,7 +1110,7 @@
               <section class="setsec" id="set-integrations" data-sec="integrations" aria-labelledby="set-integrations-h">
                 <header class="setsec-head">
                   <h3 id="set-integrations-h">Integrations</h3>
-                  <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
+                  <p class="setsec-desc">Composio endpoints and org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
                   <h4>Organization variables · Enterprise <em class="state secret-state"></em></h4>
@@ -1159,25 +1159,15 @@
                     <span>Personal-mode Composio MCP URL</span>
                     <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
                   </label>
-                  <label class="field">
-                    <span>Toolbox MCP URL</span>
-                    <input id="set-toolbox" type="text" placeholder="https://www.skillsmanager.uk/toolbox" />
-                  </label>
                 </div>
                 <div class="setcard">
                   <h4>Org-default tokens <em class="state" id="composio-personal-token-note"></em></h4>
-                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Toolbox always resolves <strong>channel → user → this org default</strong>. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
+                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
                   <label class="field">
                     <span>Default Composio token <em class="state" id="default-composio-state"></em></span>
                     <input id="set-default-composio-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
                     <input id="set-default-composio" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-composio">clear</button></div>
-                  </label>
-                  <label class="field">
-                    <span>Default Toolbox token <em class="state" id="default-toolbox-state"></em></span>
-                    <input id="set-default-toolbox-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-                    <input id="set-default-toolbox" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-toolbox">clear</button></div>
                   </label>
                 </div>
               </section>
@@ -1601,12 +1591,6 @@
               <input class="ch-composio" type="password" placeholder="leave blank to keep / use org shared default" />
               <em class="state ch-composio-state"></em>
             </label>
-            <label class="field">
-              <span>Channel Toolbox token (used for everyone here — overrides per-user)</span>
-              <input class="ch-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-              <input class="ch-toolboxtoken" type="password" placeholder="leave blank to keep / use per-user" />
-              <em class="state ch-toolboxtoken-state"></em>
-            </label>
           </div>
           <div class="setcard make-toolbox-card">
             <h4>Make MCP toolbox <em class="state ch-make-toolbox-state"></em></h4>
@@ -1770,7 +1754,7 @@
           </label>
           <div class="ch-toggles" style="margin-top:8px">
                 <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — uncapped <code>MEMORY.md</code> + <code>memory/</code> topic files, with compact catalog injection and on-demand FTS retrieval (overrides the global default)</label>
-            <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio/Skills/Toolbox tokens here (channel/user tokens still apply)</label>
+            <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio tokens here (channel/user tokens still apply)</label>
           </div>
         </div>
 
@@ -1854,12 +1838,6 @@
         </div>
         <div class="ud-row ud-composio-inventory"></div>
         <p class="hint">This person's personal accounts. Shared accounts are listed on each channel's Connections page. Save key changes before refreshing.</p>
-        <div class="ud-row">
-          <label class="fldlab">Toolbox token</label>
-          <input class="ud-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-          <input class="ud-toolboxtoken" type="password" placeholder="Toolbox token (Authorization: Bearer)" />
-          <em class="state ud-toolbox-state"></em>
-        </div>
 
         <div class="ud-row ud-custom-mcps-row">
           <label class="fldlab">Personal MCP servers<em class="state cmcp-state"></em></label>

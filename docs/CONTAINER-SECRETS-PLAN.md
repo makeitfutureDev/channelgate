@@ -50,7 +50,7 @@ work; `FEATURES.md` and `TEST-PLAN.md` are updated phase by phase as code lands.
 | Path | File / mechanism | Container-visible? | Fix in |
 |---|---|---|---|
 | Org / channel / personal env secrets | `--env-file` under `~/.channelgate/channels/<p>/<slug>/runtime/env/<run>.env` (0600, unmounted) but values land in the process environment (`src/runtimes/container/exec.js:109`) | yes (env of every process, `/proc/*/environ`) | P2 |
-| Remote MCP headers (Composio user/agent legacy, toolbox, Make, catalog servers) | `cg-mcp-<uuid>.json` in the ARTIFACT dir, mounted rw (`src/gateway/run.js:1236`) | yes (file) | P1 |
+| Remote MCP headers (Composio user/agent legacy, Make, catalog servers) | `cg-mcp-<uuid>.json` in the ARTIFACT dir, mounted rw (`src/gateway/run.js:1236`) | yes (file) | P1 |
 | Codex remote MCP headers | `<artifact>/run/cg-codex-secrets-<uuid>.json` + `*.headers.cjs` (`src/engines/codex.js:946`) | yes (file) | P1 |
 | Composio SDK sessions (Enterprise) | daemon-side bridge over the control socket; container holds only the capability + session URL (`src/ee/composio-sdk-bridge.js`) | no | already correct — the model for P1 |
 | Claude login | relay of the access token in `CLAUDE_CODE_OAUTH_TOKEN` (`src/gateway/claude-token-relay.js`) | yes (env) | P2 |
@@ -119,7 +119,7 @@ gains a `remoteMcps[]` claim (server name + URL, bounded like `composioSessions`
 alone fixes what a run may reach.
 
 - `src/gateway/mcp.js` + `run-integrations.js`: every header-bearing remote server (Composio
-  legacy user/agent, toolbox, Make, credentialed catalog servers) becomes a `command` entry over
+  legacy user/agent, Make, credentialed catalog servers) becomes a `command` entry over
   the bridge; `cg-mcp-*.json` carries no token.
 - `src/engines/codex.js`: drop the secrets bundle and header helpers for remote servers; Codex
   reaches them through `secret-env-bridge → cg-mcp-bridge` exactly like the gateway server.

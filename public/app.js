@@ -2473,11 +2473,8 @@ function renderChannelDetail(ch) {
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (meta.hasComposioToken ? "" : "no token (uses org default)");
-  card.querySelector(".ch-toolboxtoken-state").textContent = meta.hasToolboxToken ? "" : "no token (uses each user's own)";
   attachReveal(card.querySelector(".ch-composio"), { has: meta.hasComposioToken, last4: meta.composioTokenLast4, fetch: revealSecret("channel", "composioToken", ch.slug) });
-  attachReveal(card.querySelector(".ch-toolboxtoken"), { has: meta.hasToolboxToken, last4: meta.toolboxTokenLast4, fetch: revealSecret("channel", "toolboxToken", ch.slug) });
   card.querySelector(".ch-composio-label").value = meta.composioTokenLabel || "";
-  card.querySelector(".ch-toolboxtoken-label").value = meta.toolboxTokenLabel || "";
   // Per-channel environment secrets. These are the ONE part of the channel card that saves
   // immediately rather than on the card's Save button: the card round-trips its fields, and a
   // write-only value must never be a field that round-trips. The list is names + last4 only —
@@ -2561,9 +2558,7 @@ function renderChannelDetail(ch) {
   // ── Save (full meta PUT — identical body/fields to before) ────────────────────
   savebar.querySelector(".save-channel").addEventListener("click", async () => {
     const composioTok = tokenValue(card.querySelector(".ch-composio"));
-    const toolboxTok = tokenValue(card.querySelector(".ch-toolboxtoken"));
     const composioLabel = card.querySelector(".ch-composio-label").value;
-    const toolboxLabel = card.querySelector(".ch-toolboxtoken-label").value;
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
     const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
@@ -2611,10 +2606,8 @@ function renderChannelDetail(ch) {
           model: card.querySelector(".ch-model").value,
           effort: card.querySelector(".ch-effort").value,
           ...(composioTok ? { composioToken: composioTok } : {}),
-          ...(toolboxTok ? { toolboxToken: toolboxTok } : {}),
           // Owner labels always round-trip (empty clears them) — notes, not secrets.
           composioTokenLabel: composioLabel,
-          toolboxTokenLabel: toolboxLabel,
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
           ...(clearMakeToolbox ? { clearMakeToolbox: true } : {}),
@@ -3583,8 +3576,7 @@ function renderUsersTable() {
     const loadedSkills = accessGrantSkillSelection(skillOptions, u.skills || []).length;
     const tok =
       `<span class="tokdots">` +
-      `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i>` +
-      `<i class="${u.hasToolboxToken ? "set" : ""}" title="Toolbox">T</i></span>`;
+      `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i></span>`;
     return `<tr data-id="${escapeHtml(id)}"${userDrawerId === id ? ' class="sel"' : ""}>
       <td>${escapeHtml(u.name || id)}</td>
       <td class="mono">${escapeHtml(id)}</td>
@@ -3642,7 +3634,6 @@ function openUserDrawer(id) {
   node.querySelector(".ud-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (u.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (u.hasComposioToken ? "" : "no token set");
-  node.querySelector(".ud-toolbox-state").textContent = u.hasToolboxToken ? "" : "no token set";
 
   drawer.innerHTML = "";
   drawer.hidden = false;
@@ -3664,9 +3655,7 @@ function openUserDrawer(id) {
 
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
-  attachReveal(drawer.querySelector(".ud-toolboxtoken"), { has: u.hasToolboxToken, last4: u.toolboxTokenLast4, fetch: revealSecret("user", "toolboxToken", id) });
   drawer.querySelector(".ud-composio-label").value = u.composioTokenLabel || "";
-  drawer.querySelector(".ud-toolboxtoken-label").value = u.toolboxTokenLabel || "";
   mountComposioInventory(drawer.querySelector(".ud-composio-inventory"), `/api/users/${encodeURIComponent(id)}/composio-connections`);
 
   drawer.querySelector(".ud-close").addEventListener("click", closeUserDrawer);
@@ -3715,10 +3704,8 @@ function openUserDrawer(id) {
   const saved = drawer.querySelector(".ud-saved");
   drawer.querySelector(".ud-save").addEventListener("click", async () => {
     const token = tokenValue(drawer.querySelector(".ud-composio"));
-    const toolboxToken = tokenValue(drawer.querySelector(".ud-toolboxtoken"));
     // Owner labels always round-trip (empty clears them) — notes, not secrets.
     const composioTokenLabel = drawer.querySelector(".ud-composio-label").value;
-    const toolboxTokenLabel = drawer.querySelector(".ud-toolboxtoken-label").value;
     saved.textContent = "saving…";
     try {
       await api(`/api/users/${encodeURIComponent(id)}`, {
@@ -3730,9 +3717,7 @@ function openUserDrawer(id) {
           nudges: drawer.querySelector(".ud-nudges").checked,
           replyMentions: drawer.querySelector(".ud-reply-mentions").checked,
           ...(token ? { composioToken: token } : {}),
-          ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,
-          toolboxTokenLabel,
           accessGrants: userGrantsEditor.getValues(),
         }),
       });
@@ -4263,14 +4248,10 @@ function readSettingsForm() {
     ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
     ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
     ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
-    ...(tokenValue(document.getElementById("set-default-toolbox")) ? { defaultToolboxToken: tokenValue(document.getElementById("set-default-toolbox")) } : {}),
-    ...(document.getElementById("clear-default-toolbox").classList.contains("armed") ? { clearDefaultToolboxToken: true } : {}),
     // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
     defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
-    defaultToolboxTokenLabel: document.getElementById("set-default-toolbox-label").value,
     accessGrants: orgGrantsEditor?.getValues() || {},
     composioMcpUrl: document.getElementById("set-composio").value,
-    toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
     appleAppIds: document.getElementById("set-apple-app-ids").value,
     logoColor: document.getElementById("set-logo-hex").value,
@@ -4435,7 +4416,6 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-composio-sdk-key"), "");
   syncComposioModeUi();
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
-  document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
   document.getElementById("set-apple-app-ids").value = s.appleAppIds || "";
   paintLogoColor(s.logoColor || "#ff642f");
@@ -4473,11 +4453,8 @@ function paintSettings(s) {
     ? `teams app create --name "ChannelGate" --endpoint "${teamsEndpoint}"`
     : 'teams app create --name "ChannelGate" --endpoint "https://<public-url>/api/teams/messages"';
   document.getElementById("default-composio-state").textContent = tokenState(s.hasDefaultComposioToken, s.defaultComposioTokenLast4);
-  document.getElementById("default-toolbox-state").textContent = tokenState(s.hasDefaultToolboxToken, s.defaultToolboxTokenLast4);
   attachReveal(document.getElementById("set-default-composio"), { has: s.hasDefaultComposioToken, last4: "", fetch: revealSecret("settings", "defaultComposioToken") });
-  attachReveal(document.getElementById("set-default-toolbox"), { has: s.hasDefaultToolboxToken, last4: "", fetch: revealSecret("settings", "defaultToolboxToken") });
   document.getElementById("set-default-composio-label").value = s.defaultComposioTokenLabel || "";
-  document.getElementById("set-default-toolbox-label").value = s.defaultToolboxTokenLabel || "";
   document.getElementById("set-ctxwindow").value = s.contextWindow || "";
   if (s.engine) document.getElementById("set-engine").value = s.engine;
   GLOBAL_ENGINE = s.engine || "claude";
@@ -4778,7 +4755,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -4941,7 +4918,7 @@ function bindSettings() {
           connectSlack: slackTokenChanged,
         }),
       });
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.

@@ -87,13 +87,13 @@ test('CSRF, hostile origin, forged authority and personal scopes are checked ser
   assert.equal((await f.post(opened, { action: 'settings.personal.save', personalComposioToken: 'connection-test-fixture-secret', ownerId: 'forged' })).status, 303);
   assert.equal((await getUser(f.ownerId)).composioToken, 'connection-test-fixture-secret');
   assert.equal((await f.post(opened, { action: 'settings.connections.save', makeToolboxUrl: 'https://eu1.make.com/mcp/server/browser-fixture', makeToolboxKey: 'make-connection-fixture-secret' })).status, 303);
-  assert.equal((await f.post(opened, { action: 'settings.connections.save', toolboxToken: 'rotated-toolbox-fixture-secret', makeToolboxUrl: '' })).status, 303);
+  assert.equal((await f.post(opened, { action: 'settings.connections.save', composioToken: 'rotated-composio-fixture-secret', makeToolboxUrl: '' })).status, 303);
   const meta = await getChannelMeta(f.entry.slug);
   assert.equal(meta.makeToolboxUrl, 'https://eu1.make.com/mcp/server/browser-fixture');
   assert.equal(meta.makeToolboxKey, 'make-connection-fixture-secret');
-  assert.equal(meta.toolboxToken, 'rotated-toolbox-fixture-secret');
+  assert.equal(meta.composioToken, 'rotated-composio-fixture-secret');
   const html = await (await fetch(f.base + opened.route, { headers: { cookie: opened.cookie } })).text();
-  for (const value of ['personal-test-fixture-secret', 'connection-test-fixture-secret', 'make-connection-fixture-secret', 'rotated-toolbox-fixture-secret']) assert.ok(!html.includes(value));
+  for (const value of ['personal-test-fixture-secret', 'connection-test-fixture-secret', 'make-connection-fixture-secret', 'rotated-composio-fixture-secret']) assert.ok(!html.includes(value));
   assert.equal((await f.post(opened, { action: 'settings.cloud.toggle' })).status, 400);
 });
 

@@ -31,7 +31,6 @@ Composio's Slack toolkit is how the bot does Slack actions beyond the gateway's 
 (send elsewhere, schedule, canvas, react, cross-channel search — see `references/messages.md`).
 
 Other personal integrations:
-- `set_my_toolbox_token` / `clear_my_toolbox_token` — Toolbox.
 
 `composio-agent` always remains separate from every user's `composio-user` connection, and it is
 never injected in a **DM** — a one-to-one conversation only ever gets the requester's personal

@@ -360,7 +360,7 @@ test("remote-mcp refuses an unregistered jti, a name outside the claim, and an e
   // No claim at all (an old-shaped token with the same jti): nothing is relayed.
   assert.deepEqual(await refusal(hello(capability({ jti }), "composio-user")), REFUSED);
   // A name that is neither claimed nor registered, and a malformed one.
-  assert.deepEqual(await refusal(hello(narrow, "makeitfuture-toolbox")), REFUSED);
+  assert.deepEqual(await refusal(hello(narrow, "ungranted-remote")), REFUSED);
   assert.deepEqual(await refusal(hello(narrow, "../../etc/passwd")), REFUSED);
 
   // A registration that has expired (its capability outlived it only in this test).
@@ -552,12 +552,12 @@ test("a gateway hello carrying arguments is refused: an old image's broker dropp
   // An argument-free gateway hello is untouched (the other tests in this file prove it serves).
 });
 
-test("clear_my_composio_token / clear_my_toolbox_token drop every relay grant minted for that author", async (t) => {
+test("clear_my_composio_token drops every relay grant minted for that author", async (t) => {
   // The control-plane gate asks for a human click; the daemon handler here approves it.
   const socketPath = await serverOn(t, { approval: () => ({ allow: true, reason: "Approved by test", decidedBy: AUTHOR }) });
   const exp = Date.now() + 60_000;
   const servers = { "composio-user": RELAYED["composio-user"] };
-  for (const tool of ["clear_my_composio_token", "clear_my_toolbox_token"]) {
+  for (const tool of ["clear_my_composio_token"]) {
     registerRemoteMcps({ jti: `mine-${tool}`, exp, servers, meta: { authorId: AUTHOR, slug: SLUG, channelId: CHANNEL, origin: "slack_foreground" } });
     registerRemoteMcps({ jti: `theirs-${tool}`, exp, servers, meta: { authorId: "U_SOMEONE_ELSE", slug: SLUG, channelId: CHANNEL, origin: "slack_foreground" } });
     const answer = await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: capability() }, (client) => client.callTool({ name: tool, arguments: {} }));

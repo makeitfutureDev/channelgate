@@ -84,7 +84,7 @@ and other binary files open after download. Slack-only tools are
 unavailable on Teams. A public download URL remains a separate `create_public_file_link` action:
 ask for its duration and wait for the original conversation's native Approve card.
 
-Personal Composio and Toolbox tokens can be saved or disconnected under `/settings` → MCPs →
+Personal Composio tokens can be saved or disconnected under `/settings` → MCPs →
 **My connections**. Inputs are masked and never prefilled. Do not ask anyone to paste credentials
 into a channel/group message or move to a DM to set them.
 

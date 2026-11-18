@@ -45,32 +45,6 @@ Remove the requester’s personal Composio key.
 
 **Restrictions:** Also revokes active daemon remote-MCP author relays so a removed token stops working; shared credentials remain unchanged.
 
-## set_my_toolbox_token
-
-Save the requester’s personal Toolbox bearer token.
-
-| Argument | Required | Meaning and default |
-| --- | --- | --- |
-| `token` | Yes | Trimmed token of at least six characters. |
-
-**Authority and scope:** Verified trusted person; personal Toolbox credential.
-
-**Result:** Saved confirmation without token echo.
-
-**Restrictions:** Use a DM and delete its source message if this chat path is used. The connected server determines account permissions.
-
-## clear_my_toolbox_token
-
-Remove the requester’s personal Toolbox credential.
-
-**Arguments:** none.
-
-**Authority and scope:** Verified trusted person, personal scope.
-
-**Result:** Removal confirmation.
-
-**Restrictions:** Revokes the author’s active remote-MCP relay registrations; conversation/organization fallback credentials are independent.
-
 ## list_secrets
 
 List configured environment secret metadata without values.
@@ -226,7 +200,7 @@ An email account is a mailbox's IMAP and SMTP settings entered once on one form 
 
 ## Related guides
 
-[Accounts](/docs/features/connected-accounts), [environment configuration](/docs/configuration/environment-variables), [secrets](/docs/features/secrets), [Composio SDK](/docs/features/composio-sdk), and [Toolbox/Make](/docs/features/toolbox-and-make).
+[Accounts](/docs/features/connected-accounts), [environment configuration](/docs/configuration/environment-variables), [secrets](/docs/features/secrets), [Composio SDK](/docs/features/composio-sdk), and [Make connections](/docs/features/make-mcp).
 
 ## create_api_token
 

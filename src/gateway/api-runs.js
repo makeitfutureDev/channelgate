@@ -854,7 +854,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       sessionId: job.conversationKey ? "" : job.sessionId,
       overrides,
       signal,
-      // Organization key: no personal scope — nobody's personal Composio/Toolbox token, secrets or
+      // Organization key: no personal scope — nobody's personal Composio token, secrets or
       // skills, the channel's (agent) identities only; admin rank comes from the principal itself
       // (config/api-principal.js). Channel token: the creator is a trusted principal exactly as in
       // Slack. Recovery never re-enters this driver: it only delivers a saved result or

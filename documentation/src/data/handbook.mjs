@@ -311,8 +311,8 @@ export const featureGroups = [
         "description": "Provision reusable user and channel app sessions with the Enterprise Beta integration."
       },
       {
-        "slug": "toolbox-and-make",
-        "label": "Toolbox and Make connections",
+        "slug": "make-mcp",
+        "label": "Make connections",
         "description": "Use optional credential-backed tool servers without mixing account scopes."
       },
       {

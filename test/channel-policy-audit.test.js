@@ -68,12 +68,12 @@ test("policyDiff reports only the policy keys that actually changed", () => {
 
 test("policyDiff can never carry a token, an env value, or any other non-policy field", () => {
   const changes = policyDiff(
-    { composioToken: "comp_old_1111", toolboxToken: "tb_old", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, memory: false, allowNetwork: false },
-    { composioToken: "comp_new_2222", toolboxToken: "tb_new", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, memory: true, allowNetwork: true },
+    { composioToken: "comp_old_1111", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, memory: false, allowNetwork: false },
+    { composioToken: "comp_new_2222", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, memory: true, allowNetwork: true },
   );
   assert.deepEqual(Object.keys(changes), ["allowNetwork"], "only the allowlisted policy key is diffed");
   const blob = JSON.stringify(changes);
-  for (const secret of ["comp_old_1111", "comp_new_2222", "tb_old", "tb_new", "mk_old", "mk_new", "sk-old", "sk-new"]) {
+  for (const secret of ["comp_old_1111", "comp_new_2222", "mk_old", "mk_new", "sk-old", "sk-new"]) {
     assert.ok(!blob.includes(secret), `${secret} must never reach an audit row`);
   }
 });

@@ -1272,11 +1272,7 @@ function settingsBrowser(config, browser, theme, connections) {
         "Save", (v) => ({ action: "composio.save", token: v.token, label: v.label })));
       }
       cards.push(composio);
-      const toolbox = card("Toolbox", "Your personal token for the gateway's Toolbox server" + (c.toolboxServer ? " (" + c.toolboxServer + ")" : "") + ".");
-      toolbox.append(row(c.toolbox.configured ? "Configured" + (c.toolbox.last4 ? " · ••••" + c.toolbox.last4 : "") : "Not set", "",
-        c.toolbox.configured ? [button("Remove", confirmThen("Remove your Toolbox token?", { action: "toolbox.remove" }), "settings-button danger")] : []));
-      toolbox.append(form([field(c.toolbox.configured ? "Replace token" : "Token", input("token", { type: "password", max: 4096 }))], "Save", (v) => ({ action: "toolbox.save", token: v.token })));
-      cards.push(toolbox);
+
       const email = card("Email accounts", "Mailboxes only your runs read and send from. Saving logs in to IMAP and SMTP first; passwords are never shown again.");
       for (const account of c.email) {
         email.append(row(account.name + " · " + account.address, "IMAP " + account.imap.host + ":" + account.imap.port + " · SMTP " + account.smtp.host + ":" + account.smtp.port + (account.sendEnabled ? "" : " · sending off"), [

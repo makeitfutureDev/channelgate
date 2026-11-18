@@ -711,7 +711,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
   // The HTTP run API principal (config/api-principal.js): its key is an ADMIN credential, but no
   // person stands behind it. So it ranks as an admin (`rankUntrusted` stays false) while every
-  // PERSONAL lookup — grants, secrets, Composio/Toolbox tokens, the capability's principal — is
+  // PERSONAL lookup — grants, secrets, Composio tokens, the capability's principal — is
   // withheld exactly as for an unauthenticated author. The same holds for the schedules and
   // background work it owns, whose later runs carry it as their author.
   const apiKeyPrincipal = isApiPrincipal(authorId);
@@ -1260,11 +1260,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // resolves stable user/channel identities into per-thread sessions. Stored personal-mode tokens
   // are never mutated when SDK mode is active. Clean mode injects none.
   const {
-    userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken, emailSecrets = [],
+    userIdentity, composio, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, emailSecrets = [],
     makeToolboxUrl, makeToolboxKey, customMcps, composioIdentityPrefix,
   } = await resolveRunIntegrations({ meta, channelId, authorId, threadKey, workspaceId, clean, untrustedPrincipal });
   const authorIsAdmin = userIdentity.isAdmin || apiKeyPrincipal;
-  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey, ...customMcpTokens(customMcps), ...emailSecrets);
+  outputSecrets.push(composioUserToken, composioToken, makeToolboxKey, ...customMcpTokens(customMcps), ...emailSecrets);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();
@@ -1274,7 +1274,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const mcpRuntimeInput = {
     clean,
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
-    toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
+    makeToolboxUrl, makeToolboxKey, customMcps,
     channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, origin,
     questionThreadKey, sudoSchedule: sudoSchedule || sudoQuestion,
     progressReport: progressReportEnabled,
@@ -1455,7 +1455,6 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     allowedMcpCount: clean ? 0 : (Array.isArray(meta.allowedMcps) ? meta.allowedMcps.length : 0),
     composioUser: composio.user.source,
     composio: composio.shared.source,
-    toolbox: toolbox.source,
     makeToolbox: Boolean(makeToolboxUrl && makeToolboxKey),
     customMcps: Object.keys(customMcps),
   });
@@ -1594,7 +1593,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         forkSourceSessionId: fresh ? forkSourceSessionId : "",
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
-        composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
+        composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
         makeToolboxUrl, makeToolboxKey, customMcps, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled,
         allowedMcps: clean ? [] : (meta[adapter.mcpMetaKey] || []),
         claudePluginDirs: grantArtifacts.claudePluginDirs,
@@ -1721,8 +1720,6 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     hasComposio: Boolean(composioToken || composioEndpoint),
     composioSource: composio.shared.source,
     usedChannelComposio: composio.shared.source === "channel", // a DM refuses it even when one is stored
-    hasToolbox: Boolean(toolboxToken),
-    usedChannelToolbox: !clean && Boolean(meta.toolboxToken),
     hasMakeToolbox: Boolean(makeToolboxUrl && makeToolboxKey),
   };
 
@@ -1840,7 +1837,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           mcpConfigFingerprint: fallbackMcpRuntime.mcpConfigFingerprint, strictMcp,
           settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
-          composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
+          composioUserToken, composioToken, makeToolboxUrl, makeToolboxKey, customMcps,
           gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort,
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           onSessionResolved: sessionResolved(fbKey, fallbackEngine),

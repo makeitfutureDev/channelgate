@@ -1,5 +1,5 @@
 // Personal token tools for the gateway control MCP server: set/clear the author's own
-// Composio and Toolbox tokens, plus the ENVIRONMENT secrets — one listing across all three
+// Composio tokens, plus the ENVIRONMENT secrets — one listing across all three
 // scopes and one setter/remover for the two that have no channel to hang a modal off (a
 // personal secret is set from the author's DM, an organization one belongs to the deployment).
 // Split out of gateway-server.js — registered via register(server, ctx).
@@ -114,38 +114,6 @@ export function register(server, ctx) {
       // token must stop working now, not in six hours (src/mcp/remote-mcp-registry.js).
       revokeRemoteMcpsForAuthor(createdBy);
       return text("🗑️ Removed your Composio token.");
-    }
-  );
-
-  // ── Personal Toolbox token (any user, for themselves) ───────────────────────────
-  server.registerTool(
-    "set_my_toolbox_token",
-    {
-      description:
-        "Set YOUR OWN personal Toolbox (makeitfuture-toolbox) access token so your messages can use " +
-        "your Toolbox tools. It's sent as an Authorization: Bearer token. IMPORTANT: send it in a DM " +
-        "with the bot, never in a shared channel, and DELETE the message containing the token " +
-        "immediately after — it stays readable in Slack history until you do. Use " +
-        "clear_my_toolbox_token to remove it.",
-      inputSchema: { token: z.string() },
-    },
-    async ({ token }) => {
-      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
-      const t = (token || "").trim();
-      if (t.length < 6) return text("That doesn't look like a valid Toolbox token.");
-      await setUser(createdBy, { toolboxToken: t });
-      return text(`✅ Saved your Toolbox token. It'll be used for your messages.${DELETE_MSG_WARNING}`);
-    }
-  );
-
-  server.registerTool(
-    "clear_my_toolbox_token",
-    { description: "Remove YOUR OWN Toolbox token.", inputSchema: {} },
-    async () => {
-      if (!principalTrusted || !createdBy) return text(NO_PERSONAL_CONTEXT);
-      await setUser(createdBy, { toolboxToken: "" });
-      revokeRemoteMcpsForAuthor(createdBy); // same reason as clear_my_composio_token
-      return text("🗑️ Removed your Toolbox token.");
     }
   );
 

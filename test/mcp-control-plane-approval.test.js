@@ -668,7 +668,6 @@ test("every registered gateway tool is consciously classified as gated or open (
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
     "set_my_reply_mentions", // own verified preference; automatic, handler rejects untrusted principals
     "set_my_composio_token", "clear_my_composio_token",
-    "set_my_toolbox_token", "clear_my_toolbox_token",
     // environment secret scopes that are not the channel's: each changes which account future runs
     // authenticate as, and the organization one does it for every conversation at once
     "set_secret", "remove_secret",

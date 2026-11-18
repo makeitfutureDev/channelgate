@@ -28,7 +28,7 @@ function snapshot(overrides = {}) {
   return {
     account: { id: "U_ME", name: "<img src=x onerror=alert(1)>", role: "member" },
     general: { nudges: false, replyMentions: false },
-    connections: { composioMode: "personal", composio: { configured: true, last4: "0001", label: "Work" }, toolbox: { configured: false, last4: "" }, toolboxServer: "toolbox.example", email: [] },
+    connections: { composioMode: "personal", composio: { configured: true, last4: "0001", label: "Work" }, email: [] },
     mcps: { limit: 5, servers: [] }, variables: [{ name: "API_TOKEN", exposure: "hidden", hosts: [], last4: "3456", provider: "local", setAt: 0 }],
     skills: { options: [{ key: "writer", label: "writer", description: "Writes" }], selected: [], foreign: [] },
     ssh: { max: 5, keys: [] }, ...overrides,
@@ -103,7 +103,8 @@ test("secret inputs are never prefilled, and access loss clears the page", async
   await flush();
   assert.equal(nav.all().find((c) => c.attrs["aria-current"] === "page").textContent, "Connections");
   const passwords = panel.all().filter((c) => c.tag === "input" && c.type === "password");
-  assert.ok(passwords.length >= 2);
+  assert.ok(passwords.length >= 1);
+  assert.doesNotMatch(panel.textContent, /Toolbox/);
   assert.ok(passwords.every((c) => c.value === ""));
   assert.match(panel.textContent, /Connected · ••••0001/);
   ended = true;

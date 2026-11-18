@@ -7,6 +7,7 @@ import path from "node:path";
 import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
+import { stripDeadSettings } from "./dead-fields.js";
 import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
@@ -29,7 +30,6 @@ const ENV_MAP = {
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   sessionKeepalive: "SESSION_KEEPALIVE",
   composioMcpUrl: "COMPOSIO_MCP_URL",
-  toolboxMcpUrl: "TOOLBOX_MCP_URL",
   publicUrl: "GATEWAY_PUBLIC_URL",
   platformUrl: "CHANNELGATE_PLATFORM_URL",
   appleAppIds: "GATEWAY_APPLE_APP_IDS",
@@ -37,7 +37,7 @@ const ENV_MAP = {
 
 export function getSettings() {
   try {
-    return JSON.parse(readFileSync(settingsFile(), "utf8"));
+    return stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
   } catch {
     return {};
   }
@@ -134,11 +134,11 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     }
     // Bumped LAST, so a patch can never set (or freeze) the version it is being checked against.
     next.settingsRev = Number(currentVersion) + 1;
-    // 0600: this file holds the Slack tokens, the org Composio/Skills/Toolbox tokens, the run-API
+    // 0600: this file holds the Slack tokens, the org Composio tokens, the run-API
     // key and the admin password.
-    writeSecretFile(settingsFile(), JSON.stringify(next, null, 2) + "\n");
+    writeSecretFile(settingsFile(), JSON.stringify(stripDeadSettings(next), null, 2) + "\n");
     db.exec("COMMIT");
-    return next;
+    return stripDeadSettings(next);
   } catch (e) {
     try {
       db.exec("ROLLBACK");
@@ -157,6 +157,11 @@ const ambientEnv = new Map(); // envName → original process.env value (undefin
 // Push stored settings into process.env (UI-managed values win over .env). Cleared settings
 // restore the ambient value from boot — or delete the variable if it never had one.
 export function applySettingsToEnv() {
+  // Boot also removes retired credentials from the settings file itself. Read failures retain
+  // the existing getSettings() fallback; a cleanup write failure must remain visible.
+  let stored;
+  try { stored = JSON.parse(readFileSync(settingsFile(), "utf8")); } catch { /* no readable settings */ }
+  if (stored && stripDeadSettings(stored) !== stored) saveSettings({});
   const s = getSettings();
   for (const [key, envName] of Object.entries(ENV_MAP)) {
     if (!ambientEnv.has(envName)) ambientEnv.set(envName, process.env[envName]);
@@ -997,18 +1002,11 @@ export function getComposioSdkPolicy() {
   return normalizeComposioSdkPolicy(getSettings().composioSdkPolicy);
 }
 
-// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Toolbox
-// uses the full channel → user → org chain (see src/gateway/run.js). Write-only via the admin API
-// (masked on read), never logged.
+// Organization default for the shared Composio identity, after the channel token.
 export function getDefaultComposioToken() {
   const v = getSettings().defaultComposioToken;
   return typeof v === "string" ? v : "";
 }
-export function getDefaultToolboxToken() {
-  const v = getSettings().defaultToolboxToken;
-  return typeof v === "string" ? v : "";
-}
-
 // Skills platform (src/gateway/skills). A GitHub token for private skill repositories and API
 // rate limits — daemon-side only, never in a channel folder or an MCP config; write-only via the
 // admin API. The sync interval in minutes (0 = off) and the always-on context estimate above
@@ -1243,7 +1241,6 @@ export function settingsForApi() {
     hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
     composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
-    toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
     appleAppIds: getAppleAppIds().join(", "),
     logoColor: getLogoColor(),
@@ -1259,9 +1256,6 @@ export function settingsForApi() {
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
     defaultComposioTokenLast4: last4(getDefaultComposioToken()),
     defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
-    hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
-    defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
-    defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
     hasSkillsGithubToken: Boolean(getSkillsGithubToken()),
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
     hasSkillsPublishGithubToken: Boolean(getSkillsPublishGithubToken()),

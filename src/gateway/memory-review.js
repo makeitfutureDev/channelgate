@@ -185,7 +185,7 @@ export async function runMemoryReview({
   const claudeOauthToken = containerClaudeCredential({ target, relay, channelId })?.token || "";
 
   // The reviewer's MCP config: the gateway control server ONLY, narrowed to the save tool. No
-  // Composio/Skills/Toolbox identities — it has no business acting as anyone. A 0600 file under
+  // Composio identities — it has no business acting as anyone. A 0600 file under
   // the channel's bind-mounted artifact dir, because the gateway root is not mounted into a
   // container and the engine there could not open it.
   const mcpConfigJson = await buildMcpConfig({

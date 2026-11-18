@@ -3,7 +3,7 @@
 
 export function reconcileChannelMeta(current = {}, saved = {}) {
   const next = { ...current, ...saved };
-  for (const prefix of ["composio", "toolbox"]) {
+  for (const prefix of ["composio"]) {
     const tokenKey = `${prefix}Token`;
     if (!Object.prototype.hasOwnProperty.call(saved, tokenKey)) continue;
     const token = String(saved[tokenKey] || "");

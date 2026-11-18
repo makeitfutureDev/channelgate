@@ -26,7 +26,6 @@ await setUser("U_SEARCH_ADMIN", {
 await setUser("U_SEARCH_APPROVED", {
   name: "Beta Builder",
   approved: true,
-  toolboxToken: "toolbox-search-secret",
 });
 await setUser("U_SEARCH_NONE", { name: "Gamma Guest", approved: false });
 
@@ -42,8 +41,9 @@ test("user search folds case and accents and ANDs multiple terms", async () => {
 });
 
 test("user search covers visible role and configured-token status", async () => {
-  assert.deepEqual(Object.keys((await search("approved toolbox")).users), ["U_SEARCH_APPROVED"]);
+  assert.deepEqual(Object.keys((await search("approved toolbox")).users), []);
   assert.deepEqual(Object.keys((await search("no access")).users), ["U_SEARCH_NONE"]);
+  assert.deepEqual(Object.keys((await search("no tokens")).users).sort(), ["U_SEARCH_APPROVED", "U_SEARCH_NONE"]);
   assert.deepEqual(Object.keys((await search("composio")).users), ["U_SEARCH_ADMIN"]);
   assert.deepEqual(Object.keys((await search("does-not-exist")).users), []);
 });
@@ -53,7 +53,6 @@ test("search indexes the masked shape and never leaks a matching secret", async 
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.users, {});
   assert.equal(result.body.includes("composio-search-secret"), false);
-  assert.equal(result.body.includes("toolbox-search-secret"), false);
   assert.equal(filterUsersForSearch(result.users, ""), result.users, "blank searches preserve the masked listing");
 });
 

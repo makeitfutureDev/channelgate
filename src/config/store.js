@@ -50,7 +50,7 @@ export async function ensureRoot() {
 }
 
 // ── Users (global) ────────────────────────────────────────────────────────────
-// Shape: { "<platformUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
+// Shape: { "<platformUserId>": { name, composioToken, isAdmin, approved,
 //          nudges, replyMentions, skills[], allowedMcps[], allowedCodexMcps[] } }
 export async function getUsers() {
   const rows = getDb().prepare("SELECT user_id, data FROM users").all();
@@ -78,7 +78,7 @@ export async function setUser(userId, patch) {
     const values = typeof patch === "function" ? patch(existing) : patch;
     if (values === null) { db.exec("COMMIT"); return existing; }
     const next = {
-      name: "", composioToken: "", toolboxToken: "", isAdmin: false,
+      name: "", composioToken: "", isAdmin: false,
       approved: false, replyMentions: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
       allowedOpenCodeMcps: [], ...existing,
     };
@@ -117,10 +117,6 @@ export async function isApproved(userId) {
 
 export async function getComposioToken(userId) {
   return (await getUser(userId))?.composioToken || "";
-}
-
-export async function getToolboxToken(userId) {
-  return (await getUser(userId))?.toolboxToken || "";
 }
 
 // ── Channels index (global) ─────────────────────────────────────────────────
@@ -245,7 +241,6 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     extraFolders: [], // admin-declared additional host folders mounted beside it: [{ path, mode: "rw"|"ro" }] (src/gateway/extra-folders.js)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)
     composioToken: "", // shared `composio` token; personal `composio-user` remains available too
-    toolboxToken: "", // channel-wide Toolbox token used for everyone here (overrides per-user)
     makeToolboxUrl: "", // per-channel Make MCP toolbox server URL (key stays separate)
     makeToolboxKey: "", // per-channel Make MCP toolbox Bearer key
     model: "", // model override for this channel (empty = engine default)

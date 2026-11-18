@@ -196,7 +196,7 @@ session gets:
 - **The same MCP servers a turn gets:** the gateway's control tools (memory, schedules, skills,
   channel settings, the bot's Slack tools; not the background-job, progress and approval-card
   tools, which speak into a thread a session does not have), `composio-user` for YOUR connected
-  accounts, `composio-agent` for the channel's, the toolboxes and the channel's selected catalog
+  accounts, `composio-agent` for the channel's, the Make connection and the channel's selected catalog
   servers — and nothing else (`--strict-mcp-config`): the operator's own claude.ai connectors
   are not loaded.
 - **The run environment:** the organization's, your own and the channel's secrets, by the names a
