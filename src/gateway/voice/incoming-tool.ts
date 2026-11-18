@@ -7,7 +7,7 @@ interface Context {
   requireChannelAccess: () => Promise<boolean>;
   text: (message: string) => { content: { type: "text"; text: string }[] };
 }
-export function registerIncomingCallTool(server: McpServer, ctx: Context) {
+export function registerIncomingCallTool(server: McpServer, ctx: Context): void {
   server.registerTool("call_user", {
     description: "Ring the requesting person's registered iPhone about THIS thread. Requires a human approval card (Auto never bypasses it). "
       + "No arbitrary recipient or conversation may be supplied. The user answers using CallKit; only then does a voice session start. "

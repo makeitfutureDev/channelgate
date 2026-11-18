@@ -14,6 +14,21 @@ type DeviceRow = PushDevice & { id: string; owner_id: string; bundle_id: string;
 type Invitation = { id: string; owner_id: string; channel_id: string; thread_ts: string; token_hash: string; title: string; status: string; expires_ms: number; ring_ms: number; created_ms: number; call_id: string };
 export interface InviteTarget { ownerId: string; channelId: string; threadTs: string }
 export interface DeviceInput { platform?: unknown; kind?: unknown; token?: unknown; bundleId?: unknown; environment?: unknown; name?: unknown }
+export interface RegisteredDevice { id: string; name: string; bundleId: string; environment: "sandbox" | "production"; lastSeen: number }
+export interface IncomingCallSummary { id: string; title: string; status: string; createdAt: number; scheduledAt: number }
+export interface IncomingCallService {
+  registerDevice(ownerId: string, input: DeviceInput): { ok: boolean; id: string };
+  listDevices(ownerId: string): RegisteredDevice[];
+  removeDevice(ownerId: string, id: string): { ok: boolean };
+  cancel(ownerId: string, id: string): { ok: boolean };
+  request(target: InviteTarget, title: string, inMinutes?: number): Promise<{ ok: boolean; id: string; delivered: number; scheduledAt: number; expiresAt: number }>;
+  accept<T extends { id: string }>(ownerId: string, token: string, start: (target: InviteTarget, reason: string) => Promise<T>): Promise<T>;
+  decline(ownerId: string, token: string): Promise<{ ok: boolean }>;
+  expire(): void;
+  flushNotices(): Promise<void>;
+  start(): void;
+  stop(): void;
+}
 interface Dependencies {
   config?: () => PushConfig;
   now?: () => number;
@@ -32,7 +47,7 @@ async function currentAccess(target: InviteTarget): Promise<boolean> {
   return Boolean(meta && isAuthorized(meta, target.ownerId, entry.isDM, { isAdminUser: user.isAdmin === true, isApprovedUser: user.approved === true })
     && isSlackThreadParticipant(target.channelId, target.threadTs, target.ownerId));
 }
-export function createIncomingCalls(deps: Dependencies = {}) {
+export function createIncomingCalls(deps: Dependencies = {}): IncomingCallService {
   const config = deps.config || getIosCallConfig;
   const now = deps.now || Date.now;
   const authorize = deps.authorize || currentAccess;
@@ -72,15 +87,15 @@ export function createIncomingCalls(deps: Dependencies = {}) {
       catch { db.prepare("UPDATE incoming_calls SET notified=0 WHERE id=?").run(row.id); }
     }
   }
-  function listDevices(ownerId: string) {
+  function listDevices(ownerId: string): RegisteredDevice[] {
     // Tokens and token hashes never appear in a listing response.
-    return getDb().prepare("SELECT id, name, bundle_id AS bundleId, environment, last_seen_ms AS lastSeen FROM user_devices WHERE owner_id=? ORDER BY last_seen_ms DESC").all(ownerId);
+    return getDb().prepare("SELECT id, name, bundle_id AS bundleId, environment, last_seen_ms AS lastSeen FROM user_devices WHERE owner_id=? ORDER BY last_seen_ms DESC").all(ownerId) as unknown as RegisteredDevice[];
   }
   function registerDevice(ownerId: string, input: DeviceInput) {
     const c = config();
     const token = typeof input.token === "string" ? input.token.toLowerCase() : "";
     if (!ownerId || input.platform !== "ios" || input.kind !== "voip" || input.bundleId !== c.bundleId
-        || !/^[a-f0-9]{32,512}$/.test(token) || token.length % 2 || !["sandbox", "production"].includes(String(input.environment))) throw error("Invalid iPhone registration.");
+        || !/^[a-f0-9]{32,512}$/.test(token) || token.length % 2 || typeof input.environment !== "string" || !["sandbox", "production"].includes(input.environment)) throw error("Invalid iPhone registration.");
     const db = getDb();
     const old = db.prepare("SELECT id, owner_id FROM user_devices WHERE token=? AND bundle_id=? AND environment=?").get(token, c.bundleId, String(input.environment)) as { id: string; owner_id: string } | undefined;
     const id = old?.id || randomUUID();
@@ -180,8 +195,8 @@ export function createIncomingCalls(deps: Dependencies = {}) {
   return { registerDevice, listDevices, removeDevice, cancel, request, accept, decline, expire, flushNotices, start, stop };
 }
 let singleton: ReturnType<typeof createIncomingCalls> | undefined;
-export function incomingCalls() { return singleton ||= createIncomingCalls(); }
+export function incomingCalls(): IncomingCallService { return singleton ||= createIncomingCalls(); }
 
-export function getIncomingCallList(ownerId: string) {
-  return getDb().prepare("SELECT id, title, status, created_ms AS createdAt, ring_ms AS scheduledAt FROM incoming_calls WHERE owner_id=? ORDER BY created_ms DESC LIMIT 30").all(ownerId);
+export function getIncomingCallList(ownerId: string): IncomingCallSummary[] {
+  return getDb().prepare("SELECT id, title, status, created_ms AS createdAt, ring_ms AS scheduledAt FROM incoming_calls WHERE owner_id=? ORDER BY created_ms DESC LIMIT 30").all(ownerId) as unknown as IncomingCallSummary[];
 }
