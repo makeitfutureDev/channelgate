@@ -8275,10 +8275,20 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       "Reply with exactly FABLE52_OK". Pass: `claude-fable-5-2` is saved/reported, sentinel
       arrives and a second turn resumes. In a fresh uncustomized settings fixture, verify `:fable`
       resolves identically; existing saved custom shortcuts and older pinned model IDs survive.
-- [ ] Private QA registry writeback and live runs pending: the requesting user's Airtable
-      connection was unavailable during preparation. CLI 0.170.0 image/canary validation and
-      adoption are also pending. The image pin is 0.170.0; an image build and host-local
-      CLI upgrade must be verified separately from the channel HOME installation.
+- [x] Isolated runtime acceptance (2026-11-19): exact Codex 0.170.0 image built from the pinned
+      Containerfile, with matching source digest/toolchain labels, Node 24.22.2 and shipped Chromium
+      fixture launch. Through `runUpdateSmoke`, Fable 5.2/high and Astra/Sol 6.2/high each returned
+      `CG_UPDATE_SMOKE_OK` on a fresh and resumed container session. Codex runtime model evidence
+      matched the requested IDs and authenticated discovery listed both 6.2 models with ultra.
+      The host standalone package matched the publisher SHA-256 and host discovery listed both IDs.
+      This does not mark the separate Slack picker/Admin UI acceptance cases above passed.
+- [x] Smoke lease regression: `test/update-smoke.test.js` verifies the exact lease handle is
+      forwarded into container preparation and released after success or startup failure; legacy
+      callable test leases remain supported. This prevents shared-history preparation waiting on
+      its own smoke lease. Isolated live smoke completed after the fix.
+- [ ] Private QA registry writeback remains pending: the requesting user's Airtable connection
+      was still unavailable during the host rollout. Retain deployment evidence privately;
+      do not substitute another account or label unexecuted UI cases passed.
 - [x] Automated: Fable 5.2 saves as `claude-fable-5-2`, the inherited `:fable` shortcut
       resolves to it, and external usage uses its published cache-aware rates without changing
       Fable 5.1 pricing or existing saved pins.

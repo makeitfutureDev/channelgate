@@ -2,7 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
-- Update the runtime image Codex CLI pin from 0.162.1 to 0.170.0.
+- Update the runtime image Codex CLI pin from 0.162.1 to 0.170.0 and fix update smoke probes
+  waiting on their own container lease during first-time shared-history preparation.
 
 - Add GPT-6.2 Astra and Sol to bundled Codex model choices and inherited family shortcuts,
   with supported fallback reasoning levels and Standard API-equivalent usage rates. Keep

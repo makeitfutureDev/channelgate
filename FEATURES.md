@@ -2953,6 +2953,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   reasoning, excluding `none`. Fable 5.2 remains a Claude choice (`claude-fable-5-2`).
   Successful authenticated CLI discovery still determines the live catalog; a bundled choice
   does not establish account access. Existing saved model pins and custom shortcuts remain valid.
+  The runtime image pins Codex 0.170.0. Update smoke preparation forwards its own container
+  lease, so first-time shared-history setup can finish and the probe releases its lease afterward.
   Standard API-equivalent estimates include the 6.2 rates and request-level long-context uplift;
   this catalog addition keeps the pricing basis and existing pending-refresh policy unchanged.
 - **Claude's model choices state exact versions:** the picker offers Opus 5.5, Fable 5.2,
