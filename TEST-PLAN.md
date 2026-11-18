@@ -23,6 +23,9 @@
 - Live native acceptance remains pending; fake connectors and automated checks do not certify a
   Google/Microsoft client result. Tracking begins with admitted original agent prompts after upgrade;
   old native history, native logins and voice dispatch to native platforms are not acceptance claims.
+## Historical personal completion repair (2026-11-18)
+
+Regression gate: historical reaction-only self-completion must dismiss the verified actor, including paginated reply reactions, while other participants stay visible. Verify bounded repair, failed/incomplete pagination retry, bot mirror exclusion, authorization changes and newer own messages/Reopen during a read; old evidence must never re-dismiss restored work. Include saved personal receipts and legacy gateway-only owner markers already complete at migration, with exact bot identity, sole-actor evidence, and exclusion of newly indexed/open-at-migration rows. Browser regression: `test/historical-completion-browser.test.js`. Private case: ACTIVITY-SHARED-DONE-01 (engine-independent control plane).
 
 ## Shared Done and personal dismissal (2026-11-17)
 

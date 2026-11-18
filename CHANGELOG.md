@@ -6,6 +6,7 @@
   Administrators explicitly link existing accounts in Users → Activity accounts. Native threads
   support status, source links, personal Hide, pins, comments and verified-starter completion,
   while retaining each platform account's own permissions.
+- Repair older self-completed Slack threads remaining in Active after the shared participation upgrade.
 
 - Fix Composio file staging on consumer (MCP) keys handing out keys whose file Drive, Gmail and
   Slack could not retrieve (storage HTTP 404): the gateway now uploads through the workbench's

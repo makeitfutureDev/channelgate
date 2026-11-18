@@ -156,7 +156,7 @@ export function setSlackThreadLater(channelId, threadTs, userId, later, at = Dat
   return changed;
 }
 
-export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0, reopenedAt = 0, completed = messageHasCompletionReaction(root), lastMessageMs = 0, inspectedAt = 0 } = {}) {
+export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0, reopenedAt = 0, completed = messageHasCompletionReaction(root), lastMessageMs = 0, inspectedAt = 0, completionUserIds, completionActorMessageTs, completionParticipants, legacyBotOnlyCompletion = false, legacyCompletionMarkerUser = "" } = {}) {
   if (!root?.ts) return;
   const previous = getSlackThread(channelId, root.ts);
   const done = completed ? 1 : 0;
@@ -174,6 +174,7 @@ export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 
     WHERE channel_id=? AND thread_ts=?`)
     .run(done ? reactionAt : 0, checkedAt, done, checkedAt, inspectedAt, checkedAt, inspectedAt, lastMessageMs, lastMessageMs, checkedAt, done, done ? reactionAt : 0, Date.now(), channelId, root.ts);
   const current = getSlackThread(channelId, root.ts);
+  reconcileHistoricalCompletion(current, { completionUserIds, completionActorMessageTs, completionParticipants, inspectedAt, legacyBotOnlyCompletion, legacyCompletionMarkerUser });
   if (slackThreadIsDone(previous) && !slackThreadIsDone(current)) clearSlackThreadCompletionDismissals(channelId, root.ts, reopenedAt || reactionAt || checkedAt);
   if (current && ["root_done", "root_reaction_ms", "last_message_ms"].some((key) => previous?.[key] !== current[key])) {
     notifyThreadChanged({ channelId, threadTs: root.ts });
@@ -240,12 +241,13 @@ export function isSlackThreadParticipant(channelId, threadTs, userId) {
 export function recordSlackThreadParticipation(channelId, threadKey, userId, messageTs) {
   const threadTs = slackThreadFor(threadKey);
   if (!userId || !threadTs || !isSlackTs(messageTs)) return false;
-  const changed = getDb().prepare(`INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts)
-    SELECT channel_id,thread_ts,?,? FROM slack_threads WHERE channel_id=? AND thread_ts=? AND starter_id!=''
+  const changed = getDb().prepare(`INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts,historical_completion_checked)
+    SELECT channel_id,thread_ts,?,?,1 FROM slack_threads WHERE channel_id=? AND thread_ts=? AND starter_id!=''
     ON CONFLICT(channel_id,thread_ts,user_id) DO UPDATE SET
       last_own_message_ts=excluded.last_own_message_ts,
       hidden_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>hidden_ms THEN 0 ELSE hidden_ms END,
-      dismissed_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>dismissed_ms THEN 0 ELSE dismissed_ms END
+      dismissed_ms=CASE WHEN CAST(CAST(excluded.last_own_message_ts AS REAL)*1000 AS INTEGER)>dismissed_ms THEN 0 ELSE dismissed_ms END,
+      historical_completion_checked=1
     WHERE CAST(excluded.last_own_message_ts AS REAL)>CAST(last_own_message_ts AS REAL)`)
     .run(userId, String(messageTs), channelId, threadTs).changes;
   if (changed) notifyThreadChanged({ channelId, threadTs });
@@ -255,7 +257,7 @@ export function recordSlackThreadParticipation(channelId, threadKey, userId, mes
 function clearSlackThreadCompletionDismissals(channelId, threadTs, at) {
   getDb().prepare("UPDATE slack_threads SET completion_reopened_ms=MAX(completion_reopened_ms,?) WHERE channel_id=? AND thread_ts=?")
     .run(at, channelId, threadTs);
-  getDb().prepare("UPDATE slack_thread_participants SET dismissed_ms=0 WHERE channel_id=? AND thread_ts=?")
+  getDb().prepare("UPDATE slack_thread_participants SET dismissed_ms=0,historical_completion_checked=1 WHERE channel_id=? AND thread_ts=?")
     .run(channelId, threadTs);
 }
 
@@ -271,11 +273,49 @@ function writeSlackThreadCompletionDismissed(channelId, threadTs, userId, at) {
   if (!Number.isSafeInteger(at) || at <= 0) return false;
   const row = getSlackThread(channelId, threadTs);
   if (!slackThreadIsDone(row) || at <= row.completion_reopened_ms || (row.done_ms < 0 && at <= Math.abs(row.done_ms))) return false;
-  const changed = getDb().prepare(`UPDATE slack_thread_participants SET dismissed_ms=MAX(dismissed_ms,?)
+  const changed = getDb().prepare(`UPDATE slack_thread_participants SET dismissed_ms=MAX(dismissed_ms,?),historical_completion_checked=1
     WHERE channel_id=? AND thread_ts=? AND user_id=?
       AND CAST(CAST(last_own_message_ts AS REAL)*1000 AS INTEGER)<?`)
     .run(at, channelId, threadTs, userId, at).changes;
   return Boolean(changed);
+}
+
+// Capture before the asynchronous Slack read. A newly admitted own message, Reopen or modern
+// completion consumes this flag independently, so a late read cannot override that choice.
+export function pendingSlackThreadCompletionParticipants(channelId, threadTs) {
+  return getDb().prepare(`SELECT user_id,last_own_message_ts FROM slack_thread_participants
+    WHERE channel_id=? AND thread_ts=? AND historical_completion_checked=0`).all(channelId, threadTs);
+}
+
+function reconcileHistoricalCompletion(row, { completionUserIds, completionActorMessageTs, completionParticipants, inspectedAt, legacyBotOnlyCompletion, legacyCompletionMarkerUser }) {
+  if (!row || !Array.isArray(completionUserIds) || !Array.isArray(completionParticipants)
+    || !Number.isSafeInteger(inspectedAt) || inspectedAt <= 0 || inspectedAt < row.checked_ms) return;
+  const actors = new Set(completionUserIds);
+  const mayDismiss = slackThreadIsDone(row) && !row.completion_reopened_ms && row.done_ms >= 0;
+  let changed = false;
+  const write = getDb().prepare(`UPDATE slack_thread_participants
+    SET historical_completion_checked=1,dismissed_ms=CASE WHEN ? THEN MAX(dismissed_ms,?) ELSE dismissed_ms END
+    WHERE channel_id=? AND thread_ts=? AND user_id=? AND historical_completion_checked=0 AND last_own_message_ts=?`);
+  for (const participant of completionParticipants) {
+    // This narrow compatibility case preserves the old owner's archive for a legacy bot-only
+    // root marker. It does not attribute that bot reaction to a human or affect new rows.
+    const legacyOwner = legacyBotOnlyCompletion && row.root_done && row.done_ms === 0 && !row.root_reaction_ms
+      && participant.user_id === row.starter_id && participant.last_own_message_ts === row.thread_ts;
+    // Slack supplies no reaction timestamp. A check on a message predates no message it
+    // reacts to; newer own work after that message is ambiguous and remains visible.
+    const actorAfterOwnMessage = actors.has(participant.user_id)
+      && Number(completionActorMessageTs?.[participant.user_id]) >= Number(participant.last_own_message_ts);
+    const dismiss = mayDismiss && (actorAfterOwnMessage || legacyOwner) && participant.user_id !== row.completion_mirror_user
+      && Math.floor(Number(participant.last_own_message_ts) * 1000) < inspectedAt;
+    const updated = write.run(dismiss ? 1 : 0, inspectedAt, row.channel_id, row.thread_ts,
+      participant.user_id, participant.last_own_message_ts).changes > 0;
+    if (updated && dismiss && legacyOwner && legacyCompletionMarkerUser) {
+      getDb().prepare("UPDATE slack_threads SET historical_completion_marker_user=? WHERE channel_id=? AND thread_ts=?")
+        .run(legacyCompletionMarkerUser, row.channel_id, row.thread_ts);
+    }
+    changed ||= updated;
+  }
+  if (changed) notifyThreadChanged({ channelId: row.channel_id, threadTs: row.thread_ts });
 }
 
 export function setSlackThreadHidden(channelId, threadTs, userId, hidden, at = Date.now()) {
@@ -289,7 +329,7 @@ export function setSlackThreadHidden(channelId, threadTs, userId, hidden, at = D
 }
 
 export function slackThreadsForUser(userId) {
-  return getDb().prepare(`SELECT t.*,p.hidden_ms,p.dismissed_ms,p.last_own_message_ts FROM slack_threads t
+  return getDb().prepare(`SELECT t.*,p.hidden_ms,p.dismissed_ms,p.last_own_message_ts,p.historical_completion_checked FROM slack_threads t
     JOIN slack_thread_participants p USING(channel_id,thread_ts)
     WHERE p.user_id=? AND t.starter_id!='' ORDER BY t.updated_ms DESC,t.thread_ts DESC`).all(userId);
 }

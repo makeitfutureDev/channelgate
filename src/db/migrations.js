@@ -1458,4 +1458,38 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 61,
+    up(db) {
+      // Old reaction-only completion has no actor timestamp. Reconcile it once per person;
+      // already dismissed or reopened work must never be archived by that old check again.
+      db.exec(`
+        ALTER TABLE slack_thread_participants ADD COLUMN historical_completion_checked INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE slack_threads ADD COLUMN historical_completion_marker_user TEXT NOT NULL DEFAULT '';
+        UPDATE slack_thread_participants AS p SET historical_completion_checked=0
+        WHERE EXISTS (
+          SELECT 1 FROM slack_threads t WHERE t.channel_id=p.channel_id AND t.thread_ts=p.thread_ts
+            AND (t.done_ms>0 OR (t.root_done=1 AND (t.done_ms>=0 OR t.root_reaction_ms>ABS(t.done_ms))))
+        );
+        UPDATE slack_thread_participants AS p SET dismissed_ms=MAX(dismissed_ms,COALESCE((
+          SELECT f.done_ms FROM followup_done f JOIN slack_threads t
+            ON f.thread_key=t.channel_id || '::' || t.thread_ts
+          WHERE t.channel_id=p.channel_id AND t.thread_ts=p.thread_ts AND f.user_id=p.user_id
+            AND (t.done_ms>0 OR (t.root_done=1 AND (t.done_ms>=0 OR t.root_reaction_ms>ABS(t.done_ms))))
+            AND f.done_ms>t.completion_reopened_ms
+            AND f.done_ms>CAST(CAST(p.last_own_message_ts AS REAL)*1000 AS INTEGER)
+        ),0));
+        UPDATE slack_thread_participants SET historical_completion_checked=1
+        WHERE dismissed_ms>0 OR EXISTS (
+          SELECT 1 FROM followup_done f WHERE f.user_id=slack_thread_participants.user_id
+            AND f.thread_key=slack_thread_participants.channel_id || '::' || slack_thread_participants.thread_ts
+        ) OR EXISTS (
+          SELECT 1 FROM slack_threads t
+          WHERE t.channel_id=slack_thread_participants.channel_id
+            AND t.thread_ts=slack_thread_participants.thread_ts
+            AND (t.completion_reopened_ms>0 OR t.done_ms<0)
+        );
+      `);
+    },
+  },
 ];

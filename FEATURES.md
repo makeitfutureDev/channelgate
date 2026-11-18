@@ -21,6 +21,9 @@ Tracking starts with original messages admitted to an agent turn after installat
 history is not backfilled or assigned an inferred owner. Login still uses the existing Activity
 account/session and its Slack connection; native-platform login and cross-platform voice calls are
 outside this change.
+## Historical personal completion repair (2026-11-18)
+
+Historical Slack checkmark completion is reconciled to the person who added it, so pre-upgrade self-closed conversations leave their Active list while remaining in Completed. Checks by other people retain green visibility. Saved personal receipts also repair older bot-marked completions. A one-time compatibility path preserves the prior starter archive for already-completed legacy roots carrying only the authenticated gateway marker; it does not attribute human acceptance or change shared completion. New conversations and reopened work are excluded.
 
 ## Shared Done stays visible until personal dismissal (2026-11-17)
 
