@@ -116,16 +116,100 @@ test("catalog search ignores stale requests and preserves search focus by reusin
   assert.ok(requests.some(item => item.url.endsWith("query=slack")));
 });
 
-test("catalog pagination deduplicates applications and policy-refused applications cannot be chosen", async () => {
+test("catalog pages replace applications, return to the previous cursor and preserve a page after app detail", async () => {
   const { root, requests } = fixture(async url => !url.includes("/apps?") ? response(state()) : url.includes("cursor=")
-    ? response({ apps: [app("gmail"), app("slack", { canConnect: false, reason: "Limit reached" })], nextCursor: null })
+    ? response({ apps: [app("slack", { canConnect: false, reason: "Limit reached" }), app("slack")], nextCursor: null })
     : response({ apps: [app("gmail")], nextCursor: "next page" }), { connectionsNew: true });
-  await flush(); find(root, "button", "Load more applications").listeners.click(); await flush();
-  assert.equal(root.all().filter(item => item.attributes["aria-label"] === "View Gmail connections").length, 1);
+  await flush(); assert.equal(find(root, "button", "Previous").disabled, true);
+  find(root, "button", "Next").listeners.click(); await flush();
+  assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 1);
+  assert.equal(root.all().filter(item => item.attributes["aria-label"] === "View Gmail connections").length, 0);
+  assert.match(root.textContent, /Page 2/); assert.equal(find(root, "button", "Next").disabled, true);
   openApp(root, "Slack"); assert.equal(find(root, "button", "Connect new").disabled, true);
   assert.match(root.textContent, /Limit reached/);
+  const beforeBack = requests.length;
   find(root, "button", "Back to apps").listeners.click(); await flush();
+  assert.equal(requests.length, beforeBack); assert.match(root.textContent, /Page 2/);
+  assert.ok(root.all().find(item => item.attributes["aria-label"] === "View Slack connections"));
+  find(root, "button", "Previous").listeners.click(); await flush();
+  assert.match(root.textContent, /Page 1/); assert.equal(find(root, "button", "Previous").disabled, true);
+  assert.ok(root.all().find(item => item.attributes["aria-label"] === "View Gmail connections"));
+  assert.equal(requests.at(-1).url, "/activity/me/api/connections/apps?query=");
   assert.ok(requests.some(item => /cursor=next%20page/.test(item.url)));
+});
+
+test("app detail Back keeps the current search and page without refetching", async () => {
+  const { root, requests, tick } = fixture(async url => !url.includes("/apps?") ? response(state()) : response({ apps: [app("gmail")], nextCursor: "next" }), { connectionsNew: true });
+  await flush(); const search = root.querySelectorAll("input")[0]; search.value = "mail"; search.listeners.input(); tick(); await flush();
+  find(root, "button", "Next").listeners.click(); await flush(); openApp(root);
+  const requestCount = requests.length; find(root, "button", "Back to apps").listeners.click(); await flush();
+  assert.equal(requests.length, requestCount); assert.equal(root.querySelectorAll("input")[0].value, "mail"); assert.match(root.textContent, /Page 2/);
+});
+
+test("catalog and connected pages render at most 24 apps and connected pagination makes no catalog requests", async () => {
+  const accounts = Array.from({ length: 50 }, (_, index) => ({ app: "app_" + String(index).padStart(2, "0"), status: "ACTIVE" }));
+  const { root, requests } = fixture(async url => url.includes("/apps?") ? response({ apps: accounts.map(account => app(account.app)), nextCursor: "later" }) : response(state({ accounts })));
+  await flush(); assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 24);
+  find(root, "button", "Next").listeners.click(); assert.match(root.textContent, /Page 2/);
+  assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 24);
+  find(root, "button", "Next").listeners.click(); assert.match(root.textContent, /Page 3/);
+  assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 2);
+  assert.equal(find(root, "button", "Next").disabled, true); assert.equal(requests.length, 1);
+  const search = root.querySelectorAll("input")[0]; search.value = "app 00"; search.listeners.input();
+  assert.match(root.textContent, /Page 1/); assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 1);
+  find(root, "button", "All apps").listeners.click(); await flush();
+  assert.equal(root.all().filter(item => item.className === "connection-app-card").length, 24);
+  assert.match(root.textContent, /Page 1/); assert.equal(requests.length, 2);
+});
+
+test("search and tab changes discard page cursors and stale pagination replies", async () => {
+  const held = deferred();
+  const { root, requests, tick } = fixture(async url => !url.includes("/apps?") ? response(state({ accounts: [{ app: "gmail" }] })) : url.includes("cursor=") ? held.promise
+    : url.endsWith("query=slack") ? response({ apps: [app("slack")], nextCursor: null }) : response({ apps: [app("gmail")], nextCursor: "second" }), { connectionsNew: true });
+  await flush(); find(root, "button", "Next").listeners.click();
+  assert.equal(find(root, "button", "Previous").disabled, true); assert.equal(find(root, "button", "Next").disabled, true);
+  const search = root.querySelectorAll("input")[0]; search.value = "slack"; search.listeners.input(); tick(); await flush();
+  held.resolve(response({ apps: [app("old")], nextCursor: "third" })); await flush();
+  assert.match(root.textContent, /Page 1/); assert.ok(root.all().find(item => item.attributes["aria-label"] === "View Slack connections")); assert.doesNotMatch(root.textContent, /old/);
+  find(root, "button", "Connected (1)").listeners.click();
+  find(root, "button", "All apps").listeners.click(); await flush();
+  assert.equal(requests.at(-1).url, "/activity/me/api/connections/apps?query=");
+  assert.equal(root.querySelectorAll("input")[0].value, ""); assert.match(root.textContent, /Page 1/);
+});
+
+test("empty filtered pages remain navigable, retries use the failing page cursor and repeated cursors stop", async () => {
+  let nextCalls = 0;
+  const { root, requests } = fixture(async url => !url.includes("/apps?") ? response(state()) : !url.includes("cursor=") ? response({ apps: [app("gmail")], nextCursor: "second" })
+    : ++nextCalls === 1 ? response({ error: "Page temporarily unavailable" }, 503) : response({ apps: [], nextCursor: "third" }), { connectionsNew: true });
+  await flush(); find(root, "button", "Next").listeners.click(); await flush();
+  assert.match(root.textContent, /Page temporarily unavailable/); assert.doesNotMatch(root.textContent, /No applications/);
+  assert.equal(find(root, "button", "Next").disabled, true); assert.equal(find(root, "button", "Previous").disabled, false);
+  find(root, "button", "Retry applications").listeners.click(); await flush();
+  assert.match(root.textContent, /No applications on this page/); assert.equal(find(root, "button", "Next").disabled, false);
+  assert.equal(requests.at(-1).url, "/activity/me/api/connections/apps?query=&cursor=second");
+  find(root, "button", "Next").listeners.click(); await flush();
+  assert.match(root.textContent, /Page 3/); assert.equal(find(root, "button", "Next").disabled, true);
+});
+
+test("platform logos use trusted HTTPS sources, canonical slug fallback and initials after image failure", async () => {
+  const unsafe = ["javascript:alert(1)", "https://attacker.test/icon.svg", "https://logos.composio.dev.attacker.test/a", "https://user:secret@logos.composio.dev/a", "https://logos.composio.dev:444/a", "http://logos.composio.dev/a", "https://logos.composio.dev/a?secret=x", "https://logos.composio.dev/a#x", "https://logos.composio.dev/../a", "https://logos.composio.dev/%2e%2e/a", "https://logos.composio.dev/\\attacker.test/a"];
+  const apps = [app("gmail", { logo: "https://assets.composio.dev/icons/gmail.svg" }), ...unsafe.map((logo, index) => app("unsafe_" + index, { logo })), app("bad/slug", { logo: "https://attacker.test/icon.svg" })];
+  const { root } = fixture(async url => url.includes("/apps?") ? response({ apps }) : response(state()), { connectionsNew: true });
+  await flush(); const images = root.all().filter(item => item.tag === "img");
+  assert.equal(images[0].src, "https://assets.composio.dev/icons/gmail.svg");
+  for (let index = 0; index < unsafe.length; index++) assert.equal(images[index + 1].src, "https://logos.composio.dev/api/unsafe_" + index);
+  assert.equal(images.length, apps.length - 1);
+  for (const image of images) { assert.equal(image.loading, "lazy"); assert.equal(image.decoding, "async"); assert.equal(image.referrerPolicy, "no-referrer"); assert.equal(image.alt, ""); assert.equal(image.attributes["aria-hidden"], "true"); }
+  images[0].listeners.error(); assert.equal(root.all().filter(item => item.tag === "img").length, images.length - 1);
+  assert.ok(root.all().find(item => item.className === "connection-app-icon" && item.textContent === "G"));
+});
+
+test("connected platform logos derive safe canonical URLs and inherited name properties are never used", async () => {
+  const { root } = fixture(async () => response(state({ accounts: [{ app: "gmail" }, { app: "constructor" }, { app: "toString" }, { app: "__proto__" }] })));
+  await flush();
+  assert.ok(root.all().find(item => item.attributes["aria-label"] === "View Constructor connections"));
+  assert.ok(root.all().find(item => item.tag === "img" && item.src === "https://logos.composio.dev/api/gmail"));
+  assert.doesNotMatch(root.textContent, /function|native code/);
 });
 
 test("catalog error shows retry without claiming that no apps match", async () => {

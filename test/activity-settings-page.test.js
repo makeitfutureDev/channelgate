@@ -34,11 +34,11 @@ function snapshot(overrides = {}) {
     ssh: { max: 5, keys: [] }, ...overrides,
   };
 }
-function browser(fetchImpl, { hash = "" } = {}) {
+function browser(fetchImpl, { hash = "", emailPage = false } = {}) {
   const elements = { "theme-toggle": new Element("button"), "settings-panel": new Element(), "settings-nav": new Element("nav"), "settings-status": new Element() };
   const document = { documentElement: new Element("html"), getElementById: (id) => elements[id], createElement: (tag) => new Element(tag) };
   const requests = [];
-  const page = activityPage({ sessionId: "session", csrf: "fixture-csrf", view: "settings" });
+  const page = activityPage({ sessionId: "session", csrf: "fixture-csrf", view: "settings", emailPage });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
   vm.runInNewContext(script, {
@@ -140,4 +140,41 @@ test("Voice calls section offers the closed choices and saves the person's own p
   assert.equal(post.options.headers["X-CG-CSRF"], "fixture-csrf");
   assert.deepEqual(JSON.parse(post.options.body), { action: "voice.save", language: "English", style: "conversational", patience: "quick", instructions: "Keep it short." });
   assert.equal(status.textContent, "Voice preferences saved. They apply to your next call.");
+});
+
+
+test("Email accounts is a separate settings page and never mounts Composio inventory", async () => {
+  const { panel, nav, requests } = browser(async () => reply(snapshot()), { emailPage: true });
+  await flush();
+  assert.equal(nav.all().find(c => c.attrs["aria-current"] === "page").textContent, "Email accounts");
+  assert.ok(find(panel, "h2", "Email accounts"));
+  assert.doesNotMatch(panel.textContent, /Composio|Search applications|Connected apps/);
+  assert.equal(requests.filter(r => r.url.includes("/api/connections")).length, 0);
+  find(nav, "button", "Connections").listeners.click(); await flush();
+  assert.equal(find(panel, "h2", "Email accounts"), undefined);
+  assert.equal(find(panel, "summary", "Add an email account"), undefined);
+});
+
+test("Email page preserves edit/save/remove actions without exposing saved passwords", async () => {
+  const account = { name: "work", address: "own@example.test", displayName: "Work", imap: { host: "imap.example.test", port: 993, user: "own" }, smtp: { host: "smtp.example.test", port: 587, user: "own" }, sendEnabled: true };
+  let data = snapshot(); data.connections.email = [account];
+  const { panel, requests } = browser(async (_url, options) => {
+    if (options.method === "POST") {
+      const body = JSON.parse(options.body);
+      if (body.action === "email.remove") data.connections.email = [];
+      return reply({ settings: data, notice: "Email account updated." });
+    }
+    return reply(data);
+  }, { hash: "#email" });
+  await flush(); find(panel, "button", "Edit").listeners.click();
+  const editor = panel.all().find(c => c.tag === "details"); assert.equal(editor.open, true);
+  const form = panel.all().find(c => c.tag === "form"), inputs = form.querySelectorAll("input");
+  assert.equal(inputs.find(c => c.name === "address").value, "own@example.test");
+  assert.ok(inputs.filter(c => c.type === "password").every(c => c.value === ""));
+  form.listeners.submit({ preventDefault() {} }); await flush();
+  const saved = JSON.parse(requests.at(-1).options.body);
+  assert.equal(saved.action, "email.save"); assert.equal(saved.name, "work"); assert.equal(saved.imapHost, "imap.example.test");
+  find(panel, "button", "Remove").listeners.click(); await flush();
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: "email.remove", name: "work" });
+  assert.match(panel.textContent, /No email accounts/);
 });

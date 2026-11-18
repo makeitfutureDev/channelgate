@@ -2,6 +2,24 @@
 
 ## Activity Connections settings (2026-11-18)
 
+- Compact catalog revision: `test/activity-connections-compact-browser.test.js` checks the real
+  served script at 390/768/1024/1440/1920px in both themes, increasing grid columns, compact card
+  height, platform image source/lazy/no-referrer attributes and failed-logo fallback. Require
+  24 cards maximum, Previous/Next replacing rather than accumulating, no eager next-page call,
+  app detail/back preserving page/search, and search resetting cursor/page. Existing creation and
+  deletion browser flow remains covered.
+- `test/activity-connections.test.js` verifies provider limit=24, exact opaque cursors, refusal of
+  oversized pages, trusted logo URL validation, and no credential echoes in metadata. The Activity
+  route test verifies the strict image CSP and authenticated Email URL. Email settings tests cover
+  separate navigation, no Composio inventory request on direct Email load, edit/save/remove action
+  preservation, and blank password inputs.
+- Live `ACT-CONNECTIONS-05` (engine-independent browser): authorized private Activity fixture,
+  SDK catalog with more than 24 apps. Open All apps at phone/tablet/desktop widths, change pages,
+  search/open/back, and require bounded card count, responsive columns and real logos/fallback.
+  Open Email accounts, reload its URL, edit/cancel/save/remove a disposable test mailbox and require
+  it stays separate from Connections with no stored password returned. Browser UI and gateway
+  catalog retrieval do not execute an agent engine; no Claude/Codex difference applies.
+
 - App overview/detail revision: browser coverage requires Connected cards with account counts,
   app search, app detail/back navigation, SDK All apps paging and alias flow, and no personal-token
   catalog request. Test desktop and phone in light/dark themes with long account identities.

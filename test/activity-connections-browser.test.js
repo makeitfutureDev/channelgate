@@ -39,6 +39,7 @@ test("Connections app overview/detail and confirmed account deletion work in Chr
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE }); t.after(() => browser.close());
   const page = await browser.newPage(); page.setDefaultTimeout(5000);
   const errors = []; page.on("pageerror", error => errors.push(error.message));
+  await page.route("https://logos.composio.dev/**", route => route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><rect width="28" height="28" fill="#4285f4"/></svg>' }));
   const base = `http://127.0.0.1:${server.address().port}/activity/fixture/settings/connections`;
   await page.goto(base);
   await page.getByRole("button", { name: "Connected (2)", exact: true }).waitFor();
@@ -55,7 +56,7 @@ test("Connections app overview/detail and confirmed account deletion work in Chr
   assert.equal(await page.getByRole("button", { name: "View Slack connections", exact: true }).count(), 0);
   await gmail().click();
   await page.getByText(/<img src=x onerror=alert\(1\)>/).waitFor();
-  assert.equal(await page.locator(".connections-card img").count(), 0);
+  assert.equal(await page.locator(".connections-card img[src=x]").count(), 0);
   assert.equal(await page.getByRole("button", { name: "Delete connection", exact: true }).count(), 1, "shared account has no delete action");
   if (process.env.CG_BROWSER_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.CG_BROWSER_EVIDENCE_DIR, "gmail-detail-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: "Delete connection", exact: true }).click();

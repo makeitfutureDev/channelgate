@@ -24,8 +24,60 @@ test("catalog preserves provider pagination, custom apps and strips credentials 
   assert.equal(calls[0].url.origin, "https://backend.composio.dev");
   assert.equal(calls[0].url.searchParams.get("cursor"), "opaque-next");
   assert.equal(calls[0].url.searchParams.get("search"), "mail");
+  assert.equal(calls[0].url.searchParams.get("limit"), "24");
   assert.equal(calls[0].init.redirect, "error");
   assert.doesNotMatch(JSON.stringify(result), /ak_private_fixture|auth|never/);
+});
+
+test("catalog returns only the requested small page and preserves the exact next cursor", async () => {
+  const cursors = [];
+  const options = { getConfig: () => config(), fetch: async url => {
+    assert.equal(url.searchParams.get("limit"), "24");
+    const cursor = url.searchParams.get("cursor"); cursors.push(cursor);
+    return api(cursor ? { items: [toolkit("last_app")] }
+      : { items: Array.from({ length: 24 }, (_, index) => toolkit(`app_${index}`)), next_cursor: "opaque-next-page" });
+  } };
+  const first = await activityConnectionApps({}, options);
+  assert.equal(first.apps.length, 24); assert.equal(first.nextCursor, "opaque-next-page");
+  assert.deepEqual(cursors, [null], "a visible page must not eagerly load the next one");
+  const second = await activityConnectionApps({ cursor: first.nextCursor }, options);
+  assert.deepEqual(second.apps.map(app => app.slug), ["last_app"]);
+  assert.equal(second.nextCursor, null); assert.deepEqual(cursors, [null, "opaque-next-page"]);
+  await assert.rejects(activityConnectionApps({}, { getConfig: () => config(), fetch: async () => api({
+    items: Array.from({ length: 25 }, (_, index) => toolkit(`app_${index}`)), next_cursor: "after-oversized-page",
+  }) }), error => error.status === 503, "an oversized provider page must fail rather than lose cursor items");
+});
+
+test("catalog exposes only bounded logos from the exact trusted provider asset hosts", async () => {
+  for (const logo of ["https://logos.composio.dev/api/gmail", "https://assets.composio.dev/logos/gmail.svg"]) {
+    const result = await activityConnectionApps({}, { getConfig: () => config(), fetch: async () => api({ items: [toolkit("gmail", { meta: { logo } })] }) });
+    assert.equal(result.apps[0].logo, logo);
+  }
+  for (const logo of [
+    "http://logos.composio.dev/api/gmail", "https://evil.example/gmail", "https://logos.composio.dev.evil.example/gmail",
+    "https://user:password@logos.composio.dev/api/gmail", "https://logos.composio.dev:443/api/gmail",
+    "https://assets.composio.dev:444/gmail", "https://logos.composio.dev/api/gmail?token=secret",
+    "https://logos.composio.dev/api/gmail#secret", "https://logos.composio.dev/api/../gmail",
+    "https://logos.composio.dev/api/%2e%2e/gmail", "https://logos.composio.dev\\@evil.example/gmail",
+    " https://logos.composio.dev/api/gmail", "https://logos.composio.dev/api/gmail\n",
+    "https://logos.composio.dev/" + "x".repeat(1024), "data:image/svg+xml,example", { url: "https://logos.composio.dev/api/gmail" },
+  ]) {
+    const result = await activityConnectionApps({}, { getConfig: () => config(), fetch: async () => api({ items: [toolkit("gmail", { meta: { logo } })] }) });
+    assert.equal(Object.hasOwn(result.apps[0], "logo"), false, `unsafe logo must be omitted: ${String(logo)}`);
+  }
+});
+
+test("provider credential echoes in logos, display text and cursor metadata cannot escape", async () => {
+  const key = config().sdkApiKey;
+  const result = await activityConnectionApps({}, { getConfig: () => config(), fetch: async () => api({ items: [toolkit("gmail", {
+    name: "x".repeat(150) + key, meta: { description: "x".repeat(490) + key, logo: `https://logos.composio.dev/api/${key}` },
+  })] }) });
+  assert.equal(Object.hasOwn(result.apps[0], "logo"), false);
+  assert.doesNotMatch(JSON.stringify(result), /ak_private_fixture|ak_private_/);
+  for (const response of [{ items: [toolkit(key)] }, { items: [toolkit("gmail")], next_cursor: key }]) {
+    await assert.rejects(activityConnectionApps({}, { getConfig: () => config(), fetch: async () => api(response) }),
+      error => error.status === 503 && !error.message.includes(key));
+  }
 });
 
 test("selected catalog uses owner visibility and filters unexpected provider rows", async () => {
