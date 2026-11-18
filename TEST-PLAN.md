@@ -1,5 +1,45 @@
 # ChannelGate — Test Plan
 
+## Composio SDK multi-account and app policy (2026-11-18)
+
+- Automated: `test/composio-sdk.test.js` exercises the installed SDK create/GET/PATCH wire contract,
+  personal/shared identity separation, manager/member connection controls, persisted-session
+  updates, app-policy narrowing/clearing, deny-all, fail-closed update failures and settings saves
+  during concurrent preparation. Policy changes must rotate the engine MCP fingerprint for both
+  personal/shared identities even when the remote URL stays unchanged.
+  `test/composio-sdk-settings.test.js` covers masked settings round-trips, validation with atomic
+  refusal, preserved credentials and Enterprise admission. `test/composio-sdk-policy.test.js`
+  covers normalization and settings control state, including selected-empty versus unrestricted.
+  `test/composio-policy-browser.test.js` uses a disposable authenticated admin fixture in Chromium
+  for save/reload, selected-empty versus all, mode retention, desktop/mobile layout and JS errors.
+- Provider API canary (2026-11-18): the installed SDK and gateway resolver created a disposable
+  multi-account session, allowed a Gmail profile read, refused Slack under a Gmail-only policy,
+  refused Gmail after a deny-all update, restored Gmail after disabling multi-account and allowing
+  all apps, then re-enabled explicit selection. The disposable remote session was deleted.
+  The disabled payload omits `requireExplicitSelection`: the provider rejects even `false` when
+  multi-account is off. This API evidence does not certify two-account or foreground engine flows.
+- Live `COMPOSIO-POLICY-01` (Claude and Codex): use `cg-testing-claude-bash` and
+  `cg-testing-codex-bash`, a QA author with two disposable Gmail accounts under that same personal
+  Composio identity, SDK mode with an active Enterprise entitlement, Worker mode. In Settings →
+  Integrations enable multi-account with limit 3; connect accounts as `qa-work` and `qa-personal`.
+  Ask “List my connected Gmail accounts and read the profile for qa-work, then qa-personal.”
+  Require two distinct account IDs, correct profile identity for each, explicit account selection,
+  and no forced reconnect or replacement. An execution without a selection when both are active
+  must be rejected. Other authors must not receive either personal account. Restore the policy.
+- Live `COMPOSIO-POLICY-02` (Claude and Codex): first create a session with all apps available in
+  the same fixtures. Restrict Available apps to `gmail` and revisit the existing thread. Ask
+  “List available Gmail and Slack tools, then read my Slack profile.” Require Gmail discovery
+  and refusal of Slack discovery/execution. Repeat with a new thread and shared identities under
+  manager/member authors; the app policy applies without granting members connection management.
+  Choose Only selected apps with an empty list: every app must be denied. Restore All apps and
+  verify the existing thread receives the relaxed policy on its next run; all saved accounts remain.
+- Live `COMPOSIO-POLICY-03` (engine-independent admin UI): use a disposable admin browser and
+  Enterprise fixture settings. Save multi-account off/on, limits 2 and 10, and all/selected/empty
+  app lists; reload and verify persisted values. Invalid limits and malformed slugs must return
+  400 without changing settings. Switching Personal/SDK retains credentials; no SDK key is exposed.
+- Local regressions and provider API canaries do not certify the dual-engine foreground cases.
+  Record those exact runs separately; unexecuted live cases remain pending.
+
 ## Shared outbound SSH identity (2026-11-18)
 
 - Automated: `test/agent-ssh-identity.test.js` checks atomic concurrent creation, stable reuse,

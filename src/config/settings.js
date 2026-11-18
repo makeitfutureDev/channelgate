@@ -17,6 +17,7 @@ import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { logoColor } from "./appearance.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
+import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
 import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
 import { teamsReactionKey, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "../platforms/msteams/reactions.js";
@@ -117,7 +118,8 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     const next = { ...current };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
-      next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
+      next[k] = k === "publicUrl" ? normalizePublicUrl(v)
+        : k === "composioSdkPolicy" ? normalizeComposioSdkPolicy(v) : v;
     }
     // A disable/re-enable or password rotation must never resurrect alternate-login proofs.
     if (next.adminPasswordSlackEnabled !== current.adminPasswordSlackEnabled || next.adminPassword !== current.adminPassword) {
@@ -984,6 +986,10 @@ export function getComposioSdkApiKey() {
   return typeof v === "string" ? v.trim() : "";
 }
 
+export function getComposioSdkPolicy() {
+  return normalizeComposioSdkPolicy(getSettings().composioSdkPolicy);
+}
+
 // Org-level (gateway) default tokens. For shared Composio this follows the channel token; Toolbox
 // uses the full channel → user → org chain (see src/gateway/run.js). Write-only via the admin API
 // (masked on read), never logged.
@@ -1226,6 +1232,7 @@ export function settingsForApi() {
     },
     sessionKeepalive: s.sessionKeepalive ?? process.env.SESSION_KEEPALIVE ?? "10m",
     composioMode: getComposioMode(),
+    composioSdkPolicy: normalizeComposioSdkPolicy(s.composioSdkPolicy),
     hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
     composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",

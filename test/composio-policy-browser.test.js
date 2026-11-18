@@ -1,0 +1,71 @@
+// Disposable authenticated-admin fixture; never touches serving settings or provider accounts.
+import test from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import express from "express";
+import { ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+
+test("SDK policy controls save and reload multi-account and strict app restrictions", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const { createAdminRouter } = await import("../src/web/routes/admin.js");
+  const { saveSettings, getComposioSdkPolicy } = await import("../src/config/settings.js");
+  saveSettings({ composioMode: "sdk", composioSdkApiKey: "ak_browser_policy_fixture" });
+  const app = express();
+  app.use(express.json());
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
+  app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
+  app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
+  app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
+  app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }) } }));
+  const publicDir = fileURLToPath(new URL("../public", import.meta.url));
+  app.use(express.static(publicDir, { dotfiles: "allow" }));
+  app.get("/settings", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
+  const panel = page.locator("#composio-sdk-policy");
+  await panel.waitFor();
+  assert.equal(await panel.locator(".csdk-multi").isChecked(), true);
+  await panel.locator(".csdk-max").fill("3");
+  await panel.locator(".csdk-app-mode").selectOption("selected");
+  await panel.locator(".csdk-apps").fill("GMAIL, slack\ncustom_aioutreach");
+  const persist = async () => {
+    const saved = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
+    await page.locator("#save-settings").click();
+    assert.equal((await saved).status(), 200);
+    await page.waitForFunction(() => globalThis.document.querySelector("#settings-dirty-msg")?.textContent === "All changes saved");
+  };
+  await persist();
+  assert.deepEqual(getComposioSdkPolicy(), { multiAccount: true, maxAccountsPerToolkit: 3, allowedApps: ["custom_aioutreach", "gmail", "slack"] });
+  await page.reload();
+  await panel.waitFor();
+  assert.equal(await panel.locator(".csdk-apps").inputValue(), "custom_aioutreach, gmail, slack");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+  }
+  await panel.locator(".csdk-multi").uncheck();
+  assert.equal(await panel.locator(".csdk-max").isDisabled(), true);
+  await panel.locator(".csdk-apps").fill("");
+  await persist();
+  assert.deepEqual(getComposioSdkPolicy(), { multiAccount: false, maxAccountsPerToolkit: 3, allowedApps: [] });
+  await page.reload();
+  await panel.waitFor();
+  assert.equal(await panel.locator(".csdk-app-mode").inputValue(), "selected");
+  await panel.locator(".csdk-app-mode").selectOption("all");
+  assert.equal(await panel.locator(".csdk-app-list").isVisible(), false);
+  await persist();
+  assert.equal(getComposioSdkPolicy().allowedApps, null);
+  await page.locator("#set-composio-mode").selectOption("personal");
+  assert.equal(await panel.isVisible(), false);
+  await persist();
+  assert.deepEqual(getComposioSdkPolicy(), { multiAccount: false, maxAccountsPerToolkit: 3, allowedApps: null });
+  assert.deepEqual(errors, []);
+});

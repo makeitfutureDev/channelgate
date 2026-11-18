@@ -1122,6 +1122,24 @@
                     <em class="state">Organization-level secret. It stays in gateway settings and is never passed to Claude, Codex, or a channel folder.</em>
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
                   </label>
+                  <div id="composio-sdk-policy" hidden>
+                    <label class="toggle"><input class="csdk-multi" type="checkbox" checked /> Allow multiple accounts per app</label>
+                    <p class="desc">Each person can connect separate accounts, such as work and personal Gmail, with their own aliases. When several are connected, the agent must explicitly select which account to use.</p>
+                    <label class="field">
+                      <span>Maximum accounts per app</span>
+                      <input class="csdk-max" type="number" min="2" max="10" step="1" value="5" />
+                    </label>
+                    <label class="field">
+                      <span>Available apps</span>
+                      <select class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
+                    </label>
+                    <label class="field csdk-app-list" hidden>
+                      <span>Allowed app slugs</span>
+                      <textarea class="csdk-apps" rows="3" placeholder="gmail, slack, custom_aioutreach"></textarea>
+                      <em class="state">Separate Composio toolkit slugs with commas or spaces. An empty selected list blocks every app.</em>
+                    </label>
+                    <p class="desc">Applies to personal and shared SDK sessions across the gateway. Existing sessions receive changes on their next run. Restricting apps does not delete saved connections. Save with the settings below.</p>
+                  </div>
                 </div>
                 <div class="setcard">
                   <h4>MCP server URLs</h4>

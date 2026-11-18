@@ -267,7 +267,12 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     if (!present) continue;
     if (rejectedRemotes.some((rejected) => rejected.name === name)) continue;
     const entry = httpRemotes[name] ? relayServer(name) : composioServer(endpoint, composioOpts);
-    if (entry) servers[name] = entry;
+    if (entry) {
+      servers[name] = entry;
+      // SDK policy updates keep the session URL but can change its tool schemas. Retire a
+      // warm client when that policy changes, using the same digest channel as remote rotation.
+      if (endpoint?.mode === "sdk" && endpoint.policyDigest) relayDigest[name] = endpoint.policyDigest;
+    }
   }
   for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customRemotes)]) {
     const remote = httpRemotes[name];

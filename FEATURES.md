@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Composio SDK accounts and available apps (2026-11-18)
+
+Settings → Integrations exposes the SDK session policy for both personal and shared identities.
+Multiple accounts per app are enabled by default, with a configurable limit of 2–10 (default 5).
+When several accounts are connected, the agent must select an account ID or alias explicitly.
+Disabling multi-account mode retains saved connections and restores single-account selection.
+
+Administrators can keep all apps available or allow only named Composio toolkit slugs, including
+custom MCP toolkits. An empty selected list blocks every app. The gateway applies the policy to
+new sessions and updates saved sessions before returning their MCP endpoint on the next run;
+failed updates do not expose the previous unrestricted session. Changing the policy preserves
+connected accounts, user/channel identity separation, shared connection management permissions,
+and the Enterprise admission requirement. Policy changes refresh cached engine tool schemas on
+the next turn, including when the remote session URL stays the same. Personal-token mode is unaffected.
+
 ## One outbound SSH identity across channels (2026-11-18)
 
 Each gateway creates one persistent Ed25519 keypair and mounts its dedicated directory read-only

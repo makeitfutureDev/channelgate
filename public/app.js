@@ -29,6 +29,7 @@ import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
 import { emailAccountEditorMarkup, mountEmailAccountEditor } from "./admin-email-accounts.js";
 import { mountComposioInventory } from "./admin-composio.js";
+import { syncComposioPolicyUi, paintComposioPolicy, readComposioPolicy } from "./admin-composio-policy.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
 
@@ -3800,6 +3801,8 @@ function syncComposioModeUi() {
   const entitled = document.getElementById("set-composio-mode")?.dataset.sdkEntitled === "true";
   const sdkField = document.getElementById("composio-sdk-key-field");
   if (sdkField) sdkField.hidden = mode !== "sdk";
+  const policy = document.getElementById("composio-sdk-policy");
+  if (policy) syncComposioPolicyUi(policy, { sdkMode: mode === "sdk", entitled });
   const help = document.getElementById("composio-mode-help");
   if (help) {
     help.textContent = mode === "sdk"
@@ -4255,6 +4258,7 @@ function readSettingsForm() {
     trustedBotApps: document.getElementById("set-trusted-apps").value,
     defaultChannelAccess: document.getElementById("set-channel-access").value,
     composioMode: document.getElementById("set-composio-mode").value,
+    composioSdkPolicy: readComposioPolicy(document.getElementById("composio-sdk-policy")),
     ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
     ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
     ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
@@ -4408,6 +4412,7 @@ function paintSettings(s) {
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
+  paintComposioPolicy(document.getElementById("composio-sdk-policy"), s.composioSdkPolicy);
   document.getElementById("set-composio-mode").dataset.sdkEntitled = String(s.composioSdk?.entitled === true);
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = s.composioSdk?.entitled !== true;
   document.getElementById("set-composio-sdk-key").disabled = s.composioSdk?.entitled !== true;
@@ -4766,6 +4771,7 @@ function bindSettings() {
     btn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(btn); });
   }
   document.getElementById("set-composio-mode").addEventListener("change", syncComposioModeUi);
+  document.getElementById("composio-sdk-policy").addEventListener("change", syncComposioModeUi);
 
   // Connect / disconnect a chat platform without restarting the daemon — the same live-reconnect
   // affordance Slack has had, for the platforms whose credentials live on this page.
