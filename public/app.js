@@ -3622,21 +3622,17 @@ function openUserDrawer(id) {
   node.querySelector(".ud-reply-mentions").checked = u.replyMentions === true;
   const activityHost = node.querySelector(".ud-activity-identities");
   const linkedActivity = new Set(u.activityIdentities || []);
-  const activityCandidates = Object.entries(USERS).filter(([uid, user]) => uid !== id &&
-    (linkedActivity.has(uid) || ((user.approved || user.isAdmin) && user.activityPlatform)));
-  for (const [uid, user] of activityCandidates) {
-    const assignedElsewhere = Object.entries(USERS).some(([owner, record]) => owner !== id && (record.activityIdentities || []).includes(uid));
-    const label = document.createElement("label");
-    label.className = "toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = uid;
-    input.checked = linkedActivity.has(uid);
-    input.disabled = !input.checked && (assignedElsewhere || (user.activityIdentities || []).length > 0);
-    label.append(input, document.createTextNode(` ${user.name || uid} · ${user.activityPlatform === "msteams" ? "Microsoft Teams" : "Google Chat"} · ${uid}${input.disabled ? " (already linked)" : ""}`));
-    activityHost.appendChild(label);
-  }
-  if (!activityCandidates.length) activityHost.textContent = "No approved Google Chat or Microsoft Teams accounts yet.";
+  const activityCandidates = Object.fromEntries(Object.entries(USERS).filter(([uid, user]) => {
+    if (uid === id) return false;
+    if (linkedActivity.has(uid)) return true;
+    const assigned = Object.entries(USERS).some(([owner, record]) => owner !== id && (record.activityIdentities || []).includes(uid));
+    return (user.approved || user.isAdmin) && user.activityPlatform && !assigned && !(user.activityIdentities || []).length;
+  }).map(([uid, user]) => [uid, { ...user, name: `${user.name || uid} · ${user.activityPlatform === "msteams" ? "Microsoft Teams" : "Google Chat"}` }]));
+  const activityPicker = mountUserPicker(activityHost, {
+    users: activityCandidates, selected: [...linkedActivity], includeUser: () => true,
+    labels: { selected: "Linked Activity accounts", placeholder: "Search users by name, email or account ID…",
+      search: "Search Activity users", available: "Available Activity accounts", empty: "No Activity accounts linked." },
+  });
   const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
@@ -3657,7 +3653,7 @@ function openUserDrawer(id) {
     state.textContent = "saving…";
     try {
       await api(`/api/users/${encodeURIComponent(id)}/activity-identities`, {
-        method: "PUT", body: JSON.stringify({ activityIdentities: [...drawer.querySelectorAll(".ud-activity-identities input:checked")].map(input => input.value) }),
+        method: "PUT", body: JSON.stringify({ activityIdentities: activityPicker.getValues() }),
       });
       await loadUsers();
       document.querySelector("#user-drawer .ud-activity-saved").textContent = "✓ saved";

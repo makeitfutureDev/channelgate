@@ -4,7 +4,8 @@
 
 The existing personal Activity dashboard also lists new Google Chat and Microsoft Teams agent
 conversations for explicitly linked accounts. An administrator selects existing approved native
-accounts under Users → Activity accounts; exact account IDs establish the link, never names or
+accounts with the searchable user picker under Users → Activity accounts. Search by name, email
+or account ID and remove linked accounts from their compact selections; exact account IDs establish the link, never names or
 email matching. Links combine presentation only and do not transfer roles, permissions, secrets,
 connector credentials or run authorship. Unlinking or revoking an account removes its access.
 

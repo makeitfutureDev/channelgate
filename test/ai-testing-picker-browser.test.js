@@ -11,12 +11,14 @@ ensureTestEnv();
 test("testing user search selects, removes and persists with keyboard and pointer at desktop and mobile widths", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
-  const { setUser } = await import("../src/config/store.js");
+  const { setUser, getUser } = await import("../src/config/store.js");
   const { saveSettings, getAiTestingUsers } = await import("../src/config/settings.js");
   await setUser("UTESTALPHA", { name: "Alpha Tester", email: "alpha@example.test", approved: true });
   await setUser("UTESTBETA", { name: "Beta Tester", email: "beta@example.test", approved: true });
   for (let i = 0; i < 40; i++) await setUser(`UTEST${i}`, { name: `Sample User ${i}`, approved: true });
   saveSettings({ aiTestingUsers: ["USAVEDMISSING"] });
+  await setUser("native-picker@example.test", { name: "Native Picker", approved: true, platform: "googlechat" });
+  await setUser("29:" + "long-native-id-".repeat(20), { name: "Teams Picker", approved: true, platform: "msteams" });
   const app = express();
   app.use(express.json());
   // This focused router fixture represents an authenticated admin; real login is tested separately.
@@ -88,5 +90,32 @@ test("testing user search selects, removes and persists with keyboard and pointe
   await page.reload();
   await search.waitFor();
   assert.equal(await picker.locator(".user-picker-chip").count(), 0);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('.nav-item[data-view="users"]').click();
+  await page.locator('#users tr[data-id="UTESTALPHA"]').click();
+  const activity = page.locator('#user-drawer .ud-activity-identities');
+  const activitySearch = activity.getByRole('combobox');
+  assert.equal(await activity.getByRole('listbox').isVisible(), false);
+  await activitySearch.fill('native-picker@example.test');
+  await activity.getByRole('option', { name: /Native Picker/ }).click();
+  await activity.getByRole('button', { name: /Remove Native Picker/ }).waitFor();
+  await activitySearch.fill('Teams Picker');
+  await activitySearch.press('Enter');
+  await activity.getByRole('button', { name: /Remove Teams Picker/ }).waitFor();
+  const saveActivity = async () => {
+    const saved = page.waitForResponse(r => r.url().endsWith('/users/UTESTALPHA/activity-identities') && r.request().method() === 'PUT');
+    await page.locator('.ud-save-activity').click();
+    assert.equal((await saved).status(), 200);
+    await page.locator('.ud-activity-saved').getByText('✓ saved').waitFor();
+  };
+  await saveActivity();
+  assert.equal((await getUser('UTESTALPHA')).activityIdentities.length, 2);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(await activity.evaluate(el => el.scrollWidth <= el.clientWidth), true, 'native account picker has no horizontal overflow');
+  }
+  await activity.getByRole('button', { name: /Remove Native Picker/ }).click();
+  await saveActivity();
+  assert.deepEqual((await getUser('UTESTALPHA')).activityIdentities, ['29:' + 'long-native-id-'.repeat(20)]);
   assert.deepEqual(errors, []);
 });

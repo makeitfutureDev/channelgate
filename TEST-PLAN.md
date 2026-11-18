@@ -2,6 +2,12 @@
 
 ## Combined Activity across platforms (2026-11-18)
 
+- User picker regression: `test/ai-testing-picker-browser.test.js` runs the shared picker and
+  Activity account search in a disposable admin browser on desktop/phone. Search native accounts
+  by name/email, add by pointer/keyboard, save and remove a linked account; long IDs must not
+  cause horizontal overflow. Searching alone does not save links. Existing admission/link gates
+  remain covered by `test/activity-identities.test.js`.
+
 - Automated: `test/platform-threads.test.js` covers migration 60, native opaque keys, observed-root
   authority, personal visibility, replay protection, explicit completion and runtime status.
   `test/activity-identities.test.js` covers explicit account links, assignment conflicts, unlinking,
