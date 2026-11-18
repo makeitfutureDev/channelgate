@@ -4322,6 +4322,7 @@ function readSettingsForm() {
     containerMemory: document.getElementById("set-container-memory").value,
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
+    fsRoots: document.getElementById("set-fs-roots").value.split("\n").map((line) => line.trim()).filter(Boolean),
     containerEgressMode: document.getElementById("set-container-egress-bridge").checked ? "bridge" : "proxy",
     containerEgressSecretsStrict: document.getElementById("set-container-egress-strict").checked,
     // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
@@ -4481,6 +4482,7 @@ function paintSettings(s) {
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
+  document.getElementById("set-fs-roots").value = Array.isArray(s.fsRoots) ? s.fsRoots.join("\n") : "";
   document.getElementById("set-container-egress-bridge").checked = s.containerEgressMode === "bridge";
   document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
@@ -5041,7 +5043,16 @@ async function fsBrowse(p) {
   document.getElementById("fs-up").dataset.parent = data.parent || "";
   const list = document.getElementById("fs-list");
   list.innerHTML = "";
-  if (!data.dirs.length) {
+  // The other allowed roots (Settings → Container runtime) are offered at the primary root.
+  for (const root of Array.isArray(data.otherRoots) ? data.otherRoots : []) {
+    const row = document.createElement("div");
+    row.className = "fs-item";
+    row.innerHTML = ICON_FOLDER;
+    row.appendChild(document.createTextNode(`${root} (allowed root)`));
+    row.addEventListener("click", () => fsBrowse(root));
+    list.appendChild(row);
+  }
+  if (!data.dirs.length && !(data.otherRoots || []).length) {
     list.innerHTML = `<div class="fs-item" style="color:var(--muted);cursor:default">(no sub-folders)</div>`;
   }
   for (const d of data.dirs) {

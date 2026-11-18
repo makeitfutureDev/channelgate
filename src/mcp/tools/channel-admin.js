@@ -35,7 +35,7 @@ function describeDriveSyncStatus(status) {
     ? `✔️ Last sync succeeded at ${when(last.at)}${first}.`
     : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
 }
-import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
+import { allowedFsRoots, allowedRootFor, resolveWithinRoots } from "../../web/security.js";
 import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 import { EXTRA_FOLDER_MODES, MAX_EXTRA_FOLDERS, normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
@@ -338,9 +338,9 @@ export function register(server, ctx) {
       // Same containment as the admin UI's workDir field (src/web/security.js): the sandbox and
       // admin-mode runs execute in this folder, so it must realpath-resolve (symlinks followed)
       // inside the allowlisted root — an out-of-root or nonexistent path is refused.
-      const root = allowedFsRoot();
-      const real = resolveWithinRoot(root, p);
-      if (!real) return text(`That path doesn't exist or is outside the allowed root (${root}).`);
+      const roots = allowedFsRoots();
+      const real = resolveWithinRoots(p, roots);
+      if (!real) return text(`That path doesn't exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}).`);
       // Existence was proven by resolveWithinRoot; the catch only guards a delete race.
       let isDir = false;
       try {
@@ -442,16 +442,18 @@ export function register(server, ctx) {
     {
       description:
         "ADMIN ONLY. Browse folders on the host machine to find one to use with set_channel_workdir or add_channel_folder. " +
-        "Pass an absolute `path` to list its sub-folders (defaults to the home directory). Returns the " +
-        "resolved path, its parent (to go up), and each sub-folder's full path (to go down or to set).",
+        "Pass an absolute `path` to list its sub-folders (defaults to the primary allowed root). Returns the " +
+        "resolved path, its parent (to go up), each sub-folder's full path (to go down or to set), and — at the " +
+        "primary root — the other allowed roots an admin configured (Settings → Container runtime).",
       inputSchema: { path: z.string().optional() },
     },
     async ({ path: dir }) => {
       if (!(await requireAdmin())) return text("Only admins can browse the host filesystem.");
       // Browsing is confined to the same allowlisted root as set_channel_workdir / the admin UI.
-      const root = allowedFsRoot();
-      const target = resolveWithinRoot(root, dir && dir.trim() ? dir.trim() : root);
-      if (!target) return text(`That path doesn't exist or is outside the allowed root (${root}).`);
+      const roots = allowedFsRoots();
+      const target = resolveWithinRoots(dir && dir.trim() ? dir.trim() : roots[0], roots);
+      if (!target) return text(`That path doesn't exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}).`);
+      const root = allowedRootFor(target, roots);
       try {
         const entries = await readdir(target, { withFileTypes: true });
         const folders = entries
@@ -459,9 +461,11 @@ export function register(server, ctx) {
           .map((e) => e.name)
           .sort((a, b) => a.localeCompare(b));
         const parent = path.dirname(target);
-        const head = `📂 ${target}\n${parent !== target ? `↑ up: ${parent}` : "(filesystem root)"}`;
+        const parentOk = parent !== target && Boolean(allowedRootFor(parent, roots));
+        const head = `📂 ${target}\n${parentOk ? `↑ up: ${parent}` : "(top of an allowed root)"}`;
         const body = folders.length ? folders.map((f) => `📁 ${path.join(target, f)}`).join("\n") : "(no sub-folders)";
-        return text(`${head}\n\n${body}`);
+        const others = target === roots[0] && roots.length > 1 ? `\n\nOther allowed roots:\n${roots.slice(1).map((r) => `📁 ${r}`).join("\n")}` : "";
+        return text(`${head}\n\n${body}${others}`);
       } catch (e) {
         return text(`Couldn't list ${target}: ${e.message}`);
       }

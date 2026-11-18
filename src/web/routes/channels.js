@@ -14,7 +14,7 @@ import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { allowedFsRoot, resolveWithinRoot } from "../security.js";
+import { allowedFsRoots, resolveWithinRoots } from "../security.js";
 import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 import { normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 // MEMORY.md and CLAUDE.md live INSIDE the channel's agent-writable working folder, so every read
@@ -474,15 +474,15 @@ export function createChannelsRouter({
         } else if (!wanted) {
           workDirPatch = "";
         } else {
-          const root = allowedFsRoot();
+          const roots = allowedFsRoots();
           // The folder picker returns a server-validated REAL path. If that folder's name carries
           // trailing/leading whitespace (a stray space, NBSP, tab, …), the trimmed value points at
           // a non-existent sibling and the save 400s even though Browse just accepted it. So try the
           // trimmed value first (normalizes accidentally-typed surrounding spaces), then fall back to
           // the raw value before rejecting. resolveWithinRoot still enforces containment either way.
-          const real = resolveWithinRoot(root, wanted) || resolveWithinRoot(root, body.workDir);
+          const real = resolveWithinRoots(wanted, roots) || resolveWithinRoots(body.workDir, roots);
           if (!real || !(await stat(real)).isDirectory())
-            return res.status(400).json({ error: `workDir must be an existing directory under ${root}` });
+            return res.status(400).json({ error: `workDir must be an existing directory under ${roots.join(" or ")}` });
           // Inside the root is not enough: the daemon's own trees and other conversations' folders
           // are refused regardless (src/gateway/workdir-boundary.js) — the folder is mounted
           // read-write into the channel's container.

@@ -392,7 +392,8 @@ runs two daemons against one runtime root.
 long-lived container of that channel's own: its own HOME volume, its own CLI logins, its own
 process namespace, and none of the host's files reachable beyond the channel's work folder and the
 additional folders an admin declared for it (Settings → Additional folders, or the
-`add_channel_folder` tool: existing directories inside the allowed root, mounted at their identical
+`add_channel_folder` tool: existing directories inside an allowed root — the gateway user's home or
+the *Additional allowed roots* listed under Settings → Container runtime — mounted at their identical
 paths read-write or read-only, so one host folder — a shared project, a mounted file server — can
 serve several conversations that each keep their own working folder). There
 is no host fallback: the daemon refuses to boot without a usable container CLI, and a channel that

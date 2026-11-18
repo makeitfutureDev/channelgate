@@ -207,6 +207,44 @@ export function allowedFsRoot() {
   }
 }
 
+// Additional allowlisted roots (UI-managed `fsRoots`, Settings → Container runtime): host
+// directories OUTSIDE the primary root — a mounted file server under /mnt, a shared /srv/projects
+// — that an admin may point a channel's working folder or an additional folder at. Each entry is
+// an absolute, existing directory, realpath'd like the primary root; anything else is dropped
+// here rather than trusted. The primary root always comes first.
+export function allowedFsRoots() {
+  const primary = allowedFsRoot();
+  const s = getSettings();
+  const extras = Array.isArray(s.fsRoots) ? s.fsRoots : [];
+  const out = [primary];
+  for (const raw of extras) {
+    const value = String(raw || "").trim();
+    if (!value || !path.isAbsolute(value)) continue;
+    let real;
+    try {
+      real = realpathSync(value);
+    } catch {
+      continue;
+    }
+    if (!out.includes(real)) out.push(real);
+  }
+  return out;
+}
+
+// Which allowed root contains `target` (already resolved), or "" when none does.
+export function allowedRootFor(target, roots = allowedFsRoots()) {
+  return roots.find((root) => pathWithin(root, target)) || "";
+}
+
+// resolveWithinRoot over every allowed root: the real path when it sits inside ANY of them.
+export function resolveWithinRoots(candidate, roots = allowedFsRoots()) {
+  for (const root of roots) {
+    const real = resolveWithinRoot(root, candidate);
+    if (real) return real;
+  }
+  return null;
+}
+
 // Is `target` equal to or inside `root`? Pure prefix logic via path.relative — separator-aware,
 // so "/home/user2" is NOT within "/home/user" while a dir literally named "..foo" IS. Both
 // arguments should already be resolved/real paths (see resolveWithinRoot).

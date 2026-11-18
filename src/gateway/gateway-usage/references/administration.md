@@ -295,7 +295,10 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
   `@mounts/<name>` (the folder's basename), listed first at the root; a read-only mount refuses
   writes there too. Inside the container, use the folder's real host path.
 - `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir` or
-  `add_channel_folder`.
+  `add_channel_folder`. Only the allowed roots are browsable: the gateway user's home and the
+  *Additional allowed roots* an admin listed under Settings → Container runtime (shown at the
+  top level). A folder elsewhere on the host, a mounted share under `/mnt` say, is refused as
+  "outside the allowed root" until an admin adds its root there; say so instead of retrying.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
   (admin) — two-way-sync a Google Drive folder with the channel's whole folder. Agent instructions
   and skills (`CLAUDE.md`, `AGENTS.md`, `.claude/`, …), `MEMORY.md`/`memory/`, secrets (`.env`,

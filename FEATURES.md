@@ -93,6 +93,16 @@ at the kernel.
   member), `add_channel_folder` (admin; an approval card in channels that are not in Admin mode)
   and `remove_channel_folder` (admin, automatic). Every change is a `channel_meta_changed` audit
   event. Up to 16 entries.
+- **Allowed roots.** A folder must sit inside an allowed root: the gateway user's home (or the
+  configured `fsRoot`) and, new, the **Additional allowed roots** an admin lists under Settings →
+  Container runtime (`fsRoots`: one absolute path per line, each an existing directory on the
+  gateway host, none of the daemon's own trees; a bad entry refuses the save). This is how a
+  mounted file server under `/mnt` or a shared `/srv/projects` becomes selectable without widening
+  the primary root. Every door reads the same list (`allowedFsRoots` in `src/web/security.js`):
+  the working-folder field and `set_channel_workdir`, additional folders and `add_channel_folder`,
+  the folder picker (which offers the other roots at the primary root and stops Up at each root's
+  top) and `list_folders`. A root that is removed later makes an already-stored folder under it
+  fail closed at the next spawn with the remedy, like any other refusal.
 - **Validated at every door; any conversation folder is allowed.** An entry must be an absolute
   path to an existing directory that realpath-resolves inside the allowlisted root and is none of
   the daemon's own trees (`sensitiveWorkDirRoots` in `src/gateway/workdir-boundary.js`: the home
