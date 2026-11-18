@@ -15,6 +15,7 @@ const API = "https://backend.composio.dev/api/v3.1/toolkits";
 const ACCOUNTS_API = "https://backend.composio.dev/api/v3.1/connected_accounts";
 const SLUG = /^[a-z0-9_][a-z0-9_-]{0,127}$/;
 const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,160}$/;
+const CATALOG_PAGE_SIZE = 24;
 const creating = new Set();
 const deleting = new Set();
 const clean = (v, max = 256) => typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
@@ -232,6 +233,15 @@ export async function deleteActivityConnection({ ownerId, teamId, connectionId, 
   } finally { deleting.delete(key); }
 }
 
+function catalogLogo(value, credential) {
+  // Logos are passive browser images from the provider's fixed asset hosts. Reject URL
+  // normalization tricks, credentials, ports and parameters rather than broadening CSP.
+  if (typeof value !== "string" || value.length > 1024 || value !== value.trim() || value.includes(credential)
+    || !/^https:\/\/(?:logos|assets)\.composio\.dev\/[A-Za-z0-9_/-][A-Za-z0-9_./-]*$/.test(value)
+    || value.split("/").some(segment => segment === "." || segment === "..")) return "";
+  return value;
+}
+
 async function catalogRequest(config, { query = "", cursor = "", ownerId, teamId }, options) {
   if (typeof query !== "string" || query.length > 120 || typeof cursor !== "string" || cursor.length > 2048) fail("Invalid app search or page.");
   const identity = composioIdentity({ workspaceId: teamId, kind: "user", id: ownerId });
@@ -244,7 +254,7 @@ async function catalogRequest(config, { query = "", cursor = "", ownerId, teamId
   for (let page = 0; page < 50; page++) {
     const url = new URL(API);
     const search = query.trim() || (selected && allowed.length === 1 ? allowed[0] : "");
-    for (const [key, value] of Object.entries({ limit: 100, type: "all", sort_by: "alphabetically", include_deprecated: false, user_id: identity,
+    for (const [key, value] of Object.entries({ limit: CATALOG_PAGE_SIZE, type: "all", sort_by: "alphabetically", include_deprecated: false, user_id: identity,
       ...(next ? { cursor: next } : {}), ...(search ? { search } : {}) })) url.searchParams.set(key, String(value));
     if (seen.has(next)) throw new Error("repeated page"); seen.add(next);
     const response = await (options.fetch || globalThis.fetch)(url, {
@@ -256,19 +266,21 @@ async function catalogRequest(config, { query = "", cursor = "", ownerId, teamId
       while (true) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength; if (total > 2_000_000) throw new Error("catalog too large"); chunks.push(value); }
     } finally { await reader.cancel().catch(() => {}); }
     const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!Array.isArray(result?.items) || result.items.length > 200) throw new Error("invalid catalog");
+    // Do not truncate an oversized page: its cursor would skip undisplayed applications.
+    if (!Array.isArray(result?.items) || result.items.length > CATALOG_PAGE_SIZE) throw new Error("invalid catalog");
     const previous = next; next = result.next_cursor;
-    if (next != null && (typeof next !== "string" || next.length > 2048 || next === previous)) throw new Error("invalid page");
+    if (next != null && (typeof next !== "string" || next.length > 2048 || next === previous || next.includes(config.sdkApiKey))) throw new Error("invalid page");
     for (const item of result.items) {
       const slug = clean(item?.slug, 128).toLowerCase();
-      if (!SLUG.test(slug)) throw new Error("invalid toolkit");
+      if (!SLUG.test(slug) || slug.includes(config.sdkApiKey.toLowerCase())) throw new Error("invalid toolkit");
       if (selected && !allowed.includes(slug)) continue;
-      const safe = value => clean(value, 500).split(config.sdkApiKey).join("[redacted]");
+      const safe = value => clean(typeof value === "string" ? value.split(config.sdkApiKey).join("[redacted]") : "", 500);
       const name = safe(item.name).slice(0, 160) || slug, description = safe(item.meta?.description);
+      const logo = catalogLogo(item.meta?.logo, config.sdkApiKey);
       // The API also calls its legacy metadata object `deprecated`; that object is not
       // evidence that an app is retired (ordinary Gmail has deprecated.toolkitId).
       const deprecated = item.deprecated === true;
-      apps.set(slug, { slug, name, description, canConnect: item.no_auth !== true && !deprecated,
+      apps.set(slug, { slug, name, description, ...(logo ? { logo } : {}), canConnect: item.no_auth !== true && !deprecated,
         reason: item.no_auth === true ? "Available without a connection" : deprecated ? "No longer supported" : "" });
     }
     // Skip pages containing only apps excluded by the gateway policy. Keep the provider's
