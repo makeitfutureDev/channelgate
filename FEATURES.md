@@ -1,5 +1,27 @@
 # ChannelGate — Features
 
+## Combined Activity across Slack, Google Chat and Teams (2026-11-18)
+
+The existing personal Activity dashboard also lists new Google Chat and Microsoft Teams agent
+conversations for explicitly linked accounts. An administrator selects existing approved native
+accounts under Users → Activity accounts; exact account IDs establish the link, never names or
+email matching. Links combine presentation only and do not transfer roles, permissions, secrets,
+connector credentials or run authorship. Unlinking or revoking an account removes its access.
+
+Native threads retain opaque platform session keys and fresh platform membership/admission checks.
+The combined list supports status and working time, grouping, pins, private comments, personal Hide,
+and starter-only Done/Reopen and Later/Resume (including Mark All Done). Open uses the correct native
+platform. Completion on Google Chat and Teams is saved in Activity; Slack retains its checkmark.
+Only a proven observed root author can complete a native thread; replying to an unseen root grants
+participation and personal Hide without acquiring completion authority. Fresh original agent prompts
+restore the sender's hidden row and reopen completed work; duplicate deliveries, edits and reactions
+do not. Pending questions/approvals and background work contribute live status.
+
+Tracking starts with original messages admitted to an agent turn after installation. Existing native
+history is not backfilled or assigned an inferred owner. Login still uses the existing Activity
+account/session and its Slack connection; native-platform login and cross-platform voice calls are
+outside this change.
+
 ## Shared Done stays visible until personal dismissal (2026-11-17)
 
 Done is shared across a conversation, while leaving Active is personal. When somebody else completes a thread, its green Done row remains in your Activity until you Hide it. Completing it yourself removes it from Active and retains it in Completed; pins cannot override this. Hide remains separate and affects only your list. Reopen resets automatic completion dismissals while preserving manual Hide, and your next newer original message restores your own visibility. Existing starter-only dashboard and voice completion authority is unchanged. Existing running tasks continue, but shared Done remains the displayed state.

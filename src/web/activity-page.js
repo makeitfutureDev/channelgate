@@ -585,7 +585,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       let entry = nodes.get(rowKey);
       if (!entry) { entry = makeRow(rowKey); nodes.set(rowKey, entry); }
       const title = String(row.title || "Untitled conversation"), url = safeUrl(row.url);
-      const app = Boolean(url && new URL(url).origin === location.origin);
+      const app = Boolean((!row.platform || row.platform === "slack") && url && new URL(url).origin === location.origin);
       entry.title.textContent = title;
       entry.title.title = title;
       entry.saved = row.comment;
@@ -621,8 +621,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       clock(entry);
       link(entry.open, url, app);
       entry.open.dataset.app = app ? "1" : "";
-      entry.open.setAttribute("aria-label", "Open in Slack: " + title);
-      entry.open.title = app ? "Open in Slack · Ctrl/⌘-click opens it in the browser" : "Open in Slack";
+      entry.open.dataset.platform = row.platform || "slack";
+      const platformName = row.platform === "googlechat" ? "Google Chat" : row.platform === "msteams" ? "Microsoft Teams" : "Slack";
+      entry.open.textContent = "Open in " + platformName;
+      entry.open.setAttribute("aria-label", "Open in " + platformName + ": " + title);
+      entry.open.title = app ? "Open in Slack · Ctrl/⌘-click opens it in the browser" : "Open in " + platformName;
       if (voiceCalls && /^[A-Z0-9_]{1,32}$/.test(String(row.channelId)) && /^\d{1,13}\.\d{1,6}$/.test(String(row.threadTs))) {
         entry.call.dataset.channelId = row.channelId; entry.call.dataset.threadTs = row.threadTs;
         entry.call.dataset.channelName = String(row.channelName || ""); entry.call.dataset.title = title;
@@ -1398,6 +1401,7 @@ function settingsBrowser(config, browser, theme) {
 
 const icon = (svg) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>${svg}</svg>`)}")`;
 const ICONS = {
+  external: icon("<g fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 3h7v7M21 3 10 14M10 4H4v16h16v-6'/></g>"),
   call: icon("<path d='M6.6 2.6c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8L9.4 8.1c-.3.3-.4.8-.1 1.2a13 13 0 0 0 5.4 5.4c.4.2.9.2 1.2-.1l1.4-1.3c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8l-1.5 1.5c-1 1-2.5 1.4-3.9.9A20 20 0 0 1 4.2 8c-.5-1.4-.1-2.9.9-3.9l1.5-1.5Z'/>"),
   hide: icon("<g fill='none' stroke='white' stroke-width='2' stroke-linecap='round'><path d='M3 3l18 18M10 5a12 12 0 0 1 12 7 17 17 0 0 1-4 5M6 6a17 17 0 0 0-4 6 12 12 0 0 0 13 7'/><path d='M10 10a3 3 0 0 0 4 4'/></g>"),
   pin: icon("<path d='m15 2 7 7-2 2-2-1-4 4v3l-1 1-3-3-5 5-1-1 5-5-3-3 1-1h3l4-4-1-2 2-2Z'/>"),
@@ -1591,6 +1595,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 .open-link,.call-link,.toggle{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
 .open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
+.open-link[data-platform=googlechat],.open-link[data-platform=msteams]{--icon:${ICONS.external}}
 .call-link{--icon:${ICONS.call}}
 ${voiceCalls ? CALL_OVERLAY_CSS : ""}
 .toggle[data-state=done]{--icon:${ICONS.done};color:var(--s-done)}
@@ -1719,7 +1724,7 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 ${callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
-<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
+<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Slack main messages get ✅; Google Chat and Teams completion is saved in Activity. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>

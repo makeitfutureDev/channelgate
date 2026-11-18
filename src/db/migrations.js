@@ -1426,4 +1426,36 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 60,
+    up(db) {
+      // Non-Slack Activity uses canonical session keys, never native reply addresses.
+      db.exec(`
+        CREATE TABLE platform_threads (
+          channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, platform TEXT NOT NULL,
+          slug TEXT NOT NULL, starter_id TEXT NOT NULL, title TEXT NOT NULL,
+          updated_ms INTEGER NOT NULL, last_message_ms INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'idle', done_ms INTEGER NOT NULL DEFAULT 0,
+          later_ms INTEGER NOT NULL DEFAULT 0, error_ms INTEGER NOT NULL DEFAULT 0,
+          completion_reopened_ms INTEGER NOT NULL DEFAULT 0,
+          source_url TEXT NOT NULL DEFAULT '', agent_engaged INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY(channel_id,thread_ts)
+        );
+        CREATE TABLE platform_thread_participants (
+          channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, user_id TEXT NOT NULL,
+          hidden_ms INTEGER NOT NULL DEFAULT 0, dismissed_ms INTEGER NOT NULL DEFAULT 0,
+          last_own_message_ms INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY(channel_id,thread_ts,user_id),
+          FOREIGN KEY(channel_id,thread_ts) REFERENCES platform_threads(channel_id,thread_ts) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_platform_thread_participants_user ON platform_thread_participants(user_id,channel_id,thread_ts);
+        CREATE TABLE platform_thread_messages (
+          channel_id TEXT NOT NULL, message_id TEXT NOT NULL, thread_ts TEXT NOT NULL,
+          message_ms INTEGER NOT NULL,
+          PRIMARY KEY(channel_id,message_id),
+          FOREIGN KEY(channel_id,thread_ts) REFERENCES platform_threads(channel_id,thread_ts) ON DELETE CASCADE
+        );
+      `);
+    },
+  },
 ];

@@ -3594,7 +3594,7 @@ function renderUsersTable() {
     </tr>`;
   }).join("");
   wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Name</th><th>User ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   for (const tr of wrap.querySelectorAll("tbody tr[data-id]")) tr.addEventListener("click", () => openUserDrawer(tr.dataset.id));
 }
@@ -3620,6 +3620,23 @@ function openUserDrawer(id) {
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
   node.querySelector(".ud-nudges").checked = !!u.nudges;
   node.querySelector(".ud-reply-mentions").checked = u.replyMentions === true;
+  const activityHost = node.querySelector(".ud-activity-identities");
+  const linkedActivity = new Set(u.activityIdentities || []);
+  const activityCandidates = Object.entries(USERS).filter(([uid, user]) => uid !== id &&
+    (linkedActivity.has(uid) || ((user.approved || user.isAdmin) && user.activityPlatform)));
+  for (const [uid, user] of activityCandidates) {
+    const assignedElsewhere = Object.entries(USERS).some(([owner, record]) => owner !== id && (record.activityIdentities || []).includes(uid));
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = uid;
+    input.checked = linkedActivity.has(uid);
+    input.disabled = !input.checked && (assignedElsewhere || (user.activityIdentities || []).length > 0);
+    label.append(input, document.createTextNode(` ${user.name || uid} · ${user.activityPlatform === "msteams" ? "Microsoft Teams" : "Google Chat"} · ${uid}${input.disabled ? " (already linked)" : ""}`));
+    activityHost.appendChild(label);
+  }
+  if (!activityCandidates.length) activityHost.textContent = "No approved Google Chat or Microsoft Teams accounts yet.";
   const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
@@ -3635,6 +3652,18 @@ function openUserDrawer(id) {
   drawer.appendChild(node);
 
   mountUserDashboardAccess(drawer.querySelector(".ud-dashboard-access"), id, { confirm: confirmDialog });
+  drawer.querySelector(".ud-save-activity").addEventListener("click", async () => {
+    const state = drawer.querySelector(".ud-activity-saved");
+    state.textContent = "saving…";
+    try {
+      await api(`/api/users/${encodeURIComponent(id)}/activity-identities`, {
+        method: "PUT", body: JSON.stringify({ activityIdentities: [...drawer.querySelectorAll(".ud-activity-identities input:checked")].map(input => input.value) }),
+      });
+      await loadUsers();
+      document.querySelector("#user-drawer .ud-activity-saved").textContent = "✓ saved";
+    } catch (error) { state.textContent = "✗ " + error.message; }
+  });
+
 
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
