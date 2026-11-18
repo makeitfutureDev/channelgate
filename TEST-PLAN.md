@@ -1,5 +1,68 @@
 # ChannelGate — Test Plan
 
+## Container process limit (2026-11-19)
+
+- [x] `test/container-process-limit.test.js` (always runs): the host-side reader returns the
+      kernel's counters for cgroup v2 and v1, `max: null` for an uncapped cgroup, and unknown for a
+      non-container pid, a missing process, missing counters and a namespace-hidden path; pressure
+      begins at 85% and never without a limit or a reading; the inspect format ends in
+      `{{.State.Pid}}` and a 10-field line still parses. `ensureUp` with `reclaimProcesses`
+      on a running container at 1,000 of 1,024 with only the caller's own lease runs `stop -t 10`
+      then `start`, never `rm`, and returns `reclaimed`; with another lease inside, without the
+      flag, or when the stop fails it stops or starts nothing and returns `processPressure`; with
+      room, no cap, an unreadable cgroup or a throwing reader it does nothing; a stopped container
+      is started with no read. The post-mortem counts only refusals
+      since this turn's `ensureUp`, keeps them as evidence after the tree freed its slots, counts a
+      restarted container from zero and is unknown without a cap. `annotateProcessLimit` produces
+      the exact sentence and `details.processLimit`, never adds "thread", "fork" or "session" to
+      the message, leaves stops, aborts, provider errors, evidence-free and merely nearly-full
+      failures untouched, and does not wait on a probe that never answers. The event
+      log keeps numbers only. The answer note and the per-attempt facts are asserted verbatim for
+      the reclaimed, shared and ordinary cases and are empty for a host run or an uncapped runtime.
+      The default is 4,096; a stored 1,024 is raised once and a later or different value is kept.
+- [x] `test/runtime-integration-run.test.js`: a Claude and a Codex turn whose backend reports a
+      reclaim each lead their answer with the restart note, announce it once as an `answer_note`,
+      carry "The gateway restarted this container just before this attempt" in the spawned prompt
+      and log one `container_process_reclaim` event with the numbers, having asked the backend with
+      `reclaimProcesses`; a failing turn whose backend
+      reports 1,023 of 1,024 with 50 refusals rejects with the named cause and
+      `details.processLimit`, and the same failure in a container with room keeps its own words.
+      `test/runtime-integration-jobs.test.js`: a job recovered after a restart holds a `job` lease
+      under its own run id.
+- [x] Live mechanism check on a throwaway container (2026-11-19, engine-independent): a
+      `--pids-limit 64` container filled with `sleep` processes read 63 of 64 with one refusal from
+      the host; a `podman exec` into it failed ("unable to start container process"), which is why
+      nothing inside can clean up; `stop -t 10` + `start` took 298 ms and read 3 of 64, refusals 0.
+- [x] Live incident replay on the gateway host (2026-11-19, engine-independent: host cgroup reads
+      and container lifecycle, no engine involved). Fixture: channel container
+      `cg-65b79052-slack-int-presentations` on the second gateway of this host, restarted by a
+      retried turn five minutes earlier. Observed before: `pids.current` 1,023 of `pids.max` 1,024,
+      `pids.events` `max 1434`, five orphaned `agent-browser` daemons with their Chromium trees and
+      three orphaned MCP bridges, no engine process, no `active_runs` row. `{{.State.Pid}}` →
+      `/proc/<pid>/cgroup` → the `libpod-<id>.scope` counters were readable by a different OS user
+      with no exec. After ending the leftover processes from the host: 10 of 1,024.
+- [ ] Live `PROC-LIMIT-01` — Claude and Codex, each in its own disposable Worker channel with
+      network on, on a gateway whose limit is set to 1,024 for the test (Settings → Container
+      runtime). Prompt: "Start five separate agent-browser sessions named p1 to p5, open
+      https://example.com in each, leave them all open and reply with the session names." Expect
+      the turn either to finish or to fail with an error containing "ran out of process slots
+      (… of 1,024 in use" and a `run_error` event carrying `processLimit`. Then send "list the open
+      browser sessions". Expect the reply to begin with "This channel's container had run out of
+      process slots", `podman inspect --format '{{.State.StartedAt}}'` newer than the second
+      message, a `container_process_reclaim` event, and the engine reporting no open sessions.
+      Pass: no turn dies twice in a row for the same reason and neither message needs an operator.
+- [ ] Live `PROC-LIMIT-02` — same fixture, Claude and Codex. Start a gateway background job
+      (`run_in_background`: `sleep 600`), repeat the five-browser prompt, then send any message.
+      Expect no container restart while the job runs (unchanged `StartedAt`), the reply to begin
+      with "nearly out of process slots … other work is still running in it", and the job to
+      finish. Pass: the job is never killed by a reclaim.
+- [ ] Live `PROC-LIMIT-03` (engine-independent: boot-time settings, no engine involved). On an
+      install whose `settings.json` holds `containerPidsLimit: 1024` and no `containerPidsLimitRev`,
+      restart the daemon. Expect the boot line "container process limit raised from the old default
+      1024 to 4096", Settings → Container runtime showing 4096, and the next turn in a channel
+      recreating its container with `--pids-limit 4096` (`podman inspect --format
+      '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
+
 ## Activity Connections settings (2026-11-18)
 
 - Compact catalog revision: `test/activity-connections-compact-browser.test.js` checks the real

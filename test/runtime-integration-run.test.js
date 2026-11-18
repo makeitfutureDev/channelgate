@@ -294,6 +294,54 @@ test("an isolated turn warms the runtime up, holds a run lease, and releases it"
   void entry;
 });
 
+test("a container that ran out of process slots: the reply and the engine are both told it was restarted", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend({ ensureUpResult: { reclaimed: { current: 1000, max: 1024 } } });
+    useBackend(backend);
+    const id = `C_RT_RECLAIM_${engine.toUpperCase()}`;
+    await channel(id, `rt-reclaim-${engine}`, { engine });
+    const notes = [];
+    const result = await runMessage({
+      channelId: id, authorId: "U_RT", text: "hello after the reclaim", threadKey: "9300.001", origin: "slack_foreground", preferCold: true,
+      onEvent: (event) => { if (event?.kind === "answer_note") notes.push(event.text); },
+    });
+    const note = "⚠️ _This channel's container had run out of process slots (1,000 of 1,024 in use by processes earlier work left running), so it was restarted before this turn. Browser sessions, dev servers and anything else left running in it are gone._\n\n";
+    assert.equal(result.engine, engine);
+    assert.equal(backend.calls.ensureUp[0].reclaimProcesses, true, `${engine}: a turn is the caller that may ask for the restart`);
+    assert.ok(result.content.startsWith(note), `${engine}: the answer leads with what happened`);
+    assert.deepEqual(notes.filter((text) => text.includes("run out of process slots")), [note], `${engine}: announced once, for surfaces that stream the answer`);
+    // The engine's own prompt carries the fact, so it does not assume its browsers still exist.
+    const spawned = JSON.stringify(backend.calls.spawn.at(-1));
+    assert.match(spawned, /The gateway restarted this container just before this attempt because it had run out of process slots \(1,000 of 1,024 in use\)/, `${engine}: told in its per-attempt facts`);
+    const events = (await readEvents({ limit: 200 })).filter((event) => event.event === "container_process_reclaim" && event.channel === id);
+    assert.equal(events.length, 1);
+    assert.deepEqual({ current: events[0].current, max: events[0].max }, { current: 1000, max: 1024 });
+  }
+});
+
+test("an engine death the process limit caused is named, with the kernel's numbers", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
+  const backend = createFakeRuntimeBackend({ processLimit: { current: 1023, max: 1024, exhausted: true, full: false, denied: 50 } });
+  useBackend(backend);
+  await channel("C_RT_PROCLIMIT", "rt-proclimit");
+  await assert.rejects(
+    runMessage({ channelId: "C_RT_PROCLIMIT", authorId: "U_RT", text: "CLAUDE_STUB_FAIL_GENERIC", threadKey: "9301.001", origin: "slack_foreground", preferCold: true }),
+    (error) => {
+      assert.match(error.message, / — this channel's container ran out of process slots \(1,023 of 1,024 in use; the limit refused 50 new processes during this turn\)\.$/);
+      assert.deepEqual(error.details.processLimit, { current: 1023, max: 1024, denied: 50 });
+      return true;
+    },
+  );
+  // The same failure in a container with room keeps its own words.
+  const roomy = createFakeRuntimeBackend({ processLimit: { current: 40, max: 4096, exhausted: false, full: false, denied: 0 } });
+  useBackend(roomy);
+  await assert.rejects(
+    runMessage({ channelId: "C_RT_PROCLIMIT", authorId: "U_RT", text: "CLAUDE_STUB_FAIL_GENERIC", threadKey: "9301.002", origin: "slack_foreground", preferCold: true }),
+    (error) => { assert.doesNotMatch(error.message, /process slots/); assert.equal(error.details?.processLimit, undefined); return true; },
+  );
+});
+
 test("a Claude turn relays the OPERATOR's login into the container — never a stale engine-home copy", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
   const backend = createFakeRuntimeBackend();

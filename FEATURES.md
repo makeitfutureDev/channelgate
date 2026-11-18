@@ -1,5 +1,54 @@
 # ChannelGate — Features
 
+## Container process limit: reclaim, named failures, higher default (2026-11-19)
+
+A channel container's process limit (`--pids-limit`) counts processes and threads together and is
+shared by every thread and job in the channel. Whatever a turn leaves running — a browser session
+that detached into its own session, a dev server, the children of an engine that crashed — keeps
+its slots until the container next goes idle. A container at the limit cannot start a thread:
+Claude Code aborts within seconds, every automatic resume is exec'd into the same full container
+and aborts the same way, and the agent cannot run `kill` to help itself.
+
+- **The daemon reads the limit from the host.** `src/runtimes/container/pids-pressure.js` resolves
+  the container's init pid (`{{.State.Pid}}`, now part of the lifecycle's one `inspect`) to its
+  cgroup and reads the kernel's `pids.current`, `pids.max` and `pids.events` — file reads, with no
+  process started in a container that has no room for one. cgroup v1 and v2 are both read; a
+  hidden ancestor, a missing file or no cap is "unknown" and never treated as pressure.
+- **A full container is restarted before a turn is exec'd into it.** `ensureUp` checks a running
+  container's use. From 85% of the limit, when the caller is a turn (`reclaimProcesses`, passed by
+  the run orchestrator for every foreground turn, schedule, API run and job continuation) and
+  nobody else holds a lease on it (the caller's own lease does not count), the container is
+  stopped and started again: the same thing the idle reaper would have done a few minutes later.
+  Files, the HOME volume and the temp volumes are untouched; processes left running are gone. The
+  answer begins with a note saying so, the engine's per-attempt runtime facts say so, and a
+  `container_process_reclaim` event records the numbers. With other work inside — or when the stop
+  itself fails — nothing is lost: the turn is told the container is nearly full and may fail, once
+  per turn. The memory reviewer, SSH sessions, `/resume` inspection and session carries never
+  restart a container: nobody would be told, and a developer who attached to look at a full
+  container must find it as it was.
+- **A death the limit caused says so.** After an engine run fails, the run orchestrator asks the
+  backend's optional `inspectProcessLimit` (host-side, bounded to three seconds). When the kernel
+  refused starts during that turn, or the container is at its limit, the error gains
+  "this channel's container ran out of process slots (1,023 of 1,024 in use; the limit refused 50
+  new processes during this turn)" and `details.processLimit`; `run_error` and `run_auto_resume`
+  log the three numbers. A container that is only nearly full blames nothing, and stops, aborts
+  and provider errors are never annotated. The existing one-shot auto-resume then meets a
+  reclaimed container instead of the full one. A preparation step that fails inside a container
+  that could not be cleared carries the same numbers.
+- **Every container attempt is told its budget.** The per-attempt access facts state the applied
+  limit, that a headless browser session takes roughly 250 slots, and to close browser sessions
+  and servers when finished. Nothing is stated for a host run or a runtime that applies no cap.
+- **The default is 4,096** (was 1,024, which four parallel browser sessions exhaust). The Settings
+  page saves every container field together, so installs that saved it have the old default
+  stored: boot raises a stored 1,024 once (`raiseLegacyPidsLimitDefault`, marked by
+  `containerPidsLimitRev`), leaves any other stored value alone, and never touches a 1,024 an
+  operator sets afterwards. A limit change recreates each container at its next idle moment.
+- **A background job recovered after a daemon restart is leased again.** "Is anyone else inside?"
+  is asked of leases, and the recovered job's lease died with the old daemon; without one, a
+  rebuild or a reclaim would have seen an empty container and ended the job.
+
+→ TEST-PLAN: Container process limit (2026-11-19).
+
 ## Activity connection management (2026-11-18)
 
 Activity → Settings → Connections opens a compact, full-width application grid with Connected and
@@ -5132,7 +5181,7 @@ are retired, bullet by bullet; everything else stands.
   bullet below). Hardening: tmpfs `/run` only (64m, noexec — pid files and the socket mount, which
   must be fresh at every start);
   `--cap-drop ALL` plus only `DAC_OVERRIDE`/`CHOWN`/`FOWNER`; `--security-opt no-new-privileges`;
-  `--init`; `--pids-limit` (1024 by default), `--memory` and `--cpus`, all three dropped with a
+  `--init`; `--pids-limit` (4096 by default), `--memory` and `--cpus`, all three dropped with a
   warning when the host does not delegate cgroup controllers (probed once with a throwaway
   container, so a whole fleet does not fail one spawn at a time). Every container carries
   `channelgate=1`, `cg.install`, `cg.platform`, `cg.channel`, `cg.fingerprint`, `cg.image` and

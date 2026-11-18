@@ -81,6 +81,11 @@ export const OPTIONAL_METHODS = Object.freeze([
   "inspectUsage",
   // inspectResources(target, { pid, runId }) → bounded process/thread/cgroup counts; no secrets.
   "inspectResources",
+  // inspectProcessLimit(target) → { current, max, exhausted, full, denied } | null — the runtime's
+  // process/thread cap as seen from OUTSIDE it, after an engine process died. `denied` is how many
+  // starts the cap refused since this target's ensureUp; `full` is "at the cap right now". Null when there is no cap or it cannot be
+  // read; never throws for "unknown".
+  "inspectProcessLimit",
   // writeHomeFile(target, { file, body, mode = 0o600 }) → Promise<void> — place ONE private file in
   // the runtime's persistent HOME (the relayed Codex auth.json, src/gateway/codex-token-relay.js):
   // written 0600 (0700 for a launcher) and RENAMED into place, never through a mount.

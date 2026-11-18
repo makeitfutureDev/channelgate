@@ -1011,6 +1011,19 @@ export class BackgroundJobs {
     // that loop awaits whole continuation turns, and an agent inside one may itself launch a
     // background job, which would otherwise deadlock against a gate this same call has to release.
     this._releaseRecoveryGate();
+    // Lease every recovered container job BEFORE the loop below delivers anything. "Is anyone else
+    // inside?" is asked of leases, and these jobs' leases died with the old daemon: the loop
+    // awaits whole continuation turns, and such a turn in the same channel would otherwise see an
+    // empty container — free to be rebuilt, or restarted by the process-limit reclaim — while a
+    // later row's job is still running in it. A row that turns out finished or unverifiable goes
+    // through _finish, which releases the lease.
+    for (const rec of recs) {
+      if (rec.pendingDelivery || !rec.runtime?.backend || rec.runtime.backend === "host") continue;
+      await this._attachRecoveredRuntime(rec);
+      if (rec.target?.container?.name) {
+        try { rec.lease = rec.target.runtime.acquireLease(rec.target, { kind: "job", id: rec.runtime.runId || rec.id }); } catch { /* the watch still runs */ }
+      }
+    }
     for (const rec of recs) {
       // A row that recorded a non-host runtime needs its target rebuilt before anything can be
       // asked about it: its pid belonged to a client process that died with the old daemon, and
@@ -1018,7 +1031,7 @@ export class BackgroundJobs {
       // channel has since been moved to a different backend (or the runtime can't be resolved at
       // all) we deliberately do NOT guess — the job falls through to the "could not be confirmed"
       // continuation below, which is what an unverifiable job has always produced.
-      if (rec.runtime?.backend && rec.runtime.backend !== "host") await this._attachRecoveredRuntime(rec);
+      if (rec.runtime?.backend && rec.runtime.backend !== "host" && !rec.target) await this._attachRecoveredRuntime(rec);
       rec.tail = await this._tailFromLog(rec.logFile, rec);
       if (rec.pendingDelivery) {
         // Older delivery code passed the entire synthetic agent session key to Slack as
@@ -1042,6 +1055,7 @@ export class BackgroundJobs {
         await logEvent("bg_recover_watch", { id: rec.id, slug: rec.slug, pid: rec.pid, runtime: rec.runtime?.backend || "host" });
         // Still running after a restart: live work again, for the egress proxy's swap gate.
         rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id });
+        // It keeps the lease taken before this loop (the pre-pass above) until _finish.
         this._watchByProbe(rec, { recovered: true });
       } else {
         // Already tracked above, so _finish's guard passes → force the continuation.
