@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add an application/account inventory to Activity Settings → Connections and a searchable,
+  paginated SDK app picker with private authorization links and account aliases. Personal-token
+  mode shows connected apps and refreshes them when the token changes.
+
 - Let viewers resize Activity's Actions column and save its width. Widen the default so all
   six desktop action buttons fit on one row, including Call.
 

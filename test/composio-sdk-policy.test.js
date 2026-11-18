@@ -9,6 +9,7 @@ test("multi-account defaults require explicit selection; empty restrictions neve
   });
   assert.deepEqual(composioSessionPolicy({ allowedApps: [] }).toolkits, { enable: [] });
   assert.deepEqual(normalizeComposioSdkPolicy({ allowedApps: [" Gmail ", "gmail", "custom_aioutreach"] }).allowedApps, ["custom_aioutreach", "gmail"]);
+  assert.deepEqual(normalizeComposioSdkPolicy({ allowedApps: ["_1password"] }).allowedApps, ["_1password"]);
   for (const value of [null, "gmail", ["gmail"]]) assert.throws(() => normalizeComposioSdkPolicy(value));
   for (const allowedApps of [false, {}, ["gmail,slack"], ["https://example.com"], ["*"]]) assert.throws(() => composioSessionPolicy({ allowedApps }));
 });

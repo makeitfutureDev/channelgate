@@ -42,7 +42,7 @@ function browser(fetchImpl, { hash = "" } = {}) {
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
   vm.runInNewContext(script, {
-    document, location: { hash }, Intl, Date, confirm: () => true, history: { replaceState() {} },
+    document, location: { hash }, Intl, Date, URL, setTimeout, clearTimeout, confirm: () => true, history: { replaceState() {} },
     fetch: (url, options = {}) => { requests.push({ url, options }); return fetchImpl(url, options); },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
   });

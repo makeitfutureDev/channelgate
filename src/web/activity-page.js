@@ -1,5 +1,6 @@
 // Cookie-authenticated browser dashboard with self-hosted brand assets and no browser storage.
 import crypto from "node:crypto";
+import { activityConnectionsBrowser } from "./activity-connections-page.js";
 import { callHistoryBrowser, CALL_HISTORY_CSS } from "./call-history-page.js";
 import { getLogoColor } from "../config/settings.js";
 import { channelGateLogo } from "../config/appearance.js";
@@ -1079,7 +1080,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
 
 // The Settings view: the viewer's own preferences, connections, MCP servers, variables, skills
 // and SSH keys. Every value is rendered with textContent; secret inputs are never prefilled.
-function settingsBrowser(config, browser, theme) {
+function settingsBrowser(config, browser, theme, connections) {
   "use strict";
   const { base, csrf } = config;
   const { document, location } = browser;
@@ -1088,7 +1089,7 @@ function settingsBrowser(config, browser, theme) {
   const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
   const voiceCalls = config.voiceCalls === true;
   const wanted = String(location?.hash || "").replace(/^#/, "");
-  let section = SECTIONS.some(([id]) => id === wanted) ? wanted : "general";
+  let section = SECTIONS.some(([id]) => id === wanted) ? wanted : config.connectionsPage ? "connections" : "general";
   let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null, skillQuery = "";
   const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
@@ -1203,6 +1204,7 @@ function settingsBrowser(config, browser, theme) {
       if (response.status === 400 && typeof result.error === "string") { settle(result.error); return; }
       if (!response.ok || !result.settings) throw new Error("unavailable");
       data = result.settings; editing = null; busy = false;
+      if (body.action === "composio.save" || body.action === "composio.remove") connections.refresh();
       notice = String(result.notice || "Saved."); noticeKind = "ok";
       render();
     } catch { settle("That change couldn’t be saved. Please try again."); }
@@ -1258,8 +1260,10 @@ function settingsBrowser(config, browser, theme) {
     },
     connections() {
       const c = data.connections, cards = [];
+      cards.push(connections.mount());
+      if (config.connectionsNew && c.composioMode === "sdk") return cards;
       const composio = card("Composio · your account", "Your own apps (Gmail, Calendar, HubSpot, …) as composio-user. Only your runs use it, in every conversation.");
-      if (c.composioMode === "sdk") composio.append(node("p", "settings-copy", "This gateway runs Composio in SDK mode: your session is created automatically. Nothing to configure."));
+      if (c.composioMode === "sdk") composio.append(node("p", "settings-copy", "Your apps are connected through the list above. Each connection belongs to your personal account."));
       else {
         composio.append(row(c.composio.configured ? "Connected" + (c.composio.last4 ? " · ••••" + c.composio.last4 : "") : "Not connected", c.composio.label,
           c.composio.configured ? [button("Remove", confirmThen("Remove your Composio account? Runs in progress stop using it.", { action: "composio.remove" }), "settings-button danger")] : []));
@@ -1446,13 +1450,13 @@ const tableHead = () => `<thead><tr>${ACTIVITY_COLUMNS.map((id) => `<th scope="c
   Object.hasOwn(ACTIVITY_COLUMN_MIN_WIDTHS, id) ? `<span class="col-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the ${COLUMN_LABELS[id]} column" title="Drag to resize · double-click to reset"></span>` : ""}</th>`).join("")}</tr></thead>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null, logoColor = getLogoColor() }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, connectionsPage = false, connectionsNew = false, callTarget = null, logoColor = getLogoColor() }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings", callsView = view === "calls";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
     ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
-  const config = JSON.stringify({ base, csrf, view, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, columns: COLUMN_CONFIG, voiceCalls: voiceCalls === true,
+  const config = JSON.stringify({ base, csrf, view, connectionsPage, connectionsNew, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, columns: COLUMN_CONFIG, voiceCalls: voiceCalls === true,
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
@@ -1748,6 +1752,6 @@ ${callsView ? `<section class="calls-page" aria-label="Call history"><div class=
 <p class="privacy">Your conversations are private. <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
 </main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${callsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${callHistoryBrowser.toString()})(${config}, globalThis);` : settingsView
-    ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis));`
+    ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis), (${activityConnectionsBrowser.toString()})(${config}, globalThis));`
     : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})()${voiceCalls && view === "activity" ? `, (${callOverlayBrowser.toString()})(${config}, globalThis)` : ""});`}</script></body></html>` };
 }

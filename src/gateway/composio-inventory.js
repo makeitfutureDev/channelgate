@@ -12,7 +12,7 @@ import { resolveComposioConnections } from "./run-integrations.js";
 const MAX_PAGES = 50;
 const MAX_APPS = 200;
 const MAX_ACCOUNTS = 10_000;
-const SLUG = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+const SLUG = /^[a-z0-9_][a-z0-9_-]{0,127}$/;
 const FAILURE = "Composio connections could not be loaded. Try refreshing.";
 
 function text(value, limit = 256) {

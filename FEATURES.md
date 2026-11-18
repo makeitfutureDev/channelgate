@@ -1,5 +1,21 @@
 # ChannelGate — Features
 
+## Activity connection management (2026-11-18)
+
+Activity → Settings → Connections lists the signed-in person's Composio applications and accounts,
+with identity, alias, status and a refresh action. It uses the same personal identity as their
+agent runs. Personal-token mode shows the apps Composio publishes for that token, identifies
+partial/unavailable results, and retains the token editor; adding apps in this dashboard requires
+SDK mode. Saving or removing a token immediately refreshes its account list.
+
+SDK users can open Add connection, search and page through native and user-visible custom apps,
+choose an alias and continue to Composio's hosted authorization page. The gateway's app allowlist,
+account limits and Enterprise entitlement apply. No-auth apps need no connection. New connections
+are private to that person; successful authorization is established by refreshing provider account
+status, never by trusting callback query strings. The browser receives no project key or MCP URL.
+Both pages retain Activity cookie, workspace, revocation and CSRF checks. The admin Users page
+continues to provide authorized per-user inventory separately.
+
 ## Completed Activity in completion order (2026-11-18)
 
 Completed opens as a single ungrouped list, most recently completed first, including pinned
