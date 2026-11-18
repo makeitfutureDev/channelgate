@@ -1361,6 +1361,27 @@ Task progress remain visible; older agent streams without optional task-type met
   still bounded, and so is the scrypt work an unauthenticated caller can cause.
 - Documented in `docs/OPERATIONS.md` → Reverse proxies and tunnels and in INSTALL.md: without the
   setting, all remote logins behind a proxy share one backoff bucket.
+- **The undeclared case is said at boot.** A Public URL on a loopback bind with no proxy declared
+  prints one `[gateway] WARNING` naming the setting. A non-loopback bind is reached directly, so
+  it is not warned about.
+
+## Admin password in the environment (2026-11 stable-branch review)
+
+- **`ADMIN_PASSWORD` may be a hash.** The environment value accepts the same `scrypt$<salt>$<hash>`
+  string the settings store uses, so `.env` need not hold the password itself. `npm run
+  hash-password` prompts for it without echo, or reads it from stdin, never from argv, and prints
+  the ready-to-paste `ADMIN_PASSWORD='scrypt$…'` line; the single quotes keep `$` literal for Node's
+  `.env` loader, systemd's `EnvironmentFile` and a shell. A legacy cleartext value keeps working
+  and is still compared in constant time.
+- **Boot warnings, never the value.** The daemon warns once per boot when the environment value is
+  cleartext, and when a password set in the admin UI shadows it: the `.env` one is then unused but
+  becomes the admin password again if the UI one is removed. The daemon still never rewrites
+  `.env`.
+- **The hashing helpers are a leaf.** `src/web/password-hash.js` imports only `node:crypto`;
+  `src/web/security.js` re-exports it, so existing callers are unchanged.
+- **The GitHub skills webhook refuses early.** With no webhook secret configured (404) or no
+  well-formed `X-Hub-Signature-256` header (401) the request is answered before the 2 MB body
+  parser runs. A well-formed signature is still verified over the raw body by the handler.
 ## Web and Slack surface hardening (security audit batch 1)
 
 - **Admin mode is admin-only on every surface.** The Slack Settings mode control refuses to switch

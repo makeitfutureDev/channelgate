@@ -2,7 +2,6 @@
 // containment, constant-time password compare, which client a per-IP limiter counts against,
 // per-IP login backoff, and the MCP `match` shape-check. Kept as small standalone functions (unit-tested in test/web-security.test.js) —
 // the Express wiring lives in auth.js / app.js / routes/admin.js.
-import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
@@ -150,48 +149,11 @@ export async function assertPublicHttpUrl(value, opts = {}) {
   return (await resolvePublicHttpUrl(value, opts)).url;
 }
 
-// ── Admin password hashing ──────────────────────────────────────────────────────
-// The admin password used to sit in settings.json in cleartext, so anyone who could read that
-// file (or any endpoint that echoes it) had the credential itself rather than a verifier. Stored
-// as scrypt now: "scrypt$<saltB64>$<hashB64>". Async so a login never blocks the event loop the
-// Slack side is using.
-const SCRYPT = { N: 16_384, r: 8, p: 1, keylen: 32 };
-const SCRYPT_PREFIX = "scrypt$";
-
-const scryptAsync = (pw, salt) =>
-  new Promise((resolve, reject) => {
-    crypto.scrypt(pw, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p }, (err, key) => (err ? reject(err) : resolve(key)));
-  });
-
-export function isHashedPassword(stored) {
-  return typeof stored === "string" && stored.startsWith(SCRYPT_PREFIX);
-}
-
-export async function hashPassword(pw) {
-  const salt = crypto.randomBytes(16);
-  const key = await scryptAsync(String(pw), salt);
-  return `${SCRYPT_PREFIX}${salt.toString("base64")}$${key.toString("base64")}`;
-}
-
-// Verify against either format. A stored value that isn't a scrypt string is a legacy cleartext
-// password — still accepted (so an existing install keeps working) and compared in constant time;
-// callers upgrade it to a hash on the next successful login.
-export async function verifyPassword(pw, stored) {
-  if (!pw || !stored) return false;
-  if (!isHashedPassword(stored)) return timingSafeEqualStr(String(pw), String(stored));
-
-  const [, saltB64, hashB64] = String(stored).split("$");
-  if (!saltB64 || !hashB64) return false;
-  try {
-    const key = await scryptAsync(String(pw), Buffer.from(saltB64, "base64"));
-    const expected = Buffer.from(hashB64, "base64");
-    // Both are fixed-length scrypt outputs, so a length mismatch means a malformed record, not a
-    // guess of the wrong length — no timing signal to protect there.
-    return key.length === expected.length && crypto.timingSafeEqual(key, expected);
-  } catch {
-    return false;
-  }
-}
+// ── Admin password hashing + constant-time compare ──────────────────────────────
+// Implemented in the dependency-free leaf ./password-hash.js (scrypt "scrypt$<salt>$<hash>", the
+// legacy cleartext fallback, the digest-based compare) and re-exported here, so the web layer
+// keeps one import site while the hash helper script and the boot posture check stay light.
+export { timingSafeEqualStr, isHashedPassword, hashPassword, verifyPassword } from "./password-hash.js";
 
 // ── Allowlisted filesystem root ─────────────────────────────────────────────────
 // The one root the admin API may browse (`/api/fs/list`) and point a channel's workDir at.
@@ -267,42 +229,29 @@ export function resolveWithinRoot(root, candidate) {
   return pathWithin(root, real) ? real : null;
 }
 
-// ── Constant-time compare ───────────────────────────────────────────────────────
-// Compare via fixed-size SHA-256 digests: timingSafeEqual needs equal-length inputs, and a raw
-// length pre-check would leak when a guess matches the secret's length. Digests never do.
-export function timingSafeEqualStr(a, b) {
-  const da = crypto.createHash("sha256").update(String(a)).digest();
-  const db = crypto.createHash("sha256").update(String(b)).digest();
-  return crypto.timingSafeEqual(da, db);
-}
-
 // ── Which client is a per-IP limiter counting? ──────────────────────────────────
 // The daemon binds loopback and is reached from the internet through a tunnel or reverse proxy on
 // this same host (cloudflared, nginx), so EVERY public caller arrives on a 127.0.0.1 socket and
 // `req.ip` says so. Keying a backoff on that address puts the whole internet in ONE bucket: a
-// handful of bad approval tokens from anywhere locks out every legitimate approval link, and one
-// attacker's failed logins locks out the admin. That is not a per-IP limiter, it is a kill switch
-// anybody can pull.
+// handful of bad approval tokens from anywhere delays every legitimate approval link, and one
+// attacker's failed logins delay the admin.
 //
-// The forwarding headers carry the real client, and they are trustworthy exactly when the socket
-// itself is loopback: only the proxy in front and other processes on this host can open one, and
-// both are already inside the trust boundary. From a NON-loopback socket the header is whatever
-// the client typed, so it is ignored — unless the operator declares a trusted proxy elsewhere on
-// the network with CG_TRUST_PROXY.
-//
-// `CF-Connecting-IP` is preferred over `X-Forwarded-For`: Cloudflare's edge OVERWRITES it with the
-// connecting address, while the first XFF hop is client-supplied whenever the proxy appends rather
-// than replaces (so a caller through the tunnel can rotate it to shed its own backoff — an evasion,
-// never a way to attribute failures to someone else's bucket, since a spoofed value only ever
-// lengthens that caller's own runway).
+// The forwarding headers carry the real client, but a header is only as trustworthy as whoever
+// wrote it. A loopback socket proves nothing about that: the proxy opens one, and so does every
+// other process on the host and every tunnel, and whatever a proxy does not overwrite is passed
+// through exactly as the client typed it. Believing a header because the socket was loopback let
+// a caller choose a fresh bucket per request (unlimited guessing) or charge its failures to
+// somebody else's address. So a header is believed only when the operator DECLARED which proxy
+// sets it (`trustProxy`, see clientKey below), and only the part that proxy itself wrote.
 //
 // Only a syntactically valid address is honoured; anything else falls back to the socket, which
 // also caps what a header can put in the limiter's map.
 //
-// This is deliberately a helper rather than Express's app-wide `trust proxy`: it fixes the two
-// call sites that key on an address (this file's login backoff via auth.js, and the approval-link
-// router) without also re-pointing `req.secure` / `req.protocol` / `req.hostname` at
-// client-supplied headers, and Express's setting knows nothing about `CF-Connecting-IP`.
+// This is deliberately a helper rather than Express's app-wide `trust proxy`: it fixes the call
+// sites that key on an address (the login backoff via auth.js, the approval-link router, the
+// passkey and skills-token limiters) without also re-pointing `req.secure` / `req.protocol` /
+// `req.hostname` at client-supplied headers, and Express's setting knows nothing about
+// `CF-Connecting-IP`.
 const MAX_ADDRESS_LEN = 64;
 
 function normalizeAddress(value) {

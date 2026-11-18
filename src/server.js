@@ -18,8 +18,9 @@ import { forbiddenWorkDirReason } from "./gateway/workdir-boundary.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault, getPublicUrl, getTrustProxy } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
+import { bootPostureWarnings } from "./web/boot-posture.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createBotMembershipRecovery } from "./slack/bot-membership.js";
 import { abortRunsInChannel } from "./slack/message-pipeline.js";
@@ -419,6 +420,16 @@ async function main() {
   // without a password, so this says the admin surface is simply unusable until one exists.
   if (!getAdminPassword())
     console.warn("[gateway] WARNING: no admin password — every privileged admin route is refused until ADMIN_PASSWORD (or settings adminPassword) is set.");
+  // How the admin surface is configured, said once per boot: a cleartext or forgotten
+  // ADMIN_PASSWORD in the environment, and a tunnel or proxy nobody declared.
+  for (const warning of bootPostureWarnings({
+    envPassword: process.env.ADMIN_PASSWORD,
+    settingsPassword: getSettings().adminPassword,
+    publicUrl: getPublicUrl(),
+    bindHost: HOST,
+    trustProxy: getTrustProxy(),
+  }))
+    console.warn(`[gateway] WARNING: ${warning}`);
 
   // Snapshot any interactive turns that were mid-run when the daemon last stopped, BEFORE Slack
   // reconnects — any active_runs row present now belongs to the previous instance (only one gateway
