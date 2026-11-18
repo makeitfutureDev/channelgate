@@ -3,7 +3,7 @@
 ## 0.6.5 — candidate, pending approval
 
 - Combine new Google Chat and Microsoft Teams agent threads with Slack in personal Activity.
-  Administrators explicitly link existing accounts in Users → Activity accounts. Native threads
+  Administrators find and link existing accounts with user search in Users → Activity accounts. Native threads
   support status, source links, personal Hide, pins, comments and verified-starter completion,
   while retaining each platform account's own permissions.
 - Repair older self-completed Slack threads remaining in Active after the shared participation upgrade.
