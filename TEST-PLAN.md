@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Combined Activity across platforms (2026-11-18)
+
+- Automated: `test/platform-threads.test.js` covers migration 60, native opaque keys, observed-root
+  authority, personal visibility, replay protection, explicit completion and runtime status.
+  `test/activity-identities.test.js` covers explicit account links, assignment conflicts, unlinking,
+  approval revocation and absence of privilege/token propagation. `test/activity.test.js` covers the
+  combined HTTP listing, native source redirects, viewer isolation, native membership loss and
+  mutations. Browser regressions retain Slack desktop links and label native sources correctly.
+- Live gate `ACTIVITY-COMBINED-01` (Claude and Codex, each on Google Chat and Microsoft Teams):
+  use dedicated approved native QA accounts, private fixture conversations containing the bot and
+  those accounts, plus an approved dashboard owner and an unlinked second viewer. In Admin UI →
+  Users link the exact native accounts to the dashboard owner. Send “Reply with combined-activity-check.”
+  in each fixture. Existing Activity must list Slack and both native threads, correctly labelled,
+  with source links opening the proper platform and status updating while work runs/finishes.
+  Exercise Hide/Show, pin, private comment, Later/Resume, Done/Reopen and bulk completion on proven
+  owned roots. A reply to an unseen root must allow personal Hide but not completion. Send a newer
+  own prompt to restore a hidden row; replay/edit/reaction must not restore it. An unlinked viewer
+  must not read or mutate those rows. Unlink one native account and revoke membership on the other;
+  listings, saved open links and writes must fail closed, including revocation during roster reads.
+  Roles, credentials and run authorship must be unchanged. A gateway restart must retain metadata.
+- Live native acceptance remains pending; fake connectors and automated checks do not certify a
+  Google/Microsoft client result. Tracking begins with admitted original agent prompts after upgrade;
+  old native history, native logins and voice dispatch to native platforms are not acceptance claims.
+
 ## Shared Done and personal dismissal (2026-11-17)
 
 - Automated: `test/activity-done-dismissal.test.js` covers migration 59, per-actor dismissal, duplicate/delayed reactions, access checks, Reopen cycles, manual Hide separation and voice acknowledgment. Activity API/Home/browser regressions cover shared Done visibility, personal archive capacity, pins and status while work continues. `test/activity-shared-done-browser.test.js` exercises two viewers on desktop and phone.

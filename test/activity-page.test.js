@@ -349,7 +349,7 @@ test("Mark All Done describes its full scope, requires confirmation, and cancels
   assert.match(page.html, /aria-labelledby="all-done-title" aria-describedby="all-done-description"/);
   assert.match(page.html, /tracked agent threads you started done and removes them from your Active view across all channels/);
   assert.match(page.html, /outside the current filter, search, or page/);
-  assert.match(page.html, /main Slack messages get ✅. Running work continues/);
+  assert.match(page.html, /Slack main messages get ✅; Google Chat and Teams completion is saved in Activity. Running work continues/);
   elements.search.value = "not visible"; elements.search.fire("input");
   assert.equal(elements.threads.children.length, 0);
   assert.equal(elements["mark-all-done"].disabled, false, "scope is independent of filtered visible rows");
@@ -1090,4 +1090,20 @@ test("acknowledging an already shared-Done row sends Done true and dismisses onl
   const save = requests.find((r) => r.url.endsWith("/api/completion"));
   assert.equal(JSON.parse(save.options.body).done, true, "acknowledgement must not reopen shared completion");
   assert.equal(elements.threads.children.length, 0);
+});
+
+test('combined Activity labels native platform links and keeps opaque thread addresses', async () => {
+  const b = browser();
+  for (const [platform, channelId, threadTs, label] of [
+    ['googlechat', 'gchat:spaces/ABC', 'spaces/ABC/threads/ROOT', 'Google Chat'],
+    ['msteams', 'teams:19:ABC@thread.tacv2', '1720000000000', 'Microsoft Teams'],
+  ]) {
+    const url = '/activity/session/open/' + encodeURIComponent(channelId) + '/' + encodeURIComponent(threadTs);
+    b.stream.fire('threads', { data: JSON.stringify({ rows: [{ ...row('idle', 'Native work', url), platform, channelId, threadTs }] }) });
+    const open = b.elements.threads.children[0].querySelectorAll('a').find(a => String(a.className).includes('open-link'));
+    assert.equal(open.textContent, 'Open in ' + label);
+    assert.match(open.href, /\/activity\/session\/open\//);
+    assert.equal(open.target, '_blank');
+    assert.equal(open.dataset.app, '');
+  }
 });

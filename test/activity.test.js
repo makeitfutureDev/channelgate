@@ -18,9 +18,9 @@ const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests
 
 beforeEach(async () => {
   resetActivityStateForTests();
-  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
-  await setUser("U_MINE", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [] });
-  await setUser("U_OTHER", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [] });
+  for (const table of ["platform_thread_messages", "platform_thread_participants", "platform_threads", "slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
+  await setUser("U_MINE", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [], activityIdentities: [] });
+  await setUser("U_OTHER", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [], activityIdentities: [] });
 });
 
 test("reply Dashboard privately launches the clicker's Activity from owned, foreign and automation replies", async (t) => {
@@ -1567,3 +1567,126 @@ test("shared Done stays on other participants' Active list while the actor's com
   assert.equal((await activityThreadSnapshot(f.client, "U_MINE", { filter: "active" })).rows.length, 1);
   assert.equal((await activityThreadSnapshot(f.client, "U_OTHER", { filter: "active" })).rows.length, 0, "manual Hide survives global Reopen");
 });
+
+test("combined Activity lists linked Chat and Teams threads, isolates viewers and rechecks native access", async (t) => {
+  const { registerTransport, unregisterTransport } = await import('../src/platforms/live.js');
+  const { setActivityIdentities } = await import('../src/config/activity-identities.js');
+  const { recordPlatformThreadMessage, getPlatformThread } = await import('../src/gateway/platform-threads.js');
+  const f = await fixture(t);
+  await f.root();
+  const roster = new Map();
+  const cases = [
+    { platform: 'googlechat', user: 'users/COMBINED', channel: 'gchat:spaces/COMBINED', raw: 'spaces/COMBINED', thread: 'spaces/COMBINED/threads/ROOT', messageId: 'spaces/COMBINED/messages/ROOT', payload: { message: { threadReply: false, createTime: new Date().toISOString() } } },
+    { platform: 'msteams', user: '29:COMBINED', channel: 'teams:19:COMBINED@thread.tacv2', raw: '19:COMBINED@thread.tacv2', thread: '123456789', messageId: '123456789', payload: { activity: { timestamp: new Date().toISOString() } } },
+  ];
+  t.after(() => { unregisterTransport('googlechat'); unregisterTransport('msteams'); });
+  for (const c of cases) {
+    await setUser(c.user, { approved: true, platform: c.platform, activityIdentities: [] });
+    await upsertChannelEntry(c.channel, { name: c.platform, type: 'channel', platform: c.platform });
+    const entry = await getChannelEntry(c.channel);
+    await saveChannelMeta(entry.slug, { access: 'approved', isDM: false });
+    roster.set(c.platform, [{ id: c.user }]);
+    registerTransport(c.platform, { getConnector: () => ({ api: { listMembers: async () => roster.get(c.platform) } }) });
+    recordPlatformThreadMessage({ slug: entry.slug, threadKey: c.thread, message: { platform: c.platform, conversationId: c.channel, rawConversationId: c.raw, userId: c.user, messageId: c.messageId, threadKey: c.thread, text: 'Combined platform work', kind: 'channel', trigger: 'message', raw: c.payload } });
+  }
+  const mine = await f.login(), other = await f.login('U_OTHER');
+  const snapshot = async (login) => (await f.request(login.url + '/api/threads', { headers: login.headers })).json();
+  assert.equal((await snapshot(mine)).rows.length, 1);
+  await setActivityIdentities('U_MINE', cases.map(c => c.user));
+  let data = await snapshot(mine);
+  assert.equal(data.rows.length, 3);
+  assert.deepEqual(new Set(data.rows.map(r => r.platform)), new Set(['slack', 'googlechat', 'msteams']));
+  assert.equal((await snapshot(other)).rows.length, 0);
+  for (const c of cases) {
+    const row = data.rows.find(r => r.platform === c.platform);
+    assert.equal(row.canComplete, true);
+    const open = await f.request(row.url, { headers: mine.headers });
+    assert.equal(open.status, 303);
+    assert.equal(new URL(open.headers.get('location')).hostname, c.platform === 'googlechat' ? 'chat.google.com' : 'teams.microsoft.com');
+    for (const [operation, extra] of [['hide', { hidden: true }], ['pin', { pinned: true }], ['comment', { comment: 'Private combined note' }], ['completion', { done: true }]]) {
+      const body = JSON.stringify({ channelId: c.channel, threadTs: c.thread, ...extra });
+      assert.equal((await f.request(mine.url + '/api/' + operation, { method: 'POST', headers: mine.post, body })).status, 200, operation);
+      assert.equal((await f.request(other.url + '/api/' + operation, { method: 'POST', headers: other.post, body })).status, 403, operation);
+    }
+    assert.equal(getPlatformThread(c.channel, c.thread).status, 'done');
+  }
+  roster.set('googlechat', []);
+  data = await snapshot(mine);
+  assert.equal(data.rows.some(r => r.platform === 'googlechat'), false);
+  const target = cases[0];
+  assert.equal((await f.request(mine.url + '/api/hide', { method: 'POST', headers: mine.post, body: JSON.stringify({ channelId: target.channel, threadTs: target.thread, hidden: false }) })).status, 403);
+  await setActivityIdentities('U_MINE', []);
+  assert.deepEqual((await snapshot(mine)).rows.map(r => r.platform), ['slack']);
+});
+
+async function linkedChatActivityFixture(t, { secondParticipant = false } = {}) {
+  const { registerTransport, unregisterTransport } = await import('../src/platforms/live.js');
+  const { setActivityIdentities } = await import('../src/config/activity-identities.js');
+  const index = await import('../src/gateway/platform-threads.js');
+  const f = await fixture(t);
+  const starter = 'users/ACTIVITY_RACE_STARTER', participant = 'users/ACTIVITY_RACE_PARTICIPANT';
+  const channel = 'gchat:spaces/ACTIVITY_RACE', raw = 'spaces/ACTIVITY_RACE', thread = raw + '/threads/ROOT';
+  for (const user of [starter, participant]) await setUser(user, { approved: true, platform: 'googlechat', activityIdentities: [] });
+  await upsertChannelEntry(channel, { name: 'Race fixture', type: 'channel', platform: 'googlechat' });
+  const entry = await getChannelEntry(channel);
+  await saveChannelMeta(entry.slug, { access: 'approved', isDM: false });
+  const record = (user, root, at) => index.recordPlatformThreadMessage({ slug: entry.slug, threadKey: thread,
+    message: { platform: 'googlechat', conversationId: channel, rawConversationId: raw, userId: user,
+      messageId: raw + '/messages/' + (root ? 'ROOT' : 'REPLY'), threadKey: thread,
+      text: root ? 'Owned by the second linked account' : 'First linked account participates', kind: 'channel', trigger: 'message',
+      raw: { message: { threadReply: !root, createTime: new Date(at).toISOString() } } } });
+  record(starter, true, Date.now());
+  if (secondParticipant) record(participant, false, Date.now() + 1);
+  await setActivityIdentities('U_MINE', secondParticipant ? [participant, starter] : [starter]);
+  const members = [{ id: starter }, { id: participant }];
+  let rosterRead = async () => members;
+  registerTransport('googlechat', { getConnector: () => ({ api: { listMembers: (...args) => rosterRead(...args) } }) });
+  t.after(() => unregisterTransport('googlechat'));
+  const mine = await f.login();
+  const action = (operation, extra) => f.request(mine.url + '/api/' + operation, { method: 'POST', headers: mine.post,
+    body: JSON.stringify({ channelId: channel, threadTs: thread, ...extra }) });
+  return { ...f, mine, channel, thread, starter, participant, index, action, setActivityIdentities,
+    setRosterRead: read => { rosterRead = read; }, members };
+}
+
+test('combined Activity prefers the linked starter over an earlier linked participant for controls and personal state', async t => {
+  const f = await linkedChatActivityFixture(t, { secondParticipant: true });
+  const snapshot = async () => (await (await f.request(f.mine.url + '/api/threads', { headers: f.mine.headers })).json()).rows;
+  const rows = await snapshot();
+  assert.equal(rows.length, 1, 'one thread is deduplicated across linked accounts');
+  assert.equal(rows[0].canComplete, true, 'the second linked account owns this root');
+  assert.equal((await f.action('hide', { hidden: true })).status, 200);
+  assert.equal(f.index.listPlatformThreadsForUser(f.starter)[0].hidden_ms > 0, true);
+  assert.equal(f.index.listPlatformThreadsForUser(f.participant)[0].hidden_ms, 0, 'the first linked participant is not selected accidentally');
+  assert.equal((await f.action('completion', { done: true })).status, 200);
+  assert.equal(f.index.getPlatformThread(f.channel, f.thread).status, 'done');
+  assert.equal(f.index.listPlatformThreadsForUser(f.starter)[0].dismissed_ms > 0, true);
+  assert.equal(f.index.listPlatformThreadsForUser(f.participant)[0].dismissed_ms, 0);
+});
+
+for (const operation of ['hide', 'completion']) {
+  for (const revocation of ['unlink', 'session expiry']) {
+    test(`combined Activity ${operation} refuses ${revocation} during its final native roster read`, async t => {
+      const f = await linkedChatActivityFixture(t);
+      const beforeThread = f.index.getPlatformThread(f.channel, f.thread);
+      const beforeParticipant = f.index.listPlatformThreadsForUser(f.starter)[0];
+      const started = defer(), gate = defer();
+      let reads = 0;
+      const finalRead = operation === 'hide' ? 1 : 2;
+      f.setRosterRead(async () => {
+        reads++;
+        if (reads === finalRead) { started.resolve(); await gate.promise; }
+        return f.members;
+      });
+      const pending = f.action(operation, operation === 'hide' ? { hidden: true } : { done: true });
+      await started.promise;
+      if (revocation === 'unlink') await f.setActivityIdentities('U_MINE', []);
+      else f.advance(ACTIVITY_SESSION_TTL_MS + 1);
+      gate.resolve();
+      assert.equal((await pending).status, revocation === 'unlink' ? 403 : 401);
+      assert.deepEqual(f.index.getPlatformThread(f.channel, f.thread), beforeThread, 'denied operation does not change shared completion');
+      assert.deepEqual(f.index.listPlatformThreadsForUser(f.starter)[0], beforeParticipant, 'denied operation does not change personal Hide or dismissal');
+      assert.equal(reads >= finalRead, true);
+    });
+  }
+}

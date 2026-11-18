@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Combine new Google Chat and Microsoft Teams agent threads with Slack in personal Activity.
+  Administrators explicitly link existing accounts in Users → Activity accounts. Native threads
+  support status, source links, personal Hide, pins, comments and verified-starter completion,
+  while retaining each platform account's own permissions.
+
 - Fix Composio file staging on consumer (MCP) keys handing out keys whose file Drive, Gmail and
   Slack could not retrieve (storage HTTP 404): the gateway now uploads through the workbench's
   checked upload helper from the sandbox's own `/tmp` instead of naming a key on the s3fs mount,

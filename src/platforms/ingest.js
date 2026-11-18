@@ -1,3 +1,5 @@
+import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
+import { recordPlatformThreadMessage, recordPlatformThreadOutcome } from "../gateway/platform-threads.js";
 import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { autoApproveUser } from "../gateway/user-auto-approval.js";
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
@@ -62,10 +64,12 @@ export async function ensureConversation(message, connector = null) {
 async function ensureUserKnown(message) {
   const existing = await getUser(message.userId);
   if (existing) {
+    if (existing.platform !== message.platform) await setUser(message.userId, { platform: message.platform });
     if (typeof existing.nudges !== "boolean") await setUser(message.userId, { nudges: getDefaultNudges() });
     return;
   }
   await setUser(message.userId, {
+    platform: message.platform,
     name: message.userName || message.userEmail || message.userId,
     nudges: getDefaultNudges(),
   });
@@ -243,6 +247,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       }
       signal.throwIfAborted();
       progress.activity();
+      try { recordPlatformThreadMessage({ message, slug: entry.slug, threadKey: sessionKey }); } catch (error) { log.warn?.(`[${adapter.id}] Activity index failed: ${error?.message || error}`); }
       result = await run({
         channelId: message.conversationId,
         authorId: message.userId,
@@ -262,12 +267,14 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         origin: `${adapter.id}_foreground`,
       });
     } catch (err) {
+      try { recordPlatformThreadOutcome(message.conversationId, sessionKey, { status: signal.aborted ? "idle" : "error" }); } catch { /* Activity cannot replace the answer */ }
       log.error?.(`[${adapter.id}] run failed in ${entry.slug}: ${err?.message || err}`);
       await progress.stop();
       await deliver(connector, message, placeholder, signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply, "", replyMenu());
       return { error: err };
     }
 
+    try { recordPlatformThreadOutcome(message.conversationId, sessionKey, { status: runAdmissionRefusalKind(result) || result?.engineError || result?.isError || result?.error ? "error" : "idle" }); } catch { /* best effort */ }
     await progress.stop();
     if (signal.aborted) { await deliver(connector, message, placeholder, "Stopped.", rememberReply, "", replyMenu()); return { skipped: "cancelled" }; }
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });

@@ -23,6 +23,7 @@ import { listUserEmailAccounts, removeUserEmailAccount, saveUserEmailAccount } f
 import { emailAccountBody } from "./channels.js";
 import { loadComposioInventory } from "../../gateway/composio-inventory.js";
 import { adminSession } from "../auth.js";
+import { activityIdentityPlatform, setActivityIdentities } from "../../config/activity-identities.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -40,6 +41,8 @@ function maskUsers(users) {
     const toolbox = u.toolboxToken || "";
     out[id] = {
       name: u.name || "",
+      activityPlatform: activityIdentityPlatform(id, u),
+      activityIdentities: Array.isArray(u.activityIdentities) ? u.activityIdentities : [],
       isAdmin: Boolean(u.isAdmin),
       approved: Boolean(u.approved),
       nudges: userNudgesEnabled(u),
@@ -266,6 +269,18 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
       res.json({ ok: true, accounts });
     } catch (e) {
       next(e);
+    }
+  });
+
+  // Mounted behind the admin API auth stack; links affect Activity visibility only.
+  router.put("/users/:userId/activity-identities", async (req, res, next) => {
+    try {
+      const activityIdentities = await setActivityIdentities(req.params.userId, req.body?.activityIdentities);
+      await logEvent("user_activity_identities_changed", { user: req.params.userId, actor: USER_SECRET_ACTOR });
+      res.json({ ok: true, activityIdentities });
+    } catch (error) {
+      if (error?.code === "invalid_activity_identities") return res.status(error.status || 400).json({ error: error.message });
+      next(error);
     }
   });
 

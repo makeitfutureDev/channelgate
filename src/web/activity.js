@@ -34,6 +34,11 @@ import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
+import { platformOfConversation } from '../platforms/ids.js';
+import { activityIdentityIds } from '../config/activity-identities.js';
+import { platformActivityAccess, platformActivityThread, platformActivitySnapshot } from './activity-platforms.js';
+import { listPlatformThreadsForUser, isPlatformThreadParticipant, setPlatformThreadHidden, setPlatformThreadDone, setPlatformThreadLater, platformThreadUrl } from '../gateway/platform-threads.js';
+
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
 export { ACTIVITY_SESSION_TTL_MS, ACTIVITY_PASSKEY_SESSION_TTL_MS } from "./activity-sessions.js";
 const grants = new Map();
@@ -154,6 +159,9 @@ export function createActivityRouter({
   calls = null, voiceAvailable = voiceCallsAvailable,
 } = {}) {
   const callsFor = () => calls || defaultCallManager();
+  const linkedIds = new Map();
+  const combinedRefreshKey = (ownerId) => JSON.stringify([refreshKey(ownerId), configVersion,
+    ...(linkedIds.get(ownerId) || []).map(id => listPlatformThreadsForUser(id))]);
   if (typeof getClient !== "function" || typeof getTeamId !== "function") throw new Error("Activity requires its live Slack connection");
   const router = express.Router({ caseSensitive: true });
   const reader = createHomeThreadReader();
@@ -240,6 +248,11 @@ export function createActivityRouter({
   });
   installActivityPasskeys(router, { context, authorize, issueSession, sendPage, getTeamId, version: () => configVersion, now });
   const participatingThread = async (client, session, channelId, threadTs) => {
+    if (platformOfConversation(channelId) !== 'slack') {
+      const row = await platformActivityThread(session.ownerId, channelId, threadTs);
+      if (!row) throw Object.assign(new Error('Thread denied'), { status: 403 });
+      return row;
+    }
     const row = getSlackThread(channelId, threadTs);
     if (!row || !isSlackThreadParticipant(channelId, threadTs, session.ownerId) || !isSlackThreadEligible(row)) throw Object.assign(new Error("Thread denied"), { status: 403 });
     const entry = await getChannelEntry(channelId);
@@ -249,9 +262,10 @@ export function createActivityRouter({
   };
   const recheckParticipant = async (req, client, session, channelId, threadTs) => {
     const version = configVersion;
-    await participatingThread(client, session, channelId, threadTs);
+    const row = await participatingThread(client, session, channelId, threadTs);
     await context(req);
     if (version !== configVersion) throw Object.assign(new Error("Thread access changed"), { status: 403 });
+    return row;
   };
   const browserSnapshot = async (client, session, id) => {
     const user = await getUser(session.ownerId);
@@ -263,19 +277,22 @@ export function createActivityRouter({
     for (const channelId of channelPins) {
       if (typeof channelId !== "string") continue;
       const entry = await getChannelEntry(channelId);
-      if (await access.allows(entry && { ...entry, channelId })) pinnedChannels.push({ channelId, channelName: await activityChannelName({ ...entry, channelId }) });
+      if (platformOfConversation(channelId) === 'slack' ? await access.allows(entry && { ...entry, channelId }) : await platformActivityAccess(session.ownerId, channelId)) pinnedChannels.push({ channelId, channelName: await activityChannelName({ ...entry, channelId }) });
     }
     const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000, includeHidden: true,
       pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });
+    linkedIds.set(session.ownerId, await activityIdentityIds(session.ownerId));
+    const external = await platformActivitySnapshot(session.ownerId);
+    data.rows.push(...external.rows);
     return {
-      rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
-        hidden: row.hidden_ms > 0, dismissed: row.dismissed_ms > 0, canComplete: row.starter_id === session.ownerId,
+      rows: data.rows.map((row) => ({ platform: row.platform || 'slack', channelId: row.channel_id, threadTs: row.thread_ts,
+        hidden: row.hidden_ms > 0, dismissed: row.dismissed_ms > 0, canComplete: row.canComplete ?? row.starter_id === session.ownerId,
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         comment: Object.hasOwn(comments, JSON.stringify([row.channel_id, row.thread_ts])) ? comments[JSON.stringify([row.channel_id, row.thread_ts])] : "",
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
-      pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
+      pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable || external.unavailable), truncated: Boolean(data.truncated || external.truncated), total: data.total + external.rows.length, updatedAt: now(),
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
       columns: activityColumns(user?.activityColumns), columnsVersion: activityGroupOrderVersion(user?.activityColumnsVersion),
@@ -584,7 +601,13 @@ export function createActivityRouter({
   router.get("/:id/open/:channelId/:threadTs", async (req, res) => {
     try {
       const { session, client } = await context(req);
-      await participatingThread(client, session, req.params.channelId, req.params.threadTs);
+      const row = await participatingThread(client, session, req.params.channelId, req.params.threadTs);
+      if (platformOfConversation(req.params.channelId) !== 'slack') {
+        const target = platformThreadUrl(row);
+        if (!target) return unavailable(res, 404);
+        await recheckParticipant(req, client, session, req.params.channelId, req.params.threadTs);
+        return res.redirect(303, target);
+      }
       // Resolve the latest reply at click time. The index's millisecond activity date loses
       // Slack's microsecond precision and is not a message identifier. Root metadata usually
       // supplies latest_reply; only its absence on a nonempty thread requires pagination.
@@ -613,9 +636,12 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       if (!csrfOk(req, session)) return unavailable(res, 403);
       const { channelId, threadTs, hidden } = req.body || {};
-      if (typeof channelId !== "string" || !isSlackTs(threadTs) || typeof hidden !== "boolean") return unavailable(res, 400);
-      await recheckParticipant(req, client, session, channelId, threadTs);
-      if (!setSlackThreadHidden(channelId, threadTs, session.ownerId, hidden)) return unavailable(res, 403);
+      if (typeof channelId !== "string" || typeof threadTs !== 'string' || !threadTs || typeof hidden !== "boolean") return unavailable(res, 400);
+      const row = await recheckParticipant(req, client, session, channelId, threadTs);
+      const changed = platformOfConversation(channelId) === 'slack'
+        ? setSlackThreadHidden(channelId, threadTs, session.ownerId, hidden)
+        : setPlatformThreadHidden(channelId, threadTs, row.activityUserId, hidden);
+      if (!changed) return unavailable(res, 403);
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 403); }
   });
@@ -662,11 +688,11 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
       const { channelId, pinned } = req.body || {};
-      if (typeof channelId !== "string" || !/^[A-Z0-9_]{1,32}$/.test(channelId) || typeof pinned !== "boolean") return unavailable(res, 400);
+      if (typeof channelId !== "string" || !/^(?:[A-Z0-9_]{1,32}|gchat:spaces\/[A-Za-z0-9_-]+|teams:[^\s]{1,2000})$/.test(channelId) || typeof pinned !== "boolean") return unavailable(res, 400);
       const version = configVersion;
       const entry = await getChannelEntry(channelId);
       const access = await accessContext(client, session.ownerId);
-      if (!await access.allows(entry && { ...entry, channelId })) return unavailable(res, 403);
+      if (!(platformOfConversation(channelId) === 'slack' ? await access.allows(entry && { ...entry, channelId }) : await platformActivityAccess(session.ownerId, channelId))) return unavailable(res, 403);
       await context(req);
       if (version !== configVersion) return unavailable(res, 403);
       await setUser(session.ownerId, (current) => {
@@ -739,6 +765,19 @@ export function createActivityRouter({
       const result = await markAllSlackThreadsDone(client, session.ownerId, {
         beforeWrite: async () => { await context(req); },
       });
+      const external = await platformActivitySnapshot(session.ownerId);
+      for (const row of external.rows) {
+        if (!row.canComplete || row.hidden_ms || row.status === 'done' && row.dismissed_ms > 0) { result.skipped++; continue; }
+        try {
+          const checked = await recheckParticipant(req, client, session, row.channel_id, row.thread_ts);
+          if (!checked.canComplete) { result.skipped++; continue; }
+          if (setPlatformThreadDone(row.channel_id, row.thread_ts, checked.activityUserId, true)) result.marked++;
+          else result.skipped++;
+        } catch (error) {
+          if (error.status === 401 || error.status === 403) throw error;
+          result.failed++;
+        }
+      }
       return res.json(result);
     } catch (error) { return unavailable(res, error.status || 503); }
   });
@@ -749,7 +788,15 @@ export function createActivityRouter({
       const { channelId, threadTs } = req.body || {};
       const value = req.body?.[operation === "later" ? "later" : "done"];
       if (typeof channelId !== "string" || typeof threadTs !== "string" || typeof value !== "boolean") return unavailable(res, 400);
-      await participatingThread(client, session, channelId, threadTs);
+      const row = await participatingThread(client, session, channelId, threadTs);
+      if (platformOfConversation(channelId) !== 'slack') {
+        if (!row.canComplete) return unavailable(res, 403);
+        const checked = await recheckParticipant(req, client, session, channelId, threadTs);
+        if (!checked.canComplete) return unavailable(res, 403);
+        const change = operation === 'later' ? setPlatformThreadLater : setPlatformThreadDone;
+        if (!change(channelId, threadTs, checked.activityUserId, value)) return unavailable(res, 403);
+        return res.json({ ok: true });
+      }
       const result = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 1 });
       const root = result?.ok !== false && result?.messages?.find((row) => row.ts === threadTs);
       if (slackThreadRootOwner(channelId, root) !== session.ownerId) return unavailable(res, 403);
@@ -792,13 +839,13 @@ export function createActivityRouter({
       try {
         while (dirty && !closed) {
           dirty = false;
-          const current = await context(req), version = configVersion, key = refreshKey(initial.session.ownerId);
+          const current = await context(req), version = configVersion, key = combinedRefreshKey(initial.session.ownerId);
           const data = await browserSnapshot(current.client, current.session, req.params.id);
           await context(req);
           if (closed) break;
           if (version !== configVersion) { dirty = true; continue; }
           lastKey = key; lastAccess = now();
-          if (key !== refreshKey(initial.session.ownerId)) dirty = true;
+          if (key !== combinedRefreshKey(initial.session.ownerId)) dirty = true;
           if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { res.end(); break; }
         }
       } catch (error) {
@@ -807,7 +854,8 @@ export function createActivityRouter({
       } finally { sending = false; }
     };
     const unthread = onThreadChanged(({ channelId, threadTs }) => {
-      if (isSlackThreadParticipant(channelId, threadTs, initial.session.ownerId)) queue();
+      if (isSlackThreadParticipant(channelId, threadTs, initial.session.ownerId)
+        || (linkedIds.get(initial.session.ownerId) || []).some(id => isPlatformThreadParticipant(channelId, threadTs, id))) queue();
     });
     const unruns = onActiveRunsChanged(queue);
     let checking = false;
@@ -816,7 +864,7 @@ export function createActivityRouter({
       checking = true;
       try {
         await context(req);
-        if (refreshKey(initial.session.ownerId) !== lastKey || now() - lastAccess >= accessRefreshMs) await send();
+        if (combinedRefreshKey(initial.session.ownerId) !== lastKey || now() - lastAccess >= accessRefreshMs) await send();
         else if (!closed) res.write(": keepalive\n\n");
       } catch { endAccess(); }
       finally { checking = false; }
