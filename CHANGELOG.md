@@ -63,6 +63,9 @@
   links and the workspace read tools show them as `@mounts/<name>` branches, read-only mounts
   refusing writes; the admin UI keeps each entry's path visible. Any conversation folder may be
   mounted, another channel's default folder included; only the gateway's own trees are refused.
+  Admins can list **Additional allowed roots** (Settings → Container runtime) so folders outside
+  the gateway user's home, such as a mounted file server, become selectable as working or
+  additional folders.
 
 - Document the enforced network-off refusal as HTTP 403 `network-off`, while preserving engine and selected connector access.
 

@@ -487,6 +487,9 @@ export function getContainerRuntime() {
     // Off by default: the confined work-folder-only admin channel is the product's posture; an
     // operator who wants an overseer channel that sees every agent and every repo switches it on.
     fullAccessHome: s.containerFullAccessHome === true,
+    // Additional allowlisted roots for working/additional folders (src/web/security.js
+    // allowedFsRoots validates each at read time; this is the stored list for the UI).
+    fsRoots: Array.isArray(s.fsRoots) ? s.fsRoots.map((v) => String(v || "").trim()).filter(Boolean) : [],
     // Container egress (src/gateway/egress/). "proxy" (the default): every channel container runs
     // with `--network none` and reaches the internet only through the daemon's per-channel egress
     // proxy, which swaps placeholder credentials for real ones on their declared hosts. "bridge" is
@@ -1306,6 +1309,7 @@ export function settingsForApi() {
         containerMemory: c.memory,
         containerCpus: c.cpus,
         containerFullAccessHome: c.fullAccessHome,
+        fsRoots: c.fsRoots,
         containerEgressMode: c.egressMode,
         containerEgressSecretsStrict: c.egressSecretsStrict,
         hasContainerClaudeOauthToken: c.hasClaudeOauthToken,

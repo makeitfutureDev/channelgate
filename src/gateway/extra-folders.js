@@ -16,7 +16,7 @@
 import path from "node:path";
 import { realpathSync, statSync } from "node:fs";
 
-import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
+import { allowedFsRoots, resolveWithinRoots } from "../web/security.js";
 import { sensitiveWorkDirRoots } from "./workdir-boundary.js";
 
 export const EXTRA_FOLDER_MODES = ["rw", "ro"];
@@ -58,14 +58,14 @@ function overlaps(a, b) {
  * @param {string} options.slug         the channel being configured
  * @param {string} options.workDir      the channel's EFFECTIVE work folder (real path)
  * @param {Array}  [options.others]     the other entries already on the list (normalized)
- * @param {string} [options.root]       the allowlisted root (tests)
+ * @param {string[]} [options.roots]    the allowlisted roots (tests)
  */
-export function validateExtraFolder(candidate, { slug = "", workDir = "", others = [], root = allowedFsRoot() } = {}) {
+export function validateExtraFolder(candidate, { slug = "", workDir = "", others = [], roots = allowedFsRoots() } = {}) {
   const refuse = (reason, { prefix = "Refused: ", subject = "" } = {}) => ({ error: `${prefix}${subject ? `${subject} ` : ""}${reason}.`, reason });
   const p = String(candidate || "").trim();
   if (!p || !path.isAbsolute(p)) return refuse("is not an absolute path to an existing directory", { prefix: "" , subject: p || "(empty)" });
-  const real = resolveWithinRoot(root, p);
-  if (!real) return refuse(`does not exist or is outside the allowed root (${root})`, { prefix: "", subject: p });
+  const real = resolveWithinRoots(p, roots);
+  if (!real) return refuse(`does not exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}; an admin can add roots under Settings → Container runtime → Additional allowed roots)`, { prefix: "", subject: p });
   let isDir = false;
   try {
     isDir = statSync(real).isDirectory();
@@ -124,11 +124,11 @@ export function forbiddenExtraFolderMessage(slug, dir, reason) {
  * spawn fails closed with the remedy — exactly like a stored forbidden work folder. Returns the
  * list of `{ path, mode }` to mount. Called at every spawn (turns, jobs, schedules, reviews).
  */
-export function resolveExtraFoldersForSpawn(slug, meta = {}, { workDir = "", root = allowedFsRoot() } = {}) {
+export function resolveExtraFoldersForSpawn(slug, meta = {}, { workDir = "", roots = allowedFsRoots() } = {}) {
   const entries = normalizeExtraFolders(meta?.extraFolders);
   const out = [];
   for (const entry of entries) {
-    const checked = validateExtraFolder(entry.path, { slug, workDir, others: out, root });
+    const checked = validateExtraFolder(entry.path, { slug, workDir, others: out, roots });
     if (checked.error) throw Object.assign(new Error(forbiddenExtraFolderMessage(slug, entry.path, checked.reason)), { code: "extra_folder_refused" });
     out.push({ path: checked.path, mode: entry.mode });
   }

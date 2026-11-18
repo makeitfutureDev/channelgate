@@ -155,7 +155,19 @@ Regression gate: historical reaction-only self-completion must dismiss the verif
   is omitted and clears on `[]`. `test/channel-workdir-ui.test.js` — the Save body carries the
   rows. `test/mcp-control-plane-approval.test.js` — `add_channel_folder` is gated,
   `remove_channel_folder` automatic, `list_channel_folders` open.
+- [x] `test/fs-roots.test.js` — without extra roots a folder outside the primary root is refused
+  by the validator, the channel PUT and the picker route; the settings PUT refuses a relative
+  path, a missing directory, the gateway root and a non-array, and stores a trimmed, deduplicated
+  list; with the share as a root it is accepted as an additional folder and as a working folder,
+  the picker lists it at the primary root only and stops Up at its top, `list_folders` names it
+  and `add_channel_folder` accepts it; removing the root makes the stored folder refuse again.
 - [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (admin UI): on a deployment whose working data lives outside the
+  gateway user's home (e.g. `/mnt/comercial/Comercial`), add that directory's parent under
+  Settings → Container runtime → *Additional allowed roots* and save. Expected: the folder picker
+  on a channel now lists it as "(allowed root)" at the top level; selecting a folder under it as an
+  additional folder saves without "outside the allowed root"; the next message in the channel
+  recreates the container and the agent lists the folder's contents. PASS when all three hold.
 - [ ] Live, engine-independent (admin UI + MCP): in a private test channel whose working folder
   is a project directory, as an admin add `~/.channelgate` and then the working folder itself
   under *Additional folders* and save. Expected: each save answers 400 `extraFolders refused: …`

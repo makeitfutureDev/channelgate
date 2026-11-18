@@ -10,9 +10,11 @@ import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../../ee/u
 import { Router } from "express";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { readdir } from "node:fs/promises";
+import { realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
+import { allowedFsRoot, allowedFsRoots, allowedRootFor, resolveWithinRoots, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
 import { getSkill, listSkills as listCatalogSkills } from "../../gateway/skills/catalog.js";
 import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
@@ -535,6 +537,29 @@ export function createSettingsRouter({
       // configure, because the grant is the daemon user's own home and nothing else; an admin
       // API caller cannot turn this into "mount an arbitrary host path".
       if (typeof body.containerFullAccessHome === "boolean") patch.containerFullAccessHome = body.containerFullAccessHome;
+      // Additional allowed roots for working and additional folders (src/web/security.js
+      // allowedFsRoots): absolute, existing directories only, none of the daemon's own trees. A
+      // bad entry refuses the whole save rather than being silently dropped.
+      if (body.fsRoots !== undefined) {
+        if (!Array.isArray(body.fsRoots)) return res.status(400).json({ error: "fsRoots must be an array of absolute directory paths" });
+        const roots = [];
+        for (const raw of body.fsRoots) {
+          const value = String(raw || "").trim();
+          if (!value) continue;
+          if (!path.isAbsolute(value)) return res.status(400).json({ error: `fsRoots: ${value} is not an absolute path` });
+          let real;
+          try {
+            real = realpathSync(value);
+            if (!statSync(real).isDirectory()) throw new Error("not a directory");
+          } catch {
+            return res.status(400).json({ error: `fsRoots: ${value} is not an existing directory` });
+          }
+          const forbidden = forbiddenWorkDirReason(real, { channels: [] });
+          if (forbidden && !/another conversation|workspace root|platform folder/.test(forbidden)) return res.status(400).json({ error: `fsRoots refused: ${real} is ${forbidden}` });
+          if (!roots.includes(real)) roots.push(real);
+        }
+        patch.fsRoots = roots;
+      }
       // Container egress: the proxy (default) or the legacy open bridge. A closed set — anything
       // else is refused rather than stored and read back as "proxy".
       if (body.containerEgressMode !== undefined) {
@@ -932,9 +957,10 @@ export function createSettingsRouter({
   // symlinks can't step outside it.
   router.get("/fs/list", async (req, res) => {
     try {
-      const root = allowedFsRoot();
-      const dir = resolveWithinRoot(root, req.query.path ? String(req.query.path) : root);
-      if (!dir) return res.status(400).json({ error: `path is outside the allowed root (${root})` });
+      const roots = allowedFsRoots();
+      const dir = resolveWithinRoots(req.query.path ? String(req.query.path) : roots[0], roots);
+      if (!dir) return res.status(400).json({ error: `path is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")})` });
+      const root = allowedRootFor(dir, roots);
       const entries = await readdir(dir, { withFileTypes: true });
       const dirs = entries
         .filter((e) => e.isDirectory() || e.isSymbolicLink())
@@ -943,7 +969,9 @@ export function createSettingsRouter({
       const parent = path.dirname(dir);
       const parentOk = parent !== dir && pathWithin(root, parent);
       const assignedConversations = workspaceAssignmentsAtPath(await listChannels(), dir);
-      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), assignedConversations });
+      // The other allowed roots are offered at the primary root so the picker can reach them.
+      const otherRoots = dir === roots[0] ? roots.slice(1) : [];
+      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), roots, otherRoots, assignedConversations });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }

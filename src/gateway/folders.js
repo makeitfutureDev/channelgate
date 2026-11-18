@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
-import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
+import { resolveWithinRoots } from "../web/security.js";
 import { forbiddenWorkDirReason } from "./workdir-boundary.js";
 import { extraFolderDirectories } from "./extra-folders.js";
 import { assertChannelMembership } from "./channel-membership.js";
@@ -53,7 +53,7 @@ export function effectiveWorkDir(slug, meta = {}) {
     // workDir stored BEFORE the allowlist existed (or before an admin tightened the root) would
     // otherwise be honored as run cwd + mounted work folder forever. Re-check here — one chokepoint
     // covers runs, background jobs, lockdown generation, and the memory routes.
-    const real = resolveWithinRoot(allowedFsRoot(), w);
+    const real = resolveWithinRoots(w);
     if (real) {
       // The daemon-owned trees (home, gateway root, ~/.ssh, …) are refused even inside the root
       // (src/gateway/workdir-boundary.js). Only the static roots are checked on this hot path; the
