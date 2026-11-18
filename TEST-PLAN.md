@@ -14675,3 +14675,29 @@ Live acceptance (pending, run separately with Claude and Codex in an authorized 
   replay must not change/widen it. Invalid ports/private or mixed DNS must refuse, and Network
   off/revoked authority before approval must prevent the append. Restore only fixture grants
   and keys. A mock MCP test does not establish a live SSH login or human approval.
+
+
+## Container startup: stale rootless Podman systemd scope
+
+- Engine-independent daemon fixture: `test/container-lifecycle.test.js`, the injected fake
+  container CLI and clock; scratch runtime only. This runs before Claude/Codex spawn and cannot
+  depend on the selected engine. No live channel configuration or real systemd scopes are changed.
+- Setup: an existing exited, install-owned container with matching image/mount fingerprints;
+  inject the full `unable to start unit "libpod-<64 hex>.scope" ... Unit <same unit> was already
+  loaded or has a fragment file.` error into `start`.
+- Action: resolve readiness as a normal accepted turn would. Fail the first start, then succeed;
+  repeat with two failures then success and with persistent failure.
+- Pass: same container starts after delays of 1s then 2s, at most three starts; success marks it
+  running and persistent failure retains the final CLI error. No recreation, stop, removal or
+  volume deletion occurs. Concurrent preparations share one retry sequence through the mutex.
+- Negative cases: permission/cgroup-delegation errors, unrelated or mismatched unit names,
+  Docker and rootful Podman fail after one start with no delay. Stop during the backoff rejects
+  promptly as an explicit abort, makes no additional start attempt, and releases the mutex for
+  a later turn. Stop while the failed CLI attempt resolves prevents entering the backoff.
+- Run: `node --test test/container-lifecycle.test.js`. This deterministic fault-injection
+  acceptance proves retry behavior; it does not claim reproduction of a live systemd failure.
+- Optional live release smoke for both Claude and Codex: on exclusive disposable Worker fixtures,
+  stop the idle container without deleting HOME, send “Reply with STARTUP-READY”, and require
+  the same container to start and the selected engine to answer. Live smoke does not exercise
+  scope-conflict recovery unless that precise error is observed/injected in an isolated runtime.
+  Not executed for this change; do not manufacture a scope collision on a serving installation.

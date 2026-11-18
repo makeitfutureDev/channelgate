@@ -31,9 +31,9 @@ function target(slug, overrides = {}) {
 // A fake CLI that always resolves the image and answers `inspect` from a mutable state object.
 // `lifecycleOpts` reaches createContainerLifecycle so a test can drive the rebuild wait on a fake
 // clock (`now` + `sleep`) instead of real timers.
-function harness({ state = { exists: false }, kind = "podman", extraRoutes = [], lifecycleOpts = {} } = {}) {
+function harness({ state = { exists: false }, kind = "podman", rootless = true, extraRoutes = [], lifecycleOpts = {} } = {}) {
   const fake = createFakeCli({
-    kind,
+    kind, rootless,
     routes: [
       ...extraRoutes,
       { match: (a) => a[1] === "image" && a[2] === "inspect", result: { code: 0, stdout: "sha256:img|1.0.0" } },
@@ -308,6 +308,123 @@ test("state machine: running with a matching fingerprint is reused as-is", async
   assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0);
   assert.equal(h.fake.last("start"), null);
   assert.equal(h.fake.last("rm"), null);
+});
+
+const SCOPE_UNIT = `libpod-${"a".repeat(64)}.scope`;
+const SCOPE_CONFLICT = `Error: OCI runtime error: unable to apply cgroup configuration: unable to start unit "${SCOPE_UNIT}" (properties [{Name:Description Value:"container"}]): Unit ${SCOPE_UNIT} was already loaded or has a fragment file.`;
+
+test("exited container retries a transient rootless Podman systemd scope conflict without recreation", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-recovery"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", once: true, result: { code: 125, stderr: SCOPE_CONFLICT } });
+  const result = await h.lifecycle.ensureUp(t);
+  assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: true });
+  assert.equal(h.fake.find("start").length, 2);
+  assert.deepEqual(delays, [1_000]);
+  assert.equal(h.fake.find("rm").length + h.fake.find("run").filter((a) => a[2] === "-d").length + h.fake.find("volume").length + h.fake.find("stop").length, 0);
+  assert.ok(h.logs.some((line) => line.includes("retrying start (1/2)")));
+});
+
+test("systemd scope retries are bounded and preserve the final CLI error", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-exhausted"));
+  h.reaper.markStopped(t.container.name);
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => ({ code: 125, stderr: `${SCOPE_CONFLICT} attempt=${++attempts}` }) });
+  await assert.rejects(h.lifecycle.ensureUp(t), /could not start container .*attempt=3$/);
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [1_000, 2_000]);
+  assert.equal(h.reaper.snapshot().some((entry) => entry.running), false);
+  assert.equal(h.fake.find("rm").length + h.fake.find("run").filter((a) => a[2] === "-d").length + h.fake.find("volume").length, 0);
+});
+
+test("scope retry recovers on its final permitted attempt", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-last-attempt"));
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => (++attempts < 3 ? { code: 125, stderr: SCOPE_CONFLICT } : { code: 0 }) });
+  assert.equal((await h.lifecycle.ensureUp(t)).started, true);
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [1_000, 2_000]);
+});
+
+test("unrelated startup failures and non-Podman runtimes fail immediately", async () => {
+  for (const [kind, stderr, rootless = true] of [
+    ["podman", "Error: permission denied"],
+    ["podman", "Error: cgroup controllers not delegated"],
+    ["podman", SCOPE_CONFLICT.replaceAll(SCOPE_UNIT, "unrelated.scope")],
+    ["podman", SCOPE_CONFLICT.replace(`Unit ${SCOPE_UNIT}`, `Unit libpod-${"b".repeat(64)}.scope`)],
+    ["docker", SCOPE_CONFLICT],
+    ["podman", SCOPE_CONFLICT, false],
+  ]) {
+    const delays = [];
+    const h = harness({ kind, rootless, state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+    const t = await warmed(h, target(`scope-unrelated-${kind}`));
+    h.fake.addRoute({ match: (a) => a[1] === "start", result: { code: 125, stderr } });
+    await assert.rejects(h.lifecycle.ensureUp(t), (error) => error.message.endsWith(stderr));
+    assert.equal(h.fake.find("start").length, 1);
+    assert.deepEqual(delays, []);
+  }
+});
+
+test("Stop interrupts scope retry delay and releases the container mutex", async () => {
+  let enteredSleep;
+  const sleeping = new Promise((resolve) => { enteredSleep = resolve; });
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: () => { enteredSleep(); return new Promise(() => {}); } } });
+  const t = await warmed(h, target("scope-stop"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", once: true, result: { code: 125, stderr: SCOPE_CONFLICT } });
+  const controller = new AbortController();
+  const pending = h.lifecycle.ensureUp(t, { signal: controller.signal });
+  const rejected = assert.rejects(pending, { name: "AbortError", details: { explicitStop: true } });
+  await sleeping;
+  controller.abort();
+  await rejected;
+  assert.equal(h.fake.find("start").length, 1, "Stop must prevent a retry");
+  assert.equal((await h.lifecycle.ensureUp(t)).started, true, "a later turn can acquire the same mutex");
+});
+
+test("Stop during a failed CLI start prevents the retry delay", async () => {
+  const controller = new AbortController();
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async () => assert.fail("cancelled start must not wait") } });
+  const t = await warmed(h, target("scope-stop-start"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => { controller.abort(); return { code: 125, stderr: SCOPE_CONFLICT }; } });
+  await assert.rejects(h.lifecycle.ensureUp(t, { signal: controller.signal }), { name: "AbortError" });
+  assert.equal(h.fake.find("start").length, 1);
+});
+
+test("concurrent turns share one scope retry sequence under the container mutex", async () => {
+  let enteredSleep;
+  let finishSleep;
+  const sleeping = new Promise((resolve) => { enteredSleep = resolve; });
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: () => { enteredSleep(); return new Promise((resolve) => { finishSleep = resolve; }); } } });
+  const t = await warmed(h, target("scope-concurrent"));
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => {
+    if (++attempts === 1) return { code: 125, stderr: SCOPE_CONFLICT };
+    h.state.status = "running";
+    return { code: 0 };
+  } });
+  const first = h.lifecycle.ensureUp(t);
+  await sleeping;
+  const second = h.lifecycle.ensureUp(t);
+  finishSleep();
+  const results = await Promise.all([first, second]);
+  assert.equal(attempts, 2);
+  assert.deepEqual(results.map((result) => result.started), [true, false]);
+});
+
+test("Stop coinciding with successful start preserves running-container accounting", async () => {
+  const controller = new AbortController();
+  const h = harness({ state: { exists: true, status: "exited" } });
+  const t = await warmed(h, target("scope-stop-success"));
+  h.reaper.markStopped(t.container.name);
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => { controller.abort(); return { code: 0 }; } });
+  await assert.rejects(h.lifecycle.ensureUp(t, { signal: controller.signal }), { name: "AbortError" });
+  assert.equal(h.fake.find("start").length, 1);
+  assert.equal(h.reaper.snapshot().find((entry) => entry.name === t.container.name).running, true);
 });
 
 test("state machine: running with a stale fingerprint recreates when unleased", async () => {

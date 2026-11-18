@@ -7030,6 +7030,16 @@ The probe never reconfigures/recreates the runtime, retries, reads argv/environm
 extends the recovery deadline; unavailable probes remain explicitly unavailable. Bounded snapshot
 facts are retained with the run-error event. No container image rebuild is needed for this reducer.
 
+## Container restart after a transient systemd scope conflict
+
+When restarting an existing stopped rootless Podman container, the daemon recognizes the exact
+`libpod-<container-id>.scope` already-loaded error and retries the same `start` after 1 and 2
+seconds, at most three attempts. The per-container mutex stays held, Stop cancels the wait, and
+exhaustion reports the last CLI error. No container or volume is removed, no systemd configuration
+is changed, and unrelated errors, Docker and rootful runtimes are not retried. This recovery is
+engine-independent: it finishes before an engine process is spawned. No runtime image rebuild is
+required.
+
 ## Node 24 runtime baseline
 
 The daemon, installer, transactional updater and documentation build require Node 24.0.0 or
