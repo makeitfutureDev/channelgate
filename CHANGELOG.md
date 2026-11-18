@@ -7,6 +7,10 @@
 - Add GPT-6.2 Astra and Sol to bundled Codex model choices and inherited family shortcuts,
   with supported fallback reasoning levels and Standard API-equivalent usage rates. Keep
   Fable 5.2 in Claude choices and preserve existing model pins and custom shortcuts.
+- Accept a scrypt hash in `ADMIN_PASSWORD` and add `npm run hash-password` to produce the `.env`
+  line. Warn at boot about a cleartext or shadowed `ADMIN_PASSWORD` and about a Public URL behind
+  an undeclared reverse proxy. Refuse GitHub skills-webhook deliveries with no configured secret
+  or no well-formed signature before reading their body.
 
 - Use platform logos and compact responsive app cards in Activity Connections, paginate 24 apps
   at a time, and move IMAP/SMTP accounts to their own Email accounts settings page.

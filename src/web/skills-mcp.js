@@ -272,6 +272,19 @@ export function skillsMcpHandler() {
   };
 }
 
+// What can be refused about a webhook delivery WITHOUT its body, checked before the 2 MB parser
+// runs: the signature covers the body, so it can only be verified after reading it, but a gateway
+// with no webhook secret has nothing to verify and a request with no well-formed signature header
+// cannot pass. Neither caller gets its body read.
+const WEBHOOK_SIGNATURE_RE = /^sha256=[0-9a-f]{64}$/;
+export function skillsWebhookGate() {
+  return (req, res, next) => {
+    if (!getSkillsWebhookSecret()) return res.status(404).json({ error: "webhook not configured" });
+    if (!WEBHOOK_SIGNATURE_RE.test(String(req.headers["x-hub-signature-256"] || ""))) return res.status(401).json({ error: "bad signature" });
+    next();
+  };
+}
+
 // GitHub push webhook: verify the signature over the RAW body, find the source(s) for the pushed
 // repository, and hand the sync to the caller-provided trigger (debounced by the caller).
 export function skillsWebhookHandler({ triggerSync }) {
@@ -308,7 +321,7 @@ export function skillsWebhookHandler({ triggerSync }) {
 
 // Mount both routes on an Express app BEFORE the admin auth middleware.
 export function mountSkillsPublicRoutes(app, { triggerSync }) {
-  app.post("/api/skills/webhook/github", express.raw({ type: "*/*", limit: "2mb" }), skillsWebhookHandler({ triggerSync }));
+  app.post("/api/skills/webhook/github", skillsWebhookGate(), express.raw({ type: "*/*", limit: "2mb" }), skillsWebhookHandler({ triggerSync }));
   app.post("/mcp/skills", skillsMcpAuthGate(), express.json({ limit: "20mb" }), skillsMcpHandler());
   app.get("/mcp/skills", (_req, res) => res.status(405).json({ error: "POST only (stateless Streamable HTTP)" }));
   app.delete("/mcp/skills", (_req, res) => res.status(405).json({ error: "stateless endpoint" }));

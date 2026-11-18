@@ -183,7 +183,18 @@ logins share one backoff bucket. A loopback socket on its own is deliberately NO
 of a proxy — any process on the host or any tunnel opens one — so an undeclared header is ignored,
 and a value that is not a valid IP address is ignored too. Independently of the key, more than 50
 failed attempts in ten minutes across all clients puts every login on the maximum delay until the
-window drains, which bounds guessing even where a header is misdeclared.
+window drains, which bounds guessing even where a header is misdeclared. A Public URL on a loopback
+bind with no proxy declared is reported at every boot (`[gateway] WARNING: a Public URL is
+configured on a loopback bind but no reverse proxy is declared …`).
+
+**The admin password in `.env`.** A password set in the admin UI is stored as a scrypt hash, and so
+is the one generated on first boot. `ADMIN_PASSWORD` in `.env` is yours: the daemon verifies against
+it and never rewrites the file, so a cleartext value stays cleartext. Replace it with a hash —
+`npm run hash-password` asks for the password without echo (or reads it from stdin, never from the
+command line) and prints the `ADMIN_PASSWORD='scrypt$…'` line to paste — or set the password in the
+admin UI and delete the line. The UI password wins while both exist, which leaves the `.env` one as
+a forgotten fallback that becomes the admin password again if the UI one is removed; the daemon
+warns about both cases at boot and never prints the value.
 
 Notes for operators:
 

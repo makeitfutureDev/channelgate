@@ -103,7 +103,7 @@ const areas = [
       "test/composio-files.test.js",
     ],
   },
-  { name: "web-boundary", floor: [80, 80, 75], include: ["src/web/security.js", "src/web/ip-policy.js"], tests: ["test/web-security.test.js", "test/ssrf.test.js", "test/host-guard.test.js"] },
+  { name: "web-boundary", floor: [80, 80, 75], include: ["src/web/security.js", "src/web/password-hash.js", "src/web/boot-posture.js", "src/web/ip-policy.js"], tests: ["test/web-security.test.js", "test/web-auth-posture.test.js", "test/ssrf.test.js", "test/host-guard.test.js"] },
   // The old include named src/gateway/update-runner.js, which no longer exists — this area had
   // been passing vacuously (exactly the failure the existence check below now refuses). Floors
   // re-based on measured reality for scripts/update-runner.mjs (58/74/57 on 2026-08-08); the
