@@ -1,5 +1,5 @@
 // APNs token authentication and bounded HTTP/2 transport. No third-party runtime dependency.
-import { createPrivateKey, sign, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { connect, type ClientHttp2Session } from "node:http2";
 
 export interface PushConfig {
@@ -24,14 +24,15 @@ export function pushConfigReady(config: PushConfig): boolean {
 let cached: { key: string; team: string; id: string; issued: number; token: string } | undefined;
 export function providerToken(config: PushConfig, now = Date.now()): string {
   const issued = Math.floor(now / 1000);
-  if (cached && cached.key === config.privateKey && cached.team === config.teamId && cached.id === config.keyId
+  const fingerprint = createHash("sha256").update(config.privateKey).digest("hex");
+  if (cached && cached.key === fingerprint && cached.team === config.teamId && cached.id === config.keyId
       && issued >= cached.issued && issued - cached.issued < 1200) return cached.token;
   const header = Buffer.from(JSON.stringify({ alg: "ES256", kid: config.keyId })).toString("base64url");
   const claims = Buffer.from(JSON.stringify({ iss: config.teamId, iat: issued })).toString("base64url");
   const input = `${header}.${claims}`;
   const signature = sign("sha256", Buffer.from(input), { key: parsePushKey(config.privateKey), dsaEncoding: "ieee-p1363" }).toString("base64url");
   const token = `${input}.${signature}`;
-  cached = { key: config.privateKey, team: config.teamId, id: config.keyId, issued, token };
+  cached = { key: fingerprint, team: config.teamId, id: config.keyId, issued, token };
   return token;
 }
 export function pushHeaders(config: PushConfig, device: PushDevice, id: string): Record<string, string> {
