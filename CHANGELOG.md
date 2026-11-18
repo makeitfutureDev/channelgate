@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Use one persistent outbound SSH key across all channels on a gateway. Each agent container
+  mounts the dedicated pair read-only in `~/.ssh/channelgate` and returns the same public key.
+  Connections use ordinary SSH and retain existing channel-specific network/server approvals.
 - Combine new Google Chat and Microsoft Teams agent threads with Slack in personal Activity.
   Administrators find and link existing accounts with user search in Users → Activity accounts. Native threads
   support status, source links, personal Hide, pins, comments and verified-starter completion,

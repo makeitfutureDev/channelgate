@@ -11,6 +11,8 @@
 export const IMAGE_SPEC_VERSION = "1.6.3";
 
 export const CONTAINER_HOME = "/home/agent";
+// One deployment-owned outbound identity; the channel's remaining ~/.ssh stays private.
+export const CONTAINER_AGENT_SSH_DIR = `${CONTAINER_HOME}/.ssh/channelgate`;
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
 // toolchain: npm -g (NPM_CONFIG_PREFIX), then pip --user / pipx / uv / curl installers
 // (~/.local/bin), then anything the agent drops in ~/bin, then the language-runtime bin dirs

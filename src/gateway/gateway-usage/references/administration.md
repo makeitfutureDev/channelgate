@@ -172,6 +172,17 @@ These channel modes do not leave the container. The separate organization-admin-
   still succeed while it is off — that is not permission. If the switch is off and a task needs
   the network, say so and ask an admin to turn it on rather than working around it. The current
   value is in the gateway-managed block at the top of this conversation's instruction file.
+- **One outbound SSH key for the gateway.** For a public key to install on another server,
+  read `~/.ssh/channelgate/id_ed25519.pub` and return that exact single line. Every channel and
+  project/admin container on this gateway mounts the same dedicated keypair directory read-only.
+  Use normal `ssh -i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes`, plus the proxy command
+  above where required. Never generate a per-channel replacement or use a different old key
+  when asked for the gateway key; report a missing mount. Existing local keys and SSH config are
+  retained. The shared private key is readable by container shell users; never print, upload or
+  share it. Read-only prevents changing the central pair, not copying it. Host `/sudo` runs use
+  the shared identity path stated in their current runtime preamble. Installing the public key
+  grants the corresponding server account; each channel still needs its own network/destination
+  approval. This is separate from a person's key for SSH *into* a channel container.
 - **Secrets behind the proxy.** In a proxy-mode container a secret with an egress rule — GitHub,
   Vercel, Supabase, Make and Composio token names are built in; any other one once an admin sets
   **Used on hosts** (admin UI) or `hosts` (`set_secret`) — is a **placeholder** (`cgph_…`) that

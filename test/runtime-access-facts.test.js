@@ -22,6 +22,24 @@ test("container-local stores and parent scaffolding do not expose the host gatew
   assert.ok(!note.includes(root), "an unmounted host path is not disclosed");
 });
 
+test("shared SSH identity is explained from resolved mounts without exposing the rest of the gateway", () => {
+  const source = path.join(gatewayRoot(), "config", "agent-ssh");
+  const t = target([{ ...bind(source, "/home/agent/.ssh/channelgate", "agent-ssh"), mode: "ro" }]);
+  for (const clean of [false, true]) {
+    const note = runtimeAccessPreamble(t, { clean, allowNetwork: false });
+    assert.match(note, /Shared outbound SSH identity/);
+    assert.match(note, /\/home\/agent\/\.ssh\/channelgate\/id_ed25519\.pub/);
+    assert.match(note, /same key in every channel/);
+    assert.match(note, /Do not generate a channel-specific replacement/);
+    assert.match(note, /mounted read-only/);
+    assert.match(note, /runtime directory: \*\*not mounted\*\*/);
+    assert.match(note, /database: \*\*not mounted\*\*/);
+    assert.ok(!note.includes(source), "only the in-container key path is disclosed");
+  }
+  assert.doesNotMatch(runtimeAccessPreamble(target([])), /Shared outbound SSH identity/);
+  assert.match(runtimeAccessPreamble({ backend: "host" }), new RegExp(source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("resolved parent grant and an explicitly selected gateway workdir expose the store", () => {
   for (const mount of [bind(path.dirname(gatewayRoot()), undefined, "operator-home"), bind(gatewayRoot())]) {
     const note = gatewayStoreAccessNote(target([mount]));
