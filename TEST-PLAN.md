@@ -1,5 +1,44 @@
 # ChannelGate — Test Plan
 
+## Activity Connections settings (2026-11-18)
+
+- Automated: `test/activity-connections.test.js` verifies owner-filtered catalog paging and custom
+  apps, restrictive/empty policy, real provider underscore slugs, no-auth/legacy metadata,
+  credential/error filtering, Enterprise/Personal-mode gates, connection ownership, private defaults,
+  callback isolation, concurrent creation and SDK preparation cancellation. Existing SDK policy
+  and inventory tests retain app validation and account isolation coverage.
+- Activity route cases in `test/activity.test.js` verify both page URLs, authenticated owner and
+  workspace, ignored read selectors/refused write selectors, CSRF/Origin/session denial, fixed
+  callback, no-store headers, and revocation while a read awaits. A success query cannot activate
+  an account. `test/activity-settings-page.test.js` retains all other personal settings coverage.
+- `test/activity-connections-page.test.js` verifies list/error states, search races, pagination,
+  aliases, duplicate-post prevention, safe authorization links, personal-token inventory-only flow,
+  token-change refresh and stale-response suppression. `test/activity-connections-browser.test.js`
+  executes the served Settings script in Chromium: list → Add → alias → authorization, personal
+  fallback, session expiry, no injected HTML/JS errors, and viewport fit at 1440px/390px.
+- Provider API canary (2026-11-18): real catalog first/next pages, custom toolkit search and an
+  allowlisted Gmail catalog were verified. The gateway service created a Gmail authorization link
+  for an isolated test identity; the raw provider record verified its owner, alias and PRIVATE type.
+  The pending test account and remote session were deleted. No OAuth sign-in or mailbox access was
+  performed. The provider's `deprecated` object contains legacy fields; it is not a retirement flag.
+- Live `ACT-CONNECTIONS-01` (engine-independent browser): authenticated private Activity fixture,
+  two approved users with separate disposable provider identities, SDK Enterprise mode. Visit
+  Settings → Connections; require only that viewer's accounts, distinguish partial/error/empty,
+  reload and refresh, and deny another cookie/session/CSRF/origin. Restrict apps including an empty
+  list and verify the catalog and direct create request honor it. Restore the original policy.
+- Live `ACT-CONNECTIONS-02` (browser plus Claude/Codex): the same owner's disposable accounts in
+  `cg-testing-claude-bash` and `cg-testing-codex-bash`, with the actual fixture roles verified first.
+  From Add connection choose Gmail, create distinct `qa-work`/`qa-personal` aliases and finish OAuth
+  manually. Refresh until both statuses are ACTIVE, then ask each engine to list these aliases and
+  read the selected account's profile. Require exact owner/account routing and no other user's data.
+  A callback claiming success without completed OAuth must remain pending. Restore fixtures.
+- Live `ACT-CONNECTIONS-03` (engine-independent browser): Personal mode with a disposable consumer
+  token publishing known apps. Require connected-app inventory, no SDK catalog/create controls,
+  token save/replace/remove refreshing the list, no token value returned, and a direct SDK-create
+  request refused. Restore the prior mode/token. Consumer inventory may omit unpublished accounts.
+- The browser fixtures and provider canary above do not certify completed OAuth or dual-engine
+  foreground runs. Those live acceptance rows and private QA writeback remain pending until run.
+
 ## Completed Activity order (2026-11-18)
 
 - Automated: `test/activity-page.test.js` exercises the served browser script with interleaved

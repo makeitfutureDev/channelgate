@@ -30,6 +30,7 @@ import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
+import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
@@ -159,6 +160,7 @@ export function createActivityRouter({
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
   now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100, drainTimeoutMs = 30_000,
   calls = /** @type {object | null} */ (null), voiceAvailable = voiceCallsAvailable, incoming = /** @type {ReturnType<typeof incomingCalls> | null} */ (null),
+  connectionServices = {},
 } = {}) {
   const callsFor = () => calls || defaultCallManager();
   const incomingFor = () => incoming || incomingCalls();
@@ -350,11 +352,12 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
+      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/connections(?:\/new)?)?$/.test(req.path) ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls, callTarget: launch?.channelId ? launch : null });
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls,
+        connectionsPage: req.path.includes("/settings/connections"), connectionsNew: req.path.endsWith("/settings/connections/new"), callTarget: launch?.channelId ? launch : null });
       headers(res, page.nonce, { worklet: voiceCalls && view === "activity" }); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
@@ -372,6 +375,7 @@ export function createActivityRouter({
   };
   const csrfOk = (req, session) => req.headers.origin === req.activityOrigin
     && timingSafeEqualStr(String(req.headers["x-cg-csrf"] || req.query?.csrf || ""), session.csrf);
+  registerActivityConnectionRoutes(router, { context, csrfOk, services: connectionServices });
   // Older links to the standalone call page land on the dashboard with the overlay instead.
   router.get("/:id/call", async (req, res) => {
     try {
@@ -542,6 +546,8 @@ export function createActivityRouter({
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);
   router.get("/:id/settings", serveDashboard);
+  router.get("/:id/settings/connections", serveDashboard);
+  router.get("/:id/settings/connections/new", serveDashboard);
   router.get("/:id/calls", serveDashboard);
 
   router.get("/:id/api/calls", async (req, res) => {

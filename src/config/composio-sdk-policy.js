@@ -8,7 +8,7 @@ export function normalizeComposioSdkPolicy(value = {}) {
     throw new Error("Composio accounts per app must be an integer from 2 to 10");
   }
   if (allowedApps !== null && (!Array.isArray(allowedApps) || allowedApps.length > 200
-    || allowedApps.some((app) => typeof app !== "string" || !/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(app.trim())))) {
+    || allowedApps.some((app) => typeof app !== "string" || !/^[a-z0-9_][a-z0-9_-]{0,127}$/i.test(app.trim())))) {
     throw new Error("Composio allowed apps must be null or a list of up to 200 toolkit slugs");
   }
   return {

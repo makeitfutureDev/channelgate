@@ -1067,6 +1067,55 @@ test("Settings page and API are the viewer's own, masked, CSRF-protected and clo
   assert.notEqual((await getUser("U_MINE")).nudges, true);
 });
 
+test("Connections pages and APIs bind the authenticated Activity owner and workspace", async (t) => {
+  const calls = [];
+  const f = await fixture(t, { connectionServices: {
+    inventory: async input => { calls.push(["inventory", input]); return { mode: "sdk", canAdd: true, state: "ready", accounts: [{ app: "gmail", account: input.ownerId, status: "INITIATED" }] }; },
+    apps: async input => { calls.push(["apps", input]); return { apps: [{ slug: "gmail", name: "Gmail", canConnect: true }], nextCursor: "page2" }; },
+    create: async input => { await input.authorize(); calls.push(["create", input]); return { redirectUrl: "https://connect.composio.dev/link/fixture" }; },
+  } });
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  for (const suffix of ["/settings/connections", "/settings/connections/new"]) {
+    const page = await f.request(mine.url + suffix, { headers: mine.headers });
+    assert.equal(page.status, 200); const html = await page.text();
+    assert.match(html, /<title>Settings · ChannelGate/); assert.match(html, /"connectionsPage":true/);
+    assert.match(html, new RegExp('"connectionsNew":' + String(suffix.endsWith("/new"))));
+    assert.doesNotMatch(html, /id="threads"/);
+  }
+  const inventory = await f.request(mine.url + "/api/connections?ownerId=U_OTHER", { headers: mine.headers });
+  assert.match(inventory.headers.get("cache-control"), /no-store/);
+  assert.equal((await inventory.json()).accounts[0].account, "U_MINE");
+  assert.deepEqual(calls.at(-1), ["inventory", { ownerId: "U_MINE", teamId: "T_WORK" }]);
+  const catalog = await f.request(mine.url + "/api/connections/apps?query=mail&cursor=opaque&userId=U_OTHER", { headers: mine.headers });
+  assert.equal(catalog.status, 200);
+  assert.deepEqual(calls.at(-1), ["apps", { ownerId: "U_MINE", teamId: "T_WORK", query: "mail", cursor: "opaque" }]);
+  const endpoint = mine.url + "/api/connections", body = JSON.stringify({ app: "gmail", alias: "work" });
+  for (const headers of [{}, { ...mine.post, "X-CG-CSRF": "" }, { ...mine.post, "X-CG-CSRF": other.csrf }, { ...mine.post, Origin: "https://evil.example" }, { cookie: "cg_admin=forged", Origin: f.base }]) {
+    const result = await f.request(endpoint, { method: "POST", headers, body });
+    assert.ok([401, 403].includes(result.status));
+  }
+  assert.equal(calls.filter(([kind]) => kind === "create").length, 0);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ app: "gmail", ownerId: "U_OTHER", callbackUrl: "https://evil.example" }) })).status, 400);
+  const created = await f.request(endpoint, { method: "POST", headers: mine.post, body });
+  assert.equal(created.status, 200); assert.deepEqual(await created.json(), { redirectUrl: "https://connect.composio.dev/link/fixture" });
+  const actual = calls.at(-1)[1]; assert.equal(actual.ownerId, "U_MINE"); assert.equal(actual.teamId, "T_WORK");
+  assert.equal(actual.sessionId, mine.url.split("/").at(-1));
+  assert.equal(actual.callbackUrl, f.base + mine.url + "/settings/connections");
+  // Callback query strings are never evidence of an ACTIVE provider account.
+  assert.equal((await f.request(mine.url + "/settings/connections?status=success", { headers: mine.headers })).status, 200);
+  assert.equal((await (await f.request(endpoint, { headers: mine.headers })).json()).accounts[0].status, "INITIATED");
+});
+
+test("Connections discard awaited data and refuse link creation after Activity revocation", async (t) => {
+  const gate = defer(); let entered = false;
+  const f = await fixture(t, { connectionServices: { inventory: async () => { entered = true; await gate.promise; return { accounts: [{ account: "must-not-publish" }] }; } } });
+  const mine = await f.login();
+  const pending = f.request(mine.url + "/api/connections", { headers: mine.headers });
+  while (!entered) await new Promise(resolve => setImmediate(resolve));
+  await setUser("U_MINE", { approved: false }); gate.resolve();
+  const result = await pending; assert.equal(result.status, 403); assert.doesNotMatch(await result.text(), /must-not-publish/);
+});
+
 test("Activity is one installable web app: shared manifest, icons and a launcher that resumes the live session", async (t) => {
   const f = await fixture(t);
   await f.root("C_WORK", "100.000001", "U_MINE");
