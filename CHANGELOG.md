@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Use platform logos and compact responsive app cards in Activity Connections, paginate 24 apps
+  at a time, and move IMAP/SMTP accounts to their own Email accounts settings page.
+
 - Redesign Activity Connections around searchable app cards and account details. Let users confirm
   deletion of their own private Composio connections in SDK and supported personal-token mode.
 

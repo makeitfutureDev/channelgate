@@ -100,7 +100,7 @@ export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, team
 function headers(res, nonce = "", { worklet = false } = {}) {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data: https://logos.composio.dev https://assets.composio.dev; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
 // Outside /activity/ so installed Chrome opens a regular browser tab. This page
 // grants nothing: the existing same-origin WebAuthn endpoints verify the passkey.
@@ -352,12 +352,12 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/connections(?:\/new)?)?$/.test(req.path) ? "settings" : "activity";
+      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
       const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls,
-        connectionsPage: req.path.includes("/settings/connections"), connectionsNew: req.path.endsWith("/settings/connections/new"), callTarget: launch?.channelId ? launch : null });
+        emailPage: req.path.endsWith("/settings/email"), connectionsPage: req.path.includes("/settings/connections"), connectionsNew: req.path.endsWith("/settings/connections/new"), callTarget: launch?.channelId ? launch : null });
       headers(res, page.nonce, { worklet: voiceCalls && view === "activity" }); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
@@ -546,6 +546,7 @@ export function createActivityRouter({
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);
   router.get("/:id/settings", serveDashboard);
+  router.get("/:id/settings/email", serveDashboard);
   router.get("/:id/settings/connections", serveDashboard);
   router.get("/:id/settings/connections/new", serveDashboard);
   router.get("/:id/calls", serveDashboard);

@@ -2,8 +2,12 @@
 
 ## Activity connection management (2026-11-18)
 
-Activity → Settings → Connections opens an application grid with Connected and SDK All apps views,
-search and account counts. Select an app to see its connected accounts, identities, aliases and
+Activity → Settings → Connections opens a compact, full-width application grid with Connected and
+SDK All apps views, trusted platform logos, search and account counts. The grid adds columns as
+the viewport widens. Both views show at most 24 apps per page with Previous/Next navigation; SDK
+catalog requests fetch only the selected cursor page, and opening an app preserves its page/search.
+Missing or failed logos fall back to initials. IMAP/SMTP accounts have their own Email accounts
+settings page at `/activity/:id/settings/email`, separate from Composio connections. Select an app to see its connected accounts, identities, aliases and
 status; SDK users can connect another account from that detail view. It uses the same personal identity as their
 agent runs. Personal-token mode shows the apps Composio publishes for that token, identifies
 partial/unavailable results, and retains the token editor; adding apps in this dashboard requires

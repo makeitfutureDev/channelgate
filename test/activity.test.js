@@ -1075,10 +1075,13 @@ test("Connections pages and APIs bind the authenticated Activity owner and works
     create: async input => { await input.authorize(); calls.push(["create", input]); return { redirectUrl: "https://connect.composio.dev/link/fixture" }; },
   } });
   const mine = await f.login(), other = await f.login("U_OTHER");
-  for (const suffix of ["/settings/connections", "/settings/connections/new"]) {
+  for (const suffix of ["/settings/connections", "/settings/connections/new", "/settings/email"]) {
     const page = await f.request(mine.url + suffix, { headers: mine.headers });
     assert.equal(page.status, 200); const html = await page.text();
-    assert.match(html, /<title>Settings · ChannelGate/); assert.match(html, /"connectionsPage":true/);
+    assert.match(html, /<title>Settings · ChannelGate/);
+    assert.match(html, suffix.endsWith("/email") ? /"emailPage":true/ : /"connectionsPage":true/);
+    const policy = page.headers.get("content-security-policy");
+    assert.match(policy, /img-src 'self' data: https:\/\/logos\.composio\.dev https:\/\/assets\.composio\.dev;/);
     assert.match(html, new RegExp('"connectionsNew":' + String(suffix.endsWith("/new"))));
     assert.doesNotMatch(html, /id="threads"/);
   }

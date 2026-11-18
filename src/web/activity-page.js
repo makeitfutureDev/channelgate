@@ -1086,10 +1086,10 @@ function settingsBrowser(config, browser, theme, connections) {
   const { document, location } = browser;
   const el = (id) => document.getElementById(id);
   const panel = el("settings-panel"), nav = el("settings-nav"), status = el("settings-status");
-  const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
+  const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["email", "Email accounts"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
   const voiceCalls = config.voiceCalls === true;
   const wanted = String(location?.hash || "").replace(/^#/, "");
-  let section = SECTIONS.some(([id]) => id === wanted) ? wanted : config.connectionsPage ? "connections" : "general";
+  let section = SECTIONS.some(([id]) => id === wanted) ? wanted : config.emailPage ? "email" : config.connectionsPage ? "connections" : "general";
   let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null, skillQuery = "";
   const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
@@ -1272,6 +1272,10 @@ function settingsBrowser(config, browser, theme, connections) {
         cards.push(composio);
       }
 
+      return cards;
+    },
+    email() {
+      const c = data.connections;
       const email = card("Email accounts", "Mailboxes only your runs read and send from. Saving logs in to IMAP and SMTP first; passwords are never shown again.");
       for (const account of c.email) {
         email.append(row(account.name + " · " + account.address, "IMAP " + account.imap.host + ":" + account.imap.port + " · SMTP " + account.smtp.host + ":" + account.smtp.port + (account.sendEnabled ? "" : " · sending off"), [
@@ -1293,8 +1297,8 @@ function settingsBrowser(config, browser, theme, connections) {
         field("SMTP user", input("smtpUser", { value: v("smtp.user"), max: 254 }), "Blank uses the IMAP user."), field("SMTP password", input("smtpPassword", { type: "password", max: 1024, placeholder: current ? "Leave blank to keep" : "Blank uses the IMAP password" })),
       ], current ? "Save changes" : "Connect", (values) => ({ action: "email.save", ...values, ...(current ? { name: current.name } : {}) }),
       current ? { cancel: () => { editing = null; render(); } } : {}));
-      email.append(emailEditor); cards.push(email);
-      return cards;
+      email.append(emailEditor);
+      return [email];
     },
     mcps() {
       const m = data.mcps;
@@ -1386,11 +1390,12 @@ function settingsBrowser(config, browser, theme, connections) {
   };
 
   function render() {
+    document.documentElement.dataset.settingsSection = section;
     nav.replaceChildren(...SECTIONS.map(([id, label]) => {
       const item = node("button", "settings-tab", label);
       item.type = "button";
       if (id === section) item.setAttribute("aria-current", "page");
-      item.addEventListener("click", () => { section = id; editing = null; notice = ""; noticeKind = ""; if (browser.history?.replaceState) browser.history.replaceState(null, "", "#" + id); render(); });
+      item.addEventListener("click", () => { section = id; editing = null; notice = ""; noticeKind = ""; if (browser.history?.replaceState) browser.history.replaceState(null, "", base + "/settings" + (id === "email" ? "/email" : id === "connections" ? "/connections" : "#" + id)); render(); });
       return item;
     }));
     paintStatus();
@@ -1446,13 +1451,13 @@ const tableHead = () => `<thead><tr>${ACTIVITY_COLUMNS.map((id) => `<th scope="c
   Object.hasOwn(ACTIVITY_COLUMN_MIN_WIDTHS, id) ? `<span class="col-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the ${COLUMN_LABELS[id]} column" title="Drag to resize · double-click to reset"></span>` : ""}</th>`).join("")}</tr></thead>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, connectionsPage = false, connectionsNew = false, callTarget = null, logoColor = getLogoColor() }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, connectionsPage = false, connectionsNew = false, emailPage = false, callTarget = null, logoColor = getLogoColor() }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings", callsView = view === "calls";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
     ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
-  const config = JSON.stringify({ base, csrf, view, connectionsPage, connectionsNew, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, columns: COLUMN_CONFIG, voiceCalls: voiceCalls === true,
+  const config = JSON.stringify({ base, csrf, view, connectionsPage, connectionsNew, emailPage, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, columns: COLUMN_CONFIG, voiceCalls: voiceCalls === true,
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
@@ -1636,12 +1641,13 @@ ${voiceCalls ? CALL_OVERLAY_CSS : ""}
 .order-dialog button:disabled{opacity:.4;cursor:default}.order-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.order-dialog .order-save{background:var(--orange);border-color:var(--orange);color:var(--brand-ink)}
 .order-dialog .order-error{color:var(--danger);min-height:1.6em}
 .subscriptions-page{padding:8px 16px 24px}
-.settings-page{max-width:1080px;margin:0 auto;padding:18px 16px 32px}
+.settings-page{width:100%;max-width:1080px;margin:0 auto;padding:18px 16px 32px}
+html[data-settings-section=connections] .settings-page{max-width:1800px}
 .settings-head h1{font-size:20px;margin:0 0 4px}
 .settings-copy{color:var(--muted);font-size:12.5px;margin:0 0 12px;line-height:1.55}
 .settings-status{margin:0 0 12px;padding:9px 12px;border-radius:8px;font-size:12.5px;border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 12%,transparent)}
 .settings-status.error{border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:color-mix(in srgb,var(--danger) 12%,transparent)}
-.settings-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:20px;align-items:start}
+.settings-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:24px;align-items:start}
 .settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:64px}
 .settings-tab{text-align:left;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:13px}
 .settings-tab:hover{color:var(--ink);background:var(--hover)}
@@ -1677,14 +1683,16 @@ select.settings-input{height:32px}
 .connections-tabs{display:flex;gap:4px;padding:4px;background:var(--panel-dark);border:1px solid var(--line-soft);border-radius:9px;flex-shrink:0}
 .connections-tabs button{border:0;background:transparent;color:var(--muted);padding:7px 12px;border-radius:6px;font:12.5px var(--font)}
 .connections-tabs button[aria-pressed=true],.connections-tabs button[aria-selected=true]{background:var(--panel-2);color:var(--ink);box-shadow:0 1px 3px #0002}
-.connections-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin:12px 0}
-.connection-app-card{display:flex;align-items:center;gap:14px;width:100%;min-height:100px;padding:18px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer;min-width:0}
+.connections-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr));gap:10px;margin:12px 0}
+.connection-app-card{display:flex;align-items:center;gap:10px;width:100%;min-height:76px;padding:12px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer;min-width:0}
 .connection-app-card:hover{border-color:var(--orange);background:var(--hover)}
 .connection-app-card:focus-visible{outline:2px solid var(--orange);outline-offset:3px}
 .connection-app-text{min-width:0}
-.connection-app-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 42px;width:42px;height:42px;border-radius:11px;background:var(--panel-2);color:var(--orange);font-size:17px;font-weight:700}
-.connection-app-name{display:block;font-size:14px;font-weight:600;overflow-wrap:anywhere;margin-bottom:7px}
-.connection-app-status{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.connection-app-icon img{display:block;max-width:28px;max-height:28px;object-fit:contain}
+.connection-app-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 34px;width:34px;height:34px;border-radius:8px;background:var(--panel-2);color:var(--orange);font-size:17px;font-weight:700}
+.connection-app-name{display:block;font-size:13px;font-weight:600;overflow-wrap:anywhere;margin-bottom:5px}
+.connection-app-status{display:block;font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.connections-pagination{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:16px;flex-wrap:wrap}.connections-pagination[hidden]{display:none}.connections-page-label{font-size:12px;color:var(--muted)}.connections-pagination [role=status]{font-size:12px;color:var(--muted)}
 .connection-detail{margin-top:18px}
 .connection-detail>.settings-row:first-child{padding:16px 0}
 .connection-account-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-top:1px solid var(--line-soft);flex-wrap:wrap}
@@ -1697,7 +1705,7 @@ select.settings-input{height:32px}
 .connections-selection:empty{display:none}
 .connections-selection .settings-form{padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel-dark);margin:18px 0}
 .connections-selection .settings-form h3{grid-column:1/-1;margin:0}
-@media(max-width:640px){.connections-toolbar{align-items:stretch;flex-direction:column}.connections-toolbar>.settings-input{max-width:none}.connections-tabs{align-self:flex-start}.connections-card{padding:14px}.connection-app-card{min-height:90px}.connection-delete-confirm button{max-width:100%;white-space:normal;height:auto;min-height:32px}.connection-account-actions{width:100%}}
+@media(max-width:640px){.connections-toolbar{align-items:stretch;flex-direction:column}.connections-toolbar>.settings-input{max-width:none}.connections-tabs{align-self:flex-start}.connections-card{padding:14px}.connection-app-card{min-height:72px}.connection-delete-confirm button{max-width:100%;white-space:normal;height:auto;min-height:32px}.connection-account-actions{width:100%}}
 .settings-email-editor{margin-top:16px}.settings-email-editor summary{cursor:pointer;font-weight:500;font-size:13px}
 .settings-skill-list{display:flex;flex-direction:column;max-height:420px;overflow:auto;margin:10px 0;border:1px solid var(--line);border-radius:8px}
 .settings-skill{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--line-soft)}
