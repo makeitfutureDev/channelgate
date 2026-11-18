@@ -727,6 +727,10 @@
                     <input id="set-public-url" type="text" placeholder="https://gateway.makeitfuture.com" />
                   </label>
                   <label class="field">
+                    <span>iPhone app identifiers for passkeys (<code>&lt;Team ID&gt;.&lt;bundle id&gt;</code>, comma-separated; published at <code>/.well-known/apple-app-site-association</code>)</span>
+                    <input id="set-apple-app-ids" type="text" placeholder="ABCDE12345.com.example.channelgate" />
+                  </label>
+                  <label class="field">
                     <span>Behind a reverse proxy — which header names the real client (login and approval-link backoff)</span>
                     <select id="set-trust-proxy">
                       <option value="">None — the connecting address is the client</option>

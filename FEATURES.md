@@ -518,6 +518,20 @@ are retained. Only a destination is returned to the app; no credential or bearer
 through a URL or window message. Normal browser sign-in remains in the current tab. Passkey
 management is available under **Settings → General**, with no separate header or footer entry.
 
+## Apple app-site association for the iPhone app (2026-11-18)
+
+`GET /.well-known/apple-app-site-association` (`src/web/app.js`, mounted ahead of the admin auth
+stack and the Host guard) answers `{"webcredentials":{"apps":[…]}}` as `application/json`, no
+redirect, no session, `Cache-Control: public, max-age=3600`, so iOS (through Apple's CDN) lets the
+ChannelGate iPhone app with a `webcredentials:<public host>` entitlement use this gateway's Activity
+passkeys. The app identifiers (`<Team ID>.<bundle id>`, comma or newline separated) come from the
+`appleAppIds` setting (Settings → *iPhone app identifiers for passkeys*; the admin API validates
+each id against `APPLE_APP_ID_PATTERN` and stores a normalised comma list) or, when the setting is
+empty, `GATEWAY_APPLE_APP_IDS`. With neither the endpoint answers 404 with `no-store`, so Apple's
+CDN never caches an empty or redirected file; previously the path fell through to the admin login
+redirect, which Apple reported as `SWCERR00401 Bad JSON content`. Nothing in the file is secret:
+it is listed back by `/api/settings` and republished by Apple.
+
 ## Activity passkey sign-in (2026-11-13)
 
 Existing administrator passkeys also sign into `/activity/login` as the administrator's linked

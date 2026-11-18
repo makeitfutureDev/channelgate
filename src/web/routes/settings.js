@@ -30,6 +30,7 @@ import {
   isPerplexitySessionToken,
   isGeminiApiKey, VOICE_CALL_MODELS, VOICE_CALL_VOICES,
   normalizePublicUrl,
+  parseAppleAppIds,
   applySettingsToEnv,
   resolveSlackConfig,
   hasSlackConfig,
@@ -350,6 +351,11 @@ export function createSettingsRouter({
         patch.logoColor = color;
       }
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
+      if (typeof body.appleAppIds === "string") {
+        const ids = parseAppleAppIds(body.appleAppIds);
+        if (!ids) return res.status(400).json({ error: "Each Apple app identifier must be <Team ID>.<bundle id>, such as ABCDE12345.com.example.app" });
+        patch.appleAppIds = ids.join(", ");
+      }
       // Which proxy header the login/approval backoff may believe: "" / cloudflare / xff.
       if (typeof body.trustProxy === "string") {
         const mode = normalizeTrustProxy(body.trustProxy);

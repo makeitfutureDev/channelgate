@@ -4268,6 +4268,7 @@ function readSettingsForm() {
     composioMcpUrl: document.getElementById("set-composio").value,
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
+    appleAppIds: document.getElementById("set-apple-app-ids").value,
     logoColor: document.getElementById("set-logo-hex").value,
     trustProxy: document.getElementById("set-trust-proxy").value,
     approvalLinks: document.getElementById("set-approval-links").value,
@@ -4417,6 +4418,7 @@ function paintSettings(s) {
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
+  document.getElementById("set-apple-app-ids").value = s.appleAppIds || "";
   paintLogoColor(s.logoColor || "#ff642f");
   document.getElementById("set-trust-proxy").value = s.trustProxy || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
