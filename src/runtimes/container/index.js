@@ -20,6 +20,7 @@ import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-
 import { egressPlanFor } from "./egress-hook.js";
 import { adapterFor } from "../../engines/registry.js";
 import { channelHistoryRoot } from "./history.js";
+import { CONTAINER_DEFAULT_PIDS_LIMIT } from "./pids-pressure.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
 export { containerFingerprint } from "./lifecycle.js";
@@ -129,7 +130,7 @@ export const containerBackend = Object.freeze({
       uidStrategy: "user", // settled from the CLI probe
       credentialMode: intendedCredentialModes(settings, { egressActive: egress.active === true }),
       limits: {
-        pidsLimit: Number(settings.pidsLimit) || 1024,
+        pidsLimit: Number(settings.pidsLimit) || CONTAINER_DEFAULT_PIDS_LIMIT,
         memory: String(settings.memory || ""),
         cpus: String(settings.cpus || ""),
       },
@@ -290,6 +291,13 @@ export const containerBackend = Object.freeze({
 
   async inspectResources(target, request) {
     return runtime().state.inspectResources(target, request);
+  },
+
+  // Was the process limit why an engine process just died? Read from the host (pids-pressure.js):
+  // the in-container probe above needs a process slot, which is the one thing a full container
+  // does not have.
+  async inspectProcessLimit(target) {
+    return runtime().lifecycle.processLimitStatus(target);
   },
 
   async inspectState(target, request) {

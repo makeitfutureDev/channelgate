@@ -18,7 +18,7 @@ import { forbiddenWorkDirReason } from "./gateway/workdir-boundary.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault, getPublicUrl, getTrustProxy } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault, raiseLegacyPidsLimitDefault, getPublicUrl, getTrustProxy } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { bootPostureWarnings } from "./web/boot-posture.js";
 import { createSlackManager } from "./slack/manager.js";
@@ -266,6 +266,14 @@ async function main() {
     pinEgressSecretsStrictDefault({ configured: operatorConfigured });
   } catch (e) {
     console.warn(`[gateway] could not store the strict-secrets default (strict applies): ${e?.message || e}`);
+  }
+  // The container process limit's default rose from 1,024 to 4,096; an install that stored the old
+  // default (the Settings page saves it with every other container field) is moved once.
+  try {
+    const raised = raiseLegacyPidsLimitDefault();
+    if (raised) console.log(`[gateway] container process limit raised from the old default 1024 to ${raised} (Settings → Container runtime changes it)`);
+  } catch (e) {
+    console.warn(`[gateway] could not update the stored container process limit: ${e?.message || e}`);
   }
   console.log(`[gateway] runtime root: ${root}`);
   console.log(`[gateway] singleton lock: ${lock.file}`);

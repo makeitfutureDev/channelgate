@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Recover channel containers that run out of process slots. A full container with no other work
+  inside is restarted before the next turn runs in it, and the reply says so; a crash the limit
+  caused names it with the kernel's numbers instead of "crashed after aborting itself". Every
+  container turn is told its process budget. The default limit rises from 1,024 to 4,096, and an
+  install that stored the old default is raised once at boot.
+
 - Update the runtime image Codex CLI pin from 0.162.1 to 0.170.0 and fix update smoke probes
   waiting on their own container lease during first-time shared-history preparation.
 

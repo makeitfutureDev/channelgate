@@ -19,6 +19,7 @@ import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
 import { extraFolderMounts } from "../../gateway/extra-folders.js";
 import { agentSshDir, ensureAgentSshIdentity } from "../../config/agent-ssh.js";
+import { describePidsUse, pidsPressure, readPidsCounters } from "./pids-pressure.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -111,6 +112,9 @@ const INSPECT_FIELDS = [
   `{{index .Config.Labels "${LABEL_CHANNEL}"}}`,
   `{{index .Config.Labels "${LABEL_PLATFORM}"}}`,
   `{{index .Config.Labels "${LABEL_MOUNTS}"}}`,
+  // The container's init as a HOST pid (0 when it is not running): the handle for reading its
+  // process-limit counters from outside (pids-pressure.js). Both podman and docker report it.
+  "{{.State.Pid}}",
 ];
 export const INSPECT_FORMAT = INSPECT_FIELDS.join("|");
 
@@ -133,6 +137,7 @@ export function parseInspectLine(line) {
     imageId: field(parts[3]),
     fingerprint: field(parts[4]),
     mountFingerprint: field(parts[9]),
+    pid: /^\d+$/.test(field(parts[10])) ? Number(field(parts[10])) : 0,
     labels: {
       [LABEL_INSTALL]: field(parts[5]),
       [LABEL_IMAGE]: field(parts[6]),
@@ -392,8 +397,16 @@ export function createContainerLifecycle({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()),
   recreateWaitMs = DEFAULT_RECREATE_WAIT_MS,
   recreatePollMs = DEFAULT_RECREATE_POLL_MS,
+  readPids = readPidsCounters,
 } = {}) {
   const preparing = new Map(); // container → leases waiting for readiness, not running inside
+
+  // The process-limit counters of a RUNNING container, read from the host. Unknown (null) on any
+  // failure — an unreadable cgroup must never fail a run or look like pressure.
+  async function pidsCountersFor(info) {
+    if (!info?.exists || info.status !== "running" || !(info.pid > 1)) return null;
+    try { return await readPids({ pid: info.pid }); } catch { return null; }
+  }
 
   const checkAbort = (signal) => {
     if (signal?.aborted) throw Object.assign(new Error("Run aborted while waiting for its channel container"), { name: "AbortError", details: { explicitStop: true } });
@@ -594,7 +607,13 @@ export function createContainerLifecycle({
   // the memory reviewer both do — the idle reaper must not stop an environment a turn is about to
   // spawn into). It is excluded from "is anyone else inside?", because a turn is not a reason to
   // refuse to rebuild the container that turn is waiting for.
-  async function ensureUp(target, { announce = null, lease = null, forceImage = false, signal = null } = {}) {
+  //
+  // `reclaimProcesses`: the caller is a turn that will TELL someone when a container full of
+  // leftover processes had to be restarted for it (run.js). Everything else that brings a container
+  // up — the memory reviewer, an SSH session, `/resume` inspection, a carry — never restarts one on
+  // its own: a silent restart would end processes the next turn was counting on, and a developer
+  // who attached to look at a full container must find it as it was.
+  async function ensureUp(target, { announce = null, lease = null, forceImage = false, signal = null, reclaimProcesses = false } = {}) {
     const name = target?.container?.name;
     if (!name) throw new Error("container target is missing its name");
     const ownLeaseId = typeof lease === "string" ? lease : (lease?.id || "");
@@ -680,6 +699,46 @@ export function createContainerLifecycle({
         target.container.recreatePending = false;
       }
 
+      // ── Process-limit pressure ──────────────────────────────────────────────────────────────
+      // Work that ended can leave processes behind — a browser daemon that detached into its own
+      // session, a dev server, the children of an engine that crashed. They count against the
+      // container's process limit until it next goes idle, and a container AT the limit cannot
+      // start a thread: the engine aborts within seconds, every automatic resume is exec'd into
+      // the same full container and aborts the same way, and the agent cannot even run `kill`
+      // (live, 2026-11-18: four orphaned browsers held 1,000 of 1,024 slots through six attempts).
+      // Nothing inside can fix that, so the daemon does: when nobody else is working in the
+      // container, restart it — exactly what the idle reaper would have done a few minutes later.
+      // With other work inside it is left alone and the turn is told why it may fail.
+      let reclaimed = null;
+      let processPressure = null;
+      const counters = await pidsCountersFor(info);
+      const pressure = pidsPressure(counters);
+      // What this turn starts from, for the post-mortem (processLimitStatus): refusals counted
+      // before it began are not its own.
+      target.container.pidsBaseline = counters ? { pid: info.pid, deniedTotal: counters.deniedTotal } : null;
+      if (pressure.exhausted) {
+        const use = describePidsUse(pressure);
+        const others = othersInside();
+        if (reclaimProcesses && others === 0) {
+          log(`[container] ${name} is out of process slots (${use}) with no active work inside — restarting it to clear leftover processes`);
+          try {
+            await stopContainer(name, { caps, reason: `process limit reached (${use})` });
+            info = { ...info, status: "exited", pid: 0 };
+            reclaimed = { current: pressure.current, max: pressure.max };
+            target.container.pidsBaseline = null;
+          } catch (error) {
+            // A stop that failed leaves the container as it was: the turn is attempted in it and
+            // told it is full, exactly as when someone else is inside. Never a new way to fail.
+            log(`[container] could not restart ${name} to clear its processes: ${error?.message || error}`);
+            processPressure = { current: pressure.current, max: pressure.max, others };
+          }
+        } else {
+          log(`[container] ${name} is nearly out of process slots (${use})${others ? ` and ${others} other run(s) are active inside` : ""} — leaving it`);
+          processPressure = { current: pressure.current, max: pressure.max, others };
+        }
+      }
+      checkAbort(signal);
+
       let created = false;
       let started = false;
       if (!info.exists || info.status === "missing") {
@@ -705,13 +764,39 @@ export function createContainerLifecycle({
 
       reaper.markRunning(name, target);
       checkAbort(signal);
-      return { created, started, warmupMs: now() - startedAt };
+      return { created, started, warmupMs: now() - startedAt, reclaimed, processPressure };
     } finally {
       if (slowTimer) clearTimeout(slowTimer);
       waiters.delete(waiter);
       if (!waiters.size) preparing.delete(name);
       release?.();
     }
+  }
+
+  // After an engine process died: was this container's process limit the reason? Read fresh (the
+  // container may have been restarted since ensureUp), from the host, with no exec.
+  // → { current, max, exhausted, full, denied } | null. `denied` counts the process/thread starts the
+  // limit refused since this turn's ensureUp — evidence that survives a tree that has since died
+  // and freed its slots.
+  async function processLimitStatus(target) {
+    const name = target?.container?.name;
+    if (!name) return null;
+    const caps = await cli.probe(target.settings, { image: target.settings?.image });
+    if (!caps.ok) return null;
+    const info = await inspectByRef(caps, name);
+    const counters = await pidsCountersFor(info);
+    if (!counters) return null;
+    const pressure = pidsPressure(counters);
+    if (pressure.max == null) return null;
+    const baseline = target.container.pidsBaseline;
+    // A different init pid is a restarted container: its counters started from zero.
+    const before = baseline && baseline.pid === info.pid ? baseline.deniedTotal : 0;
+    return {
+      current: pressure.current, max: pressure.max, exhausted: pressure.exhausted,
+      // AT the limit right now — unlike `exhausted` (the 85% early warning), this alone is evidence.
+      full: pressure.current >= pressure.max,
+      denied: Math.max(0, counters.deniedTotal - before),
+    };
   }
 
   async function destroy(target, { volumes = false, strictVolumes = false, reason = "" } = {}) {
@@ -757,7 +842,7 @@ export function createContainerLifecycle({
   }
 
   return {
-    ensureUp, destroy, stopContainer, removeContainer, listOurContainers, bootReconcile,
+    ensureUp, destroy, stopContainer, removeContainer, listOurContainers, bootReconcile, processLimitStatus,
     inspect: inspectByRef, settleTarget, prepareHostSide,
   };
 }

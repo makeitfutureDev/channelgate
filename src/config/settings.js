@@ -16,6 +16,7 @@ import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
+import { CONTAINER_DEFAULT_PIDS_LIMIT, CONTAINER_LEGACY_PIDS_LIMIT } from "../runtimes/container/pids-pressure.js";
 import { logoColor } from "./appearance.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
@@ -507,7 +508,7 @@ export function getContainerRuntime() {
     image: typeof s.containerImage === "string" && s.containerImage.trim() ? s.containerImage.trim() : CONTAINER_DEFAULT_IMAGE,
     idleMinutes: settingInt(s.containerIdleMinutes, { min: 1, max: 1440, fallback: 10 }),
     maxRunning: settingInt(s.containerMaxRunning, { min: 1, max: 500, fallback: 8 }),
-    pidsLimit: settingInt(s.containerPidsLimit, { min: 64, max: 65536, fallback: 1024 }),
+    pidsLimit: settingInt(s.containerPidsLimit, { min: 64, max: 65536, fallback: CONTAINER_DEFAULT_PIDS_LIMIT }),
     memory: typeof s.containerMemory === "string" ? s.containerMemory.trim() : "",
     cpus: typeof s.containerCpus === "string" ? s.containerCpus.trim() : "",
     // Presence only — the value goes through getContainerClaudeOauthToken() at spawn time.
@@ -544,6 +545,19 @@ export function pinEgressSecretsStrictDefault({ configured, save = saveSettings,
   const value = !configured;
   save({ containerEgressSecretsStrict: value });
   return value;
+}
+// Boot (server.js), once per install: move a STORED old default process limit to the new one. The
+// admin Settings page saves every container field together, so any install that ever saved that
+// page has `containerPidsLimit: 1024` on disk without anybody having chosen it — and a stored
+// value beats the code default, which would leave exactly the installs that hit the limit on it.
+// Only the old default is touched (a deliberate 512 or 2048 stays), and only once: the revision
+// marker means an operator who sets 1,024 afterwards keeps it. → the new value, or null.
+export function raiseLegacyPidsLimitDefault({ save = saveSettings, read = getSettings } = {}) {
+  const s = read();
+  if (Number(s.containerPidsLimitRev) >= 2) return null;
+  const raise = Number.parseInt(s.containerPidsLimit, 10) === CONTAINER_LEGACY_PIDS_LIMIT;
+  save({ ...(raise ? { containerPidsLimit: CONTAINER_DEFAULT_PIDS_LIMIT } : {}), containerPidsLimitRev: 2 });
+  return raise ? CONTAINER_DEFAULT_PIDS_LIMIT : null;
 }
 // ── Anthropic-compatible providers (the Qwen harnesses — src/engines/qwen.js) ─────────────────
 // Gateway-level credentials, deliberately NOT per-channel environment secrets: `ANTHROPIC_*` is a

@@ -47,6 +47,8 @@ import { resolveCurrentModel } from "./model-info.js";
 import { linkedWorkspaceGuidePreamble } from "./guide.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
+import { annotateProcessLimit, containerProcessNotice, containerProcessNoticeKind } from "./process-limit.js";
+import { describePidsUse } from "../runtimes/container/pids-pressure.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
@@ -1534,7 +1536,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // (access-grants.js); the person is told which one so an admin can clean it up.
   const skippedGrantWarning = clean ? "" : skippedSkillGrantsWarning(runGrants.skippedSkills);
   if (runGrants.skippedSkills.length) console.warn(`[gateway] skipped personal skill grants for ${authorId || "(no author)"}: ${runGrants.skippedSkills.map((entry) => `${entry.name} (${entry.tier})`).join(", ")}`);
-  const runWarning = licenseWarning + skippedGrantWarning + skillWarning;
+  // `let`: bringRuntimeUp appends what it had to do about a full container (process-limit.js).
+  let runWarning = licenseWarning + skippedGrantWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,
     userSkills,
@@ -1577,6 +1580,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       + (promptOverride ?? turnText);
     await assertChannelBudget(channelId, entry.slug);
     engineStarted = true;
+    // A death the container's process limit caused says so (process-limit.js): from outside, a
+    // thread that could not be started is only "crashed after aborting itself".
     const attemptResult = await adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
@@ -1608,7 +1613,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         grantFingerprint,
         attachments,
       },
-    }));
+    })).catch(async (error) => { throw await annotateProcessLimit(error, target); });
     return { ...attemptResult, effort };
   };
 
@@ -1854,7 +1859,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           pluginMcpServers: fallbackMcpRuntime.pluginServers || [],
           managedMcpServers: fallbackMcpRuntime.managedServers || [],
           grantFingerprint },
-      }));
+      })).catch(async (error) => { throw await annotateProcessLimit(error, target); });
       return { ...attemptResult, effort };
     };
     const execWithSessionHeal = async (modelOverride) => {
@@ -1931,6 +1936,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // has not spawned, so there is no stream, no tool row, no token — and a warm channel (the normal
   // case, sub-second) stays quiet. Same rule as the queue notice: silence that looks like death is
   // the bug this prevents. Called once per turn, and again after a retry pause handed the lease back.
+  let runtimeBroughtUp = false;
+  const processNoticesGiven = new Set();
   async function bringRuntimeUp() {
     let warmupTimer = null;
     let warmupPosted = false;
@@ -1952,6 +1959,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         // workspace mounts had gone stale, because every turn looked busy to itself.
         lease: runtimeLease,
         signal,
+        // This is a turn: it can say so when a container full of leftover processes had to be
+        // restarted for it. Only such a caller lets the backend do that (lifecycle.js ensureUp).
+        reclaimProcesses: true,
         // The backend's own words, subject to the same "only if it is actually slow" rule: before
         // the threshold they replace the default line rather than adding one, so a sub-second start
         // stays silent; after it, they are a live update on a wait the user can already see.
@@ -1966,11 +1976,42 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // see that settled path before it snapshots a resumed session, or the footer shows the
       // whole session's cumulative tokens/value instead of this message's delta.
       refreshRuntimeReadPaths(grantArtifacts, target);
-      // Every engine may explicitly delegate to Claude. Refresh its protected HOME login before
-      // spawn, including fresh/resumed, background, scheduled and API turns. Missing Claude auth
-      // leaves the main Codex/Qwen turn usable and clears any previous managed child login.
-      await installNestedClaudeLogin(target, { resolveToken: claudeRelayOnce });
-      await installPerplexityResearchLogin(target, { clean });
+      // A full container the backend restarted (or could not): never silent — the restart ended
+      // processes an earlier turn left running, and the reader may be counting on them. Settled
+      // BEFORE anything else is exec'd into the container, so a preparation step that fails in a
+      // full one still leaves the reason on the record. The first warm-up's note rides
+      // `runWarning`, announced right after this returns; a later one (the way back from a retry
+      // pause) announces itself — each kind once per turn, whatever the counts have become.
+      const processNotice = containerProcessNotice(warmup);
+      const processNoticeKind = containerProcessNoticeKind(warmup);
+      // On the target, where the per-attempt access facts read them (runtime-access.js). A reclaim
+      // stays true for the whole turn — a later warm-up must not make the engine forget its
+      // processes were cleared; pressure is only ever the latest reading.
+      if (target.container) {
+        if (warmup?.reclaimed) target.container.processReclaim = warmup.reclaimed;
+        target.container.processPressure = warmup?.reclaimed ? null : (warmup?.processPressure || null);
+      }
+      if (processNotice && !processNoticesGiven.has(processNoticeKind)) {
+        processNoticesGiven.add(processNoticeKind);
+        if (warmup.reclaimed) logEvent("container_process_reclaim", { channel: channelId, author: authorId, slug: entry.slug, ...warmup.reclaimed }).catch(() => {});
+        if (runtimeBroughtUp) announceAnswerNote(processNotice);
+        runWarning += processNotice;
+      }
+      runtimeBroughtUp = true;
+      try {
+        // Every engine may explicitly delegate to Claude. Refresh its protected HOME login before
+        // spawn, including fresh/resumed, background, scheduled and API turns. Missing Claude auth
+        // leaves the main Codex/Qwen turn usable and clears any previous managed child login.
+        await installNestedClaudeLogin(target, { resolveToken: claudeRelayOnce });
+        await installPerplexityResearchLogin(target, { clean });
+      } catch (error) {
+        // Preparing a container that has no room to start a process fails on an exec error that
+        // names nothing. Say what the backend already measured.
+        if (warmup?.processPressure && error && typeof error === "object" && error.name !== "AbortError") {
+          error.message = `${String(error.message || "Preparing the channel container failed").replace(/[.\s]+$/, "")} — this channel's container is nearly out of process slots (${describePidsUse(warmup.processPressure)} in use) and could not be cleared.`;
+        }
+        throw error;
+      }
       if (warmup?.created || warmup?.started) {
         console.log(`[gateway] ${entry.slug}: ${target.backend} runtime ${warmup.created ? "created" : "started"} in ${Date.now() - warmupStartedAt}ms`);
       }

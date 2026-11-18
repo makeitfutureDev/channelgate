@@ -4483,7 +4483,7 @@ function paintSettings(s) {
   document.getElementById("set-container-image").value = s.containerImage || "";
   document.getElementById("set-container-idle").value = s.containerIdleMinutes ?? 10;
   document.getElementById("set-container-max").value = s.containerMaxRunning ?? 8;
-  document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 1024;
+  document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 4096;
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;

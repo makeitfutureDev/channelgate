@@ -6,6 +6,7 @@ import { gatewayRoot, dbFile } from "../config/paths.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
 import { describeExtraFolders, extraFolderDirectories } from "./extra-folders.js";
 import { agentSshDir } from "../config/agent-ssh.js";
+import { describePidsUse } from "../runtimes/container/pids-pressure.js";
 
 function canonicalHostPath(value) {
   try { return realpathSync(value); } catch { return path.resolve(value); }
@@ -99,6 +100,28 @@ export function containerAccessNote(target) {
   return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access}${extraNote} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
 }
 
+// The container's process budget, and what the daemon just did about it. A container's limit counts
+// processes AND threads, is shared by every thread and job in the channel, and is held by anything
+// a turn leaves running — which is how four forgotten browser sessions left an engine unable to
+// start a thread (2026-11-18). The engine cannot see the limit from inside until it is hit, so
+// every attempt is told the number and the two habits that keep it from mattering. Nothing here
+// for a host run, an unresolved target, or a container whose runtime applies no cap.
+export function processLimitNote(target) {
+  if (target?.backend === "host" || !target?.container) return "";
+  const c = target.container;
+  const lines = [];
+  const limit = Number(c.appliedLimits?.pidsLimit) || 0;
+  if (limit > 0) {
+    lines.push(`Process limit for this container: **${limit.toLocaleString("en-US")}** processes and threads in total, shared by every thread and job in this channel. A headless browser session takes roughly 250, and anything a turn leaves running (browser sessions, dev servers, watchers) keeps its slots after that turn ends. Close each browser session when its work is finished (\`agent-browser --session <name> close\`), stop servers you started, and keep parallel browser sessions to a few. At the limit nothing can start — commands fail with "Resource temporarily unavailable" (EAGAIN) and the engine itself can crash.`);
+  }
+  if (c.processReclaim) {
+    lines.push(`The gateway restarted this container just before this attempt because it had run out of process slots (${describePidsUse(c.processReclaim)} in use): every process earlier turns left running in it is gone, including browser sessions, dev servers and shells. Files are untouched. Start again only what this task still needs, one at a time rather than the same load at once.`);
+  } else if (c.processPressure) {
+    lines.push(`This container is nearly out of process slots right now (${describePidsUse(c.processPressure)} in use)${c.processPressure.others > 0 ? " while other work is running in it" : ""}, and the gateway could not clear it. Start as few processes as possible and close what you no longer need first.`);
+  }
+  return lines.length ? `${lines.join(" ")}\n` : "";
+}
+
 // The launcher supplies its resolved decision. Channel mode, writable tools and mounted home
 // cannot establish the current author's bypass, and a caller that omits it must stay unknown.
 export function permissionBypassNote(dangerouslySkip) {
@@ -117,6 +140,7 @@ export function runtimeAccessPreamble(target, { clean, allowNetwork, dangerously
     + "Answer access questions from this resolved runtime, even when the conversation previously said otherwise.\n"
     + permissionBypassNote(dangerouslySkip)
     + containerAccessNote(target) + "\n"
+    + processLimitNote(target)
     + gatewayStoreAccessNote(target) + "\n"
     + agentSshAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"

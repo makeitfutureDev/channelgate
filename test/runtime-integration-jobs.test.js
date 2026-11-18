@@ -127,6 +127,9 @@ test("a recovered container job is probed and signalled through the backend, nev
 
   // Liveness came from the backend's probe on the recorded runId — not from process.kill(pid, 0).
   assert.ok(backend.calls.probe.includes("job-abc123"), "the recovered job was probed through the backend");
+  // Leased again under its own run id: "is anyone else inside?" is asked of leases, so without one
+  // a rebuild or the process-limit reclaim would see an empty container and end this job.
+  assert.deepEqual(backend.calls.leases.filter((l) => l.id === "job-abc123").map((l) => ({ kind: l.kind, released: l.released })), [{ kind: "job", released: false }]);
   const status = jobs.status("recover1");
   assert.ok(status, "a job the backend says is alive keeps being tracked");
   assert.match(status.tail, /partial output https:\/\/public\.example\.test \[REDACTED\]/);

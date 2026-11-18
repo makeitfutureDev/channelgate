@@ -462,7 +462,7 @@ image until idle. A manual `git pull` still needs a matching image rebuild.
 | Image reference | default `channelgate/runtime:latest` |
 | Stop an idle channel container after | minutes, default 10 |
 | Max containers running at once | default 8; past it the least-recently-used **idle** container is stopped |
-| Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
+| Process / memory / CPU limit | `--pids-limit` (default 4096), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = current admin authors in Admin channels mount the gateway user's home; members keep a separate project container (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
