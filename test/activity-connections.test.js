@@ -221,14 +221,16 @@ const consumerTools = () => [{ name: "COMPOSIO_SEARCH_TOOLS" }, { name: "COMPOSI
 const personalInventory = () => ({ mode: "personal", state: "ready", accounts: [{ id: "gmail_owned", app: "gmail", accountType: "PRIVATE" }] });
 const personalOptions = (overrides = {}) => ({ getConfig: () => config({ mode: "personal" }), getUser: async () => ({ composioToken: "consumer-secret" }), inventory: async () => personalInventory(), ...overrides });
 function consumerFixture({ listing = [{ id: "gmail_owned", account_type: "PRIVATE" }], tools = consumerTools(), onCall = () => {}, outcome = "removed" } = {}) {
-  const calls = []; let closed = 0;
+  const calls = []; let closed = 0, removed = false;
   return { calls, get closed() { return closed; }, connect: async args => {
     assert.deepEqual(args.headers, { "x-consumer-api-key": "consumer-secret" }); assert.equal(args.publicOnly, true);
     return { close: async () => { closed++; }, listTools: async () => ({ tools }), callTool: async call => {
       calls.push(call); await onCall(call);
       if (call.name === "COMPOSIO_SEARCH_TOOLS") return { data: { session: { id: "session" } } };
       const entry = call.arguments.toolkits[0];
-      return { data: { results: { gmail: { toolkit: "gmail", status: entry.action === "list" ? "active" : outcome, accounts: listing } } } };
+      const accounts = removed ? [] : listing;
+      if (entry.action === "remove" && outcome === "removed") removed = true;
+      return { data: { results: { gmail: { toolkit: "gmail", status: entry.action === "list" ? "active" : outcome, accounts } } } };
     } };
   } };
 }
@@ -236,8 +238,8 @@ test("personal delete uses the selected consumer token, verified private list an
   const consumer = consumerFixture(); let checks = 0;
   const result = await deleteActivityConnection(deleteInput({ connectionId: "gmail_owned", authorize: async () => { checks++; } }), personalOptions({ connect: consumer.connect }));
   assert.deepEqual(result, { deleted: true }); assert.ok(checks >= 4); assert.equal(consumer.closed, 1);
-  assert.deepEqual(consumer.calls.map(call => call.name), ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_MANAGE_CONNECTIONS", "COMPOSIO_MANAGE_CONNECTIONS"]);
-  assert.deepEqual(consumer.calls.at(-1).arguments, { toolkits: [{ name: "gmail", action: "remove", account_id: "gmail_owned" }] });
+  assert.deepEqual(consumer.calls.map(call => call.name), ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_MANAGE_CONNECTIONS", "COMPOSIO_MANAGE_CONNECTIONS", "COMPOSIO_MANAGE_CONNECTIONS"]);
+  assert.deepEqual(consumer.calls[2].arguments, { session_id: "session", toolkits: [{ name: "gmail", action: "remove", account_id: "gmail_owned" }] });
 });
 test("personal shared, missing, ambiguous, and unverified accounts cannot be removed", async () => {
   for (const listing of [[{ id: "gmail_owned", account_type: "SHARED" }], [{ id: "gmail_owned" }], [{ id: "gmail_other", account_type: "PRIVATE" }], [{ id: "gmail_owned", account_type: "PRIVATE" }, { id: "gmail_owned", account_type: "PRIVATE" }]]) {

@@ -104,12 +104,12 @@ async function personalClient(token, options, work) {
     return await Promise.race([pending, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; controller.abort(); reject(new Error("consumer timeout")); }, timeout); })]);
   } finally { clearTimeout(timer); controller.abort(); if (client) await Promise.race([Promise.resolve(client.close()).catch(() => {}), new Promise(resolve => setTimeout(resolve, 100))]); }
 }
-function consumerPayload(response) {
+function consumerPayload(response, accepts = value => value.results && typeof value.results === "object") {
   const queue = [response];
   for (let i = 0; i < queue.length && i < 30; i++) {
     const value = queue[i]; if (!value || typeof value !== "object") continue;
     if (value.isError === true || value.successful === false || value.success === false) throw new Error("consumer request failed");
-    if (value.results && typeof value.results === "object") return value;
+    if (accepts(value)) return value;
     for (const key of ["structuredContent", "data", "result", "response"]) if (value[key]) queue.push(value[key]);
     for (const block of value.content || []) if (block.type === "text" && typeof block.text === "string" && block.text.length <= 2_000_000) {
       try { queue.push(JSON.parse(block.text)); } catch { /* Non-JSON tool text is not proof. */ }
@@ -136,15 +136,22 @@ async function deletePersonalConnection({ ownerId, connectionId, authorize }, op
   const app = matches[0].app;
   return personalClient(token, { ...options, timeoutMs: deadline - Date.now() }, async call => {
     await check();
-    await call("COMPOSIO_SEARCH_TOOLS", { queries: [{ use_case: `Inspect ${app} connected account status and aliases` }], search_strategy: "tool_search", session: { generate_id: true } });
-    const listed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: app, action: "list" }] }));
+    const search = consumerPayload(await call("COMPOSIO_SEARCH_TOOLS", { queries: [{ use_case: `Inspect ${app} connected account status and aliases` }], search_strategy: "tool_search", session: { generate_id: true } }), value => typeof value.session?.id === "string");
+    const sessionId = search.session.id;
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) throw new Error("invalid consumer session");
+    const listed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { session_id: sessionId, toolkits: [{ name: app, action: "list" }] }));
     const result = listed.results[app];
     const own = result?.accounts?.filter(account => account.id === connectionId && account.account_type === "PRIVATE");
     if (result?.toolkit !== app || !Array.isArray(own) || own.length !== 1) fail("This connection is unavailable or is not your private account.", 404);
     await check();
-    const removed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: app, action: "remove", account_id: connectionId }] }));
+    const removed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { session_id: sessionId, toolkits: [{ name: app, action: "remove", account_id: connectionId }] }));
     const outcome = removed.results[app];
-    if (outcome?.toolkit !== app || !["removed", "deleted"].includes(outcome.status)) throw new Error("consumer deletion not confirmed");
+    if (outcome?.toolkit !== app || outcome.error || ["failed", "error"].includes(outcome.status)) throw new Error("consumer deletion failed");
+    await check();
+    // Provider remove statuses vary. Confirm the exact ID disappeared from the same token's
+    // fresh account list instead of inferring success from a message or alias.
+    const confirmed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { session_id: sessionId, toolkits: [{ name: app, action: "list" }] })).results[app];
+    if (confirmed?.toolkit !== app || !Array.isArray(confirmed.accounts) || confirmed.accounts.some(account => account.id === connectionId)) throw new Error("consumer deletion not confirmed");
     await check();
     return { deleted: true };
   });
