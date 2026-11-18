@@ -3758,5 +3758,11 @@ Keep container cgroups inside the delegated daemon service, preserve private tem
 - Add approval-gated agent calls to the requesting person's iPhone, with optional durable delay,
   owner-scoped registration, single-use answer/decline invitations and APNs VoIP delivery.
 - Add private APNs configuration and lifecycle notices; existing voice calls handle accepted calls.
+- `call_user` no longer posts an approval card for a call that cannot ring (not configured, no
+  registered iPhone, a call already pending): the agent is told why at once. An approved call that
+  cannot be placed now marks its card failed instead of applied.
+- A missed/declined/failed call notice that cannot be posted is retried with a growing wait (up to
+  30 minutes) and abandoned with one audit event six hours after the ring, instead of being
+  retried every five seconds without end.
 - Add strict TypeScript modules using Node 24's built-in type stripping, CI type checking and
   mixed JavaScript/TypeScript static checks and test discovery. No runtime dependency is added.

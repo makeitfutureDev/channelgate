@@ -14692,6 +14692,14 @@ Automated: `node --test test/incoming-calls.test.ts test/incoming-calls-tools.te
 request/response framing with sandbox/production selection, owner-only listings and deletion,
 malformed registration, expired/replayed tokens, two-phone answer races, failed acceptance,
 invalidated APNs tokens, rate limits, revoked access and restart-safe one-time scheduling.
+Follow-up cases (same three files): `preflight` gives every refusal `request()` would and writes
+no row; `call_user` posts NO approval card and returns an error when incoming calls are not
+configured, no iPhone is registered or a call is already pending; an approved call that Apple then
+refuses makes the durable executor return a failure ("Couldn't place the call: …") while a placed
+one reports applied; a notice whose post keeps failing is retried after 46 s, 92 s, … capped at
+30 minutes, never ahead of an untried notice, abandoned once six hours after the ring with exactly
+one `incoming_call_notice_abandoned` event, and swept after seven days; a notice that recovers is
+posted exactly once.
 
 Live acceptance, separately for Claude and Codex (not yet executed on this branch):
 
@@ -14715,6 +14723,16 @@ Live acceptance, separately for Claude and Codex (not yet executed on this branc
    once after restart; a stale overdue invitation must fail rather than ring late. Cancel a queued
    call through the owner API and confirm no push. An invalidated APNs token must be removed,
    with failure reported rather than a false ringing/answered claim.
+6. Refusal before approval. With incoming calls disabled in Settings (or with no phone registered
+   for the requester), ask the selected engine: "Call me now about this thread." Expect NO
+   approval card, and an answer naming the cause (not configured / no iPhone registered). Then,
+   with everything configured, request a call, unregister the phone in the iPhone app BEFORE
+   clicking Approve, and click: the card must show the call as failed with "No iPhone registered",
+   not as applied, and no phone may ring.
+7. Notice retry (isolated test daemon only). Let a call go unanswered while the test daemon's chat
+   connection is disconnected; reconnect within a few minutes and expect exactly one missed notice
+   in the source thread. The Audit feed must show no `incoming_call_notice_abandoned` event for
+   it; that event appears only for a notice still failing six hours after its ring.
 
 Pass requires observed evidence for each engine and scenario. Apple/APNs tests need operator
 credentials and a merged/deployed candidate; record blocked or unexecuted cases explicitly.

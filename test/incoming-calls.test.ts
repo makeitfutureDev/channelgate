@@ -170,3 +170,62 @@ test("a seven-day scheduled call survives retention sweeps until its due deliver
   f.tick(7 * 86400_000 + 5000); await f.calls.flushNotices();
   assert.equal(f.pushes.length, 1);
 });
+test("an outcome notice that cannot be posted backs off, yields to fresh notices and is abandoned once", async () => {
+  let clock = 1_000_000, broken = true; const attempts: string[] = [];
+  const calls = createIncomingCalls({ config: () => config, now: () => clock, voiceEnabled: () => true, authorize: async () => true,
+    send: async () => ({ status: 200, reason: "" }),
+    notify: async row => { attempts.push(row.title); if (broken && row.title === "Stuck") throw new Error("connector offline"); } });
+  calls.registerDevice(target.ownerId, registration);
+  await calls.request(target, "Stuck"); clock += 46_000; await calls.flushNotices();
+  assert.deepEqual(attempts, ["Stuck"]);
+  // The five-second timer finds nothing to do until the wait (46 s since the ring) has passed.
+  for (let i = 0; i < 8; i++) { clock += 5_000; await calls.flushNotices(); }
+  assert.deepEqual(attempts, ["Stuck"]);
+  clock += 6_000; await calls.flushNotices();
+  assert.deepEqual(attempts, ["Stuck", "Stuck"]);
+  // The wait doubles (92 s now). A notice that was never tried is always served before a retry.
+  clock += 91_000; await calls.flushNotices(); assert.equal(attempts.length, 2);
+  calls.registerDevice("U_OTHER_PERSON", { ...registration, token: "cd".repeat(32) });
+  await calls.request({ ...target, ownerId: "U_OTHER_PERSON" }, "Fresh"); clock += 46_000; await calls.flushNotices();
+  assert.deepEqual(attempts.slice(2), ["Fresh", "Stuck"]);
+  // The wait is capped at thirty minutes.
+  let before = attempts.length; clock += 29 * 60_000; await calls.flushNotices(); clock += 29 * 60_000; await calls.flushNotices();
+  assert.equal(attempts.length - before, 1);
+  clock += 60_000; await calls.flushNotices(); assert.equal(attempts.length - before, 2);
+  // Six hours after the ring the notice is abandoned: recorded once, never attempted again, swept with history.
+  clock += 6 * 3600_000; before = attempts.length; await calls.flushNotices(); await calls.flushNotices();
+  assert.equal(attempts.length, before);
+  const stuck = getDb().prepare("SELECT notified FROM incoming_calls WHERE title='Stuck'").get() as { notified: number };
+  assert.equal(stuck.notified, 1);
+  assert.equal((getDb().prepare("SELECT COUNT(*) AS n FROM events WHERE event='incoming_call_notice_abandoned'").get() as { n: number }).n, 1);
+  clock += 8 * 86400_000; calls.expire();
+  assert.equal((getDb().prepare("SELECT COUNT(*) AS n FROM incoming_calls").get() as { n: number }).n, 0);
+});
+test("a notice that recovers is delivered exactly once after its retry wait", async () => {
+  let clock = 1_000_000, broken = true; const outcomes: string[] = [];
+  const calls = createIncomingCalls({ config: () => config, now: () => clock, voiceEnabled: () => true, authorize: async () => true,
+    send: async () => ({ status: 200, reason: "" }), notify: async (_row, status) => { if (broken) throw new Error("offline"); outcomes.push(status); } });
+  calls.registerDevice(target.ownerId, registration);
+  await calls.request(target, "Review"); clock += 46_000; await calls.flushNotices();
+  broken = false; clock += 10_000; await calls.flushNotices(); assert.deepEqual(outcomes, []);
+  clock += 40_000; await calls.flushNotices(); await calls.flushNotices(); assert.deepEqual(outcomes, ["missed"]);
+});
+test("preflight reports every refusal request() would give and writes nothing", async () => {
+  let ready = true, voice = true, allowed = true;
+  const calls = createIncomingCalls({ config: () => ({ ...config, enabled: ready }), now: () => 1_000_000, voiceEnabled: () => voice,
+    authorize: async () => allowed, send: async () => ({ status: 200, reason: "" }), notify: async () => {} });
+  const rows = () => (getDb().prepare("SELECT COUNT(*) AS n FROM incoming_calls").get() as { n: number }).n;
+  ready = false; await assert.rejects(calls.preflight(target, "Review"), /not configured/); ready = true;
+  voice = false; await assert.rejects(calls.preflight(target, "Review"), /not configured/); voice = true;
+  allowed = false; await assert.rejects(calls.preflight(target, "Review"), /access is required/); allowed = true;
+  await assert.rejects(calls.preflight({ ...target, threadTs: "not-a-thread" }, "Review"), /access is required/);
+  await assert.rejects(calls.preflight(target, "Review"), /No iPhone registered/);
+  calls.registerDevice(target.ownerId, registration);
+  await assert.rejects(calls.preflight(target, ""), /reason/);
+  await assert.rejects(calls.preflight(target, "Review", 10081), /Delay/);
+  await calls.preflight(target, "Review"); await calls.preflight(target, "Review", 5);
+  assert.equal(rows(), 0);
+  await calls.request(target, "Later", 5);
+  await assert.rejects(calls.preflight(target, "Review"), /pending or the call limit/);
+  assert.equal(rows(), 1);
+});

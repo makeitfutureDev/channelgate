@@ -177,6 +177,9 @@ card confirms the reason and delay, even under Auto. Recipient and thread are bo
 verified run context; the model cannot select another person or conversation. API/agent
 principals and SSH sessions cannot initiate the call. A delayed invitation is persisted and
 checked again when due. Return the submission/schedule result, then end the turn.
+A call that could not ring — incoming calls not configured, no registered iPhone, a call already
+pending — is refused with the reason as an error and posts no approval card; report that reason
+instead of retrying. If an approved call cannot be placed, the card shows the failure.
 
 **Limits:** Requires the companion iPhone app, opt-in device registration, enabled voice calls and
 administrator-configured APNs credentials. Apple accepting a push does not establish delivery or
