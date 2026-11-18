@@ -7,10 +7,16 @@ import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { composioIdentity } from "../ee/composio-sessions.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { loadComposioInventory } from "./composio-inventory.js";
+import { connectRemoteClient } from "../mcp/remote-relay.js";
+import { publicPinnedFetch } from "../mcp/public-fetch.js";
+import { composioUrl } from "./mcp-catalog.js";
 
 const API = "https://backend.composio.dev/api/v3.1/toolkits";
+const ACCOUNTS_API = "https://backend.composio.dev/api/v3.1/connected_accounts";
 const SLUG = /^[a-z0-9_][a-z0-9_-]{0,127}$/;
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const creating = new Set();
+const deleting = new Set();
 const clean = (v, max = 256) => typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
 export class ActivityConnectionsError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -31,16 +37,192 @@ function checkCurrent(config, options) {
 }
 
 export async function activityConnectionInventory({ ownerId, teamId }, options = {}) {
+  const selected = (options.getConfig || currentConfig)();
   const record = await (options.getUser || getUser)(ownerId);
   const inventory = await (options.inventory || loadComposioInventory)({ kind: "user", id: ownerId, record }, {
     ...(options.inventoryOptions || {}),
     // The authenticated Activity session supplies the workspace, exactly as SDK runs do.
-    ...(getComposioMode() === "sdk" ? { config: { mode: "sdk", sdkApiKey: getComposioSdkApiKey(), workspaceId: teamId } } : {}),
+    ...(selected.mode === "sdk" ? { config: { mode: "sdk", sdkApiKey: selected.sdkApiKey, workspaceId: teamId } } : {}),
   });
   let config;
   try { config = sdkConfig(options); } catch { /* A read remains useful without SDK creation. */ }
-  return { ...inventory, canAdd: Boolean(config) && inventory.mode === "sdk" && inventory.state === "ready",
+  // Visibility is not ownership: SDK list() drops user_id in some versions, and shared
+  // accounts may be visible. Join a bounded raw PRIVATE-owner inventory before offering Delete.
+  let owned = new Map();
+  if (config && inventory.mode === "sdk" && inventory.accounts?.length) {
+    try { owned = await ownedSdkAccounts(config, { ownerId, teamId }, options); checkCurrent(config, options); }
+    catch { owned = new Map(); /* The read still works; an unverified account must never offer deletion. */ }
+  } else if (inventory.mode === "personal" && record?.composioToken && inventory.accounts?.length) {
+    try {
+      await personalClient(record.composioToken, options, async () => {});
+      const current = await (options.getUser || getUser)(ownerId);
+      if ((options.getConfig || currentConfig)().mode === "personal" && current?.composioToken === record.composioToken) {
+        for (const account of inventory.accounts) if (account.accountType === "PRIVATE") owned.set(account.id, account.app);
+      }
+    } catch { /* Consumer endpoints without exact-ID removal remain read-only. */ }
+  }
+  return { ...inventory, accounts: (inventory.accounts || []).map(account => ({ ...account,
+    canDelete: owned.get(account.id) === account.app })),
+    deleteMessage: inventory.mode === "personal"
+      ? "Only your verified private accounts can be deleted. Other accounts can be managed in Composio."
+      : "Only your verified private accounts can be deleted.",
+    canAdd: Boolean(config) && inventory.mode === "sdk" && inventory.state === "ready",
     ...(config ? { policy: { multiAccount: config.policy.multiAccount, maxAccountsPerToolkit: config.policy.maxAccountsPerToolkit } } : {}) };
+}
+
+// A consumer credential selects its owner in the provider; never use the organization token.
+// A PRIVATE account from that token-scoped API is owned by that consumer. The linked mailbox
+// email is not the consumer identity and must not be used as an ownership check.
+async function personalClient(token, options, work) {
+  const controller = new AbortController();
+  const timeout = Math.max(10, Math.min(20_000, options.timeoutMs || 20_000));
+  let client, timer, expired = false;
+  const pending = Promise.resolve().then(async () => {
+    client = await (options.connect || connectRemoteClient)({ url: composioUrl(), headers: { "x-consumer-api-key": token }, publicOnly: true, retryDelaysMs: [],
+      fetch: (input, init = {}) => publicPinnedFetch(input, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal }),
+    });
+    if (expired) { await client.close().catch(() => {}); throw new Error("consumer timeout"); }
+    let cursor; const seen = new Set(); let manage, search;
+    for (let page = 0; page < 50; page++) {
+      const result = await client.listTools(cursor ? { cursor } : {}, { signal: controller.signal, timeout });
+      controller.signal.throwIfAborted();
+      if (!Array.isArray(result?.tools)) throw new Error("invalid consumer tools");
+      manage ||= result.tools.find(tool => tool.name === "COMPOSIO_MANAGE_CONNECTIONS");
+      search ||= result.tools.find(tool => tool.name === "COMPOSIO_SEARCH_TOOLS");
+      cursor = result.nextCursor;
+      if (!cursor) break;
+      if (typeof cursor !== "string" || seen.has(cursor) || page === 49) throw new Error("invalid tools cursor"); seen.add(cursor);
+    }
+    const fields = manage?.inputSchema?.properties?.toolkits?.items?.properties;
+    if (!search || !fields?.action?.enum?.includes("remove") || !fields.action.enum.includes("list") || fields.account_id?.type !== "string") {
+      fail("This Composio connection does not support account deletion here. Manage it in Composio.", 409);
+    }
+    controller.signal.throwIfAborted();
+    return work((name, args) => { controller.signal.throwIfAborted(); return client.callTool({ name, arguments: args }, undefined, { signal: controller.signal, timeout }); });
+  });
+  try {
+    return await Promise.race([pending, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; controller.abort(); reject(new Error("consumer timeout")); }, timeout); })]);
+  } finally { clearTimeout(timer); controller.abort(); if (client) await Promise.race([Promise.resolve(client.close()).catch(() => {}), new Promise(resolve => setTimeout(resolve, 100))]); }
+}
+function consumerPayload(response) {
+  const queue = [response];
+  for (let i = 0; i < queue.length && i < 30; i++) {
+    const value = queue[i]; if (!value || typeof value !== "object") continue;
+    if (value.isError === true || value.successful === false || value.success === false) throw new Error("consumer request failed");
+    if (value.results && typeof value.results === "object") return value;
+    for (const key of ["structuredContent", "data", "result", "response"]) if (value[key]) queue.push(value[key]);
+    for (const block of value.content || []) if (block.type === "text" && typeof block.text === "string" && block.text.length <= 2_000_000) {
+      try { queue.push(JSON.parse(block.text)); } catch { /* Non-JSON tool text is not proof. */ }
+    }
+  }
+  throw new Error("missing consumer result");
+}
+async function deletePersonalConnection({ ownerId, connectionId, authorize }, options) {
+  const deadline = Date.now() + Math.max(10, Math.min(20_000, options.timeoutMs || 20_000));
+  const record = await (options.getUser || getUser)(ownerId), token = record?.composioToken;
+  if (!token) fail("No personal Composio connection is configured.", 409);
+  const check = async () => {
+    await authorize();
+    const current = await (options.getUser || getUser)(ownerId);
+    if ((options.getConfig || currentConfig)().mode !== "personal" || current?.composioToken !== token) fail("Connection settings changed. Refresh and try again.", 409);
+  };
+  await check();
+  const inventory = await (options.inventory || loadComposioInventory)({ kind: "user", id: ownerId, record }, {
+    ...options.inventoryOptions, timeoutMs: Math.max(10, deadline - Date.now()), totalTimeoutMs: Math.max(10, deadline - Date.now()),
+  });
+  if (Date.now() >= deadline) throw new Error("consumer timeout");
+  const matches = (inventory.accounts || []).filter(account => account.id === connectionId && account.accountType === "PRIVATE" && SLUG.test(account.app));
+  if (inventory.mode !== "personal" || !["ready", "partial"].includes(inventory.state) || matches.length !== 1) fail("This connection is unavailable or is not your private account.", 404);
+  const app = matches[0].app;
+  return personalClient(token, { ...options, timeoutMs: deadline - Date.now() }, async call => {
+    await check();
+    await call("COMPOSIO_SEARCH_TOOLS", { queries: [{ use_case: `Inspect ${app} connected account status and aliases` }], search_strategy: "tool_search", session: { generate_id: true } });
+    const listed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: app, action: "list" }] }));
+    const result = listed.results[app];
+    const own = result?.accounts?.filter(account => account.id === connectionId && account.account_type === "PRIVATE");
+    if (result?.toolkit !== app || !Array.isArray(own) || own.length !== 1) fail("This connection is unavailable or is not your private account.", 404);
+    await check();
+    const removed = consumerPayload(await call("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: app, action: "remove", account_id: connectionId }] }));
+    const outcome = removed.results[app];
+    if (outcome?.toolkit !== app || !["removed", "deleted"].includes(outcome.status)) throw new Error("consumer deletion not confirmed");
+    await check();
+    return { deleted: true };
+  });
+}
+
+async function accountRequest(config, path, init, options, signal) {
+  const response = await (options.fetch || globalThis.fetch)(path, {
+    ...init, redirect: "error", signal, headers: { "x-api-key": config.sdkApiKey },
+  });
+  if (response.status === 404) fail("This connection is unavailable or is not your private account.", 404);
+  if (!response.ok) throw new Error("account request failed");
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("missing account response");
+  const chunks = []; let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      total += value.byteLength; if (total > 2_000_000) throw new Error("account response too large"); chunks.push(value);
+    }
+  } finally { await reader.cancel().catch(() => {}); }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+const privateOwner = (account, identity) => account?.user_id === identity
+  && account?.experimental?.account_type === "PRIVATE";
+async function ownedSdkAccounts(config, { ownerId, teamId }, options) {
+  const identity = composioIdentity({ workspaceId: teamId, kind: "user", id: ownerId });
+  const signal = AbortSignal.timeout(Math.max(10, Math.min(20_000, options.timeoutMs || 20_000)));
+  const owned = new Map(), seen = new Set(); let cursor = "";
+  for (let page = 0; page < 50; page++) {
+    const url = new URL(ACCOUNTS_API);
+    url.searchParams.set("user_ids", identity); url.searchParams.set("account_type", "PRIVATE"); url.searchParams.set("limit", "100");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const result = await accountRequest(config, url, {}, options, signal);
+    if (!Array.isArray(result?.items) || result.items.length > 200) throw new Error("invalid account page");
+    for (const item of result.items) {
+      if (privateOwner(item, identity) && typeof item.id === "string" && ACCOUNT_ID.test(item.id)
+        && typeof item.toolkit?.slug === "string" && SLUG.test(item.toolkit.slug)) owned.set(item.id, item.toolkit.slug);
+      if (owned.size > 10_000) throw new Error("account limit");
+    }
+    cursor = result.next_cursor;
+    if (!cursor) return owned;
+    if (typeof cursor !== "string" || cursor.length > 2048 || seen.has(cursor)) throw new Error("invalid account cursor");
+    seen.add(cursor);
+  }
+  throw new Error("account page limit");
+}
+
+/** Deletes only a current user's verified PRIVATE account; never a visible shared account. */
+export async function deleteActivityConnection({ ownerId, teamId, connectionId, authorize }, options = {}) {
+  if (typeof connectionId !== "string" || !ACCOUNT_ID.test(connectionId)) fail("Choose a valid connection.");
+  const mode = (options.getConfig || currentConfig)().mode;
+  const config = mode === "sdk" ? sdkConfig(options) : null;
+  const key = `${teamId}:${ownerId}:${connectionId}`;
+  if (deleting.has(key)) fail("This connection is already being deleted. Refresh when it finishes.", 409);
+  deleting.add(key);
+  const checkAccess = async () => {
+    try { await authorize(); }
+    catch (error) { fail("Your Activity session has ended.", error.status === 401 ? 401 : 403); }
+  };
+  try {
+    await checkAccess();
+    if (!config) return await deletePersonalConnection({ ownerId, connectionId, authorize: checkAccess }, options);
+    const identity = composioIdentity({ workspaceId: teamId, kind: "user", id: ownerId });
+    const signal = AbortSignal.timeout(Math.max(10, Math.min(20_000, options.timeoutMs || 20_000)));
+    const url = `${ACCOUNTS_API}/${encodeURIComponent(connectionId)}`;
+    const account = await accountRequest(config, url, {}, options, signal);
+    if (account?.id !== connectionId || !privateOwner(account, identity)) fail("This connection is unavailable or is not your private account.", 404);
+    await checkAccess(); checkCurrent(config, options);
+    // The connection alone is removed. Do not request upstream credential revocation, which
+    // can affect other connections sharing the provider's grant.
+    const result = await accountRequest(config, url, { method: "DELETE" }, options, signal);
+    if (result?.success !== true) throw new Error("delete not confirmed");
+    await checkAccess(); checkCurrent(config, options);
+    return { deleted: true };
+  } catch (error) {
+    if (error instanceof ActivityConnectionsError) throw error;
+    fail("The connection could not be deleted. Refresh your connections and try again.", 503);
+  } finally { deleting.delete(key); }
 }
 
 async function catalogRequest(config, { query = "", cursor = "", ownerId, teamId }, options) {

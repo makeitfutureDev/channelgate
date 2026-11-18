@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 ensureTestEnv();
-const { activityConnectionInventory, activityConnectionApps: loadApps, createActivityConnection } = await import("../src/gateway/activity-connections.js");
+const { activityConnectionInventory, activityConnectionApps: loadApps, createActivityConnection, deleteActivityConnection } = await import("../src/gateway/activity-connections.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const activityConnectionApps = (input, options) => loadApps({ ownerId: "UOWNER", teamId: "TTEAM", ...input }, options);
 const policy = (allowedApps = null) => ({ multiAccount: true, maxAccountsPerToolkit: 3, allowedApps });
@@ -146,4 +146,145 @@ test("inventory delegates only the selected personal record, never an org token"
   const result = await activityConnectionInventory({ ownerId: "UOWNER", teamId: "TTEAM" }, { getUser: async id => ({ name: id, composioToken: "personal-private-token" }), getConfig: () => config({ mode: "personal" }), inventory: async input => { selection = input; return { mode: "personal", state: "ready", accounts: [{ app: "gmail" }] }; } });
   assert.equal(selection.kind, "user"); assert.equal(selection.id, "UOWNER"); assert.equal(selection.record.composioToken, "personal-private-token");
   assert.equal(result.canAdd, false); assert.doesNotMatch(JSON.stringify(result), /personal-private-token/);
+});
+
+const ownAccount = overrides => ({ id: "ca_owned", user_id: "slack:TTEAM:user:UOWNER", toolkit: { slug: "gmail" }, experimental: { account_type: "PRIVATE" }, ...overrides });
+const deleteInput = overrides => ({ ownerId: "UOWNER", teamId: "TTEAM", connectionId: "ca_owned", authorize: async () => {}, ...overrides });
+test("SDK delete verifies exact private owner then deletes one account without revoking upstream credentials", async () => {
+  const calls = []; let authorized = 0;
+  assert.deepEqual(await deleteActivityConnection(deleteInput({ authorize: async () => { authorized++; } }), {
+    getConfig: () => config(), fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return api(init.method === "DELETE" ? { success: true } : ownAccount());
+    },
+  }), { deleted: true });
+  assert.equal(authorized, 3); assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "https://backend.composio.dev/api/v3.1/connected_accounts/ca_owned");
+  assert.equal(calls[1].url, calls[0].url); assert.equal(calls[1].init.method, "DELETE");
+  assert.equal(calls[1].init.redirect, "error"); assert.ok(calls[1].init.signal instanceof AbortSignal);
+  assert.doesNotMatch(calls[1].url, /revoke|user_id/);
+});
+test("SDK delete refuses other owners, shared accounts, omitted ownership and mismatched IDs without mutation", async () => {
+  for (const account of [ownAccount({ user_id: "slack:TTEAM:user:UOTHER" }), ownAccount({ experimental: { account_type: "SHARED" } }), ownAccount({ user_id: undefined }), ownAccount({ experimental: undefined }), ownAccount({ id: "ca_else" })]) {
+    await assert.rejects(deleteActivityConnection(deleteInput(), { getConfig: () => config(), fetch: async (_url, init) => {
+      assert.notEqual(init.method, "DELETE"); return api(account);
+    } }), error => error.status === 404 && !error.message.includes("UOTHER"));
+  }
+  for (const connectionId of ["../ca_else", "bad/id", "ca?revoke_on_delete=true", ["ca_owned"], "x".repeat(161)]) {
+    await assert.rejects(deleteActivityConnection(deleteInput({ connectionId }), { getConfig: () => config(), fetch: () => assert.fail("invalid ID cannot fetch") }), /valid connection/);
+  }
+});
+test("SDK deletion rechecks Activity access and configuration immediately before mutation", async () => {
+  for (const change of ["token", "policy", "mode", "access"]) {
+    let current = config(), checks = 0;
+    await assert.rejects(deleteActivityConnection(deleteInput({ authorize: async () => {
+      if (++checks === 2 && change === "access") throw Object.assign(new Error("revoked"), { status: 401 });
+    } }), { getConfig: () => current, fetch: async (_url, init) => {
+      assert.notEqual(init.method, "DELETE");
+      if (change === "token") current = config({ sdkApiKey: "rotated-secret" });
+      if (change === "policy") current = config({ policy: policy([]) });
+      if (change === "mode") current = config({ mode: "personal" });
+      return api(ownAccount());
+    } }), /settings changed|SDK mode|session has ended/);
+  }
+});
+test("SDK missing and failed deletions do not expose provider details or claim success", async () => {
+  for (const [status, result] of [[404, {}], [500, { error: "ak_private_fixture upstream-secret" }], [200, { success: false }]]) {
+    await assert.rejects(deleteActivityConnection(deleteInput(), { getConfig: () => config(), fetch: async (_url, init) => api(init.method === "DELETE" ? result : ownAccount(), init.method === "DELETE" ? status : 200) }), error => [404, 503].includes(error.status) && !/upstream-secret|private_fixture/.test(error.message));
+  }
+});
+test("SDK duplicate delete is refused while in flight and its lock releases after failure", async () => {
+  let enter, release; const entered = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const pending = deleteActivityConnection(deleteInput(), { getConfig: () => config(), fetch: async () => { enter(); await gate; throw new Error("fixture"); } });
+  await entered;
+  await assert.rejects(deleteActivityConnection(deleteInput(), { getConfig: () => config() }), error => error.status === 409);
+  release(); await assert.rejects(pending, error => error.status === 503);
+  await assert.rejects(deleteActivityConnection(deleteInput(), { getConfig: () => config(), fetch: async () => api({}, 404) }), error => error.status === 404);
+});
+test("SDK inventory joins paginated raw ownership evidence and fails closed on in-flight policy changes", async () => {
+  const visible = [{ id: "ca_owned", app: "gmail" }, { id: "ca_other", app: "slack" }, { id: "ca_shared", app: "gmail" }];
+  let current = config(); const calls = [];
+  const options = { getConfig: () => current, getUser: async () => ({}), inventory: async () => ({ mode: "sdk", state: "ready", accounts: visible }), fetch: async url => {
+    calls.push(url); assert.equal(url.searchParams.get("user_ids"), "slack:TTEAM:user:UOWNER"); assert.equal(url.searchParams.get("account_type"), "PRIVATE");
+    return api(url.searchParams.has("cursor") ? { items: [ownAccount({ id: "ca_other", user_id: "another-user", toolkit: { slug: "slack" } })] } : { items: [ownAccount(), ownAccount({ id: "ca_shared", experimental: { account_type: "SHARED" } })], next_cursor: "page2" });
+  } };
+  const result = await activityConnectionInventory({ ownerId: "UOWNER", teamId: "TTEAM" }, options);
+  assert.deepEqual(result.accounts.map(a => a.canDelete), [true, false, false]); assert.equal(calls.length, 2);
+  assert.doesNotMatch(JSON.stringify(result), /user_id|another-user|private_fixture/);
+  const changed = await activityConnectionInventory({ ownerId: "UOWNER", teamId: "TTEAM" }, { ...options, fetch: async () => { current = config({ policy: policy([]) }); return api({ items: [ownAccount()] }); } });
+  assert.ok(changed.accounts.every(a => a.canDelete === false));
+});
+
+const consumerTools = () => [{ name: "COMPOSIO_SEARCH_TOOLS" }, { name: "COMPOSIO_MANAGE_CONNECTIONS", inputSchema: { properties: { toolkits: { items: { properties: {
+  action: { enum: ["list", "remove"] }, account_id: { type: "string" },
+} } } } } }];
+const personalInventory = () => ({ mode: "personal", state: "ready", accounts: [{ id: "gmail_owned", app: "gmail", accountType: "PRIVATE" }] });
+const personalOptions = (overrides = {}) => ({ getConfig: () => config({ mode: "personal" }), getUser: async () => ({ composioToken: "consumer-secret" }), inventory: async () => personalInventory(), ...overrides });
+function consumerFixture({ listing = [{ id: "gmail_owned", account_type: "PRIVATE" }], tools = consumerTools(), onCall = () => {}, outcome = "removed" } = {}) {
+  const calls = []; let closed = 0;
+  return { calls, get closed() { return closed; }, connect: async args => {
+    assert.deepEqual(args.headers, { "x-consumer-api-key": "consumer-secret" }); assert.equal(args.publicOnly, true);
+    return { close: async () => { closed++; }, listTools: async () => ({ tools }), callTool: async call => {
+      calls.push(call); await onCall(call);
+      if (call.name === "COMPOSIO_SEARCH_TOOLS") return { data: { session: { id: "session" } } };
+      const entry = call.arguments.toolkits[0];
+      return { data: { results: { gmail: { toolkit: "gmail", status: entry.action === "list" ? "active" : outcome, accounts: listing } } } };
+    } };
+  } };
+}
+test("personal delete uses the selected consumer token, verified private list and exact stable account ID", async () => {
+  const consumer = consumerFixture(); let checks = 0;
+  const result = await deleteActivityConnection(deleteInput({ connectionId: "gmail_owned", authorize: async () => { checks++; } }), personalOptions({ connect: consumer.connect }));
+  assert.deepEqual(result, { deleted: true }); assert.ok(checks >= 4); assert.equal(consumer.closed, 1);
+  assert.deepEqual(consumer.calls.map(call => call.name), ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_MANAGE_CONNECTIONS", "COMPOSIO_MANAGE_CONNECTIONS"]);
+  assert.deepEqual(consumer.calls.at(-1).arguments, { toolkits: [{ name: "gmail", action: "remove", account_id: "gmail_owned" }] });
+});
+test("personal shared, missing, ambiguous, and unverified accounts cannot be removed", async () => {
+  for (const listing of [[{ id: "gmail_owned", account_type: "SHARED" }], [{ id: "gmail_owned" }], [{ id: "gmail_other", account_type: "PRIVATE" }], [{ id: "gmail_owned", account_type: "PRIVATE" }, { id: "gmail_owned", account_type: "PRIVATE" }]]) {
+    const consumer = consumerFixture({ listing });
+    await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ connect: consumer.connect })), error => error.status === 404);
+    assert.equal(consumer.calls.some(call => call.arguments.toolkits?.[0]?.action === "remove"), false);
+  }
+  await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ inventory: async () => ({ ...personalInventory(), accounts: [{ id: "gmail_owned", app: "gmail", accountType: "SHARED" }] }), connect: () => assert.fail("no discovery for shared account") })), error => error.status === 404);
+});
+test("personal unsupported remove schema and token or session revocation stop deletion", async () => {
+  const unsupported = consumerFixture({ tools: [{ name: "COMPOSIO_SEARCH_TOOLS" }] });
+  await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ connect: unsupported.connect })), error => error.status === 409);
+  assert.equal(unsupported.calls.length, 0);
+  for (const reason of ["token", "access", "mode"]) {
+    let token = "consumer-secret", mode = "personal", revoked = false;
+    const consumer = consumerFixture({ onCall: call => {
+      if (call.arguments.toolkits?.[0]?.action === "list") {
+        if (reason === "token") token = "different-consumer";
+        if (reason === "mode") mode = "sdk";
+        if (reason === "access") revoked = true;
+      }
+    } });
+    await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned", authorize: async () => { if (revoked) throw Object.assign(new Error("ended"), { status: 403 }); } }), personalOptions({ getConfig: () => config({ mode }), getUser: async () => ({ composioToken: token }), connect: consumer.connect })), error => [403, 409].includes(error.status));
+    assert.equal(consumer.calls.some(call => call.arguments.toolkits?.[0]?.action === "remove"), false);
+  }
+});
+test("personal inventory offers deletion only for PRIVATE accounts with supported provider schema", async () => {
+  const consumer = consumerFixture();
+  const result = await activityConnectionInventory({ ownerId: "UOWNER", teamId: "TTEAM" }, personalOptions({ connect: consumer.connect }));
+  assert.equal(result.accounts[0].canDelete, true);
+  const unsupported = consumerFixture({ tools: [] });
+  const readOnly = await activityConnectionInventory({ ownerId: "UOWNER", teamId: "TTEAM" }, personalOptions({ connect: unsupported.connect }));
+  assert.equal(readOnly.accounts[0].canDelete, false);
+});
+test("a late consumer discovery cannot remove an account after its bounded request has timed out", async () => {
+  let calls = 0, release;
+  const held = new Promise(resolve => { release = resolve; });
+  const pending = deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ timeoutMs: 20, connect: async () => ({
+    listTools: async () => { await held; return { tools: consumerTools() }; },
+    close: async () => {}, callTool: async () => { calls++; return {}; },
+  }) }));
+  await assert.rejects(pending, error => error.status === 503);
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 0);
+});
+test("personal errors and unconfirmed remove outcomes never report deletion or expose credentials", async () => {
+  const consumer = consumerFixture({ outcome: "ak_private_fixture consumer-secret error" });
+  await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ connect: consumer.connect })), error => error.status === 503 && !/consumer-secret|private_fixture/.test(error.message));
+  await assert.rejects(deleteActivityConnection(deleteInput({ connectionId: "gmail_owned" }), personalOptions({ getUser: async () => ({}), connect: () => assert.fail("no organization fallback") })), error => error.status === 409);
 });
