@@ -10,6 +10,7 @@ const {
   CODEX_SOL_PRICE_CUTOVER,
   CODEX_TERRA_LUNA_PRICE_CUTOVER,
   CODEX_61_SOL_LAUNCH,
+  CODEX_62_LAUNCH,
   CODEX_61_TERRA_LAUNCH,
   applyCodexPricingRefresh,
   autoRefreshCodexPricing,
@@ -246,5 +247,25 @@ test("GPT-6.1 Terra launch, snapshots and request-level long-context rates repai
   await autoRefreshCodexPricing({ db, makeBackup: async () => "backup", log: { log() {} } });
   assert.equal(buildCodexPricingRefresh({ db }).delta, 0);
   assert.equal(pendingCodexPricingRefresh(db).pending, false);
+  db.close();
+});
+
+
+test("GPT-6.2 launch prices respect the per-request long-context boundary and snapshots", () => {
+  const db = fixture();
+  for (const [model, short, long] of [["gpt-6.2-astra", 2.084, 4.148016], ["gpt-6.2-sol", 0.521, 1.037004]]) {
+    const before = addPricingEvidence(db, "2026-11-16T23:59:59.999Z", model);
+    const launch = addPricingEvidence(db, CODEX_62_LAUNCH, model);
+    const plan = buildCodexPricingRefresh({ db });
+    assert.equal(plan.componentUpdates.find((row) => row.id === before).costUSD, null);
+    assert.ok(plan.componentUpdates.find((row) => row.id === launch).costUSD > 0);
+    const usage = { input_tokens: 272_000, cached_input_tokens: 20_000, cache_write_input_tokens: 10_000, output_tokens: 1_000 };
+    assert.equal(estimateCodexCost(usage, model, [{ usage }]).costUSD, short);
+    const longUsage = { ...usage, input_tokens: 272_001 };
+    assert.equal(estimateCodexCost(longUsage, model, [{ usage: longUsage }]).costUSD, long);
+    assert.equal(estimateCodexCost(longUsage, `${model}-2026-11-17`, [{ usage: longUsage }]).costUSD, long);
+    assert.ok(estimateCodexCost(longUsage, model).costUSD < long, "aggregate tokens never imply a single long request");
+    assert.equal(estimateCodexCost(usage, `${model}-preview`).costUSD, null);
+  }
   db.close();
 });

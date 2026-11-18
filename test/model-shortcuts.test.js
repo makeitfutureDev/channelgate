@@ -30,6 +30,8 @@ test("fresh installs inherit supported family defaults without persisting versio
   assert.deepEqual(defaults.fable, { engine: "claude", model: "claude-fable-5-2" });
   assert.equal(defaults.sonet.engine, "claude");
   assert.match(defaults.sonet.model, /^claude-sonnet-/);
+  assert.deepEqual(defaults.astra, { engine: "codex", model: "gpt-6.2-astra" });
+  assert.deepEqual(defaults.sol, { engine: "codex", model: "gpt-6.2-sol" });
   assert.equal(defaults.sol.engine, "codex");
   assert.match(defaults.sol.model, /^gpt-[\d.]+-sol$/);
   saveSettings({ sessionKeepalive: "10" });

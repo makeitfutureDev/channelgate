@@ -325,7 +325,11 @@ const codex = validateEngineAdapter({
   costRateKey: "codexRatePer1MTokens",
   instructionFile: "AGENTS.md", skillsDir: ".agents/skills", mcpTransport: "argv", contextWindow: 272_000,
   efforts: ["none", "low", "medium", "high", "xhigh", "max", "ultra"], models: [
-    ...["codex", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
+    ...["astra", "sol"].map((family) => ({
+      label: `GPT-6.2 ${family === "astra" ? "Astra" : "Sol"}`, value: `gpt-6.2-${family}`,
+      description: `GPT-6.2 ${family} model.`, efforts: ["low", "medium", "high", "xhigh", "max"],
+    })),
+    ...["codex", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
   ], mintsOwnSessionId: true,
   // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
   transientKinds: Object.freeze(["transient"]),

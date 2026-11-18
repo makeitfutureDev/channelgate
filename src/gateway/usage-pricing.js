@@ -12,6 +12,7 @@ export const CODEX_PRICING_HISTORY_SINCE = "2026-07-13T00:00:00.000Z";
 export const CODEX_SOL_PRICE_CUTOVER = "2026-08-21T00:00:00.000Z";
 export const CODEX_TERRA_LUNA_PRICE_CUTOVER = "2026-07-30T00:00:00.000Z";
 export const CODEX_61_TERRA_LAUNCH = "2026-10-26T00:00:00.000Z";
+export const CODEX_62_LAUNCH = "2026-11-17T00:00:00.000Z";
 export const CODEX_61_SOL_LAUNCH = "2026-09-29T00:00:00.000Z";
 export const CODEX_PRICING_META_KEY = "codex_usage_pricing_basis";
 
@@ -46,7 +47,7 @@ const sameRate = (left, right) => (
 function codexRatesAt(ts) {
   const current = getCodexModelRates();
   const historical = { ...current };
-  for (const [key, launch] of [["gpt-6.1-sol", CODEX_61_SOL_LAUNCH], ["gpt-6.1-terra", CODEX_61_TERRA_LAUNCH]]) {
+  for (const [key, launch] of [["gpt-6.2-astra", CODEX_62_LAUNCH], ["gpt-6.2-sol", CODEX_62_LAUNCH], ["gpt-6.1-sol", CODEX_61_SOL_LAUNCH], ["gpt-6.1-terra", CODEX_61_TERRA_LAUNCH]]) {
     if (String(ts || "") < launch && sameRate(current[key], DEFAULT_CODEX_RATES[key])) {
       delete historical[key];
     }

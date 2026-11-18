@@ -2926,6 +2926,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   same registry snapshot, so newly available models such as Astra appear without a ChannelGate code
   change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
   snapshot, or the bundled fallback on a cold start.
+- **Codex defaults include GPT-6.2 Astra and Sol:** the bundled picker and browser fallback
+  offer `gpt-6.2-astra` and `gpt-6.2-sol`; inherited `:astra` and `:sol` shortcuts follow
+  the latest stable family in the active catalog. These fallback entries offer low through max
+  reasoning, excluding `none`. Fable 5.2 remains a Claude choice (`claude-fable-5-2`).
+  Successful authenticated CLI discovery still determines the live catalog; a bundled choice
+  does not establish account access. Existing saved model pins and custom shortcuts remain valid.
+  Standard API-equivalent estimates include the 6.2 rates and request-level long-context uplift;
+  this catalog addition keeps the pricing basis and existing pending-refresh policy unchanged.
 - **Claude's model choices state exact versions:** the picker offers Opus 5.5, Fable 5.2,
   Sonnet 5.5, and Haiku 4.5 under their full model IDs. Sonnet 5.5 uses its native 1M
   context window and verified cache-aware pricing for external transcript usage. It omits duplicate aliases and special

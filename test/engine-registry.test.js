@@ -29,9 +29,9 @@ test("all shipped engines are registered with the facts callers depend on", () =
   }
 });
 
-test("Codex fallback models match the current selectable CLI catalog", () => {
+test("Codex fallback models include current stable families", () => {
   assert.deepEqual(adapterFor("codex").models.map((model) => model.value), [
-    "codex", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+    "gpt-6.2-astra", "gpt-6.2-sol", "codex", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
   ]);
 });
 

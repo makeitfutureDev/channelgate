@@ -768,11 +768,14 @@ export function getCodexRatePer1MTokens() {
 // Defaults verified against OpenAI's STANDARD API pricing table on 2026-09-13, and the GPT-6 Sol /
 // GPT-6 Luna rows on 2026-09-24 (their 2026-09-22 launch prices), and GPT-6.1 Sol on
 // 2026-10-22 (its 2026-09-29 launch price), and GPT-6.1 Terra on
-// 2026-11-01 (its 2026-10-26 launch price); admins can adjust
+// 2026-11-01 (its 2026-10-26 launch price), and GPT-6.2 Astra/Sol on
+// 2026-11-18 (their 2026-11-17 launch prices); admins can adjust
 // them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
 // Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
 // the model list itself is fixed and intentionally small.
 export const DEFAULT_CODEX_RATES = {
+  "gpt-6.2-astra": { input: 8, cachedInput: 0.4, output: 40 },
+  "gpt-6.2-sol": { input: 2, cachedInput: 0.1, output: 10 },
   "gpt-6-astra": { input: 10, cachedInput: 1, output: 50 },
   "gpt-6.1-sol": { input: 2, cachedInput: 0.1, output: 10 },
   "gpt-6.1-terra": { input: 1, cachedInput: 0.05, output: 5 },

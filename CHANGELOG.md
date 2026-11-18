@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add GPT-6.2 Astra and Sol to bundled Codex model choices and inherited family shortcuts,
+  with supported fallback reasoning levels and Standard API-equivalent usage rates. Keep
+  Fable 5.2 in Claude choices and preserve existing model pins and custom shortcuts.
+
 - Use platform logos and compact responsive app cards in Activity Connections, paginate 24 apps
   at a time, and move IMAP/SMTP accounts to their own Email accounts settings page.
 

@@ -12,6 +12,8 @@ test("Slack offers a short Claude list with exact versioned IDs", () => {
   const codexValues = modelOptionsForEngine("codex").map(({ value }) => value);
 
   assert.deepEqual(claudeValues, ["__default__", "claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-4-5"]);
+  assert.ok(codexValues.includes("gpt-6.2-astra"));
+  assert.ok(codexValues.includes("gpt-6.2-sol"));
   assert.ok(!codexValues.some((value) => /fable/i.test(value)));
   assert.equal(modelOptionsForEngine("claude", "claude-sonnet-5").at(-1).value, "claude-sonnet-5");
   assert.equal(modelOptionsForEngine("claude", "fable").at(-1).label, "Current: fable");
@@ -32,5 +34,15 @@ test("admin UI consumes server model manifests and keeps exact versions as its o
   assert.match(claudeList, /\["claude-fable-5-2", "Fable 5\.2"\]/);
   assert.match(claudeList, /\["claude-sonnet-5-5", "Sonnet 5\.5"\]/);
   assert.doesNotMatch(claudeList, /\["(?:best|fable|opusplan)",/);
+  assert.match(codexList, /\["gpt-6\.2-astra", "GPT-6\.2 Astra"\]/);
+  assert.match(codexList, /\["gpt-6\.2-sol", "GPT-6\.2 Sol"\]/);
   assert.doesNotMatch(codexList, /fable/i);
+});
+
+const { effortsForModel } = await import("../src/engines/registry.js");
+
+test("GPT-6.2 fallback efforts exclude unsupported none and unverified ultra", () => {
+  for (const model of ["gpt-6.2-astra", "gpt-6.2-sol"]) {
+    assert.deepEqual(effortsForModel("codex", model), ["low", "medium", "high", "xhigh", "max"]);
+  }
 });

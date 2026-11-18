@@ -8227,6 +8227,24 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       external transcripts use $2 input, $10 output, $2.50/$4 cache writes and $0.10 cache reads
       per million tokens, while saved Sonnet 5 remains selectable and priced independently
       (`test/model-info.test.js`, `test/model-options.test.js`, `test/external-usage.test.js`).
+- [x] Automated (2026-11-18): bundled Codex and offline browser choices contain exact
+      `gpt-6.2-astra` / `gpt-6.2-sol` IDs; inherited family shortcuts select 6.2 and Claude's
+      `:fable` remains `claude-fable-5-2`. New fallback efforts are low/medium/high/xhigh/max.
+      Pricing fixtures cover cached input, cache writes, dated snapshots, launch-day guards and
+      request input at 272,000 / 272,001; aggregate input alone never implies a long request.
+- [ ] Live 6.2 Codex acceptance: in the existing Codex QA fixture, with a validated runtime
+      CLI whose authenticated `debug models` lists 6.2, open `/model`, select GPT-6.2 Astra,
+      high, then ask "Reply with exactly ASTRA62_OK". Repeat with Sol and `SOL62_OK`.
+      Pass: saved exact IDs and reported answering models match, sentinels arrive, and a follow-up
+      resumes each session on the same model. Repeat selection/save/reload through Admin Runtime
+      settings; verify choices and efforts agree. A CLI catalog omitting 6.2 is BLOCKED, not PASS.
+- [ ] Claude regression: in the existing Claude QA fixture choose Fable 5.2/high and ask
+      "Reply with exactly FABLE52_OK". Pass: `claude-fable-5-2` is saved/reported, sentinel
+      arrives and a second turn resumes. In a fresh uncustomized settings fixture, verify `:fable`
+      resolves identically; existing saved custom shortcuts and older pinned model IDs survive.
+- [ ] Private QA registry writeback and live runs pending: the requesting user's Airtable
+      connection was unavailable during preparation. CLI 0.170.0 image/canary validation and
+      adoption are also pending; existing 0.162.1 pin remains until those gates pass.
 - [x] Automated: Fable 5.2 saves as `claude-fable-5-2`, the inherited `:fable` shortcut
       resolves to it, and external usage uses its published cache-aware rates without changing
       Fable 5.1 pricing or existing saved pins.
