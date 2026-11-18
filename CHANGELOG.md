@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Retry a stopped rootless Podman container's startup twice when its previous systemd scope
+  is still loaded. Stop cancels the retry wait; other startup errors still fail immediately.
+
 - Show Completed Activity as an ungrouped list by default, newest completion first. Pins and
   later messages no longer override completion order; other views keep their saved grouping.
 

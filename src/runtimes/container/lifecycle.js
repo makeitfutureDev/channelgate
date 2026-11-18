@@ -68,6 +68,10 @@ export const OPERATOR_HOME_MASKS = Object.freeze([path.join(".local", "share", "
 export const MASK_TMPFS_OPTIONS = "rw,noexec,nosuid,size=1m,notmpcopyup";
 
 const GONE_PATTERN = /no such container|no container with name|is not running|only create exec sessions on running containers|container state improper|removing container/i;
+// A stopped rootless Podman container can outlive its systemd scope's teardown. Retry only
+// that exact conflict, without deleting the container, changing cgroups or touching volumes.
+const START_SCOPE_CONFLICT = /unable to start unit "(libpod-[a-f0-9]{64}\.scope)"[\s\S]*Unit \1 was already loaded or has a fragment file\./i;
+const START_SCOPE_RETRY_MS = [1_000, 2_000];
 
 export function isContainerGoneError(text) {
   return GONE_PATTERN.test(String(text || ""));
@@ -394,11 +398,11 @@ export function createContainerLifecycle({
   const checkAbort = (signal) => {
     if (signal?.aborted) throw Object.assign(new Error("Run aborted while waiting for its channel container"), { name: "AbortError", details: { explicitStop: true } });
   };
-  async function waitPoll(signal) {
+  async function waitPoll(signal, delayMs = recreatePollMs) {
     checkAbort(signal);
     let onAbort;
     try {
-      await Promise.race([sleep(recreatePollMs), ...(signal ? [new Promise((_, reject) => {
+      await Promise.race([sleep(delayMs), ...(signal ? [new Promise((_, reject) => {
         onAbort = () => { try { checkAbort(signal); } catch (error) { reject(error); } };
         signal.addEventListener("abort", onAbort, { once: true });
       })] : [])]);
@@ -545,9 +549,19 @@ export function createContainerLifecycle({
     }
   }
 
-  async function startContainer(caps, name) {
-    const result = await cli.runWith(caps, ["start", name], { timeoutMs: 60_000 });
-    if (result.code !== 0) throw new Error(`could not start container ${name}: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
+  async function startContainer(caps, name, { signal } = {}) {
+    for (let attempt = 0; ; attempt += 1) {
+      checkAbort(signal);
+      const result = await cli.runWith(caps, ["start", name], { timeoutMs: 60_000 });
+      if (result.code === 0) return;
+      checkAbort(signal);
+      const stderr = String(result.stderr || "").trim();
+      if (caps.kind !== "podman" || !caps.rootless || !START_SCOPE_CONFLICT.test(stderr) || attempt >= START_SCOPE_RETRY_MS.length) {
+        throw new Error(`could not start container ${name}: ${stderr || `exit ${result.code}`}`);
+      }
+      log(`[container] ${name} previous systemd scope is still loaded — retrying start (${attempt + 1}/${START_SCOPE_RETRY_MS.length})`);
+      await waitPoll(signal, START_SCOPE_RETRY_MS[attempt]);
+    }
   }
 
   async function stopContainer(name, { caps = null, settings = null, reason = "" } = {}) {
@@ -682,7 +696,7 @@ export function createContainerLifecycle({
         prepareHostSide(target);
         const hadLeases = othersInside() > 0;
         slowTimer = announceAfter(announce, "Restarting this channel's container…");
-        await startContainer(caps, name);
+        await startContainer(caps, name, { signal });
         started = true;
         if (hadLeases) {
           announceOnce(announce, "The channel container had stopped — background processes from the previous session were lost.");
