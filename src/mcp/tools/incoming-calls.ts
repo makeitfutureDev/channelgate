@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { incomingCalls } from "./incoming.ts";
+import { incomingCalls } from "../../gateway/voice/incoming.ts";
 interface Context {
   principalTrusted: boolean; apiPrincipal: boolean; agentPrincipal: boolean;
   channelId: string; threadKey: string; createdBy: string;

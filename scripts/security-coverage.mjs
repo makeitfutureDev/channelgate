@@ -12,7 +12,7 @@ const branchFlag = help.includes("--test-coverage-branches") ? "--test-coverage-
 const areas = [
   {
     name: "incoming-iphone-calls", floor: [90, 80, 70],
-    include: ["src/gateway/voice/apns.ts", "src/gateway/voice/incoming.ts", "src/gateway/voice/incoming-tool.ts"],
+    include: ["src/gateway/voice/apns.ts", "src/gateway/voice/incoming.ts", "src/mcp/tools/incoming-calls.ts"],
     tests: ["test/incoming-calls.test.ts", "test/incoming-calls-routes.test.ts", "test/incoming-calls-tools.test.ts"],
   },
   {

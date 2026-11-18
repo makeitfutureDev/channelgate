@@ -1,4 +1,4 @@
-import { registerIncomingCallTool } from "../gateway/voice/incoming-tool.ts";
+import { registerIncomingCallTool } from "./tools/incoming-calls.ts";
 // Gateway control MCP server. Injected into every gated run, scoped to the current principal by a
 // daemon-signed, expiring capability. Exposes scheduling tools (anyone allowed in the channel) and
 // channel-admin tools to manage the channel's MCP allowlist (admins only). Tool registrations live

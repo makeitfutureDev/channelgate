@@ -17,7 +17,7 @@ export const functionalityAreas = [
   area(14, 'Progress and native reports', 'features/progress-and-streaming features/report-artifacts features/slack-tables features/slack-charts features/slack-lists features/slack-canvases'),
   area(15, 'Usage, cost visibility, and auditing', 'features/usage-and-costs features/pricing-and-usage-repair features/activity-and-audit'),
   area(16, 'HTTP automation API', 'features/run-api configuration/notifications-and-automation'),
-  area(17, 'Developer access, browser work, and media', 'features/ssh-access features/vscode-access features/workspace-toolchain features/browser-automation features/video-understanding features/attachments-and-voice'),
+  area(17, 'Developer access, browser work, and media', 'features/ssh-access features/vscode-access features/workspace-toolchain features/browser-automation features/video-understanding features/attachments-and-voice voice-calls'),
   area(18, 'Secrets and credential management', 'features/secrets features/network-access configuration/environment-variables controls/accounts-and-secrets'),
   area(19, 'Google Drive workspace synchronization', 'features/drive-sync controls/conversation-settings'),
   area(20, 'Private VPN and database access', 'features/vpn-database controls/database'),
