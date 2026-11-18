@@ -1437,7 +1437,7 @@ const LIGHT = `color-scheme:light;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
 // Column labels and the default track of each column when the viewer has not resized it.
 const COLUMN_LABELS = Object.freeze({ conversation: "Conversation", comment: "Comment", channel: "Channel", status: "Status", last: "Last", actions: "Actions" });
-const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "156px" });
+const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "192px" });
 const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES,
   min: ACTIVITY_COLUMN_MIN_WIDTHS, max: ACTIVITY_COLUMN_MAX_WIDTH, commentMax: ACTIVITY_COMMENT_MAX });
 const DEFAULT_COLUMN_TEMPLATE = ACTIVITY_COLUMNS.map((id) => COLUMN_TEMPLATES[id]).join(" ");

@@ -198,7 +198,8 @@ viewer's account, never shown to anyone else and never posted to Slack or the ag
 matches comment text. Columns can be rearranged by dragging a header, or with **▤ Columns** in the
 footer (move left/right, Reset order and widths). They can be resized by dragging a header's edge;
 double-click the edge (or press Home on it) to reset a column, and ←/→ resize it from the
-keyboard. Actions can be moved but not resized. The order and widths are saved per viewer, shared
+keyboard. Actions is also resizable, defaults to 192px and has a 188px minimum so all six
+desktop buttons (including Call) fit on one line. The order and widths are saved per viewer, shared
 by the Pinned and main tables, and follow the viewer across sessions and devices. Phones keep the
 stacked layout, with the comment on its own line.
 

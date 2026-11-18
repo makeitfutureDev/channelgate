@@ -30,9 +30,9 @@ export function activityGrouping(value) {
 
 // Activity table columns: the viewer's own order and widths. Every id is a fixed column; widths
 // are whole pixels within a per-column floor so a header can never collapse beyond reach.
-// Actions holds fixed-size buttons, so it can move but not be resized.
+// Actions keeps room for six 28px buttons and their five 4px gaps on desktop.
 export const ACTIVITY_COLUMNS = Object.freeze(["conversation", "comment", "channel", "status", "last", "actions"]);
-export const ACTIVITY_COLUMN_MIN_WIDTHS = Object.freeze({ conversation: 120, comment: 80, channel: 60, status: 80, last: 40 });
+export const ACTIVITY_COLUMN_MIN_WIDTHS = Object.freeze({ conversation: 120, comment: 80, channel: 60, status: 80, last: 40, actions: 188 });
 export const ACTIVITY_COLUMN_MAX_WIDTH = 1600;
 
 export function validActivityColumnOrder(value) {

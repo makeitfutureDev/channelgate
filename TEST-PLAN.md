@@ -308,7 +308,14 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   to reset it; **▤ Columns** → Reset order and widths → Save restores the defaults. Keyboard:
   Tab to an edge, ←/→ resize it, Home resets. Narrow the window to phone width: stacked layout,
   comment visible, no horizontal scroll. Malformed layouts (duplicate or missing columns,
-  out-of-range or Actions widths) are refused (400); writes without a valid session, CSRF token or Origin are refused (401/403).
+  out-of-range widths) are refused (400); writes without a valid session, CSRF token or Origin are refused (401/403).
+- Actions regression (2026-11-18): enable voice calls in the isolated router fixture so all six
+  buttons render. At 1440px, all six buttons must share one line inside the default 192px cell.
+  Drag the Actions header edge 64px wider: both tables align, the save succeeds, and the width
+  survives reload. Shift+Left clamps at 188px with all buttons still on one line; Home resets
+  the width. API rejects Actions widths below 188px and above 1600px. Phone layout must retain
+  its existing wrapping without page overflow. Engine-independent: rendering and account
+  preference storage do not execute or select an engine.
 - Automated: `test/activity.test.js` (routes, ownership, privacy, validation),
   `test/activity-page.test.js` (browser script) and `test/activity-columns-browser.test.js` (real
   Chromium: comment save, edge-drag resize, header drag-reorder, reload persistence, reset, phone

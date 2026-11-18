@@ -23,8 +23,8 @@ test("Activity columns move, resize and keep comments in a real browser", { skip
   let base;
   const app = express();
   app.use("/fonts", express.static(fileURLToPath(new URL("../public/fonts", import.meta.url))));
-  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TCOLS", getBaseUrl: () => base,
-    snapshot: async () => ({ rows: roots.map((root, index) => ({ channel_id: channelId, thread_ts: root.ts, title: root.text,
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TCOLS", getBaseUrl: () => base, voiceAvailable: () => true,
+    snapshot: async () => ({ rows: roots.map((root, index) => ({ channel_id: channelId, thread_ts: root.ts, title: root.text, starter_id: ownerId,
       channelName: "Columns fixture", status: index ? "idle" : "waiting", last_message_ms: Date.now() - index * 60_000 })), total: roots.length }) }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   base = `http://127.0.0.1:${server.address().port}`;
@@ -51,6 +51,28 @@ test("Activity columns move, resize and keep comments in a real browser", { skip
     return ths.every((th, index) => Math.abs(th.getBoundingClientRect().left - tds[index].getBoundingClientRect().left) < 1.5);
   });
   assert.equal(await aligned(), true);
+
+  // All six Actions buttons fit on one desktop line, including the optional call link.
+  const actionsOnOneLine = () => page.locator("#threads tr:first-child .actions").evaluate((cell) => {
+    const boxes = [...cell.querySelectorAll("a,button")].map((button) => button.getBoundingClientRect());
+    const bounds = cell.getBoundingClientRect();
+    return boxes.length === 6 && boxes.every((box) => Math.abs(box.top - boxes[0].top) < 1
+      && box.left >= bounds.left && box.right <= bounds.right);
+  });
+  assert.equal(await actionsOnOneLine(), true, "default Actions width fits every button");
+  const actionsHandle = page.locator('#table th[data-col="actions"] .col-resize');
+  const actionsBefore = (await page.locator('#table th[data-col="actions"]').boundingBox()).width;
+  const actionsBox = await actionsHandle.boundingBox();
+  const actionsSaved = page.waitForResponse((response) => response.url().endsWith("/api/columns"));
+  await page.mouse.move(actionsBox.x + actionsBox.width / 2, actionsBox.y + actionsBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(actionsBox.x + actionsBox.width / 2 + 64, actionsBox.y + actionsBox.height / 2, { steps: 8 });
+  await page.mouse.up();
+  assert.equal((await actionsSaved).status(), 200);
+  const actionsAfter = (await page.locator('#table th[data-col="actions"]').boundingBox()).width;
+  assert.ok(Math.abs(actionsBefore + 64 - actionsAfter) < 2, "Actions grows by the dragged distance");
+  assert.equal((await getUser(ownerId)).activityColumns.widths.actions, Math.round(actionsAfter));
+  assert.equal(await actionsOnOneLine(), true);
 
   // Comment: Enter saves it to the viewer's account.
   const comment = page.getByRole("textbox", { name: "Comment on: First columns fixture" });
@@ -96,7 +118,21 @@ test("Activity columns move, resize and keep comments in a real browser", { skip
   await page.waitForFunction(() => globalThis.document.querySelector("#table thead th")?.dataset.col === "status");
   assert.equal(await comment.inputValue(), "Waiting for Ana");
   assert.ok(Math.abs((await page.locator('#table th[data-col="conversation"]').boundingBox()).width - after) < 2);
+  assert.ok(Math.abs((await page.locator('#table th[data-col="actions"]').boundingBox()).width - actionsAfter) < 2, "Actions width survives reload");
+  assert.equal(await actionsOnOneLine(), true);
   assert.equal(await aligned(), true);
+
+  // Keyboard resizing cannot shrink Actions below the space needed for its buttons.
+  await actionsHandle.focus();
+  const actionsMin = page.waitForResponse((response) => response.url().endsWith("/api/columns"));
+  for (let i = 0; i < 10; i++) await actionsHandle.press("Shift+ArrowLeft");
+  assert.equal((await actionsMin).status(), 200);
+  assert.equal((await getUser(ownerId)).activityColumns.widths.actions, 188);
+  assert.equal(await actionsOnOneLine(), true, "minimum width still fits every button");
+  const actionsReset = page.waitForResponse((response) => response.url().endsWith("/api/columns"));
+  await actionsHandle.press("Home");
+  assert.equal((await actionsReset).status(), 200);
+  assert.equal((await getUser(ownerId)).activityColumns.widths.actions, undefined);
 
   // Double-click resets a width; the Columns dialog resets everything.
   const reset = page.waitForResponse((response) => response.url().endsWith("/api/columns"));
