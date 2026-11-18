@@ -1,4 +1,4 @@
-import { registerIncomingCallTool } from "./tools/incoming-calls.ts";
+import { registerIncomingCallTool, incomingCallProblem } from "./tools/incoming-calls.ts";
 // Gateway control MCP server. Injected into every gated run, scoped to the current principal by a
 // daemon-signed, expiring capability. Exposes scheduling tools (anyone allowed in the channel) and
 // channel-admin tools to manage the channel's MCP allowlist (admins only). Tool registrations live
@@ -308,6 +308,9 @@ export function gateCardTier(gate, args = {}) {
 // What the table says per tool: `authz` is who may CALL it (checked first; a caller without it is
 // refused with no card), `details(args)` is the card text — or null, which means the change is
 // AUTOMATIC for that caller — and `tier` is who must click the card (defaults to the authz).
+// An optional `precheck(args)` returns why the call could not be applied at all ("" when it can):
+// the caller gets that reason as an error and NO card is posted. It never replaces the handler's
+// own validation, which runs again when the saved call is applied.
 //
 // Operator decision 2026-10-07 (minimum second-approval cards). A card survives only where one
 // unasked call would silently hand attacker-controlled content or a secret to OTHER channels and a
@@ -318,7 +321,7 @@ export function gateCardTier(gate, args = {}) {
 // A surviving card is DURABLE: the exact call is saved and applied on the click, with no deadline.
 const AUTOMATIC = () => null;
 
-export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId }) {
+export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId, threadKey, apiPrincipal, agentPrincipal }) {
   const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
   const sudoEdit = (args = {}) => args.sudo === true || (args.sudo !== false && listForChannel(channelId).some((s) => s.id === args.id && s.sudo === true));
   return new Map([
@@ -437,7 +440,11 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // requester and answered on their access, so the requester (or an admin) confirms the exact text
     // on a card first. The daemon re-runs the access gate itself; the click is the human factor
     // against an injected "ask #sales for …" — never auto-approved, in Auto mode too.
-    ["call_user", { authz: "worker", tier: "owner", details: ({ reason, in_minutes = 0 }) =>
+    // `precheck` answers why the call cannot be placed at all (not configured, no iPhone, one
+    // already pending): the caller is told at once and no card asks for a pointless approval.
+    ["call_user", { authz: "worker", tier: "owner",
+      precheck: ({ reason, in_minutes = 0 }) => incomingCallProblem({ principalTrusted: principalTrusted === true, apiPrincipal, agentPrincipal, channelId, threadKey, createdBy }, reason, in_minutes),
+      details: ({ reason, in_minutes = 0 }) =>
       `Ring your registered iPhone ${in_minutes ? `in ${in_minutes} minutes` : "now"} for this conversation: ${summarize(String(reason || ""), 160)}. The call can access only conversations you are currently allowed to open.` }],
     ["send_agent_message", { authz: "any", tier: "owner", details: ({ to, message }) =>
       `Send a message to the agent in ${summarize(String(to || ""))} on your behalf:\n${summarize(String(message || ""), 1200)}\nIts reply will be posted back into this thread.` }],
@@ -541,6 +548,9 @@ export function createGatewayMcpServer(ctx) {
             return text(`Couldn't request SSH egress: ${error.message}`);
           }
         }
+        // A gate may know the saved call could not be applied: say so now instead of posting a card.
+        const problem = typeof gate.precheck === "function" ? await gate.precheck(args ?? {}) : "";
+        if (problem) return { ...text(`Couldn't request \`${name}\`: ${problem} No approval card was posted and nothing was changed.`), isError: true };
         let details = hostAlreadyAllowed ? null : await gate.details(args ?? {});
         if (details !== null) {
           // The clicker must independently hold the card's tier ("" needs no extra rank): the

@@ -8,10 +8,11 @@ import { isSlackThreadParticipant } from "../slack-threads.js";
 import { liveConnector } from "../../platforms/live.js";
 import { platformOfConversation } from "../../platforms/ids.js";
 import { postNotice } from "../../platforms/notify.js";
+import { logEvent } from "../../util/logger.js";
 import { pushConfigReady, sendVoipPush, type PushConfig, type PushDevice, type PushResult } from "./apns.ts";
 
 type DeviceRow = PushDevice & { id: string; owner_id: string; bundle_id: string; name: string; last_seen_ms: number };
-type Invitation = { id: string; owner_id: string; channel_id: string; thread_ts: string; token_hash: string; title: string; status: string; expires_ms: number; ring_ms: number; created_ms: number; call_id: string };
+type Invitation = { id: string; owner_id: string; channel_id: string; thread_ts: string; token_hash: string; title: string; status: string; expires_ms: number; ring_ms: number; created_ms: number; call_id: string; notice_claim_ms: number };
 export interface InviteTarget { ownerId: string; channelId: string; threadTs: string }
 export interface DeviceInput { platform?: unknown; kind?: unknown; token?: unknown; bundleId?: unknown; environment?: unknown; name?: unknown }
 export interface RegisteredDevice { id: string; name: string; bundleId: string; environment: "sandbox" | "production"; lastSeen: number }
@@ -21,6 +22,7 @@ export interface IncomingCallService {
   listDevices(ownerId: string): RegisteredDevice[];
   removeDevice(ownerId: string, id: string): { ok: boolean };
   cancel(ownerId: string, id: string): { ok: boolean };
+  preflight(target: InviteTarget, title: string, inMinutes?: number): Promise<void>;
   request(target: InviteTarget, title: string, inMinutes?: number): Promise<{ ok: boolean; id: string; delivered: number; scheduledAt: number; expiresAt: number }>;
   accept<T extends { id: string }>(ownerId: string, token: string, start: (target: InviteTarget, reason: string) => Promise<T>): Promise<T>;
   decline(ownerId: string, token: string): Promise<{ ok: boolean }>;
@@ -39,6 +41,9 @@ interface Dependencies {
 }
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const error = (message: string, status = 400) => Object.assign(new Error(message), { status });
+// An outcome notice that cannot be posted is retried with a doubling wait (30 seconds up to 30
+// minutes, measured from the ring) and abandoned six hours after the ring.
+const NOTICE_RETRY_MIN_MS = 30_000, NOTICE_RETRY_MAX_MS = 30 * 60_000, NOTICE_GIVE_UP_MS = 6 * 3600_000;
 async function currentAccess(target: InviteTarget): Promise<boolean> {
   const user = await getUser(target.ownerId);
   const entry = await getChannelEntry(target.channelId);
@@ -80,7 +85,15 @@ export function createIncomingCalls(deps: Dependencies = {}): IncomingCallServic
       } catch { getDb().prepare("UPDATE incoming_calls SET status='failed' WHERE id=? AND status='ringing'").run(row.id); }
     }
     const db = getDb();
-    const rows = db.prepare("SELECT * FROM incoming_calls WHERE notified=0 AND status IN ('declined','missed','failed') LIMIT 50").all() as unknown as Invitation[];
+    // Give up on a notice that has been tried and is still failing long after its call: the row
+    // becomes ordinary history (and is swept with it) instead of being retried for ever.
+    const abandoned = db.prepare(`UPDATE incoming_calls SET notified=1 WHERE notified=0 AND notice_claim_ms>0
+      AND status IN ('declined','missed','failed') AND ring_ms<? RETURNING *`).all(now() - NOTICE_GIVE_UP_MS) as unknown as Invitation[];
+    for (const row of abandoned) void logEvent("incoming_call_notice_abandoned", { channel: row.channel_id, author: row.owner_id, invitation: row.id, outcome: row.status });
+    // notice_claim_ms is the last attempt. Untried notices go first, so stuck ones cannot starve them.
+    const rows = db.prepare(`SELECT * FROM incoming_calls WHERE notified=0 AND status IN ('declined','missed','failed')
+      AND (notice_claim_ms=0 OR ?-notice_claim_ms>=MIN(?,MAX(?,notice_claim_ms-ring_ms))) ORDER BY notice_claim_ms LIMIT 50`)
+      .all(now(), NOTICE_RETRY_MAX_MS, NOTICE_RETRY_MIN_MS) as unknown as Invitation[];
     for (const row of rows) {
       if (!db.prepare("UPDATE incoming_calls SET notified=2,notice_claim_ms=? WHERE id=? AND notified=0").run(now(), row.id).changes) continue;
       try { await notify(row, row.status); db.prepare("UPDATE incoming_calls SET notified=1 WHERE id=?").run(row.id); }
@@ -114,7 +127,9 @@ export function createIncomingCalls(deps: Dependencies = {}): IncomingCallServic
     getDb().prepare("UPDATE incoming_calls SET status='cancelled',notified=1 WHERE owner_id=? AND id=? AND status='scheduled'").run(ownerId, id);
     return { ok: true };
   }
-  async function request(target: InviteTarget, title: string, inMinutes = 0) {
+  // Every refusal that needs no write. The approval gate asks it BEFORE posting a card; request()
+  // asks it again when the approved call is applied, because state can change in between.
+  async function admissible(target: InviteTarget, title: string, inMinutes: number): Promise<void> {
     const c = config();
     if (!pushConfigReady(c) || !voiceEnabled()) throw error("Incoming calls are not configured. Ask an administrator to configure iPhone calls.", 503);
     if (!/^[A-Z0-9_]{1,32}$/.test(target.channelId) || !/^\d{1,13}\.\d{1,6}$/.test(target.threadTs)
@@ -122,16 +137,26 @@ export function createIncomingCalls(deps: Dependencies = {}): IncomingCallServic
     if (typeof title !== "string" || !title.trim() || title.length > 160) throw error("Give a call reason of 1–160 characters.");
     if (!Number.isInteger(inMinutes) || inMinutes < 0 || inMinutes > 10080) throw error("Delay must be 0–10080 whole minutes.");
     expire();
+    if (!getDb().prepare("SELECT 1 FROM user_devices WHERE owner_id=? AND bundle_id=?").get(target.ownerId, c.bundleId)) throw error("No iPhone registered. Sign in to the iPhone app and enable incoming calls.", 409);
+  }
+  function admitRate(ownerId: string): void {
     const db = getDb();
-    const devices = db.prepare("SELECT * FROM user_devices WHERE owner_id=? AND bundle_id=?").all(target.ownerId, c.bundleId) as unknown as DeviceRow[];
-    if (!devices.length) throw error("No iPhone registered. Sign in to the iPhone app and enable incoming calls.", 409);
+    const recent = db.prepare("SELECT COUNT(*) AS n FROM incoming_calls WHERE owner_id=? AND created_ms>?").get(ownerId, now() - 3600_000) as { n: number };
+    const active = db.prepare("SELECT id FROM incoming_calls WHERE owner_id=? AND (status IN ('scheduled','ringing','accepting') OR created_ms>?)").get(ownerId, now() - 60_000);
+    if (active || recent.n >= 10) throw error("An incoming call is pending or the call limit was reached. Try later.", 429);
+  }
+  async function preflight(target: InviteTarget, title: string, inMinutes = 0) {
+    await admissible(target, title, inMinutes);
+    admitRate(target.ownerId);
+  }
+  async function request(target: InviteTarget, title: string, inMinutes = 0) {
+    await admissible(target, title, inMinutes);
+    const db = getDb();
     // Serialize admission with an immediate transaction: concurrent runs cannot ring twice.
     const id = randomUUID(), token = randomBytes(32).toString("base64url");
     db.exec("BEGIN IMMEDIATE");
     try {
-      const recent = db.prepare("SELECT COUNT(*) AS n FROM incoming_calls WHERE owner_id=? AND created_ms>?").get(target.ownerId, now() - 3600_000) as { n: number };
-      const active = db.prepare("SELECT id FROM incoming_calls WHERE owner_id=? AND (status IN ('scheduled','ringing','accepting') OR created_ms>?)").get(target.ownerId, now() - 60_000);
-      if (active || recent.n >= 10) throw error("An incoming call is pending or the call limit was reached. Try later.", 429);
+      admitRate(target.ownerId);
       db.prepare("INSERT INTO incoming_calls(id,owner_id,channel_id,thread_ts,token_hash,title,status,created_ms,expires_ms,ring_ms) VALUES(?,?,?,?,?,?,?,?,?,?)")
         .run(id, target.ownerId, target.channelId, target.threadTs, inMinutes ? "" : digest(token), title.trim(), inMinutes ? "scheduled" : "ringing", now(), inMinutes ? 0 : now() + 45_000, now() + inMinutes * 60_000);
       db.exec("COMMIT");
@@ -192,10 +217,12 @@ export function createIncomingCalls(deps: Dependencies = {}): IncomingCallServic
     void flushNotices().catch(() => {});
   }
   function stop() { if (timer) clearInterval(timer); timer = undefined; }
-  return { registerDevice, listDevices, removeDevice, cancel, request, accept, decline, expire, flushNotices, start, stop };
+  return { registerDevice, listDevices, removeDevice, cancel, preflight, request, accept, decline, expire, flushNotices, start, stop };
 }
 let singleton: ReturnType<typeof createIncomingCalls> | undefined;
 export function incomingCalls(): IncomingCallService { return singleton ||= createIncomingCalls(); }
+/** Test seam: replace (or, with no argument, reset) the process-wide service. */
+export function __setIncomingCallsForTests(service?: IncomingCallService): void { singleton = service; }
 
 export function getIncomingCallList(ownerId: string): IncomingCallSummary[] {
   return getDb().prepare("SELECT id, title, status, created_ms AS createdAt, ring_ms AS scheduledAt FROM incoming_calls WHERE owner_id=? ORDER BY created_ms DESC LIMIT 30").all(ownerId) as unknown as IncomingCallSummary[];

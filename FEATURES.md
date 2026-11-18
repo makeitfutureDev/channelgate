@@ -7073,6 +7073,19 @@ are available through the Activity API. Admission limits one pending invitation 
 least one minute between invitations, and ten invitations per hour. A delayed call more than one
 minute late fails instead of surprising the user hours later after downtime.
 
+A call that could not ring is refused before any approval card is posted: incoming calls not
+configured or voice calls off, no registered iPhone, a reason or delay out of range, lost
+conversation access, or a pending invitation / reached limit. The agent gets the reason as an
+error and nobody is asked to approve a call that would fail. The same checks run again when the
+approved call is applied; a call that then cannot be placed (Apple refuses the push, the phone was
+unregistered meanwhile) marks the card failed with that reason, never "applied".
+
+A declined, missed or failed notice that cannot be posted is retried with a doubling wait — 30
+seconds at least, 30 minutes at most, measured from the ring — and untried notices are always
+served first. Six hours after the ring a still-failing notice is abandoned: one
+`incoming_call_notice_abandoned` audit event (invitation id, outcome, conversation, person) is
+recorded and the invitation becomes ordinary history, removed by the seven-day sweep.
+
 The implementation requires the companion iOS app and a correctly configured Apple APNs key.
 Live Apple delivery, lock-screen answer/decline and engine acceptance remain release checks;
 local fixtures are not claims of a production call.

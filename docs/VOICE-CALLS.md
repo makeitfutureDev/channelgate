@@ -200,6 +200,12 @@ from a recurring schedule: each recurring call still needs its own approval. At 
 invitation can be pending for a person. On answer, the existing voice service rechecks conversation
 access and uses that person's identity. No voice session starts merely because the phone rings.
 
+No card appears for a call that could not ring. When incoming calls are not configured, voice
+calls are off, the requester has no registered iPhone, or a call is already pending for them, the
+agent is told the reason immediately and nothing waits for approval. The checks run again when
+the card is approved: if the call cannot be placed then (for example the phone was unregistered in
+between, or Apple refuses the push), the card shows the failure and its reason.
+
 Activity API (authenticated Activity session plus same-origin and CSRF checks for writes):
 
 - `POST /activity/:id/api/devices`: `{platform:"ios",kind:"voip",token,bundleId,environment,name}`.
@@ -214,7 +220,9 @@ Activity API (authenticated Activity session plus same-origin and CSRF checks fo
 
 The daemon's five-second worker processes delayed invitations and notices. A schedule over one
 minute late fails instead of ringing after prolonged downtime. Notices are retried on connector
-failure. A process crash after posting a notice but before recording success may produce a
+failure with a doubling wait (30 seconds up to 30 minutes, counted from the ring); six hours after
+the ring a notice that still cannot be posted is abandoned and recorded once in the Audit feed as
+`incoming_call_notice_abandoned`. A process crash after posting a notice but before recording success may produce a
 notification retry; do not treat chat notices as an exactly-once transport. Apple may also delay or
 reject a push: delivery submission is not proof of receipt or answer.
 
