@@ -89,6 +89,32 @@ test("host target is refused without invoking an engine", async () => {
   assert.match(result.error, /isolated container/);
 });
 
+test("object leases reach container preparation and release after success or startup failure", async () => {
+  for (const failStartup of [false, true]) {
+    const root = tempRoot(); const f = fixture(root);
+    const lease = {
+      id: "smoke-own-lease",
+      release() { assert.equal(this, lease); f.calls.push("release"); },
+    };
+    f.target.runtime.acquireLease = () => { f.calls.push("lease"); return lease; };
+    f.target.runtime.ensureUp = async (target, opts) => {
+      assert.equal(target, f.target);
+      assert.equal(opts.lease, lease, "container preparation must exclude its caller's own lease");
+      assert.equal(opts.forceImage, true);
+      f.calls.push("ensure");
+      if (failStartup) throw new Error("image missing");
+    };
+    try {
+      const result = await runUpdateSmoke({ root, resolveTarget: f.resolveTarget, engines: [
+        { id: "codex", updateSmoke: async () => { f.calls.push("codex"); return { content: "CG_UPDATE_SMOKE_OK" }; } },
+      ] });
+      assert.equal(result.ok, !failStartup, result.error);
+      if (failStartup) assert.match(result.error, /image missing/);
+      assert.deepEqual(f.calls, ["lease", "ensure", ...(!failStartup ? ["codex"] : []), "destroy", "release"]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test("engine failure is reported, second engine runs, and cleanup always releases lease", async () => {
   const root = tempRoot(); const f = fixture(root);
   try {
