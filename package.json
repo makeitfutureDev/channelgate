@@ -33,6 +33,7 @@
     "secret-scan": "node scripts/secret-scan.mjs",
     "dev": "node --watch src/start.js",
     "setup": "bash scripts/install.sh",
+    "hash-password": "node scripts/hash-password.mjs",
     "update": "bash scripts/update.sh",
     "service:install": "bash scripts/install-systemd.sh",
     "service:uninstall": "bash scripts/uninstall-systemd.sh",
