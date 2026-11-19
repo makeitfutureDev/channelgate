@@ -416,6 +416,10 @@ export async function bindRunningChannelEgress({ listContainers = null, resolveT
   const index = await getChannelsIndex();
   let bound = 0;
   let failed = 0;
+  // Slack channels are unverified until the membership pass completes after Slack connects, and
+  // the runtime resolver refuses them until then. At boot that is every Slack channel: count them
+  // as waiting rather than failed — the daemon calls this again once membership is verified.
+  let deferred = 0;
   for (const container of containers) {
     if (container?.state !== "running" || !container.slug) continue;
     const platform = platformOr(container.platform).id;
@@ -427,12 +431,19 @@ export async function bindRunningChannelEgress({ listContainers = null, resolveT
       await ensureChannelEgress(target);
       bound += 1;
     } catch (error) {
+      if (error?.code === "channel_membership_unverified") {
+        deferred += 1;
+        continue;
+      }
       failed += 1;
       log?.warn?.(`[egress] could not restore the egress listener of ${container.slug}: ${error?.message || error}`);
     }
   }
-  if (bound || failed) log?.log?.(`[egress] restored ${bound} running container listener(s)${failed ? `, ${failed} failed` : ""}`);
-  return { bound, failed };
+  if (bound || failed || deferred) {
+    log?.log?.(`[egress] restored ${bound} running container listener(s)${failed ? `, ${failed} failed` : ""}` +
+      `${deferred ? `, ${deferred} waiting for Slack membership verification` : ""}`);
+  }
+  return { bound, failed, deferred };
 }
 
 export async function closeChannelEgress(target) {

@@ -162,6 +162,9 @@ async function containerRuntimeHealth() {
 let claudeLoginWatch = null;
 let agentDirectoryRefresh = null;
 let membershipRecovery = null;
+// Boot work that had to wait for the first Slack membership verification (see boot below).
+let afterMembershipVerified = () => {};
+let egressRestoreWaiting = false;
 
 async function stopRuntimeServices(reason) {
   membershipRecovery?.stop();
@@ -218,7 +221,12 @@ async function main() {
     onArchived: (row) => abortRunsInChannel(row.channelId, row.slug, "bot_removed"),
     // Catch up ONLY the channels this verification restored. The routine five-minute pass must
     // not rebuild every workspace; the catalog poller already converges unchanged folders cheaply.
-    onVerified: syncRestoredWorkspaces,
+    onVerified: async (result) => {
+      await syncRestoredWorkspaces(result);
+      // Never awaited: a recovered turn is a whole model turn, and this pass must finish first.
+      // Never thrown either: a failure here must not read as a failed verification.
+      try { afterMembershipVerified(); } catch (e) { console.error("[gateway] post-verification work failed:", e?.message || e); }
+    },
   });
   slack.onDisconnected(() => membershipRecovery.invalidate());
   slack.onConnected(() => membershipRecovery.reconcile());
@@ -339,7 +347,8 @@ async function main() {
     await startEgressService({ log: console });
     // Containers that kept running across the restart get their listener back now, not at their
     // channel's next turn (a recovered background job or an attached editor needs the network).
-    await bindRunningChannelEgress({ log: console });
+    const restored = await bindRunningChannelEgress({ log: console });
+    egressRestoreWaiting = restored.deferred > 0;
   } catch (error) {
     console.warn(`[egress] proxy unavailable (${error?.message || error}) — container runs in proxy mode will fail closed until it starts.`);
   }
@@ -445,6 +454,18 @@ async function main() {
   // arriving after reconnect get fresh rows and aren't mistaken for stale ones.
   const staleRuns = takeStaleRuns();
   const runRecovery = createRunRecovery(staleRuns, { slack });
+  // Both wait for Slack membership: a survivor in a Slack channel is replayed when its channel is
+  // verified, and the containers of Slack channels that kept running get their egress listener
+  // back then (the boot pass above ran before Slack connected and could only count them).
+  afterMembershipVerified = () => {
+    runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+    if (egressRestoreWaiting) {
+      egressRestoreWaiting = false;
+      bindRunningChannelEgress({ log: console })
+        .then((restored) => { egressRestoreWaiting = restored.deferred > 0; })
+        .catch((e) => console.warn(`[egress] could not restore running container listeners: ${e?.message || e}`));
+    }
+  };
 
   // License verification (src/ee/license.js). Deliberately started here and NOT awaited: the
   // ChannelGate platform is a remote HTTP service and the daemon must come up whether or not it

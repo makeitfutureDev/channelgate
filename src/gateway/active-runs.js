@@ -23,7 +23,8 @@ import { runQueue } from "../slack/message-lifecycle.js";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
 import { assertQuestionAccess } from "./question-access.js";
-import { getUser } from "../config/store.js";
+import { getChannelMeta, getUser } from "../config/store.js";
+import { assertChannelMembership } from "./channel-membership.js";
 import { recordSlackThreadOutcome } from "./slack-threads.js";
 import { runAdmissionRefusalKind } from "./run-admission-result.js";
 
@@ -351,25 +352,86 @@ function pendingRecoveryRuns() {
     .map((row) => fromJson(row.data, null)).filter((rec) => rec?.recoveryPending && !rec.awaitingChoice);
 }
 
+// Can this survivor's conversation run YET? After a restart or a reconnect every Slack channel is
+// unverified until the membership pass has read the bot's complete channel list, and the runtime
+// resolver refuses a turn there. A replay started in that window used to fail with "membership
+// has not been verified" and ask the person to send the message again — the opposite of
+// recovering it. Anything else the resolver would refuse (an archived channel, a missing record)
+// is admitted, so the replay's own failure path names the real reason.
+export async function membershipAdmitsRecovery(rec) {
+  let meta = null;
+  try { meta = await getChannelMeta(rec.slug); } catch { /* the replay reports it */ }
+  if (!meta || meta.archived) return true;
+  try {
+    assertChannelMembership({ ...meta, channelId: meta.channelId || rec.channelId });
+    return true;
+  } catch (error) {
+    return error?.code !== "channel_membership_unverified";
+  }
+}
+
+// How long a survivor waits for its channel's membership check before it is replayed anyway and
+// fails with the reason in its thread. Verification normally takes seconds and retries every 30.
+const RECOVERY_MEMBERSHIP_HOLD_MS = 2 * 60_000;
+const RECOVERY_MEMBERSHIP_FRESH_WINDOWS = 5;
+
 // Arm before Slack connects; reconnect callbacks are idempotent and never block connection setup.
+// Survivors whose channel is not admitted yet (`options.admit`, default membershipAdmitsRecovery)
+// keep their reserved place in the thread queue and are replayed by a later start(): the daemon
+// calls it when a membership verification completes, and a bounded timer calls it when none does.
 export function createRunRecovery(stale, options) {
   let reservations = reserveRecoveryRuns(stale);
   let running = null;
   let requested = true;
+  let heldSince = 0;
+  let holdTimer = null;
+  let freshWindows = RECOVERY_MEMBERSHIP_FRESH_WINDOWS;
+  const admit = options.admit || membershipAdmitsRecovery;
+  const maxHoldMs = Number.isFinite(options.maxHoldMs) ? options.maxHoldMs : RECOVERY_MEMBERSHIP_HOLD_MS;
+  const retry = () => start().catch((error) => console.error("[gateway] reconnect recovery failed:", error.message));
   const start = () => {
     if (running) return running;
-    if (!requested || !options.slack?.snapshot?.().connected || !options.slack.getClient?.()) return Promise.resolve();
+    if ((!requested && !reservations.length) || !options.slack?.snapshot?.().connected || !options.slack.getClient?.()) return Promise.resolve();
+    // Only a connection asks for the durable rows again; a verification or the hold timer replays
+    // just the survivors already waiting here.
+    const rescan = requested;
     requested = false;
-    const batch = reservations;
-    reservations = [];
-    batch.push(...reserveRecoveryRuns(pendingRecoveryRuns()));
-    running = recoverRuns([], { ...options, reservations: batch }).finally(() => {
+    running = (async () => {
+      const candidates = [...reservations, ...(rescan ? reserveRecoveryRuns(pendingRecoveryRuns()) : [])];
+      reservations = [];
+      const expired = heldSince > 0 && Date.now() - heldSince >= maxHoldMs;
+      const batch = [];
+      for (const entry of candidates) {
+        const ready = expired || entry.handle.aborted || await Promise.resolve().then(() => admit(entry.rec)).catch(() => true);
+        (ready ? batch : reservations).push(entry);
+      }
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      if (reservations.length) {
+        if (!heldSince) {
+          heldSince = Date.now();
+          await logEvent("run_recover_wait", { count: reservations.length, reason: "slack channel membership not verified yet" });
+        }
+        holdTimer = setTimeout(retry, Math.max(0, heldSince + maxHoldMs - Date.now()) + 5);
+        holdTimer.unref?.();
+      } else {
+        heldSince = 0;
+      }
+      await recoverRuns([], { ...options, reservations: batch });
+    })().finally(() => {
       running = null;
-      if (requested) queueMicrotask(() => start().catch((error) => console.error("[gateway] reconnect recovery failed:", error.message)));
+      if (requested) queueMicrotask(retry);
     });
     return running;
   };
-  const unsubscribe = options.slack?.onConnected?.(() => { requested = true; return start(); });
+  // A new connection starts a new verification, so survivors still waiting get a fresh window —
+  // a bounded number of times, or a socket that keeps reconnecting would hold them silently.
+  const unsubscribeConnected = options.slack?.onConnected?.(() => {
+    requested = true;
+    if (heldSince && freshWindows > 0) { heldSince = 0; freshWindows -= 1; }
+    return start();
+  });
+  const unsubscribe = () => { clearTimeout(holdTimer); holdTimer = null; return unsubscribeConnected?.(); };
   return { start, unsubscribe };
 }
 

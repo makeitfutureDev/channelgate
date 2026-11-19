@@ -478,7 +478,7 @@ test("boot: every RUNNING proxy-mode container gets its listener back before its
     resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: SETTINGS }),
     log: { log() {}, warn() {} },
   });
-  assert.deepEqual(out, { bound: 1, failed: 0 });
+  assert.deepEqual(out, { bound: 1, failed: 0, deferred: 0 });
   const restored = service.egressStatus().channels.find((c) => c.slug === recovered.slug);
   assert.equal(restored.listening, true);
   assert.equal(restored.channelId, "C_EGSVC_BOOT");
@@ -488,7 +488,32 @@ test("boot: every RUNNING proxy-mode container gets its listener back before its
     resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: { ...SETTINGS, egressMode: "bridge" } }),
     log: { log() {}, warn() {} },
   });
-  assert.deepEqual(legacy, { bound: 0, failed: 0 });
+  assert.deepEqual(legacy, { bound: 0, failed: 0, deferred: 0 });
+
+  // Before Slack connects every Slack channel is unverified and the resolver refuses it. That is a
+  // listener still to restore once membership is verified, not a failure to warn about per channel.
+  await service.closeChannelEgress(recoveredTarget);
+  const lines = [];
+  const quiet = { log: (line) => lines.push(`log ${line}`), warn: (line) => lines.push(`warn ${line}`) };
+  let verified = false;
+  const gated = async (slug, meta) => {
+    if (!verified) throw Object.assign(new Error("Slack channel membership has not been verified."), { code: "channel_membership_unverified" });
+    return resolveRuntime(slug, meta, { settings: SETTINGS });
+  };
+  const containers = async () => [{ slug: recovered.slug, platform: "slack", state: "running" }];
+  const waiting = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: gated, log: quiet });
+  assert.deepEqual(waiting, { bound: 0, failed: 0, deferred: 1 });
+  assert.equal(lines.filter((line) => line.startsWith("warn")).length, 0);
+  assert.match(lines.join("\n"), /restored 0 running container listener\(s\), 1 waiting for Slack membership verification/);
+  assert.equal(service.egressStatus().channels.some((c) => c.slug === recovered.slug && c.listening), false);
+  verified = true;
+  const after = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: gated, log: quiet });
+  assert.deepEqual(after, { bound: 1, failed: 0, deferred: 0 });
+  assert.equal(service.egressStatus().channels.find((c) => c.slug === recovered.slug).listening, true);
+  // Any other refusal is still a named failure.
+  const broken = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: async () => { throw new Error("boom"); }, log: quiet });
+  assert.deepEqual(broken, { bound: 0, failed: 1, deferred: 0 });
+  assert.ok(lines.some((line) => line.startsWith("warn") && line.includes("boom")));
 });
 
 test("a removed secret's placeholder is revoked by the config-change listener", async () => {
