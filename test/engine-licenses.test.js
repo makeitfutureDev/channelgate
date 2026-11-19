@@ -229,6 +229,15 @@ test("pickers get one shape: harness, then a license step only when there is a c
   assert.equal(pool.describeSelectionText({ engine: a.id, pool: [b.id], meta: {} }), "Codex · Pick A, then Pick B");
   assert.equal(pool.describeSelectionText({ engine: b.id, pool: "", meta: {} }), "Codex · Pick B");
   assert.equal(pool.describeSelectionText({ engine: "claude", pool: "", meta: {} }), "Claude Code");
+
+  // A bare harness pick keeps the conversation's own choice for that harness, and implies nothing.
+  assert.deepEqual(pool.harnessSelection("codex", { engine: a.id, licensePool: [b.id] }), { engine: a.id, licensePool: [b.id] });
+  assert.deepEqual(pool.harnessSelection("codex", { engine: "codex", licensePool: "any" }), { engine: "codex", licensePool: "any" });
+  assert.deepEqual(pool.harnessSelection("codex", { engine: "claude" }), { engine: "codex", licensePool: "" });
+  assert.deepEqual(pool.harnessSelection("codex", { engine: a.id, licensePool: [b.id], approvedEngines: [a.id] }), { engine: a.id, licensePool: "" });
+  saveSettings({ engine: b.id, enginePool: [a.id] });
+  assert.deepEqual(pool.harnessSelection("codex", {}), { engine: b.id, licensePool: [a.id] }, "no channel choice: the gateway default's");
+  assert.deepEqual(pool.harnessSelection("claude", {}), { engine: "claude", licensePool: "" });
 });
 
 test("a channel is locked to licenses, to whole harnesses, or both", () => {

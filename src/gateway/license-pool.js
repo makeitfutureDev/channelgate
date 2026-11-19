@@ -13,7 +13,7 @@
 // a pool applies to a PINNED thread too, where cross-harness failover never does.
 import { adapterFor, coherentLicensePool, harnessOf, isEngineId, licenseLabel, licensesOfHarness, modelBelongsToEngine } from "../engines/registry.js";
 import { HARNESS_IDS, LICENSE_POOL_ANY, harnessLabel, isHarnessId, readLicensePool } from "../engines/license-state.js";
-import { isEngineEnabled } from "../config/settings.js";
+import { getEngine, getEnginePool, isEngineEnabled } from "../config/settings.js";
 import { isChannelEngineApproved } from "./channel-engines.js";
 
 export { LICENSE_POOL_ANY, readLicensePool };
@@ -117,6 +117,20 @@ export function resolveLicensePick({ harness, meta = {}, license = "", also = []
   const rest = (Array.isArray(also) ? also : []).filter((id) => id !== license);
   if (rest.some((id) => !ids.includes(id))) throw invalid(`Every license in one selection must be a ${harnessLabel(harness)} license this conversation can use.`);
   return { engine: license, licensePool: normalizeLicensePool(rest, license) };
+}
+
+// A bare harness pick ("codex" typed at the start of a message, a harness button): the selection
+// this conversation already has for that harness when its own default is on it — the license and
+// pool somebody chose keep applying — else the harness's own license and nothing more. "Any" is
+// never implied.
+export function harnessSelection(harness, meta = {}) {
+  const usable = selectableLicenses(harness, meta);
+  const inherited = isEngineId(meta?.engine) ? { engine: meta.engine, pool: meta.licensePool } : { engine: getEngine(), pool: getEnginePool() };
+  if (harnessOf(inherited.engine) === harness && usable.includes(inherited.engine)) {
+    const stored = describeLicenseSelection(inherited).pool;
+    return { engine: inherited.engine, licensePool: stored === LICENSE_POOL_ANY ? LICENSE_POOL_ANY : normalizeLicensePool(stored.filter((id) => usable.includes(id)), inherited.engine) };
+  }
+  return { engine: primaryLicenseOf(harness, meta), licensePool: "" };
 }
 
 // One line for a summary: "Codex", "Codex · Work ChatGPT", "Codex · any license",
