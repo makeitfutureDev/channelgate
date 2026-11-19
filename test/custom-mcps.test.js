@@ -156,6 +156,10 @@ test("Codex relays custom servers in a container and on the sudo host", () => {
   assert.ok(!args.join("\n").includes("codex-secret-789"));
   assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.custom-linear.url=")));
   assert.deepEqual(codexSecretBundle({ isolated: true, gatewayCapability: "cap", customMcps }), { gatewayCapability: "cap" }, "a container's bundle holds no custom token");
+  // An http:// custom MCP (an admin-approved private host:port) is relayed too — the relay's dial,
+  // not this config builder, decides whether that destination is approved.
+  const lan = buildCodexArgs({ prompt: "x", sessionId: "t", isNewSession: true, cwd: target.cwd, outFile: `${target.artifactDir}/tmp/o.txt`, target, customMcps: { "custom-rhino": { url: "http://192.168.130.33:10501/agent/", token: "abcdefgh5678" } }, secretBundlePath: bundle, headerHelpers: [] });
+  assert.ok(lan.includes(`mcp_servers.custom-rhino.env.CG_MCP_SERVICE="remote-mcp"`), "an http custom MCP is not silently dropped from Codex");
 
   const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
   const helpers = [];
