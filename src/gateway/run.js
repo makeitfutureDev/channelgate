@@ -54,6 +54,7 @@ import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
+import { codexHarnessFor } from "./channel-codex-paths.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -936,7 +937,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const target = runtimeResolver(entry.slug, {
     ...meta,
     engine: runtimeEngine,
-    codexHarness: runtimeEngine === "codex-eu" ? "eu" : "",
+    codexHarness: codexHarnessFor(runtimeEngine),
     ...(overrides ? { adminMode: Boolean(meta.adminMode || channelAdminMode) } : {}),
   }, { isAdminAuthor: trustedAdminAuthor });
   const isolatedRuntime = runtimeSupports(target, "isolated");

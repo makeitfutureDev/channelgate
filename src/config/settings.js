@@ -8,7 +8,7 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
-import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -38,12 +38,35 @@ const ENV_MAP = {
 };
 
 export function getSettings() {
+  let settings;
   try {
-    return stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
+    settings = stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
   } catch {
     return {};
   }
+  syncEngineLicenses(settings.engineLicenses);
+  return settings;
 }
+
+// The licenses an administrator added (`engineLicenses`) are engine adapters, registered live
+// (engines/registry.js syncLicenseAdapters). The daemon and the stdio MCP child both read this
+// file and either may write it, so the registry follows what was READ rather than what this
+// process last saved: every successful read compares the stored list with the one last applied and
+// re-registers only on a difference. A failed read (above) changes nothing — a half-written file
+// must never unregister a license mid-turn. The key is recorded BEFORE the sync because building
+// an adapter may itself read a setting.
+let syncedLicenseKey = "null";
+function syncEngineLicenses(stored) {
+  const key = JSON.stringify(stored ?? null);
+  if (key === syncedLicenseKey) return;
+  syncedLicenseKey = key;
+  try {
+    syncLicenseAdapters(Array.isArray(stored) ? stored : []);
+  } catch (error) {
+    console.warn(`[licenses] the stored license list could not be applied; keeping the previous one: ${error?.message || error}`);
+  }
+}
+export function refreshEngineLicenses() { getSettings(); }
 
 // Operators commonly enter a tunnel hostname without a scheme. Browser-facing capabilities need
 // an absolute URL, so make that convenient spelling canonical at the settings boundary. Preserve

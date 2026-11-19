@@ -8,20 +8,28 @@ import { discoverCodexModels } from "./model-discovery.js";
 import { codexAuthProcessEnv, codexEuLoginHome, codexEuLoginHint } from "../gateway/channel-codex-paths.js";
 export { codexEuLoginHome, codexEuLoginHint } from "../gateway/channel-codex-paths.js";
 
-export async function codexEuCredentialState({ readFileImpl = readFile } = {}) {
-  const home = codexEuLoginHome();
+// "Is this isolated ChatGPT login usable?" for ANY dedicated login directory: Codex EU's, and each
+// Codex license's (license-adapters.js). `planType` is the plan the sign-in itself reports, which
+// is what a license's declared type is verified against.
+export async function dedicatedCodexCredentialState({ home, label = "Codex EU", loginHint = "", readFileImpl = readFile } = {}) {
   const state = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {}, readFileImpl });
-  const remedy = `run \`${codexEuLoginHint()}\` on the gateway host and choose the intended ChatGPT workspace`;
+  const remedy = `run \`${loginHint}\` on the gateway host and choose the intended ChatGPT workspace`;
   if (!state.known || !state.authenticated) return { ...state, authenticated: false, detail: remedy };
-  if (state.method !== "chatgpt") return { ...state, authenticated: false, detail: `Codex EU requires a ChatGPT sign-in; ${remedy}` };
+  if (state.method !== "chatgpt") return { ...state, authenticated: false, detail: `${label} requires a ChatGPT sign-in; ${remedy}` };
+  let planType = "";
   try {
     const parsed = JSON.parse(await readFileImpl(path.join(home, "auth.json"), "utf8"));
     const claims = JSON.parse(Buffer.from(String(parsed.tokens?.access_token || "").split(".")[1] || "", "base64url").toString("utf8"));
     if (!claims || typeof claims !== "object" || Array.isArray(claims)) throw new Error("invalid access-token claims");
+    planType = String(claims["https://api.openai.com/auth"]?.chatgpt_plan_type || "");
   } catch {
     return { ...state, authenticated: false, detail: `the dedicated ChatGPT login could not be verified; ${remedy}` };
   }
-  return state;
+  return { ...state, planType };
+}
+
+export function codexEuCredentialState({ readFileImpl = readFile } = {}) {
+  return dedicatedCodexCredentialState({ home: codexEuLoginHome(), label: "Codex EU", loginHint: codexEuLoginHint(), readFileImpl });
 }
 
 export function makeCodexEuAdapter(base) {

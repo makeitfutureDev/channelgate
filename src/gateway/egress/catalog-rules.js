@@ -23,6 +23,7 @@ import { normalizeHost } from "./rules.js";
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
 import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
 import { resolveBedrockProvider } from "../../engines/bedrock.js";
+import { licenseApiHost, licenseOfRelaySecret, licenseRecord } from "../../engines/license-state.js";
 
 export const SWAP_FORMATS = Object.freeze(["bearer", "raw", "basic-password", "basic-user"]);
 export const DEFAULT_RULE_HEADERS = Object.freeze(["authorization"]);
@@ -64,6 +65,18 @@ export function relayRuleFor(secretName) {
     return { hosts: provider.configured ? [new URL(provider.endpoint).hostname] : [], headers: ["authorization"], format: ["bearer"] };
   }
   if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) return RELAY_RULE;
+  // An admin-added license (engines/license-state.js): the relay name carries the license id, so
+  // each license's placeholder swaps for ITS credential on ITS hosts only. A license that no
+  // longer exists has no rule, which is what revokes the placeholders minted for it.
+  const license = licenseOfRelaySecret(secretName);
+  if (license) {
+    const record = licenseRecord(license.id);
+    if (!record) return null;
+    if (license.kind === "codex-login") return CODEX_RELAY_RULE;
+    if (license.kind === "claude-login") return RELAY_RULE;
+    const host = licenseApiHost(record);
+    return { hosts: host ? [host] : [], headers: ["authorization", "x-api-key"], format: ["bearer", "raw"] };
+  }
   return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
 }
 

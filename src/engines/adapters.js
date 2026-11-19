@@ -16,6 +16,7 @@ import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
 import { makeChannelCodexAdapter } from "./codex-channel.js";
 import { makeCodexEuAdapter } from "./codex-eu.js";
 import { makeBedrockAdapter } from "./bedrock.js";
+import { buildLicenseAdapters } from "./license-adapters.js";
 
 // Which Claude login the gateway is using (src/gateway/claude-login.js). Imported LAZILY: that
 // module reads a setting, src/config/settings.js imports the engine registry, and the registry
@@ -403,3 +404,7 @@ const codex = validateEngineAdapter({
 });
 
 export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeChannelCodexAdapter(codex), makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter)]);
+
+// The adapters of the licenses an administrator added (license-adapters.js), built from the same
+// two base harnesses as every built-in above. Unvalidated: the registry validates the set.
+export const licenseAdaptersFor = (records) => buildLicenseAdapters({ claude, codex }, records);
