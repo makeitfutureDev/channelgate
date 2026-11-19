@@ -2,6 +2,13 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Let admins approve private MCP servers on the local network. Settings → Container runtime →
+  *Private MCP servers on your network* takes exact `host:port` entries, such as a CAD
+  workstation's MCP plugin at `192.168.130.33:10500`. Custom MCP connections can then reach those
+  servers over `http://` or `https://`. Only private LAN addresses on exactly the listed port are
+  allowed. Loopback and cloud metadata never are, and the gateway checks the list again on every
+  request.
+
 - Fix a busy-loop on gateways with many conversations and custom working folders. Every channel
   settings write re-decided every conversation's folder several times over, re-reading the
   settings file each time, and the Slack membership check writes every channel on each reconnect:

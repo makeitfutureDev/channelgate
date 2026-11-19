@@ -18,6 +18,7 @@ import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { CONTAINER_DEFAULT_PIDS_LIMIT, CONTAINER_LEGACY_PIDS_LIMIT } from "../runtimes/container/pids-pressure.js";
 import { logoColor } from "./appearance.js";
+import { readPrivateMcpHosts } from "./private-mcp-hosts.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
 import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
@@ -55,6 +56,10 @@ export function normalizePublicUrl(value) {
 
 // Invalid hand-edited settings fall back to the original public branding.
 export function getLogoColor() { return logoColor(getSettings().logoColor); }
+
+// Admin-approved private destinations for custom MCP connections (src/config/private-mcp-hosts.js):
+// exact `host:port` entries, invalid ones dropped. Read live — the relay calls this on every dial.
+export function getPrivateMcpHosts() { return readPrivateMcpHosts(getSettings().privateMcpHosts); }
 
 // The stored settings' VERSION: a counter bumped by every saveSettings, so a reader can tell
 // whether the values it is holding are still the ones on disk. It lives in settings.json itself
@@ -1361,6 +1366,7 @@ export function settingsForApi() {
         containerCpus: c.cpus,
         containerFullAccessHome: c.fullAccessHome,
         fsRoots: c.fsRoots,
+        privateMcpHosts: getPrivateMcpHosts(),
         containerEgressMode: c.egressMode,
         containerEgressSecretsStrict: c.egressSecretsStrict,
         hasContainerClaudeOauthToken: c.hasClaudeOauthToken,

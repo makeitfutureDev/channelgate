@@ -1,3 +1,4 @@
+import { normalizePrivateMcpHosts } from "../../config/private-mcp-hosts.js";
 import { parsePushKey } from "../../gateway/voice/apns.ts";
 import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
@@ -588,6 +589,16 @@ export function createSettingsRouter({
           if (!roots.includes(real)) roots.push(real);
         }
         patch.fsRoots = roots;
+      }
+      // Approved PRIVATE destinations for custom MCP connections (src/config/private-mcp-hosts.js):
+      // exact host:port entries whose address is a private LAN one. A bad entry refuses the whole
+      // save rather than being silently dropped.
+      if (body.privateMcpHosts !== undefined) {
+        try {
+          patch.privateMcpHosts = normalizePrivateMcpHosts(body.privateMcpHosts);
+        } catch (error) {
+          return res.status(400).json({ error: `privateMcpHosts: ${error.message}` });
+        }
       }
       // Container egress: the proxy (default) or the legacy open bridge. A closed set — anything
       // else is refused rather than stored and read back as "proxy".

@@ -3808,6 +3808,43 @@ place a real key in a prompt, evidence artifact or test result.
   arguments, container config/bundle, thread replies, or channel artifact files. Public-only URL
   validation and Lean omission remain in force for both authentication types.
 
+## Approved private MCP servers (2026-11-19)
+
+### Regression
+- [x] Automated: `node --test test/private-mcp-hosts.test.js test/custom-mcps.test.js`.
+  - Entry rules: exact `host:port`, private IP literals or DNS names only. Missing or out-of-range
+    ports, loopback, metadata, CGNAT, public, `localhost` and URL-shaped entries are refused. A
+    save refuses the whole list on one bad entry; a stored list drops invalid entries.
+  - Resolution: an approved host:port is reachable over http and https. Another port, another LAN
+    address or a missing list falls back to the public-only rule. An approved name resolving to
+    loopback, metadata or a public/private mix is refused.
+  - Fetch: plain http uses a dedicated `node:http` agent only for an approved private
+    destination. The list is re-read per request, so removal refuses the next dial. The ordinary
+    public fetch never speaks http.
+  - Relay/registry: http is relayable for a `publicOnly` custom MCP only. Built-in remotes stay
+    HTTPS-only, and a public-only dial without the private-host getter refuses http before dialling.
+  - Settings: the route validates through `normalizePrivateMcpHosts`; `settingsForApi()` returns
+    the cleaned list.
+
+### Live acceptance (Claude and Codex)
+- Fixture: an MCP server on a LAN machine reachable from the gateway host, for example the Rhino
+  MCP at `http://192.168.130.33:10500/mcp`, plus a Slack test channel in Worker mode.
+- [ ] Before approval: add a channel custom MCP `rhino` with that URL and any token in the admin
+  UI. Expected: refused with `URL refused: must use https:// unless an admin approved this private
+  host:port`.
+- [ ] Settings → Container runtime → *Private MCP servers on your network*: enter
+  `192.168.130.33:10500`, then save. Entering `127.0.0.1:80` instead must be refused with a
+  loopback error.
+- [ ] Add the custom MCP again. Expected: saved, listed as `custom-rhino` with the URL and token
+  last4.
+- [ ] Claude turn in the channel: "list the tools of the custom-rhino MCP and call a read-only
+  one (for example, document info)". Expected: `mcp__custom-rhino__…` tools are listed and the
+  call returns Rhino data. Repeat with Codex as the channel engine.
+- [ ] Remove the entry from Settings and ask again in a new turn. Expected: the server is
+  unavailable and nothing is dialled. Logs show the relay refusal and never the token.
+- Pass rule: all five checks are observed on both engines; the token never appears in Slack,
+  logs or engine config.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

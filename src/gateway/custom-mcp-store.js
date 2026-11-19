@@ -2,9 +2,11 @@
 // update and remove one entry on a channel or on a person, then cut that one server out of every
 // live relay grant so a replaced or removed token stops working at the relay's next request.
 // Every surface (the admin UI routes today) goes through here, so validation, the public-address
-// check and the audit line cannot differ between them. Audit rows carry the name and the URL's
+// check (with the admin-approved private destinations, src/config/private-mcp-hosts.js) and the audit
+// line cannot differ between them. Audit rows carry the name and the URL's
 // host — never the token.
 import { getUser, patchChannelMeta, setUser } from "../config/store.js";
+import { getPrivateMcpHosts } from "../config/settings.js";
 import { logEvent } from "../util/logger.js";
 import { revokeRemoteMcpServer } from "../mcp/remote-mcp-registry.js";
 import {
@@ -20,8 +22,8 @@ function hostOf(url) {
 }
 
 /** Add or update one of a channel's custom MCP servers. Returns the masked list. */
-export async function saveChannelCustomMcp(slug, { name, url, token, authType, headers, queryParams } = {}, { actor = "", lookup, authorize } = {}) {
-  const checkedUrl = await assertPublicCustomMcpUrl(url, lookup ? { lookup } : {});
+export async function saveChannelCustomMcp(slug, { name, url, token, authType, headers, queryParams } = {}, { actor = "", lookup, authorize, privateHosts = getPrivateMcpHosts() } = {}) {
+  const checkedUrl = await assertPublicCustomMcpUrl(url, { privateHosts, ...(lookup ? { lookup } : {}) });
   // Interactive surfaces may need to re-check access after the asynchronous DNS check.
   if (authorize) await authorize();
   const saved = await patchChannelMeta(slug, (existing) => ({
@@ -50,9 +52,9 @@ export async function listUserCustomMcps(userId) {
 }
 
 /** Add or update one of a person's own custom MCP servers. Returns the masked list. */
-export async function saveUserCustomMcp(userId, { name, url, token, authType, headers, queryParams } = {}, { actor = "", lookup, authorize } = {}) {
+export async function saveUserCustomMcp(userId, { name, url, token, authType, headers, queryParams } = {}, { actor = "", lookup, authorize, privateHosts = getPrivateMcpHosts() } = {}) {
   if (!userId) throw new Error("No user to change.");
-  const checkedUrl = await assertPublicCustomMcpUrl(url, lookup ? { lookup } : {});
+  const checkedUrl = await assertPublicCustomMcpUrl(url, { privateHosts, ...(lookup ? { lookup } : {}) });
   // Interactive surfaces may need to re-check access after the asynchronous DNS check.
   if (authorize) await authorize();
   const next = patchCustomMcps((await getUser(userId))?.customMcps, { set: { name, url: checkedUrl, token, authType, headers, queryParams }, actor: actor || userId });

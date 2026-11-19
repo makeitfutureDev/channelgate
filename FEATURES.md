@@ -575,7 +575,7 @@ themselves, from a browser, without opening Slack Settings → You:
   informational in Composio SDK mode), their personal email accounts
   (add, edit, remove; IMAP and SMTP logins are verified first, blank passwords keep the stored
   ones).
-- **MCP servers** — their personal custom MCP servers (`my-<name>`, public HTTPS only, Bearer or
+- **MCP servers** — their personal custom MCP servers (`my-<name>`, public HTTPS only unless an admin approved a private host:port, Bearer or
   Composio consumer key, up to five; edit keeps the stored token; custom-header entries can be
   re-pointed or removed here and edited in Slack).
 - **Variables** — their personal environment variables: add (hidden by default, readable on
@@ -2025,6 +2025,17 @@ control-plane status.
   The daemon relay sits outside the egress proxy, so each dial repeats the check and pins the
   connection to the vetted records (`src/mcp/public-fetch.js`). It uses its own agent, never an
   env proxy, and never follows a redirect.
+- **Approved private MCP servers on the LAN.** An organization admin can list exact `host:port`
+  destinations under Settings → Container runtime → *Private MCP servers on your network*
+  (`privateMcpHosts`, `src/config/private-mcp-hosts.js`). A custom MCP whose URL targets one of
+  them may use `http://` or `https://`, and its host must resolve ONLY to private addresses
+  (10/8, 172.16/12, 192.168/16, fc00::/7). Loopback, link-local/cloud metadata, CGNAT, other ports
+  on the same machine and other LAN addresses stay refused. A save refuses a non-private IP literal,
+  a missing port or `localhost`. The save and every relay dial check the list again
+  (`resolveCustomMcpUrl`), so removing an entry stops the connection at its next request. Built-in
+  remotes (Composio, Make) stay HTTPS-only. Any person allowed to add a custom MCP can then target
+  an approved server, so list only servers that enforce their own authentication.
+  → TEST-PLAN: Approved private MCP servers.
 - **Write-only.** Listings (`GET /api/channels`, `/api/users`, the per-scope `custom-mcps`
   routes) return name, server name, URL, last4 and who/when. There is no reveal path; replace a
   token by entering a new one. Saving an existing name without a token keeps the stored token.

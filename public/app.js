@@ -4322,6 +4322,7 @@ function readSettingsForm() {
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
     fsRoots: document.getElementById("set-fs-roots").value.split("\n").map((line) => line.trim()).filter(Boolean),
+    privateMcpHosts: document.getElementById("set-private-mcp-hosts").value.split("\n").map((line) => line.trim()).filter(Boolean),
     containerEgressMode: document.getElementById("set-container-egress-bridge").checked ? "bridge" : "proxy",
     containerEgressSecretsStrict: document.getElementById("set-container-egress-strict").checked,
     // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
@@ -4488,6 +4489,7 @@ function paintSettings(s) {
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
   document.getElementById("set-fs-roots").value = Array.isArray(s.fsRoots) ? s.fsRoots.join("\n") : "";
+  document.getElementById("set-private-mcp-hosts").value = Array.isArray(s.privateMcpHosts) ? s.privateMcpHosts.join("\n") : "";
   document.getElementById("set-container-egress-bridge").checked = s.containerEgressMode === "bridge";
   document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);

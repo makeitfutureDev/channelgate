@@ -66,6 +66,7 @@ import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./
 import { runBridge } from "../ee/composio-sdk-bridge.js";
 import { authorizeRemoteMcp, retainRemoteMcps } from "./remote-mcp-registry.js";
 import { runRemoteRelay } from "./remote-relay.js";
+import { getPrivateMcpHosts } from "../config/settings.js";
 import { withComposioApproval } from "./composio-approval.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
@@ -280,6 +281,8 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
             url: remoteTarget.url,
             headers: remoteTarget.headers,
             publicOnly: remoteTarget.publicOnly === true,
+            // A custom MCP may also reach an admin-approved private host:port, read live per dial.
+            ...(remoteTarget.publicOnly === true ? { privateHosts: getPrivateMcpHosts } : {}),
             transport,
             authorize: () => authorizeRemoteMcp(verify(), remoteName),
             ...(connectRemote ? { connect: connectRemote } : {}),
