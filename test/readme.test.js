@@ -122,7 +122,7 @@ test("badge URLs are well-formed and the CI badge names a workflow that exists",
   );
   assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2024.0.0-")), "Node floor badge");
   assert.ok(shields.some((url) => /\/badge\/platforms-Slack.*Teams.*Google%20Chat-/.test(url)), "platforms badge");
-  assert.ok(shields.some((url) => /\/badge\/engines-Claude%20Code.*Codex.*OpenCode-/.test(url)), "engines badge");
+  assert.ok(shields.some((url) => /\/badge\/engines-Claude%20Code.*Codex-/.test(url)), "engines badge");
 
   const ci = images.find(([, , url]) => url.includes("/actions/workflows/"));
   assert.ok(ci, "the CI badge is missing");

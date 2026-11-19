@@ -2,7 +2,6 @@ import path from "node:path";
 import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
-import { runOpenCode } from "./opencode.js";
 import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, isQwenTextModel, resolveQwenProvider, QWEN_PROVIDERS } from "./qwen.js";
 import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
@@ -403,44 +402,4 @@ const codex = validateEngineAdapter({
   },
 });
 
-const opencode = validateEngineAdapter({
-  id: "opencode", label: "OpenCode (read-only)", cli: "opencode", defaultModelKey: "defaultOpenCodeModel", defaultEffortKey: "defaultOpenCodeEffort",
-  mcpMetaKey: "allowedOpenCodeMcps", instructionFile: "AGENTS.md", skillsDir: ".opencode/skills",
-  mcpTransport: "none", contextWindow: 200_000, efforts: ["low", "medium", "high"], models: [],
-  mintsOwnSessionId: true,
-  transientKinds: Object.freeze([]), // its runner classifies no provider failures yet
-  supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false,
-    realCost: true, usageLimitFallback: false, userSkillOverlay: false, networkModes: ["off"], readOnly: true, mcp: false },
-  // OpenCode model IDs are provider/model. An empty value deliberately delegates to its configured
-  // default; non-empty IDs must retain the provider boundary.
-  modelBelongs: (model) => /^[a-z0-9._-]+\/[a-z0-9._:/-]+$/i.test(model),
-  resumeCommand: (id) => `opencode run --session ${id}`,
-  compileConfinement(request = {}) {
-    if (request.dangerouslySkip || request.writable || request.allowNetwork) {
-      return {
-        supported: false,
-        reason: "OpenCode is admitted only for read-only, network-off runs because its permission rules are not an OS sandbox",
-        network: { mode: request.allowNetwork ? "on" : "off", supported: false },
-        writable: false,
-        bypass: false,
-      };
-    }
-    return { supported: true, reason: "", network: { mode: "off", supported: true }, writable: false, bypass: false };
-  },
-  async run(ctx) {
-    const runtime = ctx.runtime;
-    if (ctx.policy.writable || ctx.policy.network?.mode !== "off" || runtime.allowedMcps?.length) {
-      throw new Error("OpenCode adapter refused unsupported write, network, or MCP capability");
-    }
-    return runOpenCode({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id,
-      isNewSession: ctx.session.fresh, model: runtime.model, effort: runtime.effort,
-      attachments: runtime.attachments, timeoutMs: runtime.timeoutMs, maxSilenceMs: runtime.maxSilenceMs,
-      target: runtimeTargetOr(ctx.target, ctx.cwd),
-      signal: runtime.signal, onDelta: runtime.onDelta, onEvent: runtime.onEvent });
-  },
-  interrupt: () => false,
-  discoverMcps: async () => [],
-  health: (options) => commandHealth("opencode", options),
-});
-
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeChannelCodexAdapter(codex), makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeChannelCodexAdapter(codex), makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter)]);

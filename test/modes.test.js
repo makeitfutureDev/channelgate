@@ -38,8 +38,8 @@ test("modeLabel states the network in BOTH directions, never by omission", () =>
   // The network is a switch on the channel's container; both container engines support "on".
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "claude" }), "Worker · network on");
   assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "codex" }), "Worker · network on");
-  // An engine that only declares "off" is told so rather than promised a network it will not get.
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }), "Worker · network unsupported");
+  // The switch is the channel's, not the harness's: every other harness reads the same.
+  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "qwen" }), "Worker · network on");
   // Admin mode lifts the engine's own sandbox, not the network switch.
   assert.equal(modeLabel({ adminMode: true, engine: "codex" }), "Admin · network off");
   assert.equal(modeLabel({ adminMode: true, allowNetwork: true, engine: "codex" }), "Admin · network on");
@@ -53,7 +53,6 @@ test("the detailed label admits the switch is advisory, and only where it matter
   assert.match(NETWORK_ADVISORY_NOTE, /not enforced/i);
   // ON is simply true — the container is on the bridge network — so it gains nothing.
   assert.equal(modeLabel({ allowNetwork: true, engine: "claude" }, { detail: true }), "Read-only · network on");
-  assert.equal(modeLabel({ allowBash: true, allowNetwork: true, engine: "opencode" }, { detail: true }), "Worker · network unsupported");
   // The compact form is the default: it rides the app-home channel list.
   assert.equal(modeLabel({}), "Read-only · network off");
 });
@@ -95,7 +94,7 @@ test("mode guidance follows live proxy enforcement and preserves advisory except
 test("networkState/networkLabel are the one derivation every surface shares", () => {
   assert.equal(networkState({}), "off");
   assert.equal(networkState({ allowNetwork: true, engine: "claude" }), "on");
-  assert.equal(networkState({ allowNetwork: true, engine: "opencode" }), "unsupported");
+  assert.equal(networkState({ allowNetwork: true, engine: "codex" }), "on");
   assert.equal(networkLabel({}), "network off");
   assert.equal(networkLabel({ allowNetwork: true, engine: "codex" }), "network on");
   assert.equal(networkLabel({}, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`);

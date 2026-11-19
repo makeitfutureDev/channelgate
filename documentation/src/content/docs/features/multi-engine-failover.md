@@ -30,6 +30,6 @@ For example, if you need Codex specifically, start with:
 @ChannelGate codex Review this patch using the selected Codex model.
 ```
 
-If that engine fails, repair it or deliberately choose another one. A successful default-engine fallback becomes the thread's live engine session for subsequent replies. Qwen providers and the OpenCode proof adapter are outside this fallback graph.
+If that engine fails, repair it or deliberately choose another one. A successful default-engine fallback becomes the thread's live engine session for subsequent replies. Qwen providers are outside this fallback graph.
 
 Related: [models and effort](/docs/features/models-and-effort), [engine authentication](/docs/configuration/engine-authentication), and [gateway settings](/docs/configuration/gateway-settings).

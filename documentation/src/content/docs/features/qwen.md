@@ -29,4 +29,4 @@ Qwen credentials never fall back to the operator's Anthropic login. The provider
 
 Usage records retain token counts without an invented dollar amount; the CLI's Anthropic-priced cost is discarded. Provider keys currently reach the engine as raw credentials rather than proxy placeholders. Proxy mode rejects private-address provider endpoints, including self-hosted endpoints on private networks.
 
-OpenCode is a separate proof adapter, restricted to read-only, network-off work; it is not an equivalent full-capability provider choice. See [engine capabilities](/docs/engines), [engine authentication](/docs/configuration/engine-authentication), and [network policy](/docs/configuration/network-policy).
+See [engine capabilities](/docs/engines), [engine authentication](/docs/configuration/engine-authentication), and [network policy](/docs/configuration/network-policy).

@@ -114,16 +114,16 @@ test("Qwen is off until an admin turns it on, and is never enabled by a fallback
   assert.ok(getEnabledEngines().includes("claude"));
 
   // The "never lock every harness out" rescue restores the DEFAULT harnesses only.
-  saveSettings({ engineEnabled: { claude: false, codex: false, qwen: false, opencode: false } });
+  saveSettings({ engineEnabled: { claude: false, codex: false, qwen: false } });
   assert.equal(isEngineEnabled("claude"), true);
   assert.equal(isEngineEnabled("qwen"), false, "the rescue must not switch the gateway onto a third-party provider");
 
-  saveSettings({ engineEnabled: { claude: true, codex: true, qwen: true, opencode: false } });
+  saveSettings({ engineEnabled: { claude: true, codex: true, qwen: true } });
   assert.equal(isEngineEnabled("qwen"), true);
   assert.ok(getEnabledEngines().includes("qwen"));
 
   // A deployment deliberately running ONLY Qwen keeps the others off.
-  saveSettings({ engineEnabled: { claude: false, codex: false, qwen: true, opencode: false } });
+  saveSettings({ engineEnabled: { claude: false, codex: false, qwen: true } });
   assert.equal(isEngineEnabled("qwen"), true);
   assert.equal(isEngineEnabled("claude"), false, "an explicit single-harness choice must survive");
   assert.equal(getEngine(), "qwen", "the default engine resolves to the one that is actually on");

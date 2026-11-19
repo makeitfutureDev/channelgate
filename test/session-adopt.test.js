@@ -208,12 +208,6 @@ test("a bare id is looked up in every adoptable store, not just the thread's eng
   assert.match(result.message, /continues Codex session/);
 });
 
-test("engines without a verifiable local transcript are refused explicitly", async () => {
-  const result = await plan("opencode run --session ses_abcdefgh");
-  assert.equal(result.ok, false);
-  assert.match(result.message, /can't be adopted/);
-});
-
 test("a session that only exists in the channel's container is adopted through the runtime", async () => {
   // The regression: the daemon's own state dirs hold nothing, the HOME volume is unreadable from
   // here (rootless Podman), and before this the answer was always "I can't find that session".

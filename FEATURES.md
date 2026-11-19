@@ -906,7 +906,7 @@ receives rename events are not backfilled; rename an existing indexed thread aga
 Admin → **Subscriptions** (`/subscriptions`) lists every enabled harness using the engine registry. Claude,
 Codex and Codex EU show provider-reported quotas; Codex EU reads only its dedicated ChatGPT
 login, with no fallback to the default Codex login or API key. Harnesses without a quota reader
-(including Claude Bedrock, Qwen and OpenCode) display an explicit Not supported status. Disabled
+(including Claude Bedrock and Qwen) display an explicit Not supported status. Disabled
 harnesses disappear on the next read. Each quota card displays the known plan, session/weekly/model
 or review limits when reported, percent used/remaining, reset countdown plus local reset time,
 and last successful/check timestamps. These are account-wide provider limits, including usage
@@ -3296,11 +3296,24 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Slack and Admin selectors consume registry manifests. Codex optional MCPs under
   `--ignore-user-config` receive complete credential-safe definitions; a selection without one is
   dropped from the launch with a reason, the same contract Claude's resolver uses.
-- OpenCode proves the third-engine contract without orchestrator or UI conditionals. Its adapter is
-  deliberately restricted to workspace read/glob/grep/list with model-tool network off: shell,
-  edits, external directories, plugins, MCP, and bypass modes fail closed because OpenCode
-  permissions are not an OS sandbox. JSON streaming, session resume, cancellation, usage/cost, and
-  health/version are supported. See `docs/OPENCODE-ADAPTER.md`. → TEST-PLAN: OpenCode proof adapter.
+- **A retired harness leaves no dead ends in stored data.** Removing an engine deletes its
+  adapter, runner, settings and pickers, but a harness id is also a plain string in SQLite and in
+  `settings.json`, and a restored backup can bring one back long after the upgrade. The retired
+  ids are listed once (`src/engines/retired.js`, today `opencode`) and every reader steps over
+  them instead of ending a turn or refusing a save: a channel default naming one is dropped on
+  read and on the next save, together with that harness's model and effort, so the channel
+  follows the gateway default; a channel or DM template naming one neither blocks registering a
+  new channel nor is projected onto a template-managed DM; a thread pinned to one is unpinned; a
+  gateway default naming one resolves to the first enabled harness, and its default-model,
+  default-effort and connector-selection fields are retired through `dead-fields.js`. A session
+  minted by a retired harness is never offered for `/resume` and no longer holds its thread: the
+  next message runs on the harness the thread would otherwise use, in a fresh session with the
+  chat transcript replayed, exactly like an explicit switch. An approved-harness policy keeps its
+  remaining harnesses (dropping the retired id is not a policy change, so it needs no Enterprise
+  entitlement); a policy that approved ONLY retired harnesses is kept as stored and still approves
+  nothing — retirement never widens a restriction — until an entitled administrator picks the
+  harnesses the channel may use. An id no release ever shipped is still malformed input and still
+  fails closed. No migration is involved. → TEST-PLAN: Retired harness ids.
 - **The Qwen harnesses** prove the kernel a second way: full-capability harnesses that reuse the
   `claude` CLI against an Anthropic-compatible provider, generated from a provider table with no
   orchestrator or UI conditionals — a second provider (Model Studio's EU region) is a table row,
@@ -3372,7 +3385,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Plain-language process outcomes: successful background work says **completed successfully**;
   failures distinguish general errors, rejected input/options, missing or non-executable commands,
   time limits, operating-system interruption/forced stop, and restart-unknown results. The same
-  semantic formatter covers Claude, Codex, OpenCode, engine health/MCP discovery, Drive sync,
+  semantic formatter covers Claude, Codex, engine health/MCP discovery, Drive sync,
   voice transcription, CLI compatibility checks, Whisper provisioning, and transactional update
   commands. Structured provider details remain actionable (quota reset, authentication, denied or
   invalid requests, temporary provider outage), and short subprocess diagnostics are secret-redacted
@@ -4802,8 +4815,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Host credential suppression.** A channel supplying its own key for a catalog CLI stops getting
   the daemon's shared saved login linked in behind it, so it can never silently fall back to a
   different identity.
-- **Not injected into OpenCode** (read-only, network-off): the credential would be pure exposure
-  for zero use. Clean mode gets none either, like every other injected grant.
+- **Not injected in Clean mode**, like every other injected grant.
 
 ## Isolation & security
 - **Current, progressively disclosed ChannelGate skill.** The repository's `channelgate` skill is
@@ -4992,8 +5004,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   authenticated active user's grants are unioned for each run, with the more specific tier
   replacing duplicate connector definitions. Admin editors can move among Org / This channel /
   This user without copying defaults into every record; new channels therefore inherit current org
-  grants immediately. Claude and Codex selections remain engine-specific, OpenCode exposes no MCP
-  tier, invalid skill identifiers fail closed, and user-effective settings/skills are provisioned
+  grants immediately. Claude and Codex selections remain engine-specific,
+  invalid skill identifiers fail closed, and user-effective settings/skills are provisioned
   through engine-specific synthetic homes and private per-run settings/skill views so host-global
   customizations and concurrent channel users cannot leak or race grants. Shared gateway skills use
   an immutable warm-safe plugin; optional personal/library overlays stay cold and private.
@@ -5891,7 +5903,7 @@ are retired, bullet by bullet; everything else stands.
   (`sessionState` in `src/engines/adapters.js`) — Claude's `projects/<cwd-key>/<id>.jsonl` plus the
   `<id>/` subagent directory, Codex's `sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`, whose date tree is
   what `codex exec resume` walks and therefore survives the copy intact; an engine that declares
-  none (OpenCode) is skipped rather than guessed at. HOW state crosses the boundary is a per-backend
+  none is skipped rather than guessed at. HOW state crosses the boundary is a per-backend
   fact (`copyIn`/`copyOut`, optional contract methods): the daemon cannot touch a HOME volume, so
   the container half stages through the bind-mounted artifact dir and runs ONE `sh -c` inside — and
   a file that container stages outside the requested state dirs is refused, never written. The

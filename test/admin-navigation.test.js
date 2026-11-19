@@ -70,9 +70,9 @@ test("MCP checklists show Claude and Codex together while persisting separate gr
 test("admin capability labels state the effective network boundary", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(app, /approved-domain network/);
-  assert.match(app, /\["claude", "codex"\]/);
   assert.match(app, /unrestricted network/);
-  assert.match(app, /String\(m\.engine \|\| "claude"\)/);
+  // The switch belongs to the channel's container: no harness makes the label say otherwise.
+  assert.doesNotMatch(app, /network unsupported/);
 });
 
 test("channel, DM, and group detail paths round-trip to selection keys", () => {

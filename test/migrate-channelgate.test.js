@@ -392,7 +392,7 @@ test("a stray empty new root is a leftover, not an install: the old root is merg
   // Exactly the accident this guards against: something (a test that forgot to pin its env, an
   // engine probe, a curious admin) created the new root with a synthetic engine home in it and
   // nothing else. Existence alone must not make the migration skip forever.
-  await mkdir(path.join(fx.newRoot, "engine-state", "opencode", "home"), { recursive: true });
+  await mkdir(path.join(fx.newRoot, "engine-state", "probe", "home"), { recursive: true });
 
   const lines = [];
   const summary = await migrateChannelGate(runOptions(fx, { log: (l) => lines.push(l) }));
@@ -402,7 +402,7 @@ test("a stray empty new root is a leftover, not an install: the old root is merg
   // The old install's contents are now under the new root, alongside the leftover.
   assert.ok(await exists(path.join(fx.newRoot, "config", "settings.json")));
   assert.ok(await exists(path.join(fx.newRoot, "logs")));
-  assert.ok(await exists(path.join(fx.newRoot, "engine-state", "opencode", "home")), "the leftover survives");
+  assert.ok(await exists(path.join(fx.newRoot, "engine-state", "probe", "home")), "the leftover survives");
   assert.ok(await exists(path.join(fx.newRoot, "channels", "slack", "ops", "meta.json")));
   assert.deepEqual(summary.collisions, []);
   // The old root keeps only its breadcrumb.

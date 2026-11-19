@@ -1,5 +1,64 @@
 # ChannelGate — Test Plan
 
+## Retired harness ids (2026-11-19)
+
+The OpenCode engine was removed. These cases prove that data written by an earlier release, which
+can still name it, resolves to the normal default instead of ending a turn or refusing a save.
+
+- [x] `test/retired-engine.test.js` (always runs; every fixture row is written with raw SQL,
+      because the store no longer accepts these values): no id in `src/engines/retired.js` is a
+      registered harness. A stored channel default `opencode` with its model and effort reads back
+      without all three, resolves to the gateway default, survives a settings patch and is gone
+      from the row afterwards; a stale whole-record save cannot write it back. A channel template
+      naming it does not refuse the first save of a new channel, and a DM template naming it is
+      not projected onto a template-managed DM. A thread pin naming it reads as no pin. An
+      approved-harness list `["opencode", "codex"]` approves Codex and nothing else, is saved as
+      `["codex"]` without the Enterprise entitlement, and `["codex", "removed"]` (an id no release
+      shipped) still fails closed; a list of only `["opencode"]` approves no harness, is kept as
+      stored and no longer makes a settings save throw. A session row stamped `opencode` yields no
+      session id, engine or runtime to `/resume` and the status surfaces, still counts as an
+      engaged thread, and `decideThreadEngine` switches it to the requested harness with or
+      without an explicit pin. Gateway settings `engine: "opencode"` resolve to Claude,
+      `engineEnabled` has no key for it, and `defaultOpenCodeModel`, `defaultOpenCodeEffort` and
+      `allowedOpenCodeMcps` are stripped from settings, channel and user records.
+- [x] The registry, adapter-contract, failover, enable-map, picker, fork, session-carry,
+      network-policy and mode-label suites list the shipped harnesses only
+      (`test/engine-registry.test.js`, `test/engine-adapter-contract.test.js`,
+      `test/engine-failover.test.js`, `test/engine-enable-api.test.js`,
+      `test/channel-engine-picker-browser.test.js`, `test/slack-fork.test.js`,
+      `test/session-carry.test.js`, `test/network-policy.test.js`, `test/modes.test.js`). The
+      generic refusal of a network mode an engine does not declare is still asserted, against a
+      synthetic engine declaring only `off`.
+- [ ] Live `RETIRED-01` — run once with the gateway default set to Claude and once set to Codex.
+      Fixture: a disposable Worker channel `C` with no per-channel harness and one answered thread
+      `T`. Setup, on the gateway host:
+      `sqlite3 ~/.channelgate/gateway.db "UPDATE channel_meta SET data = json_set(data, '$.engine', 'opencode', '$.model', 'opencode/big-pickle') WHERE slug = '<slug of C>'"`.
+      Action: post a new top-level message "@bot reply with the single word ready". Expect an
+      ordinary answer whose footer names the gateway default harness and model, and no
+      `run_error` event. Then open the channel's Settings, change nothing in Runtime, toggle Auto
+      and save. Expect the save to succeed, the Runtime harness picker to show the default, and
+      `SELECT json_extract(data, '$.engine'), json_extract(data, '$.model') FROM channel_meta WHERE slug = '<slug of C>'`
+      to return two NULLs. Pass: no error text mentions an unknown or unapproved harness.
+- [ ] Live `RETIRED-02` — same fixture, once per gateway default (Claude, Codex). Setup: in thread
+      `T`, whose first message was "remember the word heron",
+      `sqlite3 ~/.channelgate/gateway.db "UPDATE sessions SET engine = 'opencode' WHERE slug = '<slug of C>' AND thread_key = '<ts of T>'"`.
+      Action: type `/resume` in `T`, then reply "which word did I ask you to remember?". Expect
+      `/resume` to offer no resume command for the old id; the reply to say "heron" (the thread
+      transcript was replayed into a fresh session) on the gateway default harness; one daemon log
+      line "harness switched opencode→<default> — starting a fresh <default> session"; and
+      `SELECT engine FROM sessions WHERE slug = '<slug of C>' AND thread_key = '<ts of T>'` to
+      return the default harness. A second reply resumes that session without another switch line.
+- [ ] Live `RETIRED-03` (engine-independent: policy evaluation and a settings save, no engine
+      process is reached in the refused half). Enterprise license active. Setup:
+      `sqlite3 ~/.channelgate/gateway.db "UPDATE channel_meta SET data = json_set(data, '$.approvedEngines', json_array('opencode', 'codex')) WHERE slug = '<slug of C>'"`.
+      With Claude as the gateway default, expect a message in `C` to be refused with "Claude is
+      not an approved harness for this channel"; pin the thread to Codex with `/model` → just this
+      thread and expect an answer. Save any unrelated channel setting and expect
+      `json_extract(data, '$.approvedEngines')` to read `["codex"]`. Repeat with
+      `json_array('opencode')`: every harness is refused, an unrelated settings save succeeds and
+      leaves the list unchanged, and an administrator picking Claude under Approved harnesses
+      restores answers.
+
 ## Container process limit (2026-11-19)
 
 - [x] `test/container-process-limit.test.js` (always runs): the host-side reader returns the
@@ -513,7 +572,7 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   starts a fresh session on the destination's own login/state, replays bounded Slack history
   and never resumes or forks the other login's source ID. Repeat a busy Codex EU source fork;
   queue acknowledgement, completion ordering, Stop and restart guards still apply.
-- Qwen, Qwen EU and OpenCode sources must report that their engine does not support session
+- Qwen and Qwen EU sources must report that their engine does not support session
   forks, without posting a child or starting an engine. A source without a live session still
   requests a completed turn. Sudo/host sources, runtime-scope mismatches and revoked authors
   retain their existing rejection rules.
@@ -7538,7 +7597,7 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   `ai-testing-picker-browser.test.js`, with `CG_BROWSER_MODULE` pointing to the installed
   Playwright module: 2 passed, no skips. These prove their browser/API fixtures, not live Slack
   approval-link delivery or production UI acceptance.
-- [x] Reconciled older restart, watchdog and OpenCode confinement expectations with the current
+- [x] Reconciled older restart, watchdog and engine confinement expectations with the current
   execution/delivery and container contracts. RR-15 artifact evidence is separate from remaining
   release notice/legal reviews; live conversation gates remain explicitly unexecuted until proven.
 
@@ -8543,22 +8602,6 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       both show the same Codex models as Slack, model changes narrow the effort selector, and a
       saved valid full/custom same-engine model ID survives a load/save round trip.
 
-## OpenCode proof adapter (Phase D)
-
-- [x] Registry/UI manifest exposes OpenCode through the existing adapter-driven selectors and
-      health matrix; no OpenCode branch is added to the run orchestrator, routes, or model wizard.
-- [x] Admission compiler accepts only read-only + network-off and rejects write, approved-domain
-      network, admin bypass, selected MCPs, and unknown capabilities before spawn.
-- [x] Spawn contract uses `--pure`, raw JSON output, the dedicated default-deny agent, an inline
-      deny policy for shell/edit/web/subagent/LSP/execute/external-directory, and no MCP transport.
-- [x] Portable stub E2E covers new session, emitted session identity, resume, streamed text,
-      tokens, reported cost, health/version-compatible CLI shape, and AbortSignal process-group
-      cancellation (the macOS leg retired 2026-09-03 — Linux only).
-- [ ] Live/manual: on Linux (the macOS leg retired 2026-09-03 — Linux only) with a low-privilege
-      provider account, confirm a normal
-      workspace read succeeds while shell, edit, external-directory, web access, and MCP attempts
-      are denied. Broader modes remain blocked until an independently reviewed OS sandbox exists.
-
 ## How to run
 
 1. `node --version` (≥ 24.0.0), `claude --version` (must be authenticated).
@@ -8763,7 +8806,7 @@ structural invariants are automated; rendered navigation and feature claims also
       survive into `bg_finish.exitCode`; a deliberately missing durable marker remains null with
       unknown outcome. Notice/continuation prose stays semantic, each delivery occurs once and
       completed rows and leases are released.
-- [x] Claude, Codex, and OpenCode generic failures/cancellation; Claude structured provider errors;
+- [x] Claude and Codex generic failures/cancellation; Claude structured provider errors;
       CLI health; Codex MCP discovery; Drive sync fallback; local voice subprocesses; and
       transactional update commands have focused regressions proving semantic messages while raw
       status stays structured and redacted diagnostic text explains the concrete cause. Whisper
@@ -8949,7 +8992,7 @@ structural invariants are automated; rendered navigation and feature claims also
       a `channels_access_reset` event.
 - [x] Unit/integration: organization, channel, and authenticated-user skill/connector grants union
       live; a more-specific duplicate connector replaces its broader definition; Claude/Codex MCP
-      selections stay independent; OpenCode MCP stays empty; invalid/traversing skill names are
+      selections stay independent; invalid/traversing skill names are
       rejected; caller-supplied API principals receive no user grants; and concurrent users get
       isolated per-run settings/skill views. Stable warm-session fingerprints ignore only the
       capability nonce while retaining author/origin/trust/renewal scope, and Claude→Codex fallback
@@ -9980,7 +10023,7 @@ placeholders and `--network none`).
       ran neither ends it early nor makes it replayable; a process printing 401 retries forever
       still exhausts its silence budget and its wedge is classified as `authentication`
       (`test/codex-auth.test.js`).
-- [x] Unit: every runner (cold Claude, warm Claude, Codex, OpenCode) records stderr as LIVENESS
+- [x] Unit: every runner (cold Claude, warm Claude, Codex) records stderr as LIVENESS
       and never as progress; a liveness signal is remembered but does not reset the silence budget,
       so a chatty wedged process still hits it and the give-up report says the engine was still
       talking (`test/watchdog.test.js`).
@@ -10173,8 +10216,8 @@ placeholders and `--network none`).
       refused ("A session can only be resumed in the channel that owns its folder"), naming the
       owning channel. Keep the id but swap the `cd` for this channel's folder → still refused (the
       transcript's recorded cwd decides, not the pasted path). A bare id and a backticked/smart-
-      quoted paste work identically; an unknown id, a non-id argument, and an OpenCode session are
-      each refused with their own message. Adopt an id already bound to another thread → refused;
+      quoted paste work identically; an unknown id and a non-id argument are each refused with
+      their own message. Adopt an id already bound to another thread → refused;
       `/clear` that thread, then adopt → accepted. `/resume <id>` during a live run → "This thread
       is mid-run"; bare `/resume` still prints the terminal command.
 - [ ] **Adoption finds a CONTAINERIZED session (regression, CMD-203):** in a live channel on both
@@ -12510,7 +12553,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [x] Unit: session carry-over — the per-engine facts say where a session lives (Claude keys
       `projects/<key>` off the RUN's cwd so clean mode keys the directory it ran in, and carries the
       `<id>/` subagent directory too; Codex's rollout is a PATTERN because its filename carries a
-      timestamp nobody can recompute; OpenCode declares none and is skipped); an adapter that
+      timestamp nobody can recompute; an engine that declares none is skipped); an adapter that
       half-declares `sessionState` does not load; the state dir comes from the target, never a
       literal (automated: `test/session-carry.test.js`).
 - [x] Unit: the host-side copy expands a wildcard on the SOURCE side and lands the matched tail
@@ -13455,7 +13498,7 @@ companion skill; every change is announced in the reply.
       `~/.claude-gateway` and `~/Slack Agent` (plus one level beneath each) before and after the
       suite and fails the run on any NEW entry, so a test file that forgets `ensureTestEnv()` and
       provisions folders in the operator's real home can no longer pass silently. Proven by removing
-      the pin from `test/opencode-adapter.test.js`: the run fails and names the leaked paths.
+      the pin from one test file: the run fails and names the leaked paths.
 
 ### Licensing — keys, tiers, and usage limits (`src/ee/`)
 

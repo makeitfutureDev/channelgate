@@ -11,9 +11,8 @@ team chat. Every conversation — a Slack DM, group or channel; Microsoft Teams 
 Beta — gets its **own work folder** (`~/ChannelGate/<platform>/<slug>/`), its **own rootless
 Podman containers for project and admin authors**, its own persistent memory and one engine
 session per thread and runtime lane. Each ordinary message runs a **headless engine turn inside
-that container**: Claude Code (`claude -p`, the primary engine),
-OpenAI Codex (`codex exec`), or OpenCode (a proof adapter admitted only read-only and
-network-off). An organization admin can explicitly turn one Slack thread into a direct-host
+that container**: Claude Code (`claude -p`, the primary engine) or
+OpenAI Codex (`codex exec`). An organization admin can explicitly turn one Slack thread into a direct-host
 `/sudo` thread; only admins may then message it. The container is the default confinement boundary;
 the folder's `.claude/settings.json` carries the tool policy. A built-in admin web UI (same process) manages users, channels, engines,
 MCP connections, skills, per-channel secrets, schedules, usage and the license. `src/ee/` is the
@@ -23,7 +22,7 @@ Project records: `FEATURES.md` (shipped behavior), `TEST-PLAN.md` (the cumulativ
 the live acceptance gates) and `CHANGELOG.md` (user-visible changes). There is no `TASKS.md` and no
 mandatory planning phase (rule below). Operator and design references: `README.md`, `INSTALL.md`,
 `docs/OPERATIONS.md`, `docs/PLATFORMS.md`, `docs/SKILLS.md`, `docs/ENGINE-CAPABILITIES.md`,
-`docs/COMPATIBILITY.md`, `docs/OPENCODE-ADAPTER.md`, `docs/LICENSE-KEYS.md`. The bundled skills
+`docs/COMPATIBILITY.md`, `docs/LICENSE-KEYS.md`. The bundled skills
 `channelgate`, `headless-app-creator` and `skill-authoring` (`src/gateway/skills/bundled/`) describe
 this repository's own conventions to agents working on it.
 
@@ -232,18 +231,19 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   a root-cause thread and proposes, never applies), `drivesync.js`, `transcribe.js` (local
   Whisper), `browser-env.js`, `make-toolbox.js`, `safe-fs.js` (no-follow writes under
   agent-writable folders), `shutdown.js`.
-- `src/engines/` — engines. `adapters.js` holds the validated manifests (`claude`, `codex`,
-  `opencode`); `registry.js` derives ids, the fallback graph (claude ↔ codex only) and the
+- `src/engines/` — engines. `adapters.js` holds the validated manifests (`claude`, `codex`
+  and their account variants, `qwen`); `registry.js` derives ids, the fallback graph (claude ↔ codex only) and the
   optional `credentialState()` fingerprint the orchestrator only ever COMPARES; `contract.js`
   enforces the required facts (cli, session identity, MCP transport, settings/meta keys,
   instruction file + skills dir, models/efforts, context window, resume command) and methods
   (`compileConfinement`, `run`, `interrupt`, `discoverMcps`, `health`). Add an engine by adding a
   runner + a manifest, never by adding another `engine === "codex"` branch. Runners: `claude.js`
-  + `session-pool.js`/`persistent-session.js` (warm pool), `codex.js`, `opencode.js` (read-only,
-  network-off, no MCP, outside the failover graph; its CLI is not shipped in the runtime image).
+  + `session-pool.js`/`persistent-session.js` (warm pool), `codex.js`, `qwen.js`. `retired.js` lists the ids of
+  harnesses this build no longer ships (today `opencode`), so a stored channel default, thread pin,
+  approval list or session stamp naming one resolves to the normal default instead of throwing.
   Shared: `stream.js` (NDJSON → deltas/events), `watchdog.js` (the ONE stall watchdog),
-  `child-env.js` (the child env and passthrough list; `buildClaudeEnv`/`buildCodexEnv`/
-  `buildOpenCodeEnv` live in their runners), `network-policy.js` (the switch checked against the
+  `child-env.js` (the child env and passthrough list; `buildClaudeEnv`/`buildCodexEnv`
+  live in their runners), `network-policy.js` (the switch checked against the
   engine's declared `networkModes`, and `networkEnforcedFor(target)` — enforced by the egress proxy,
   advisory only under the legacy bridge mode or a channel's `rawNetwork`), `model-discovery.js`, `engine-health.js`,
   `codex-auth.js` (is Codex signed in — reads the CLI's own `auth.json`), `loop-wakeup.js`,
@@ -420,8 +420,8 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   the channel identity. The per-channel *Allow network* switch (`allowNetwork`) is the proxy's live
   policy — off admits only the engine endpoints and the channel's selected remote MCPs, on admits
   public destinations, and private/loopback/metadata addresses are always refused — and is also
-  checked against the engine's declared `networkModes` (OpenCode refuses "on", Codex read mode
-  refuses network on its own); there is no per-domain allow-list. A proxy-mode container holds no
+  checked against the engine's declared `networkModes` (Codex read mode refuses network on its
+  own); there is no per-domain allow-list. A proxy-mode container holds no
   ruled secret and no Claude login: it holds placeholders the proxy swaps for real values only on
   their declared hosts and only while the channel has live work (`NETWORK_POLICY_ENFORCED = true`,
   asked per target through `networkEnforcedFor`). Two operator/admin escapes make the switch

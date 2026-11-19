@@ -110,18 +110,19 @@ test("isSessionNotFound heals Codex 0.147's missing lexical rollout path", () =>
 });
 
 test("a self-minted session id is stamped with ITS OWN engine, and the thread then sticks to it", async () => {
-  // Regression for the run.js post-success stamp: it used to hardcode "codex", so an OpenCode
-  // thread's minted id was saved as a codex session and turn 2 silently migrated the thread onto
-  // Codex (fresh context + the un-restricted MCP surface). The stamp must carry the run's engine.
+  // Regression for the run.js post-success stamp: it used to hardcode "codex", so another
+  // self-minting harness's thread id was saved as a codex session and turn 2 silently migrated the
+  // thread onto Codex (fresh context + a different MCP surface). The stamp must carry the run's
+  // engine.
   const slug = "session-engine-selfmint";
-  await saveSession(slug, "t-oc", "oc-minted-thread-id", "opencode");
-  const row = await resolveSession(slug, "t-oc", "opencode");
-  assert.equal(row.engine, "opencode");
-  assert.equal(row.sessionId, "oc-minted-thread-id");
-  // Turn 2 in an opencode channel: the sticky decision must keep opencode, not switch engines.
+  await saveSession(slug, "t-eu", "eu-minted-thread-id", "codex-eu");
+  const row = await resolveSession(slug, "t-eu", "codex-eu");
+  assert.equal(row.engine, "codex-eu");
+  assert.equal(row.sessionId, "eu-minted-thread-id");
+  // Turn 2 in a Codex EU channel: the sticky decision must keep Codex EU, not switch engines.
   assert.deepEqual(
-    decideThreadEngine({ requested: "opencode", sessionEngine: row.engine, isNew: false, explicit: false }),
-    { engine: "opencode", switch: false },
+    decideThreadEngine({ requested: "codex-eu", sessionEngine: row.engine, isNew: false, explicit: false }),
+    { engine: "codex-eu", switch: false },
   );
 });
 

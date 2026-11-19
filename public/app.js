@@ -310,7 +310,7 @@ function modeLabelOf(m = {}) {
   const network = m.adminMode
     ? " · unrestricted network"
     : m.allowNetwork
-      ? ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`
+      ? " · approved-domain network"
       : "";
   return base + network;
 }
@@ -361,7 +361,7 @@ function capLabelOf(m = {}) {
   const base = [PROFILE_LABEL[p], m.autoMode ? "Auto" : "", m.cleanMode ? "Lean" : ""].filter(Boolean).join(" · ");
   if (m.adminMode) return base + " · unrestricted network";
   if (!m.allowNetwork) return base;
-  return base + ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`;
+  return base + " · approved-domain network";
 }
 
 // ── View switching + URL history ────────────────────────────────────────────────
@@ -1640,11 +1640,6 @@ function openDetail(key) {
 }
 
 // ── Shared checklist helpers (MCP list, filter box, "N of M enabled" count) ───────
-function effectiveMcpEngine(value) {
-  const engine = effectiveEngine(value);
-  const manifest = ENGINE_MANIFESTS.find((entry) => entry.id === engine);
-  return manifest?.supports?.mcp === false ? "" : engine;
-}
 
 function mcpEntryId(entry) {
   return String(entry?.id || entry?.name || "");
@@ -1819,8 +1814,7 @@ function wireGrantTierNavigation(select, currentTier) {
 }
 
 // Skills/connectors share one editor at each tier. Its MCP state keeps independent Claude/Codex
-// selections while the engine dropdown switches the visible catalog; OpenCode deliberately has
-// no MCP editor because its restricted proof profile rejects that capability.
+// selections while the engine dropdown switches the visible catalog.
 function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "access-grants-editor";
@@ -1842,10 +1836,9 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = ""
     </div>`;
   const engineSelect = el.querySelector(".grant-engine");
   engineSelect.innerHTML = selectableEngines()
-    .filter((m) => m.id !== "opencode")
     .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`)
     .join("");
-  engineSelect.value = effectiveMcpEngine(GLOBAL_ENGINE) || "claude";
+  engineSelect.value = effectiveEngine(GLOBAL_ENGINE) || "claude";
   const mcpsBox = el.querySelector(".grant-mcps");
   const mcpsCount = el.querySelector(".grant-mcps-count");
   initializeMcpBox(mcpsBox, {
@@ -1873,7 +1866,6 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = ""
         .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
       allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
         .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
-      allowedOpenCodeMcps: [],
     }),
   };
 }

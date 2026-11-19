@@ -3,7 +3,7 @@ const area = (id, label, topics) => ({ id, label, topics: topics.split(' ') });
 export const functionalityAreas = [
   area(1, 'Agents working in team chat', 'features/conversations features/invocation-and-reactions features/slack features/microsoft-teams features/google-chat'),
   area(2, 'Isolation and access control', 'features/permissions features/container-isolation features/sudo-threads features/access-templates configuration/access-and-users'),
-  area(3, 'Engines, models, effort, and authentication', 'features/claude-code features/codex features/qwen features/opencode features/models-and-effort features/dedicated-codex-login features/authentication-health'),
+  area(3, 'Engines, models, effort, and authentication', 'features/claude-code features/codex features/qwen features/models-and-effort features/dedicated-codex-login features/authentication-health'),
   area(4, 'Connected applications and MCP', 'features/connected-accounts features/mcp features/make-mcp features/composio-sdk configuration/connections configuration/mcp-servers'),
   area(5, 'Subagents and durable background work', 'features/subagents features/background-jobs features/progress-and-streaming features/failure-diagnosis'),
   area(6, 'Sessions and conversation continuity', 'features/threads-and-sessions features/session-recovery features/conversation-forks features/context-and-compaction features/lean-context'),
@@ -25,7 +25,7 @@ export const functionalityAreas = [
   area(22, 'Operator and contributor commands', 'features/operator-commands features/contributing-and-extension compatibility'),
   area(23, 'Licensing and extensibility', 'features/licensing features/offline-licensing features/contributing-and-extension licensing'),
   area(24, 'Business workflows supplied by skills', 'features/business-workflows features/skill-discovery features/connected-accounts'),
-  area(25, 'Separate, optional, and experimental surfaces', 'features/website-and-customer-portal features/opencode features/qwen features/composio-sdk features/microsoft-teams features/google-chat'),
+  area(25, 'Separate, optional, and experimental surfaces', 'features/website-and-customer-portal features/qwen features/composio-sdk features/microsoft-teams features/google-chat'),
   area(26, 'Agent execution and human interaction controls', 'controls/agent-interaction'),
   area(27, 'Knowledge and behavior controls', 'controls/knowledge-and-instructions'),
   area(28, 'Engine connector controls', 'controls/mcp-connections'),

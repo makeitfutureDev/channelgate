@@ -87,7 +87,7 @@ test("a plain-text turn.failed capacity error is a transient provider failure", 
 test("either harness is the other's failover target", () => {
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"]);
-  assert.deepEqual(fallbackTargets("opencode"), [], "the read-only engine is not a failover source");
+  assert.deepEqual(fallbackTargets("qwen"), [], "a provider harness is not a failover source");
 });
 
 test("replay safety is judged against the engine that actually ran the turn", () => {
@@ -129,22 +129,22 @@ test("engines are enabled by default and the map round-trips through settings", 
   assert.equal(isEngineEnabled("qwen"), false, "an opt-in harness is not enabled by a missing key");
   assert.equal(isEngineEnabled("qwen-eu"), false, "and so is every other provider harness in the table");
 
-  saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
+  saveSettings({ engineEnabled: { claude: true, codex: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-channel": false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-channel": false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 
 test("a stored map that disables every harness fails open instead of bricking the gateway", () => {
-  saveSettings({ engineEnabled: { claude: false, codex: false, opencode: false } });
-  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "codex-channel", "opencode"]);
+  saveSettings({ engineEnabled: { claude: false, codex: false } });
+  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "codex-channel"]);
 });
 
 test("the gateway default engine resolves past a disabled harness", () => {
-  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: false, opencode: false } });
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: false } });
   assert.equal(getEngine(), "claude", "a disabled harness must not stay the default just because it is the stored value");
-  saveSettings({ engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engineEnabled: { claude: true, codex: true } });
   assert.equal(getEngine(), "codex");
 });
 
@@ -170,7 +170,7 @@ test("an engine id that is a prefix of another still selects the harness the use
   // win over `qwen-eu`, so "qwen-eu ship it" would run on the other provider's account — and leave
   // "eu" glued to the front of the prompt.
   const anchored = (text, ids) => new RegExp(`^(${engineIdAlternation(ids)})\\b[\\s:,.;\u2013\u2014-]*([\\s\\S]*)$`, "i").exec(text);
-  const ids = ["claude", "codex", "qwen", "qwen-eu", "opencode"];
+  const ids = ["claude", "codex", "qwen", "qwen-eu", "codex-eu"];
   const eu = anchored("qwen-eu ship it", ids);
   assert.equal(eu[1], "qwen-eu");
   assert.equal(eu[2], "ship it", "the id is consumed whole — no fragment is left in the prompt");

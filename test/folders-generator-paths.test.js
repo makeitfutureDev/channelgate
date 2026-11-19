@@ -268,9 +268,6 @@ test("the managed block states this conversation's mode and network switch, in b
   assert.match(on, /Network: \*\*on\*\*/);
   assert.doesNotMatch(on, /NOT meant to use the internet/);
 
-  // An engine that cannot run with the network on is told that, not promised the switch.
-  assert.match(channelSwitchesNote({ allowNetwork: true, engine: "opencode" }), /cannot run with the network on/);
-
   // And it actually rides the block every channel folder receives — clean mode included, since a
   // lean channel still has to know what it may do.
   for (const meta of [{ allowBash: true }, { allowBash: true, cleanMode: true }]) {

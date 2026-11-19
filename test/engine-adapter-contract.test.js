@@ -38,11 +38,11 @@ test("adapter registration and RunContext validation fail closed", () => {
 
 test("built-in registry publishes safe UI manifests and a generic fallback graph", () => {
   const manifests = engineUiManifest();
-  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "codex-channel", "codex-eu", "claude-bedrock", "qwen", "qwen-eu", "opencode"]);
+  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "codex-channel", "codex-eu", "claude-bedrock", "qwen", "qwen-eu"]);
   assert.ok(manifests.every((m) => !Object.values(m).some((v) => typeof v === "function")));
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"], "failover is bidirectional — either harness covers the other");
-  assert.deepEqual(fallbackTargets("opencode"), []);
+  assert.deepEqual(fallbackTargets("qwen"), []);
   // An opt-in, third-party-provider harness is a terminal node in BOTH directions: failing a Qwen
   // turn over would spend the operator's Anthropic quota, and failing Claude over to Qwen would
   // spend a QwenCloud balance nobody pointed at that thread.
@@ -57,7 +57,7 @@ test("native fork capability follows compatible runner variants and excludes uns
   for (const engine of ["claude", "codex", "codex-eu", "codex-channel", "claude-bedrock"]) {
     assert.equal(engineSupports(engine, "nativeFork"), true, engine);
   }
-  for (const engine of ["qwen", "qwen-eu", "opencode", "unknown-engine"]) {
+  for (const engine of ["qwen", "qwen-eu", "unknown-engine"]) {
     assert.equal(engineSupports(engine, "nativeFork"), false, engine);
   }
 });

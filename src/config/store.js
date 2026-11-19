@@ -23,6 +23,7 @@ import { isApiPrincipal } from "./api-principal.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
 import { stripDeadFields } from "./dead-fields.js";
+import { isRetiredEngineId } from "../engines/retired.js";
 import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
 import { createWorkspaceProjectionReader, workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
@@ -32,11 +33,24 @@ const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 // at the channel boundary; unlike stripDeadFields(), this is also safe on internal reads because it
 // is not a secret-retirement policy (some tests intentionally prove old secrets survive until a
 // write while listing maskers still hide them).
+//
+// A channel default naming a RETIRED harness (engines/retired.js) is dropped the same way, on reads
+// and writes alike: the conversation follows the gateway default again, and its model and effort —
+// that harness's own values, meaningless to any other — go with it. Without this the stored id
+// reaches the policy check below as an unknown engine and refuses the save, and a new-channel
+// template that still names it refuses every registration.
 function stripRetiredChannelFields(meta) {
-  const record = meta;
-  if (!record || !Object.hasOwn(record, "nudges")) return record;
-  const { nudges: _retired, ...rest } = record;
-  return rest;
+  let record = meta;
+  if (!record) return record;
+  if (Object.hasOwn(record, "nudges")) {
+    const { nudges: _retired, ...rest } = record;
+    record = rest;
+  }
+  if (isRetiredEngineId(record.engine)) {
+    const { engine: _engine, model: _model, effort: _effort, ...rest } = record;
+    record = rest;
+  }
+  return record;
 }
 
 // ── Bootstrap ───────────────────────────────────────────────────────────────
@@ -80,7 +94,7 @@ export async function setUser(userId, patch) {
     const next = {
       name: "", composioToken: "", isAdmin: false,
       approved: false, replyMentions: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
-      allowedOpenCodeMcps: [], ...existing,
+      ...existing,
     };
     for (const [key, value] of Object.entries(values || {})) {
       if (value !== undefined) next[key] = value;

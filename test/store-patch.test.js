@@ -265,7 +265,6 @@ test("setUser transaction merges field-scoped patches without clearing omitted v
     skills: [],
     allowedMcps: [],
     allowedCodexMcps: [],
-    allowedOpenCodeMcps: [],
   });
 });
 

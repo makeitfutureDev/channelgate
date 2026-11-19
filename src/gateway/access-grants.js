@@ -8,7 +8,6 @@ export const ACCESS_GRANT_FIELDS = [
   "allowedMcps",
   "allowedCodexMcps",
   "allowedChannelCodexMcps",
-  "allowedOpenCodeMcps",
 ];
 
 // Skill grants become directory names under an engine's project-local skills folder. Keep them

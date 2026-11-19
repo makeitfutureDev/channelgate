@@ -25,7 +25,7 @@ A grant selects the server; it does not authorize every possible write. The requ
 
 Claude supports selected HTTP and stdio connections through protected per-run configuration. Codex uses explicit per-run definitions and protected credential handling for managed integrations. An optional server without a complete compatible launch definition is refused with a reason.
 
-Qwen harnesses share Claude's Cloud MCP selections because they use the same CLI transport. The OpenCode proof adapter has no MCP support. Plugin servers also require explicit compatible grants and do not inherit arbitrary authentication from plugin source files.
+Qwen harnesses share Claude's Cloud MCP selections because they use the same CLI transport. Plugin servers also require explicit compatible grants and do not inherit arbitrary authentication from plugin source files.
 
 ## Troubleshoot a missing tool
 

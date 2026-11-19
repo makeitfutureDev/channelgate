@@ -15,7 +15,6 @@ An engine login authenticates the model answering a turn. It is independent of S
 | Codex | **Sign in with ChatGPT**, for the gateway or for one conversation | **Settings → Agent defaults → Engine & runtime → Default gateway Codex login**, or the conversation's **Runtime → Codex authentication** |
 | Codex | **Use an OpenAI API key**, billed separately from a ChatGPT plan | The same settings |
 | Qwen and Qwen EU | The provider's own API key and endpoint, opt-in | Provider cards under **Agent defaults** |
-| OpenCode | An operator-provided CLI and provider setup, admitted read-only and network-off only | Operator setup, see [OpenCode](/docs/features/opencode) |
 
 The plan behind a login sets its cost, usage limits and contract terms. ChannelGate does not bundle provider access, and the [European data handling](#choose-a-login-for-work-in-europe) section below explains which login suits which kind of data.
 

@@ -32,9 +32,6 @@ export const cleanAccessGrants = (value) => ({
   skills: sanitizeSkillGrantNames(value?.skills),
   allowedMcps: sanitizeMcps(value?.allowedMcps),
   allowedCodexMcps: sanitizeCodexMcps(value?.allowedCodexMcps),
-  // OpenCode currently rejects all MCP capability at admission. Preserve no selections here so a
-  // hand-written setting cannot silently broaden its restricted proof profile.
-  allowedOpenCodeMcps: [],
 });
 
 // Shape-clean one DM template (User/Admin) before persisting. Its model/effort are validated by the
