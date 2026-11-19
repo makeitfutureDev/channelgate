@@ -882,7 +882,9 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
     if (!secretBundlePath || !entry?.url || !BARE_TOML_KEY.test(name)) continue;
     // Headers and query values are materialized only in the daemon's registration. A host turn
     // also gets a bridge, keeping credentials out of argv, MCP config and helper files.
-    if (!remoteMcpServerProblem({ url: entry.url, headers: {} })) addRelayedRemote(name);
+    // `publicOnly` like the registration (customMcpRemotes): an http:// URL is relayable for a custom
+    // MCP, whose dial admits it only for an admin-approved private host:port.
+    if (!remoteMcpServerProblem({ url: entry.url, headers: {}, publicOnly: true })) addRelayedRemote(name);
   }
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any
