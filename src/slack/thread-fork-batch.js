@@ -8,7 +8,7 @@ import { assertEngineSelectable } from "../engines/selection.js";
 import { isForceStopping } from "../gateway/shutdown.js";
 import { runQueue } from "./message-lifecycle.js";
 import { pendingForkThreads, pendingForkSources } from "./fork-state.js";
-import { createForkThread, forkPermalink } from "./fork-thread.js";
+import { createForkThread, forkLicensePool, forkPermalink } from "./fork-thread.js";
 
 const plain = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
@@ -42,6 +42,8 @@ export async function runThreadForkBatch(record, { slack, process, create = crea
     abortPooled(sourceRunKey);
     const model = await getThreadModel(slug, threadKey), effort = await getThreadEffort(slug, threadKey);
     const clean = Boolean(target.meta.cleanMode || await getThreadClean(slug, threadKey));
+    // Every child keeps the licenses the source may move to (fork-thread.js).
+    const licensePool = await forkLicensePool({ slug, sourceThreadTs: threadKey, engine: target.sourceEngine, meta: target.meta });
     const sourceUrl = await forkPermalink(client, channelId, threadKey);
     const cutoff = Date.now() / 1000;
     const creator = (await getUser(authorId))?.name || authorId;
@@ -56,7 +58,7 @@ export async function runThreadForkBatch(record, { slack, process, create = crea
         const child = await create(client, {
           channelId, slug, sourceThreadTs: threadKey, authorId, botUserId: snapshot.botUserId || "",
           title: plain(fork.title), activityTitle: `↪️ ${creator} Fork: ${fork.title}`.replace(/\s+/g, " ").slice(0, 160),
-          sourceUrl, engine: target.sourceEngine, model, effort, clean,
+          sourceUrl, engine: target.sourceEngine, licensePool, model, effort, clean,
           onCreated: async ts => { row.threadTs = ts; row.status = "created"; persist(); },
         });
         row.url = await forkPermalink(client, channelId, child.forkKey);

@@ -662,7 +662,7 @@ test("the runtime tab's thread scope reports the pins in force and the catalogs 
   const clean = await runtimeScopes(slug, meta, base, thread);
   assert.deepEqual(clean.thread.values, { engine: "", model: "", effort: "" });
   assert.equal(clean.thread.pinned, false);
-  assert.equal(clean.thread.inherited.engine, "Follow channel (Claude)");
+  assert.equal(clean.thread.inherited.engine, "Follow channel (Claude Code)");
   assert.equal(clean.thread.inherited.model, "Follow channel (claude-opus-4-8)");
 
   // An unpinned thread whose live session was minted by the other harness keeps running there —
@@ -681,7 +681,7 @@ test("the runtime tab's thread scope reports the pins in force and the catalogs 
   assert.equal(pinned.thread.pinned, true);
   assert.equal(pinned.thread.sessionEngineLabel, "", "an explicit pin needs no explanation");
   assert.notEqual(pinned.thread.inherited.model, "Follow channel (claude-opus-4-8)");
-  assert.equal(pinned.thread.inherited.engine, "Follow channel (Claude)", "the inherit option still names the CHANNEL's engine");
+  assert.equal(pinned.thread.inherited.engine, "Follow channel (Claude Code)", "the inherit option still names the CHANNEL's engine");
   // The channel scope is untouched by any of it.
   assert.deepEqual(pinned.channel.values, { engine: "claude", model: "claude-opus-4-8", effort: "high" });
 });

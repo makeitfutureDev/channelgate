@@ -1,4 +1,6 @@
-import { engineLabel } from "../engines/registry.js";
+import { engineLabel, harnessOf } from "../engines/registry.js";
+import { LICENSE_POOL_ANY, harnessLabel } from "../engines/license-state.js";
+import { ALSO_USE_LABEL, LICENSE_HELP_TEXT, clipLabel } from "./license-controls.js";
 import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
@@ -118,12 +120,24 @@ export const RUNTIME_SELECT_ACTION_IDS = Object.freeze({
 });
 export const RUNTIME_SCOPES = Object.freeze(Object.keys(RUNTIME_SELECT_ACTION_IDS));
 export const RUNTIME_FIELDS = Object.freeze(["engine", "model", "effort"]);
+// The license step of a scope's row (src/gateway/license-pool.js). The "engine" dropdown names the
+// HARNESS; these two exist only while that harness has more than one license this conversation
+// can use: "License" (Any license, or one of them) and "If it fails, also use" (more of them).
+export const RUNTIME_LICENSE_ACTION_IDS = Object.freeze({
+  channel: Object.freeze({ license: "cg_channel_settings_runtime_license", also: "cg_channel_settings_runtime_also" }),
+  thread: Object.freeze({ license: "cg_channel_settings_thread_license", also: "cg_channel_settings_thread_also" }),
+});
+export const RUNTIME_LICENSE_FIELDS = Object.freeze(["license", "also"]);
 
 // Which scope and field a dispatched dropdown writes, or null when the action isn't one of them.
+// `field` is one of RUNTIME_FIELDS, or "license" / "also" for the license step.
 export function runtimeSelectTarget(actionId) {
   for (const scope of RUNTIME_SCOPES) {
     for (const field of RUNTIME_FIELDS) {
       if (RUNTIME_SELECT_ACTION_IDS[scope][field] === actionId) return { scope, field };
+    }
+    for (const field of RUNTIME_LICENSE_FIELDS) {
+      if (RUNTIME_LICENSE_ACTION_IDS[scope][field] === actionId) return { scope, field };
     }
   }
   return null;
@@ -687,31 +701,67 @@ const context = (text) => ({ type: "context", elements: [mrkdwn(text)] });
 const masked = (value = {}) => (value.configured ? (value.last4 ? inlineCode(`••${value.last4}`) : "`••••`") : "");
 
 // ── Agent ────────────────────────────────────────────────────────────────────────────────────
-// Engine, model and effort as one row of dropdowns per scope (an actions block), the thread's
+// Harness, model and effort as one row of dropdowns per scope (an actions block), the thread's
 // first when Settings was opened from one; then the mode and its options in the same style.
+// `data.values.engine` is the stored LICENSE id; the first dropdown shows its harness and offers
+// harnesses (`data.options.engines`). `data.license` — present only when that harness has more
+// than one license usable here — adds the License dropdown to the row and, for a specific license,
+// the "also use" multi-select under it. `data.selection` is the stored selection in words.
+const RUNTIME_PLACEHOLDERS = Object.freeze({ engine: "harness", model: "model", effort: "effort" });
 function runtimeRow(scope, data = {}, state, { editable = true, reset = false } = {}) {
   const ids = RUNTIME_SELECT_ACTION_IDS[scope];
   const values = data.values || {};
   const inherited = data.inherited || {};
   const lists = { engine: data.options?.engines || [], model: data.options?.models || [], effort: data.options?.efforts || [] };
   const fields = RUNTIME_FIELDS;
+  // The harness the stored license belongs to. An id no adapter answers to any more stays as it is,
+  // so the row still shows what is stored instead of silently reading as the default.
+  const shown = { ...values, engine: values.engine ? harnessOf(values.engine) || values.engine : "" };
   if (!editable) {
-    return [context(fields.map((field) => values[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
+    const text = { ...shown, engine: values.engine ? data.selection || harnessLabel(shown.engine) || values.engine : "" };
+    return [context(fields.map((field) => text[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
   }
-  const elements = fields.map((field) => {
+  const select = (field) => {
     const options = [{ label: inherited[field] ? `${inherited[field]} (default)` : "Default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]];
-    const known = options.some((entry) => entry.value === values[field]);
-    const list = (known || !values[field] ? options : [...options, { label: String(values[field]), value: values[field] }]).slice(0, 100).map((entry) => option(entry.label, entry.value));
+    const known = options.some((entry) => entry.value === shown[field]);
+    const unknown = { label: field === "engine" ? harnessLabel(shown[field]) || String(shown[field]) : String(shown[field]), value: shown[field] };
+    const list = (known || !shown[field] ? options : [...options, unknown]).slice(0, 100).map((entry) => option(entry.label, entry.value));
     return {
       type: "static_select",
       action_id: ids[field],
-      placeholder: plain(field),
+      placeholder: plain(RUNTIME_PLACEHOLDERS[field]),
       options: list,
-      initial_option: selected(list, values[field] || SETTINGS_DEFAULT_VALUE),
+      initial_option: selected(list, shown[field] || SETTINGS_DEFAULT_VALUE),
     };
-  });
+  };
+  const license = values.engine && data.license?.options?.length ? data.license : null;
+  const licenseIds = RUNTIME_LICENSE_ACTION_IDS[scope];
+  const licenseSelect = () => {
+    const list = license.options.slice(0, 100).map((entry) => option(entry.label, entry.value));
+    return { type: "static_select", action_id: licenseIds.license, placeholder: plain("license"), options: list, initial_option: selected(list, license.selected) };
+  };
+  const elements = [select("engine"), ...(license ? [licenseSelect()] : []), select("model"), select("effort")];
   if (reset) elements.push(button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Use channel default", state, "thread_reset"));
-  return [{ type: "actions", block_id: `cg_runtime_${scope}`, elements }];
+  const rows = [{ type: "actions", block_id: `cg_runtime_${scope}`, elements }];
+  if (!license) return rows;
+  // More licenses to move to — only beside a specific license ("Any license" already means all of
+  // them). A multi-select is not a valid `actions` element, so it rides as a section accessory.
+  const others = (license.others || []).slice(0, 100).map((entry) => option(entry.label, entry.value));
+  if (license.selected !== LICENSE_POOL_ANY && others.length) {
+    const initial = others.filter((entry) => (license.also || []).includes(entry.value));
+    // The block id names the license the list sits beside: after the first license changes this
+    // is a new block for Slack, so it shows the stored list rather than what was ticked before.
+    rows.push({
+      type: "section", block_id: `cg_runtime_${scope}_also_${license.selected}`.slice(0, 255), text: mrkdwn(`*${ALSO_USE_LABEL}*`),
+      accessory: {
+        type: "multi_static_select", action_id: licenseIds.also, placeholder: plain("No other license"), options: others,
+        // Slack refuses the whole view when `initial_options` is an empty list.
+        ...(initial.length ? { initial_options: initial } : {}),
+      },
+    });
+  }
+  rows.push(context(LICENSE_HELP_TEXT));
+  return rows;
 }
 
 const MODE_LABELS = Object.freeze({ read: "Read-only", worker: "Worker", admin: "Admin" });
@@ -767,8 +817,12 @@ function harnessRows(runtime, opts) {
   const summary = policy == null ? "All harnesses" : labels.join(", ") || "No available harnesses";
   const heading = context(`*Approved harnesses · Enterprise* · ${escapeMrkdwn(summary)}`);
   if (!opts.canApproveHarnesses) return [heading];
-  const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...(runtime.harnessOptions || []).map((o) => option(o.label, o.value))];
   const selectedValues = policy == null ? [SETTINGS_DEFAULT_VALUE] : policy;
+  // Slack caps a select at 100 options. Licenses are added by admins without a ceiling this view
+  // controls, so the approved entries are kept first when the list has to be cut.
+  const offered = runtime.harnessOptions || [];
+  const kept = offered.length > 99 ? [...offered.filter((o) => selectedValues.includes(o.value)), ...offered.filter((o) => !selectedValues.includes(o.value))].slice(0, 99) : offered;
+  const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...kept.map((o) => option(o.label, o.value))];
   // Slack refuses the whole view (`invalid_arguments`) when `initial_options` is an empty list, so
   // a policy that is empty or names only engines this build no longer offers starts unselected.
   const initial = options.filter((o) => selectedValues.includes(o.value));
@@ -797,7 +851,7 @@ function agentPage(snapshot, state, opts) {
     ...(thread ? [
       context(`*This thread*${thread.pinned ? " · 📌 pinned" : ""}`),
       ...runtimeRow("thread", thread, state, { editable, reset: editable && thread.pinned }),
-      ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin an engine._`)] : []),
+      ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin a harness._`)] : []),
     ] : []),
     context("*Channel default*"),
     ...runtimeRow("channel", scopes.channel, state, { editable }),
@@ -1205,7 +1259,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
 
 function option(label, value, description = "") {
   return {
-    text: plain(String(label).slice(0, 75)),
+    text: plain(clipLabel(label)),
     value: String(value).slice(0, 150),
     ...(description ? { description: plain(String(description).slice(0, 75)) } : {}),
   };
