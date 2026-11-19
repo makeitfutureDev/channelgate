@@ -11,8 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
-import { resolveWithinRoots } from "../web/security.js";
-import { forbiddenWorkDirReason } from "./workdir-boundary.js";
+import { allowedFsRoots, resolveWithinRoots } from "../web/security.js";
+import { forbiddenWorkDirReason, workDirBoundary } from "./workdir-boundary.js";
 import { extraFolderDirectories } from "./extra-folders.js";
 import { assertChannelMembership } from "./channel-membership.js";
 
@@ -23,6 +23,31 @@ import { assertChannelMembership } from "./channel-membership.js";
 // per-channel metadata folder and is passed to Claude via --settings, so a custom (real-project)
 // folder is never clobbered, and config/secrets stay out of the visible workspace.
 export function effectiveWorkDir(slug, meta = {}) {
+  return resolveWorkDir(slug, meta, null);
+}
+
+// effectiveWorkDir for MANY conversations of ONE store snapshot (a channel listing, a metadata
+// write and the projection of every row it compares against). A custom folder costs a settings
+// read plus some twenty realpaths to decide, and each projection asks about every conversation:
+// 177 conversations with 60 custom folders spent 3,300 realpaths and 700 settings reads on ONE
+// metadata patch, and the Slack membership sweep patches every channel on every reconnect — long
+// enough on the event loop to miss Slack's ping, reconnect and start over. The resolver reads the
+// allowlisted roots and the daemon-owned trees once and decides each distinct question once.
+// The memo key is every field resolveWorkDir reads, so replacement metadata (a save's `next`) is
+// decided on its own. Never keep one beyond the snapshot it was made for: settings and
+// directories change, and the next listing or write must observe that.
+export function createWorkDirResolver() {
+  const decided = new Map();
+  const observed = {};
+  return (slug, meta = {}) => {
+    const key = JSON.stringify([slug, Boolean(meta.cleanMode), meta.workDir || "", meta.platform || "",
+      meta.workspaceOwnerSlug || "", meta.codeChannel?.originSlug || "", meta.workspaceLink?.platform || "", meta.workspaceOrigin || null]);
+    if (!decided.has(key)) decided.set(key, resolveWorkDir(slug, meta, observed));
+    return decided.get(key);
+  };
+}
+
+function resolveWorkDir(slug, meta, observed) {
   // Clean mode runs in the bare gateway folder — a custom (real-project) work dir is ignored so its
   // own AGENTS.md/CLAUDE.md (project context, often large) isn't loaded. This is what makes "load
   // clean" reach the model's base prompt; the small gateway-generated instructions still apply.
@@ -53,12 +78,12 @@ export function effectiveWorkDir(slug, meta = {}) {
     // workDir stored BEFORE the allowlist existed (or before an admin tightened the root) would
     // otherwise be honored as run cwd + mounted work folder forever. Re-check here — one chokepoint
     // covers runs, background jobs, lockdown generation, and the memory routes.
-    const real = resolveWithinRoots(w);
+    const real = resolveWithinRoots(w, observed ? (observed.fsRoots ||= allowedFsRoots()) : allowedFsRoots());
     if (real) {
       // The daemon-owned trees (home, gateway root, ~/.ssh, …) are refused even inside the root
       // (src/gateway/workdir-boundary.js). Only the static roots are checked on this hot path; the
       // runtime resolver re-checks against other channels' folders and fails the run closed.
-      const forbidden = forbiddenWorkDirReason(real, { slug, channels: [] });
+      const forbidden = forbiddenWorkDirReason(real, { slug, channels: [], boundary: observed ? (observed.boundary ||= workDirBoundary()) : undefined });
       if (forbidden) {
         warnWorkDirOnce(slug, w, `[workdir] stored workDir ${w} is ${forbidden} — using the default folder for ${slug}`);
       } else {

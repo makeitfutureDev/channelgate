@@ -7020,6 +7020,18 @@ are retired, bullet by bullet; everything else stands.
   audits canonicalize custom paths once per audit call rather than for every conversation pair.
   The snapshot lasts only for that call: subsequent reads observe changed owners, authorization,
   DM templates and filesystem paths while preserving the linked owner's shared policy.
+- A channel metadata write (`patchChannelMeta`, `saveChannelMeta`) and a single read
+  (`getChannelMeta`) work the same way: one snapshot of the stored rows and one work-folder
+  resolver (`createWorkDirResolver`, `src/gateway/folders.js`) per call. The resolver reads the
+  allowlisted roots and the daemon-owned trees once and decides each distinct folder question
+  once, keyed by every field the decision reads, so a save's replacement metadata is decided on
+  its own. Nothing is kept between calls. A function-form patch receives its own copy of the
+  projected record, so an in-place edit of a linked setting is refused by the linked-setting
+  check rather than altering the snapshot it is compared against.
+- The Slack membership sweeps (`src/slack/bot-membership.js`: mark every channel pending on
+  reconnect, then confirm each against the complete membership listing) yield to the event loop
+  after every conversation. A store write never waits on I/O, so without the yield a sweep is one
+  block that grows with the channel count and outlasts Slack's five-second ping timeout.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.

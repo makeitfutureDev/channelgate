@@ -16,7 +16,7 @@ ensureTestEnv();
 process.env.CG_FS_ROOT = os.homedir();
 
 const [
-  { effectiveWorkDir, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
+  { effectiveWorkDir, createWorkDirResolver, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
   { workspaceFolder, cleanWorkspaceFolder },
   { allowedFsRoot },
 ] = await Promise.all([
@@ -30,6 +30,87 @@ const [
 const fixtureParent = path.join(allowedFsRoot(), "ChannelGate Testing");
 mkdirSync(fixtureParent, { recursive: true, mode: 0o700 });
 const fixtureRoot = trackTempDir(mkdtempSync(path.join(fixtureParent, "folders-generator-")));
+
+test("a snapshot work-folder resolver decides exactly what effectiveWorkDir decides", () => {
+  const project = mkdtempSync(path.join(fixtureRoot, "cg-resolver-"));
+  const origin = workspaceFolder("resolver-origin", "slack");
+  mkdirSync(origin, { recursive: true });
+  const outside = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-resolver-escape-")));
+  const cases = [
+    ["resolver-a", {}],
+    ["resolver-a", { platform: "msteams" }],
+    ["resolver-a", { cleanMode: true }],
+    ["resolver-a", { cleanMode: true, workDir: project }],
+    ["resolver-a", { workDir: project }],
+    ["resolver-b", { workDir: project }],
+    ["resolver-a", { workDir: ` ${project} ` }],
+    ["resolver-a", { workDir: path.join(project, "gone") }],
+    ["resolver-a", { workDir: outside }],
+    ["resolver-a", { workDir: os.homedir() }],
+    ["resolver-a", { workDir: "relative/path" }],
+    // An origin's default folder is honoured only for the conversation that names that origin.
+    ["resolver-code", { workDir: origin }],
+    ["resolver-code", { workDir: origin, workspaceOwnerSlug: "resolver-origin" }],
+    ["resolver-code", { workDir: origin, codeChannel: { originSlug: "resolver-origin" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-origin", platform: "slack" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-origin", platform: "msteams" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-other", platform: "slack" } }],
+    ["resolver-code", { workDir: origin, workspaceOwnerSlug: "resolver-origin", workspaceLink: { platform: "msteams" } }],
+  ];
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const resolve = createWorkDirResolver();
+    // Asked twice and in both orders: an earlier answer must never leak into a different question.
+    for (const [slug, meta] of [...cases, ...cases.toReversed()]) {
+      assert.equal(resolve(slug, meta), effectiveWorkDir(slug, meta), `${slug} ${JSON.stringify(meta)}`);
+    }
+    assert.equal(resolve("resolver-default"), effectiveWorkDir("resolver-default"));
+  } finally {
+    console.warn = original;
+  }
+});
+
+test("a work-folder resolver belongs to one snapshot: the next one observes changed directories and roots", () => {
+  const slug = "resolver-fresh";
+  const project = path.join(mkdtempSync(path.join(fixtureRoot, "cg-resolver-fresh-")), "later");
+  const first = createWorkDirResolver();
+  assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined), "not there yet: the default folder");
+  mkdirSync(project);
+  assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined), "one snapshot keeps one answer");
+  assert.equal(createWorkDirResolver()(slug, { workDir: project }), project, "the next snapshot sees the directory");
+
+  // The daemon-owned trees are observed per snapshot too: a folder that has become the gateway
+  // runtime root is refused by the next resolver, not waved through from an earlier look.
+  const previousGatewayRoot = process.env.CHANNELGATE_DIR;
+  const quiet = console.warn;
+  console.warn = () => {};
+  process.env.CHANNELGATE_DIR = project;
+  try {
+    assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(createWorkDirResolver()(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: project }), workspaceFolder(slug, undefined));
+  } finally {
+    process.env.CHANNELGATE_DIR = previousGatewayRoot;
+    console.warn = quiet;
+  }
+  assert.equal(createWorkDirResolver()(slug, { workDir: project }), project);
+
+  // Narrowing the allowlisted root takes effect for the next snapshot, like effectiveWorkDir.
+  const held = createWorkDirResolver();
+  assert.equal(held(slug, { workDir: project }), project);
+  const previousRoot = process.env.CG_FS_ROOT;
+  const original = console.warn;
+  console.warn = () => {};
+  process.env.CG_FS_ROOT = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-resolver-root-")));
+  try {
+    assert.equal(createWorkDirResolver()(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: project }), workspaceFolder(slug, undefined));
+  } finally {
+    process.env.CG_FS_ROOT = previousRoot;
+    console.warn = original;
+  }
+});
 
 test("effectiveWorkDir: clean mode, a contained custom workDir, and an escaping one", () => {
   const slug = "workdir-probe";
