@@ -27,6 +27,7 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, resetEngineCooldowns, transientProviderFailure, transientRetryAttempts, transientRetryDelayMs, codexCapacityContinuation } = await import("../src/gateway/run.js");
 const { setThreadModel } = await import("../src/gateway/thread-engine.js");
 const { classifyCodexFailure } = await import("../src/engines/codex.js");
+const { modelsForEngine } = await import("../src/engines/registry.js");
 const { claudeProviderError } = await import("../src/engines/stream.js");
 const { PersistentClaudeSession } = await import("../src/engines/persistent-session.js");
 const { readEvents } = await import("../src/util/logger.js");
@@ -131,9 +132,14 @@ test("Codex capacity after a tool resumes its session with another model without
 
   const result = await turn("D_TR_CONTINUE", "U_TR_CONTINUE", "CODEX_STUB_CAPACITY_AFTER_TOOL", "1903.004");
   assert.equal(result.engine, "codex");
-  assert.equal(result.model, "gpt-6-astra");
-  assert.match(result.content, /continuing the same session with gpt-6-astra/);
-  assert.match(result.content, /resume=yes.*model=gpt-6-astra/);
+  // The continuation takes the first OTHER model the Codex catalog offers. Read it from the
+  // catalog: a hard-coded name went stale the day a newer model was listed first.
+  const alternative = modelsForEngine("codex").map((entry) => String(entry.value || ""))
+    .find((value) => value && value !== "codex" && value !== "gpt-6-sol");
+  assert.ok(alternative, "the Codex catalog offers a second model");
+  assert.equal(result.model, alternative);
+  assert.ok(result.content.includes(`continuing the same session with ${alternative}`), result.content);
+  assert.match(result.content, new RegExp(`resume=yes.*model=${alternative.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.equal((await readFile(path.join(result.cwd, ".cg-stub-capacity-work"), "utf8")).trim(), "1");
   assert.equal(retryEvents(entry.slug).length, 0, "the original prompt was never replayed");
   assert.equal(readEvents({ limit: 100 }).filter((event) => event.event === "run_capacity_continuation" && event.slug === entry.slug).length, 1);
