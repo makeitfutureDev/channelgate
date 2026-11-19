@@ -2,6 +2,15 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix turns interrupted by a restart not being resumed in Slack channels. Recovery started the
+  moment Slack connected, while the gateway was still re-checking which channels the bot is in,
+  so the resumed turn was refused with "Slack channel membership has not been verified" and the
+  person was asked to send the message again. A recovered turn now keeps its place in the thread
+  until its channel is verified and then resumes; after two minutes without a verification it is
+  replayed anyway and reports the reason. Containers of Slack channels that kept running across
+  the restart also get their network back once membership is verified. Before, that restore ran
+  before Slack connected and failed for every Slack channel.
+
 - Add *Start on voice clips in agent threads*, a personal setting that is off by default. With it
   on, a voice clip you send as a reply in a Slack thread where the agent answered last starts the
   agent without an @mention or 🤖. It never applies to top-level channel messages, to a clip that

@@ -2717,6 +2717,14 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   not automatically replayed. Restart survivors reserve their thread order before Slack connects,
   receive progress together, and use the normal global run limit. New messages use the existing
   queue/steer controls; reconnecting Slack retries pending recovery without another daemon restart.
+  A survivor in a Slack channel waits, in its reserved place, until the membership pass has
+  verified that channel (`membershipAdmitsRecovery`, `src/gateway/active-runs.js`): the daemon
+  starts the waiting recovery when a verification completes, logs `run_recover_wait` once, and
+  after two minutes without one replays the turn anyway so it fails with the reason in its thread
+  instead of waiting silently. DMs, other platforms and archived channels are never held. The
+  egress listeners of Slack-channel containers that kept running across the restart are restored
+  at the same moment; the boot pass, which runs before Slack connects, counts them as waiting
+  rather than failed.
   → TEST-PLAN: Incomplete turns and restart recovery.
 
 - **Discoverable channel credentials:** each non-Clean conversation or background-agent attempt receives a current,

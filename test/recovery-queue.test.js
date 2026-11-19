@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
-const { createRunRecovery, recordActiveRun, takeStaleRuns, clearActiveRun, listActiveRuns } = await import("../src/gateway/active-runs.js");
+const { createRunRecovery, membershipAdmitsRecovery, recordActiveRun, takeStaleRuns, clearActiveRun, listActiveRuns } = await import("../src/gateway/active-runs.js");
 const { runQueue } = await import("../src/slack/message-lifecycle.js");
 const { createSlackManager } = await import("../src/slack/manager.js");
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const tick = () => new Promise((r) => setImmediate(r));
 const rec = (name, thread = name) => ({ id: `recovery-${name}`, slug: "recovery-tests", channelId: "C_RECOVERY", authorId: "U_RECOVERY", threadKey: thread, text: name });
 const key = (r) => `${r.slug}::${r.threadKey}`;
-function setup(records, runner) {
+function setup(records, runner, extra = {}) {
   let connected = false;
   const listeners = new Set(); const notices = []; const progress = []; const delivered = [];
   const client = { chat: { postMessage: async (p) => { notices.push(p); return { ok: true }; } }, chatStream() {}, apiCall() {} };
@@ -20,6 +20,7 @@ function setup(records, runner) {
     progressFactory: (_mode, _client, _channel, thread) => { progress.push(thread); return { onEvent() {}, stop: async () => {} }; },
     directoryResolver: async () => ({ map: new Map(), maxWords: 1 }),
     deliver: async (_client, p) => delivered.push(p),
+    ...extra,
   });
   return { recovery, notices, progress, delivered,
     async connect() { connected = true; await Promise.all([...listeners].map((fn) => fn())); },
@@ -179,4 +180,116 @@ test("Cancel on recovered waiting work prevents replay while its active predeces
   assert.deepEqual(order, ["recovered-active"]);
   assert.equal(listActiveRuns().some((r) => r.id === queued.id), false);
   s.recovery.unsubscribe();
+});
+
+test("a survivor whose channel is not verified yet waits in its queue place and is replayed once it is", async () => {
+  const gated = rec("membership-gated"); const open = rec("membership-open");
+  const verified = new Set([open.id]); const started = [];
+  const s = setup([gated, open], async ({ text }) => { started.push(text); return answer; },
+    { admit: async (r) => verified.has(r.id), maxHoldMs: 60_000 });
+  await s.connect();
+  // The open conversation is replayed at once; the gated one neither runs nor fails.
+  assert.deepEqual(started, ["membership-open"]);
+  const resumed = () => s.notices.filter((n) => /picking it back up/.test(n.text)).length;
+  assert.equal(resumed(), 1, "only the open conversation announces a resume");
+  assert.equal(s.notices.some((n) => /failed|send it again|resend/i.test(n.text)), false, "nobody is told to send the message again");
+  assert.equal(runQueue.activeHandle(key(gated)).runId, gated.id, "it keeps its reserved place in the thread");
+  const { getDb } = await import("../src/db/index.js");
+  const durable = () => getDb().prepare("SELECT data FROM active_runs WHERE id = ?").get(gated.id);
+  assert.equal(JSON.parse(durable().data).recoveryPending, true, "and its durable row, for another restart");
+  // A message that arrives meanwhile still queues behind it.
+  const order = []; const live = { runId: "membership-later", authorId: gated.authorId };
+  const later = runQueue.acquire(key(gated), live).then(() => { order.push("later"); runQueue.release(key(gated), live); });
+  await s.recovery.start(); await s.recovery.start();
+  assert.deepEqual(started, ["membership-open"], "asking again before verification changes nothing");
+  // Verification completes: the daemon calls start() and the survivor runs exactly once.
+  verified.add(gated.id);
+  await s.recovery.start(); await later;
+  assert.deepEqual(started, ["membership-open", "membership-gated"]);
+  assert.equal(resumed(), 2);
+  assert.equal(s.notices.some((n) => /failed|send it again|resend/i.test(n.text)), false);
+  assert.deepEqual(order, ["later"]);
+  await s.recovery.start();
+  assert.deepEqual(started, ["membership-open", "membership-gated"]);
+  assert.equal(runQueue.count(key(gated)), 0);
+  assert.equal(durable(), undefined);
+  s.recovery.unsubscribe();
+});
+
+test("a survivor is not held forever: after the hold window it is replayed and reports its own outcome", async () => {
+  const r = rec("membership-expired"); const started = [];
+  const s = setup([r], async ({ text }) => { started.push(text); return answer; }, { admit: async () => false, maxHoldMs: 30 });
+  await s.connect();
+  assert.deepEqual(started, []);
+  for (let attempt = 0; attempt < 200 && !started.length; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(started, ["membership-expired"], "the timer replays it without any further event");
+  for (let attempt = 0; attempt < 200 && runQueue.count(key(r)); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(runQueue.count(key(r)), 0);
+  s.recovery.unsubscribe();
+});
+
+test("the default admission follows Slack membership and nothing else", async () => {
+  const { saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
+  const { invalidateSlackMembership, confirmSlackMembership } = await import("../src/gateway/channel-membership.js");
+  await saveChannelMeta("membership-admit", { channelId: "C_ADMIT", type: "channel" });
+  await saveChannelMeta("membership-admit-dm", { channelId: "D_ADMIT", type: "im", isDM: true });
+  const channelRun = { slug: "membership-admit", channelId: "C_ADMIT" };
+  assert.equal(await membershipAdmitsRecovery(channelRun), true, "no verification in progress");
+  assert.equal(await membershipAdmitsRecovery({ slug: "membership-admit-missing", channelId: "C_NONE" }), true, "a missing record is the replay's to report");
+  await patchChannelMeta("membership-admit", { botMembership: "pending" });
+  assert.equal(await membershipAdmitsRecovery(channelRun), false, "marked pending by the reconnect sweep");
+  await patchChannelMeta("membership-admit", { botMembership: "member" });
+  const epoch = invalidateSlackMembership();
+  assert.equal(await membershipAdmitsRecovery(channelRun), false, "this process has not verified it yet");
+  assert.equal(await membershipAdmitsRecovery({ slug: "membership-admit-dm", channelId: "D_ADMIT" }), true, "a DM has no membership to verify");
+  await patchChannelMeta("membership-admit", { archived: true, archivedReason: "bot_removed" });
+  assert.equal(await membershipAdmitsRecovery(channelRun), true, "an archived channel fails with its own reason, it does not wait");
+  await patchChannelMeta("membership-admit", { archived: false, archivedReason: null });
+  confirmSlackMembership("C_ADMIT", epoch);
+  assert.equal(await membershipAdmitsRecovery(channelRun), true);
+});
+
+test("boot order: a Slack-channel survivor is replayed after the real membership pass, never during it", async (t) => {
+  const { upsertChannelEntry, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
+  const { createBotMembershipRecovery } = await import("../src/slack/bot-membership.js");
+  const { assertChannelMembership } = await import("../src/gateway/channel-membership.js");
+  const entry = await upsertChannelEntry("C_RACE", { name: "membership-race", type: "channel", platform: "slack" });
+  await saveChannelMeta(entry.slug, { channelId: "C_RACE", type: "channel" });
+  const survivor = { id: "recovery-race", slug: entry.slug, channelId: "C_RACE", authorId: "U_RECOVERY", threadKey: "race", text: "race" };
+  recordActiveRun(survivor.id, survivor);
+
+  let connected = false;
+  const listing = deferred(); const listeners = new Set(); const notices = []; const ran = [];
+  const client = {
+    chat: { postMessage: async (p) => { notices.push(p); return { ok: true }; } }, chatStream() {}, apiCall() {},
+    users: { conversations: async () => { await listing.promise; return { ok: true, channels: [{ id: "C_RACE" }], response_metadata: { next_cursor: "" } }; } },
+  };
+  const slack = { snapshot: () => ({ connected }), getClient: () => connected ? client : null, onConnected: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+  // The daemon's wiring (src/server.js): the membership pass and the run recovery both listen for
+  // the connection, and a completed verification starts whatever recovery was waiting for it.
+  let recovery;
+  const membership = createBotMembershipRecovery({ slack, onVerified: () => { void recovery.start(); }, log: () => {} });
+  t.after(() => membership.stop());
+  await membership.invalidate();
+  recovery = createRunRecovery(takeStaleRuns(), { slack, usageRecorder: async () => {},
+    // What the runtime resolver does first for every turn.
+    runner: async () => { assertChannelMembership(await getChannelMeta(entry.slug)); ran.push("race"); return answer; },
+    progressFactory: () => ({ onEvent() {}, stop: async () => {} }),
+    directoryResolver: async () => ({ map: new Map(), maxWords: 1 }),
+    deliver: async () => {},
+  });
+  slack.onConnected(() => membership.reconcile());
+  connected = true;
+  const connecting = Promise.all([...listeners].map((fn) => fn()));
+  for (let n = 0; n < 20; n++) await tick();
+  assert.deepEqual(ran, [], "membership is still being read from Slack");
+  assert.equal(notices.some((n) => /failed|membership has not been verified/i.test(n.text)), false, JSON.stringify(notices));
+  assert.equal(runQueue.activeHandle(key(survivor)).runId, survivor.id);
+  listing.resolve();
+  await connecting;
+  for (let attempt = 0; attempt < 300 && (!ran.length || runQueue.count(key(survivor))); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(ran, ["race"]);
+  assert.equal(notices.some((n) => /failed|membership has not been verified/i.test(n.text)), false, JSON.stringify(notices));
+  assert.equal(runQueue.count(key(survivor)), 0);
+  recovery.unsubscribe();
 });

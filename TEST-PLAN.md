@@ -7187,6 +7187,27 @@ do not establish live model compliance. This changes guidance only, not resolver
 
 ## Incomplete turns and restart recovery
 
+- Restart recovery waits for Slack membership (2026-11-19). Automated (`test/recovery-queue.test.js`):
+  "boot order: a Slack-channel survivor is replayed after the real membership pass…" wires the real
+  membership sweep, the real membership gate and the run recovery the way `src/server.js` does,
+  holds the bot's channel listing open, and uses a runner that asserts membership like the runtime
+  resolver. Pass: no replay and no failure notice while the listing is open; exactly one replay
+  after it returns; never "I tried to resume your last message after a restart, but it failed".
+  Without the fix this test posts that notice. Companion cases: a gated survivor keeps its queue
+  place and durable row while an open one runs, a later message stays behind it, and the hold
+  window replays it by timer; the default admission follows `botMembership: "pending"`, the
+  process-local verification set, DMs, archived and missing records.
+  `test/egress-service.test.js`: an unverified channel's running container is counted
+  `deferred` with no warning line, bound on the next call, and any other refusal still fails.
+- Live gate, Claude and Codex separately (the replayed turn runs the engine): in a Slack channel
+  fixture (not a DM) start a turn that runs at least 60 seconds ("Run `sleep 90` in the shell,
+  then reply DONE-<engine>"). While it runs, restart the service
+  (`systemctl --user restart <unit>`). Pass: the thread shows "picking it back up now", then the
+  final answer `DONE-<engine>`; the journal has `run_recover` for the channel and no
+  `run_recover_error`; the egress line reads `restored 0 … N waiting for Slack membership
+  verification` at boot followed by `restored N running container listener(s)` with no
+  `could not restore the egress listener` lines. Record the commit, the unit and the journal lines.
+
 - [x] Automated: `node --test test/codex-completion.test.js test/claude-completion.test.js
   test/answerless-turn.test.js test/recovery-queue.test.js test/runtime-lifecycle.test.js
   test/duplicate-delivery.test.js test/durable-delivery.test.js test/slack-manager.test.js`.
