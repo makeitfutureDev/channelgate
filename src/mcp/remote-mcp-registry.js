@@ -60,12 +60,12 @@ function ensureSweeper() {
   sweeper.unref?.();
 }
 
-/** Whether the relay would accept this URL at all (https, no embedded credentials, bounded). */
-export function isRelayableUrl(value) {
+/** Whether the relay would accept this URL at all (https — or http with `allowHttp` — no embedded credentials, bounded). */
+export function isRelayableUrl(value, { allowHttp = false } = {}) {
   if (typeof value !== "string" || !value || value.length > MAX_URL_LENGTH) return false;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password;
+    return (url.protocol === "https:" || (allowHttp && url.protocol === "http:")) && !url.username && !url.password;
   } catch {
     return false;
   }
@@ -77,7 +77,10 @@ export function isRelayableUrl(value) {
  * only the bad one, so one malformed header never fails a whole container turn.
  */
 export function remoteMcpServerProblem(server) {
-  if (!server || !isRelayableUrl(server.url)) return "its URL is not https, so the gateway cannot relay it into a container";
+  // A custom MCP (`publicOnly`) may be plain http: the relay's fetch admits that ONLY for an
+  // admin-approved private host:port (src/mcp/public-fetch.js resolveCustomMcpUrl).
+  const relayable = isRelayableUrl(server?.url) || (server?.publicOnly === true && isRelayableUrl(server.url, { allowHttp: true }));
+  if (!server || !relayable) return "its URL is not https, so the gateway cannot relay it into a container";
   const headers = server.headers ?? {};
   if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "its credential headers are malformed";
   const names = Object.keys(headers);

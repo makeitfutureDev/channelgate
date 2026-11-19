@@ -967,7 +967,7 @@ memory (never on disk, never logged) for no longer than the capability's lifetim
 turn, 12 for an SSH session — and normally only while something uses it: a cold turn's grant ends
 with the turn, a warm Claude process's when the process retires, an SSH session's at its end, and a
 person clearing their Composio token drops every grant minted for their runs at once. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
-service (https only; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
+service (https only — plus http to an admin-approved private host:port for a custom MCP; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
 an operator sees: the artifact dir's `cg-mcp-*.json` and Codex's `run/cg-codex-secrets-*.json` hold
 no Composio or Make token (Codex's bundle holds only the capability), and a relay that fails
 shows in the engine's MCP log as one fixed line — `remote MCP is not authorized for this run` (the

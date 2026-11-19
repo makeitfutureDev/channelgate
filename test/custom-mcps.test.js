@@ -54,7 +54,9 @@ test("names, URLs and tokens are validated and normalized", () => {
     assert.throws(() => normalizeCustomMcpName(bad), /Name must be/, bad);
   }
   assert.equal(normalizeCustomMcpUrl(" https://mcp.example.com/mcp "), "https://mcp.example.com/mcp");
-  assert.throws(() => normalizeCustomMcpUrl("http://mcp.example.com/mcp"), /https/);
+  assert.throws(() => normalizeCustomMcpUrl("ftp://mcp.example.com/mcp"), /https/);
+  // http:// parses (an admin-approved private host may use it); the address check refuses it otherwise.
+  assert.equal(normalizeCustomMcpUrl("http://192.168.1.20:10500/mcp"), "http://192.168.1.20:10500/mcp");
   assert.throws(() => normalizeCustomMcpUrl("https://user:pw@mcp.example.com/"), /username or password/);
   assert.throws(() => normalizeCustomMcpUrl("https://mcp.example.com/#x"), /fragment/);
   assert.throws(() => normalizeCustomMcpUrl("not a url"), /valid/);

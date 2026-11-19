@@ -20,9 +20,14 @@
 // to the vetted addresses (src/mcp/public-fetch.js) — the daemon sits outside the egress proxy, so
 // without it a custom URL would be a way into the host's loopback, private network or cloud
 // metadata. A save is refused up front for the same reason (assertPublicCustomMcpUrl).
+//
+// The one exception is the operator's list of approved PRIVATE destinations (Settings →
+// `privateMcpHosts`, src/config/private-mcp-hosts.js): a URL whose exact host:port is on it may be
+// http:// or https:// and must resolve to private LAN addresses only — checked at save and again
+// on every dial, so removing an approval stops the connection at its next request.
 import { customMcpAuthentication, normalizeCustomMcpAuthType } from "./custom-mcp-auth.js";
 export { normalizeCustomMcpAuthType } from "./custom-mcp-auth.js";
-import { resolvePublicHttpUrl } from "../web/security.js";
+import { resolveCustomMcpUrl } from "../mcp/public-fetch.js";
 
 export const CUSTOM_MCP_LIMIT = 5;
 export const CUSTOM_MCP_SCOPES = Object.freeze({ channel: "custom-", user: "my-" });
@@ -54,7 +59,10 @@ export function customMcpServerName(scope, name) {
   return `${prefixFor(scope)}${name}`;
 }
 
-/** The canonical https URL, or a throw. Syntax only — assertPublicCustomMcpUrl checks the address. */
+/**
+ * The canonical URL, or a throw. Syntax only — assertPublicCustomMcpUrl checks the address, and is
+ * where http:// is refused unless the host:port is an admin-approved private destination.
+ */
 export function normalizeCustomMcpUrl(value) {
   const raw = String(value ?? "").trim();
   if (!raw || raw.length > MAX_URL_LENGTH) throw new Error("URL must be an https:// address of at most 2048 characters");
@@ -64,21 +72,22 @@ export function normalizeCustomMcpUrl(value) {
   } catch {
     throw new Error("URL must be a valid https:// address");
   }
-  if (url.protocol !== "https:") throw new Error("URL must use https://");
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("URL must use https://");
   if (url.username || url.password) throw new Error("URL must not contain a username or password — put the token in the token field");
   if (url.hash) throw new Error("URL must not contain a #fragment");
   return url.href;
 }
 
 /**
- * Refuse a URL whose host resolves to a loopback, private, link-local or metadata address. The
- * relay repeats this on every dial (DNS can change); this is the early, explainable refusal.
- * `lookup` is injectable for tests.
+ * Refuse a URL whose host resolves to a loopback, private, link-local or metadata address — unless
+ * its exact host:port is in `privateHosts` (the admin-approved list) and it resolves to private LAN
+ * addresses only. The relay repeats this on every dial (DNS can change); this is the early,
+ * explainable refusal. `lookup` is injectable for tests.
  */
-export async function assertPublicCustomMcpUrl(value, { lookup } = {}) {
+export async function assertPublicCustomMcpUrl(value, { lookup, privateHosts = [] } = {}) {
   const href = normalizeCustomMcpUrl(value);
   try {
-    await resolvePublicHttpUrl(href, lookup ? { lookup } : {});
+    await resolveCustomMcpUrl(href, { privateHosts, ...(lookup ? { lookup } : {}) });
   } catch (error) {
     throw new Error(`URL refused: ${error.message}`);
   }
