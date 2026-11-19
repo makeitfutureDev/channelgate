@@ -14,8 +14,10 @@ import { hashPassword } from "../src/web/password-hash.js";
 function readHidden(prompt) {
   return new Promise((resolve, reject) => {
     const { stdin, stderr } = process;
-    stderr.write(prompt);
+    // Echo off BEFORE the prompt is visible: the prompt is what tells a person (or a paste) to
+    // start typing, and whatever arrives while the terminal is still in cooked mode is echoed.
     stdin.setRawMode(true);
+    stderr.write(prompt);
     stdin.resume();
     stdin.setEncoding("utf8");
     let value = "";

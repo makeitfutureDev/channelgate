@@ -5,7 +5,7 @@
 //   - the GitHub webhook refuses what it can refuse before its body parser runs.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -62,6 +62,33 @@ test("hash-password reads the password from stdin and prints a line both .env lo
   // Never from argv: it would sit in the shell history and the process list.
   assert.doesNotMatch(read("scripts/hash-password.mjs"), /process\.argv/);
   assert.equal(JSON.parse(read("package.json")).scripts["hash-password"], "node scripts/hash-password.mjs");
+});
+
+test("hash-password turns the terminal echo off before either prompt is shown", async () => {
+  // A terminal stand-in: stdin claims to be a TTY and every raw-mode switch is written to stderr,
+  // in line with the prompts, so the ORDER is what the assertion reads. Found live with a real
+  // pty: the prompt used to be written first, and a password typed at once was echoed.
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cg-hash-tty-"));
+  const preload = path.join(dir, "fake-tty.mjs");
+  writeFileSync(preload, 'process.stdin.isTTY = true;\nprocess.stdin.setRawMode = (on) => { process.stderr.write(on ? "<raw:on>" : "<raw:off>"); return process.stdin; };\n');
+  const child = spawn(process.execPath, ["--import", preload, path.join(root, "scripts/hash-password.mjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let answered = 0;
+  child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    stderr += chunk;
+    if (answered === 0 && stderr.includes("New admin password: ")) { answered = 1; child.stdin.write("typed pass\r"); }
+    if (answered === 1 && stderr.includes("Repeat it: ")) { answered = 2; child.stdin.end("typed pass\r"); }
+  });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+  const status = await new Promise((resolve) => child.on("close", resolve));
+  clearTimeout(timer);
+  assert.equal(status, 0, stderr);
+  assert.ok(stderr.startsWith("<raw:on>New admin password: <raw:off>\n<raw:on>Repeat it: <raw:off>\n"), JSON.stringify(stderr.slice(0, 120)));
+  assert.doesNotMatch(stdout + stderr, /typed pass/);
+  const hash = stdout.match(/^ADMIN_PASSWORD='(scrypt\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+)'\n$/)?.[1];
+  assert.equal(await leaf.verifyPassword("typed pass", hash), true);
 });
 
 test("boot warns about a cleartext ADMIN_PASSWORD in the environment, and not about a hashed one", () => {
