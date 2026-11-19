@@ -1,6 +1,6 @@
 ---
 title: Account and secret controls
-description: Controls for personal reply mentions, connected accounts, email, and scoped environment credentials.
+description: Controls for personal reply mentions, voice auto-start, connected accounts, email, and scoped environment credentials.
 ---
 
 Credential tools change saved account or environment state. Prefer the private UI fields so secrets never enter chat history. No tool on this page reveals a stored secret value. Process environment availability and connected-account identity are separate concepts.
@@ -18,6 +18,20 @@ Choose whether completed shared-conversation replies automatically mention the r
 **Result:** Saves the preference for following replies across conversations. New users start off; existing users retain on until they opt out. The saved choice survives restart.
 
 **Restrictions:** Direct messages never add automatic tags. Explicit mentions in answer text remain available. Users can also choose **Mention me in replies** in Slack App Home → **Help & settings**; administrators can use the Users drawer.
+
+## set_my_voice_auto_start
+
+Choose whether the requester’s voice clips start the agent in threads where it answered last.
+
+| Argument | Required | Meaning and default |
+| --- | --- | --- |
+| `enabled` | Yes | Boolean; `true` starts the agent on the requester’s voice-clip replies without a mention, `false` requires a mention or 🤖 reaction again. |
+
+**Authority and scope:** Only the verified requester’s own platform user account. API attribution and agent principals cannot change this personal setting.
+
+**Result:** Saves the preference for following voice clips. Every user starts off. The saved choice survives restart.
+
+**Restrictions:** Slack only; Microsoft Teams and Google Chat still need a mention. Applies only to a voice clip sent as a reply in a thread where this agent posted most recently. Top-level channel messages, clips whose text mentions someone, threads where another agent spoke after this one, threads the agent cannot read and threads longer than 1,000 messages still need a mention. Users can also choose **Start on voice clips in agent threads** in Slack App Home → **Help & settings** or on the Activity dashboard → **Settings**.
 
 ## set_my_composio_token
 
