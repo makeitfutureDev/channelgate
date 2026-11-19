@@ -1,5 +1,6 @@
 import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { resolveStreamRecipientTeam } from "./stream-recipient.js";
+import { shouldAutoStartVoice } from "./voice-auto-trigger.js";
 import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
@@ -675,7 +676,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // everyone talks to the agent without a mention. Looked up only for the un-mentioned channel
     // messages that would otherwise be dropped here.
     const mentioned = isDM || bypassMention || mentionsBot(event.text, botUserId);
-    if (!mentioned && !(await isCodeChannelConversation(event.channel))) return;
+    // The third exception is the author's own voice auto-start setting: an un-mentioned voice
+    // clip replied into a thread where this agent spoke last (src/slack/voice-auto-trigger.js).
+    if (!mentioned && !(await isCodeChannelConversation(event.channel))) {
+      if (!(await shouldAutoStartVoice(event, client, { botUserId, loadUser: getUser }))) return;
+      logEvent("voice_auto_start", { channel: event.channel, author: event.user }).catch(() => {});
+    }
 
     // A normal message and its app_mention companion are separate Slack envelopes. Claim their
     // shared message identity synchronously before either can start a turn.

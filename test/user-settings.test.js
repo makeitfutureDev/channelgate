@@ -72,6 +72,12 @@ test("every change targets only the owner; caller-supplied owners, roles and fie
   assert.notEqual((await getUser("U_OTHER")).replyMentions, true);
   assert.equal((await userSettingsSnapshot("U_ME")).general.replyMentions, true);
   await refused({ action: "replyMentions", enabled: 1 }, /on or off/);
+  assert.equal((await userSettingsSnapshot("U_ME")).general.voiceAutoStart, false, "voice auto-start starts off");
+  await change({ action: "voiceAutoStart", enabled: true, userId: "U_OTHER" });
+  assert.equal((await getUser("U_ME")).voiceAutoStart, true);
+  assert.notEqual((await getUser("U_OTHER")).voiceAutoStart, true);
+  assert.equal((await userSettingsSnapshot("U_ME")).general.voiceAutoStart, true);
+  await refused({ action: "voiceAutoStart", enabled: "yes" }, /on or off/);
   await refused({ action: "isAdmin", value: true }, /Unknown setting/);
   await refused({}, /Unknown setting/);
   await assert.rejects(applyUserSettingsChange("", { action: "nudges", enabled: true }), (error) => error.status === 403);

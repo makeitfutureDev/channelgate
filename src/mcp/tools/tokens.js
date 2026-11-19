@@ -73,6 +73,20 @@ export function register(server, ctx) {
     }
   );
 
+  server.registerTool(
+    "set_my_voice_auto_start",
+    {
+      description: "Turn YOUR OWN voice auto-start on or off: when on, a voice clip you reply with in a Slack thread where this agent answered last starts the agent without an @mention or 🤖 reaction. Never applies to top-level channel messages or to a clip that mentions someone. Off by default. This only changes the verified requester, never another user.",
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      if (!principalTrusted || !createdBy) return text("No verified user context — change this preference from your own chat message.");
+      if (typeof enabled !== "boolean") return text("enabled must be a boolean.");
+      await setUser(createdBy, { voiceAutoStart: enabled });
+      return text(`Voice auto-start is now ${enabled ? "on" : "off"} for you. ${enabled ? "Reply with a voice clip in a thread where I answered last and I start without a mention." : "Mention me or react 🤖 to start on a voice clip."}`);
+    }
+  );
+
   // ── Personal Composio token (any user, for themselves) ─────────────────────────
   // Token-entry tools: the secret arrives inside a Slack message, so it sits in Slack history (and
   // search) until the author deletes that message. Harden what we control: the saved token is NEVER

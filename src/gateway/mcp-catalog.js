@@ -96,6 +96,7 @@ export const GATEWAY_TOOL_NAMES = [
   "update_gateway_guide",
   "reset_gateway_guide",
   "set_my_reply_mentions",
+  "set_my_voice_auto_start",
   "set_my_composio_token",
   "clear_my_composio_token",
   "list_secrets",

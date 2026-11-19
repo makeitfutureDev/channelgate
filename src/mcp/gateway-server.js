@@ -401,6 +401,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // organization scope, an admin's). The value is in the caller's own message; a card would
     // only echo its name back. Never a value in a card or a listing.
     ["set_my_reply_mentions", { authz: "any", details: AUTOMATIC }],
+    ["set_my_voice_auto_start", { authz: "any", details: AUTOMATIC }],
     ["set_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["clear_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],

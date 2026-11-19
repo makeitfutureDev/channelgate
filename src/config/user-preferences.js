@@ -3,6 +3,12 @@ export function userReplyMentionsEnabled(user) {
   return user?.replyMentions === true;
 }
 
+// Off unless the person turned it on: a voice clip they reply with in a thread the agent is
+// already working in starts the agent without a mention (src/slack/voice-auto-trigger.js).
+export function userVoiceAutoStartEnabled(user) {
+  return user?.voiceAutoStart === true;
+}
+
 // How the voice (gateway/voice/calls.js) talks to this person on a call. Set by the person on
 // their Activity Settings page; every field is bounded and closed-set where it drives behaviour.
 export const VOICE_STYLES = Object.freeze(["brief", "conversational", "thinking-partner"]);
