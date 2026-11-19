@@ -2270,6 +2270,38 @@ unexecuted; private QA registry remains pending. These automated checks are not 
 - Private QA registry update pending: the requesting user's personal Airtable connection is not
   connected in this run. Do not treat the missing registry or unexecuted live case as passed.
 
+## Channel metadata write scaling (2026-11-19)
+
+- Automated regression (`test/store-patch.test.js`, "one metadata patch decides each custom work
+  folder once…"): 96 conversations, 48 with their own custom folder under a scratch allowlisted
+  root. Count `realpathSync` calls on those folders and reads of the scratch `settings.json`
+  during one function-form patch, a no-op patch, one `getChannelMeta`, and a patch that joins and
+  then leaves another conversation's folder. Pass: at most three resolutions per custom folder per
+  snapshot (two snapshots for a write that returns the saved record, one for a read or an aborted
+  patch) and at most four settings reads per snapshot; the join still links to the owner and
+  inherits its access list, the leave unlinks. Before the fix the same patch made 592 resolutions
+  and 592 settings reads. Counts, not wall-clock time.
+- Automated equivalence (`test/folders-generator-paths.test.js`): `createWorkDirResolver` returns
+  exactly what `effectiveWorkDir` returns for default, clean, custom, vanished, escaping,
+  daemon-home, relative and origin-folder metadata, asked twice in both orders; a second resolver
+  observes a directory created and an allowlisted root narrowed after the first was made.
+- Automated regressions for the two review findings: `test/store-patch.test.js` ("a patch
+  callback editing a linked setting in place is refused…") — a follower's callback pushes onto the
+  inherited `allowedUsers` and returns `{}`; pass: `workspace_setting_linked`, both stored rows
+  unchanged, and the same edit on the unlinked owner is saved and inherited.
+  `test/bot-membership-recovery.test.js` ("both membership sweeps hand the event loop back…") —
+  40 channels with an in-memory store; pass: an immediate scheduled as each sweep starts runs
+  before the sweep has written every channel, and at least 20 event-loop turns run during the
+  verification sweep. Both fail with the respective fix removed.
+- Live gate (engine-independent — the path runs before engine selection and spawns no engine): on
+  a daemon with at least 150 registered conversations, 50 or more with custom working folders,
+  record the commit and channel count, then restart the service. Pass: health and the Slack
+  connection are ready within 120 seconds; over the following ten minutes the daemon's main
+  thread averages under 25% of one core while idle, the journal shows no
+  `A pong wasn't received` / `WebSocket error` lines, and thirty `/api/health` probes ten seconds
+  apart each answer in under two seconds. Force one Slack reconnect (disable and re-enable
+  network on the host, or `systemctl --user restart` counts as one) and repeat the probes.
+
 ## Workspace projection startup scaling (2026-11-11)
 
 - Automated regression (`test/skills-workspace-sync.test.js`): project 256 metadata rows in

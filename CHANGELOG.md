@@ -2,6 +2,14 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix a busy-loop on gateways with many conversations and custom working folders. Every channel
+  settings write re-decided every conversation's folder several times over, re-reading the
+  settings file each time, and the Slack membership check writes every channel on each reconnect:
+  with 177 conversations the daemon stopped answering Slack's ping, reconnected and started over,
+  holding one CPU core and answering health checks after 30–40 seconds. One write or read now
+  decides each folder once, and the membership check hands the event loop back after every
+  channel instead of writing them all in one uninterrupted block.
+
 - Show a green **Added to queue** button on busy-thread cards and clarify that no action is
   needed. Clicking it dismisses the card while the already queued message keeps waiting and
   runs automatically.

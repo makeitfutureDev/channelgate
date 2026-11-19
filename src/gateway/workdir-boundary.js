@@ -105,6 +105,13 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
   return out;
 }
 
+// The daemon-owned trees and the visible workspace root, observed once. Both cost a dozen
+// realpaths; a caller deciding many folders against ONE store snapshot (a channel listing, a
+// metadata write) takes them here once and hands them back as `boundary`.
+export function workDirBoundary() {
+  return { roots: sensitiveWorkDirRoots(), visible: realOrResolved(workspaceRoot()) };
+}
+
 /**
  * Why `candidate` may not be a channel's work folder, or "" when it may.
  * @param {string} candidate   an absolute directory path (realpath'd by the caller when it exists)
@@ -112,12 +119,13 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
  * @param {string} [options.slug]      the channel being configured — its own folders are allowed
  * @param {Array}  [options.channels]  other channels' folders to check instead of reading the store
  * @param {string} [options.home]      override of the daemon home (tests)
+ * @param {object} [options.boundary]  a `workDirBoundary()` taken for this same snapshot
  */
-export function forbiddenWorkDirReason(candidate, { slug = "", channels, home, allowSharedFolder = false, sharedFolderOwner = "" } = {}) {
+export function forbiddenWorkDirReason(candidate, { slug = "", channels, home, boundary, allowSharedFolder = false, sharedFolderOwner = "" } = {}) {
   const real = realOrResolved(candidate);
   if (!path.isAbsolute(real)) return "not an absolute path";
-  const roots = sensitiveWorkDirRoots(home ? { home } : {});
-  const visible = realOrResolved(workspaceRoot());
+  const roots = boundary?.roots || sensitiveWorkDirRoots(home ? { home } : {});
+  const visible = boundary?.visible || realOrResolved(workspaceRoot());
   // Exact matches first, so the most specific sentence wins (the workspace root contains the
   // artifact tree; the home contains everything).
   for (const root of roots) if (real === root.path) return root.exact ? `${root.reason} itself` : root.reason;

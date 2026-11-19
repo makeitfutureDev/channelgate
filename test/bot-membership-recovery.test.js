@@ -52,6 +52,37 @@ function fixture(t, rows, listing) {
   };
 }
 
+test("both membership sweeps hand the event loop back between conversations", async (t) => {
+  const ids = Array.from({ length: 40 }, (_, n) => `C_SWEEP_${n}`);
+  const f = fixture(t, ids.map((id) => meta(id)), async () => ({ ok: true, channels: ids.map((id) => ({ id })), response_metadata: { next_cursor: "" } }));
+  const pending = () => ids.filter((id) => f.read(id).botMembership === "pending").length;
+  const members = () => ids.filter((id) => f.read(id).botMembership === "member").length;
+  // What Slack's ping needs: other work scheduled while a sweep runs must get its turn before the
+  // sweep has written every conversation. A store write never waits on I/O, so without an
+  // explicit yield the whole sweep is one uninterrupted block however many channels there are.
+  const observe = (count) => new Promise((resolve) => { setImmediate(() => resolve(count())); });
+
+  const invalidated = f.recovery.invalidate();
+  const pendingAtFirstTurn = await observe(pending);
+  await invalidated;
+  assert.equal(pending(), ids.length);
+  assert.ok(pendingAtFirstTurn < ids.length, `the invalidation sweep wrote ${pendingAtFirstTurn} of ${ids.length} conversations before yielding`);
+
+  const reconciled = f.recovery.reconcile();
+  let turns = 0;
+  let membersAtFirstWrite = 0;
+  while (members() < ids.length && turns < 10_000) {
+    await tick();
+    turns++;
+    if (!membersAtFirstWrite) membersAtFirstWrite = members();
+  }
+  const result = await reconciled;
+  assert.equal(result.ok, true);
+  assert.equal(result.verified.length, ids.length);
+  assert.ok(membersAtFirstWrite > 0 && membersAtFirstWrite < ids.length, `the verification sweep wrote ${membersAtFirstWrite} of ${ids.length} conversations in one block`);
+  assert.ok(turns >= ids.length / 2, `only ${turns} event-loop turns ran during a ${ids.length}-conversation sweep`);
+});
+
 test("complete bot membership pagination recovers missed removals and rejoins without touching DMs or other platforms", async (t) => {
   const f = fixture(t, [
     meta("C_PRESENT"), meta("G_RETURNED", { type: "group", archived: true, archivedReason: "bot_removed" }),

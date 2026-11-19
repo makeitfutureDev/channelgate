@@ -4,6 +4,13 @@ import { listChannels, patchChannelMeta } from "../config/store.js";
 import { isSlackMembershipChannel, invalidateSlackMembership, slackMembershipEpoch, confirmSlackMembership } from "../gateway/channel-membership.js";
 import { botMembershipActivity, withChannelMembershipLock } from "./members.js";
 
+// Both sweeps below write every conversation, and nothing in a store write waits on I/O: awaited
+// back to back they are ONE uninterrupted block of the event loop that grows with the channel
+// count. Slack drops a socket whose ping goes unanswered for five seconds, the reconnect starts
+// the sweep again, and the daemon never catches up. Hand the loop back after every conversation;
+// the epoch and freshness checks already assume other work runs in between.
+const yieldToEventLoop = () => new Promise((resolve) => { setImmediate(resolve); });
+
 // A membership list is valid only when pagination completes. Never infer absence from a partial page.
 export async function readBotMemberships(client) {
   const members = new Set();
@@ -52,6 +59,7 @@ export function createBotMembershipRecovery({
         if (!isSlackMembershipChannel({ ...row.meta, channelId: row.channelId })) continue;
         await patch(row.slug, (current) => current && epoch === slackMembershipEpoch() && current.botMembership !== "pending"
           ? { botMembership: "pending" } : null);
+        await yieldToEventLoop();
       }
     });
     return preparation;
@@ -96,6 +104,7 @@ export function createBotMembershipRecovery({
             if (!wasArchived) await onArchived(row, next);
           }
         });
+        await yieldToEventLoop();
       }
       if (!fresh()) { schedule(retryMs); return { ...result, ok: false, deferred: true, reason: "superseded" }; }
       await onVerified(result);
