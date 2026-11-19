@@ -165,7 +165,7 @@ export function busyThreadChoiceBlocks(id, { queued = false, position = 1 } = {}
       text: {
         type: "mrkdwn",
         text: queued
-          ? `⏳ Your message is queued (position ${position}). I’ll pick it up automatically. You can steer the conversation or cancel this queued message while it waits.`
+          ? `⏳ Your message is queued (position ${position}). I’ll pick it up automatically — no action needed. “Added to queue” closes this card. You can also steer the conversation or cancel this queued message while it waits.`
           : "This thread is already running. Should I interrupt it with your new message, add your message to the queue, or drop the new message?",
       },
     },
@@ -174,17 +174,18 @@ export function busyThreadChoiceBlocks(id, { queued = false, position = 1 } = {}
       elements: [
         {
           type: "button",
-          style: "primary",
+          ...(!queued ? { style: "primary" } : {}),
           action_id: BUSY_THREAD_STEER_ACTION,
           text: { type: "plain_text", text: "Steer Conversation" },
           value: id,
         },
-        ...(!queued ? [{
+        {
           type: "button",
+          ...(queued ? { style: "primary" } : {}),
           action_id: BUSY_THREAD_QUEUE_ACTION,
-          text: { type: "plain_text", text: "Add to Queue" },
+          text: { type: "plain_text", text: queued ? "Added to queue" : "Add to Queue" },
           value: id,
-        }] : []),
+        },
         // Cancel discards ONLY the message waiting on this card. The turn already running keeps
         // going — stopping that is what `stop` / 🛑 is for.
         {
@@ -360,7 +361,7 @@ export async function postQueuedMessageControls(client, { event, runKey, runId, 
     const card = await client.chat.postMessage({
       channel: event.channel,
       ...(threadTs ? { thread_ts: threadTs } : {}),
-      text: "Your message is queued and will run automatically. Steer or cancel it while it waits.",
+      text: "Your message is already queued and will run automatically — no action needed. Added to queue closes this card; Steer and Cancel remain available while it waits.",
       blocks: busyThreadChoiceBlocks(id, { queued: true, position: runQueue.count(runKey) - 1 }),
     });
     // Stop may have retired the record during the Slack write. Do not resurrect its controls.
@@ -392,7 +393,14 @@ async function applyQueuedMessageChoice({ choiceId, record, choice, client, chan
   // No awaits between checking/mutating the waiting slot and terminalizing its durable record.
   // An expired click can never cancel a promoted run or interrupt a different thread owner.
   if (choice === "queue") {
-    busyThreadChoices.release(choiceId);
+    // This is an acknowledgement of an already accepted turn. Retire only its controls:
+    // the in-memory queue and durable active-run record must stay exactly as they are.
+    busyThreadChoices.discard(choiceId);
+    try { retireApprovalLinkTokens(choiceId); } catch { /* best-effort */ }
+    await auditRunChoiceAdmin(record, responderId, choiceId, choice);
+    if (client?.chat?.delete && channel && messageTs) {
+      await client.chat.delete({ channel, ts: messageTs }).catch(() => {});
+    }
     return { ok: true, choice, accepted: true };
   }
   let text;

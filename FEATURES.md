@@ -3839,7 +3839,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   alone (the next turn can rely on Slack thread context). → TEST-PLAN: In-thread commands.
 - Busy-thread messages **queue automatically**: sending another task while a thread is running
   accepts it durably and runs it FIFO when preceding work finishes, without a button click.
-  A temporary card offers **Steer Conversation** and **Cancel Request** while that message waits.
+  A temporary card confirms no action is needed and offers a green **Added to queue** button
+  alongside **Steer Conversation** and **Cancel Request** while that message waits. **Added to
+  queue** dismisses only the card; the accepted message keeps its queue position and durable
+  recovery record and runs automatically once. Ignoring the card has the same execution behavior.
   Steer moves the selected waiting message next and interrupts its original same-author active
   run (warm Claude in-protocol; cold Claude/Codex via abort). A newer or different author's run
   is left untouched, with Cancel still available. Cancel removes only that waiting message,

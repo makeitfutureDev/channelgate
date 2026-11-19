@@ -545,13 +545,18 @@ test("Steer Conversation interrupts Codex quietly and runs the selected message 
   assert.equal(runQueue.isActive(runKey), false);
 });
 
-for (const choice of ["automatic", "cancel", "stale"]) {
-  test(`auto-queued message: ${choice} preserves the active run and cannot replay`, async () => {
-    process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}${path.delimiter}${process.env.PATH || ""}`;
-    saveSettings({ engine: "claude", composioMode: "personal" });
+for (const [engine, choice] of [["claude", "automatic"], ["claude", "cancel"], ["claude", "stale"], ["claude", "confirm"], ["codex", "confirm"]]) {
+  test(`auto-queued message: ${engine} ${choice} preserves the active run and cannot replay`, async (t) => {
+    const previousPath = process.env.PATH;
+    t.after(() => {
+      process.env.PATH = previousPath;
+      saveSettings({ engine: "claude", composioMode: "personal" });
+    });
+    process.env.PATH = `${path.join(projectRoot, "test", "fixtures", ...(engine === "claude" ? ["prompt-echo"] : []))}${path.delimiter}${process.env.PATH || ""}`;
+    saveSettings({ engine, composioMode: "personal" });
     await setUser(USER, { name: "Busy User", approved: true });
     const client = fakeSlack();
-    const thread = `auto-${choice}`;
+    const thread = `auto-${engine}-${choice}`;
     const runKey = `dm-u_busy_choice::${thread}`;
     const active = { runId: `${runKey}::original`, aborted: false, controller: new AbortController(), authorId: USER };
     await runQueue.acquire(runKey, active);
@@ -559,7 +564,11 @@ for (const choice of ["automatic", "cancel", "stale"]) {
     const successor = processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
     const card = await waitForCard(client, thread);
     const buttons = card.blocks.flatMap((b) => b.elements || []);
-    assert.deepEqual(buttons.map((b) => b.action_id), [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+    assert.deepEqual(buttons.map((b) => b.action_id), [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_QUEUE_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+    assert.equal(buttons[1].text.text, "Added to queue");
+    assert.equal(buttons[1].style, "primary");
+    assert.equal(buttons[0].style, undefined);
+    assert.match(card.blocks[0].text.text, /no action needed/);
     assert.equal(runQueue.count(runKey), 2);
     assert.equal(active.controller.signal.aborted, false);
     const runId = `${runKey}::${event.ts}`;
@@ -568,9 +577,21 @@ for (const choice of ["automatic", "cancel", "stale"]) {
     assert.equal(runQueue.count(runKey), 2, "redelivery must not enqueue twice");
     const click = (action) => handleBusyThreadChoice({ ack: async () => {},
       body: { user: { id: USER }, channel: { id: CHANNEL }, message: { ts: "bot.control", thread_ts: thread } },
-      action, client }, { processMessage: processMessageEvent });
+      action, client }, { processMessage: () => assert.fail("queued controls must not dispatch another turn") });
+    if (choice === "confirm") {
+      const savedRun = listActiveRuns().find((r) => r.id === runId);
+      assert.equal((await click(buttons[1])).accepted, true);
+      assert.deepEqual(client.deleted, [{ channel: CHANNEL, ts: "bot.control" }]);
+      assert.deepEqual(listActiveRuns().find((r) => r.id === runId), savedRun);
+      assert.equal(runQueue.count(runKey), 2);
+      assert.equal(runQueue.isQueued(runKey, runId), true);
+      assert.equal(active.controller.signal.aborted, false);
+      assert.equal(busyThreadChoices.list().some((r) => r.queuedRunId === runId), false);
+      assert.equal((await click(buttons[1])).ok, false, "repeat confirmation is harmless");
+      assert.equal((await click(buttons[2])).ok, false, "dismissed controls cannot cancel queued work");
+    }
     if (choice === "cancel") {
-      const cancelled = await click(buttons[1]);
+      const cancelled = await click(buttons[2]);
       assert.equal(cancelled.cancelled, true);
       assert.equal(runQueue.count(runKey), 1);
       assert.equal(listActiveRuns().some((r) => r.id === runId), false);
@@ -579,9 +600,9 @@ for (const choice of ["automatic", "cancel", "stale"]) {
     }
     runQueue.release(runKey, active);
     await successor;
-    const answer = client.posted.filter((m) => String(m.text).includes(`AUTO-QUEUE-${choice}`));
+    const answer = client.posted.filter((m) => String(m.text).includes(engine === "codex" ? "Codex stub reply" : `AUTO-QUEUE-${choice}`));
     assert.equal(answer.length, choice === "cancel" ? 0 : 1);
-    const stale = await click(buttons[1]);
+    const stale = await click(buttons[2]);
     assert.equal(stale.ok, false);
     assert.equal(runQueue.count(runKey), 0);
     assert.equal(busyThreadChoices.list().some((r) => r.queuedRunId === runId), false);
@@ -618,7 +639,7 @@ for (const changedOwner of [false, true]) {
       assert.equal((await click(BUSY_THREAD_STEER_ACTION)).accepted, false);
       assert.equal(active.controller.signal.aborted, false);
       assert.equal(busyThreadChoices.list().some((r) => r.id === id), true);
-      assert.equal(client.updated.at(-1).blocks[1].elements.length, 2);
+      assert.equal(client.updated.at(-1).blocks[1].elements.length, 3);
       assert.equal((await click(BUSY_THREAD_CANCEL_ACTION)).cancelled, true);
       assert.equal(queued.aborted, true);
       assert.equal(listActiveRuns().some((r) => r.id === queued.runId), false);
@@ -633,6 +654,8 @@ for (const changedOwner of [false, true]) {
 }
 
 test("failed queued-card delivery still runs the accepted message automatically", async () => {
+  process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}${path.delimiter}${process.env.PATH || ""}`;
+  saveSettings({ engine: "claude", composioMode: "personal" });
   const client = fakeSlack();
   const post = client.chat.postMessage;
   client.chat.postMessage = async (m) => {
