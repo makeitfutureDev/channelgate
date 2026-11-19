@@ -63,7 +63,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   let pinnedChannels = [];
   const isPinned = (row) => filter !== "done" && !row.hidden && !(row.status === "done" && row.dismissed) && (row.pinned || row.channelPinned);
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
-  const pending = new Set(), nodes = new Map();
+  const pending = new Set(), nodes = new Map(), optimistic = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
   const grouping = el("group-by");
@@ -425,7 +425,10 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   function accept(data) {
     if (ended || !data || !Array.isArray(data.rows)) return false;
     rows = data.rows.filter((row) => row && typeof row.channelId === "string" && typeof row.threadTs === "string")
-      .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle", comment: typeof row.comment === "string" ? row.comment : "" }));
+      .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle", comment: typeof row.comment === "string" ? row.comment : "" }))
+      // A Done/Hide/Later/Pin click in flight keeps its optimistic look over any snapshot that
+      // lands before the write is confirmed, so the row never flickers back.
+      .map((row) => optimistic.has(key(row)) ? { ...row, ...optimistic.get(key(row)) } : row);
     pinnedChannels = Array.isArray(data.pinnedChannels) ? data.pinnedChannels.filter((entry) => entry
       && typeof entry.channelId === "string" && typeof entry.channelName === "string") : [];
     acceptOrder(data);
@@ -846,7 +849,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     if (!row) return;
     const field = operation === "hide" ? "hidden" : operation === "pin" ? "pinned" : operation === "later" ? "later" : "done";
     const value = operation === "hide" ? !row.hidden : operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done" || !row.dismissed;
+    // Apply the change locally at once: the server still rechecks access and adds the Slack ✅,
+    // but the row must leave the view on click, not after those round trips and a full refresh.
+    const patch = operation === "hide" ? { hidden: value } : operation === "pin" ? { pinned: value }
+      : operation === "later" ? (value ? { status: "later" } : null) : value ? { status: "done", dismissed: true } : null;
+    const previous = patch && Object.fromEntries(Object.keys(patch).map((name) => [name, row[name]]));
     pending.add(rowKey);
+    if (patch) { optimistic.set(rowKey, patch); Object.assign(row, patch); }
     actionMessage = "";
     render();
     try {
@@ -857,10 +866,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       });
       if (response.status === 401 || response.status === 403) { endAccess(); return; }
       if (!response.ok) throw new Error("unavailable");
+      optimistic.delete(rowKey); // Saved: the server's snapshot is authoritative from here on.
       await refresh();
     } catch {
-      if (!ended) actionMessage = "That change couldn’t be saved. Please try again.";
+      if (!ended) {
+        actionMessage = "That change couldn’t be saved. Please try again.";
+        if (patch) { const current = rows.find((item) => key(item) === rowKey); if (current) Object.assign(current, previous); }
+      }
     } finally {
+      optimistic.delete(rowKey);
       pending.delete(rowKey);
       render();
     }

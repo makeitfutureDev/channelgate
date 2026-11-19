@@ -673,6 +673,20 @@ test("Done requires CSRF and fresh root ownership and shares persistent completi
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body })).status, 403);
 });
 
+test("Done answers once the decision is saved, without waiting for the Slack ✅ reaction", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), slack = defer(), started = defer();
+  f.client.reactions.add = async (args) => { started.resolve(); await slack.promise; f.markerCalls.push(["add", args]); return { ok: true }; };
+  const response = await f.request(user.url + "/api/completion", { method: "POST", headers: user.post,
+    body: JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done: true }) });
+  assert.equal(response.status, 200, "the reply does not wait on a slow reactions.add");
+  assert.ok(getSlackThread("C_WORK", "100.000001").done_ms > 0, "completion is durable before the reaction");
+  await started.promise; assert.equal(f.markerCalls.length, 0);
+  slack.resolve();
+  for (let i = 0; i < 20 && !f.markerCalls.length; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.markerCalls.map(([method]) => method), ["add"], "the ✅ still lands afterwards");
+});
+
 test("private membership and sudo access are rechecked after delayed completion or permalink reads", async (t) => {
   const f = await fixture(t); const entry = await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
   f.members.set("G_PRIVATE", ["U_MINE"]);

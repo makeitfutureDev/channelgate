@@ -238,7 +238,7 @@ test("activity browser filters locally and serializes each completion action wit
   const button = elements.threads.children[0].children[5].children[1].children[0];
   elements.threads.fire("click", { target: button });
   elements.threads.fire("click", { target: button });
-  assert.equal(button.disabled, true);
+  assert.equal(elements.threads.children.length, 0, "Done hides the row before the save answers");
   const posts = requests.filter((req) => req.url.endsWith("/completion"));
   assert.equal(posts.length, 1);
   assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
@@ -248,6 +248,25 @@ test("activity browser filters locally and serializes each completion action wit
   elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
   assert.equal(elements.threads.children[0].children[5].children[1].children[0].textContent, "Reopen");
   assert.equal(toggle.textContent, "Done");
+  stream.fire("access-ended");
+});
+
+test("Done hides the row on click, survives a mid-flight snapshot, and restores it when saving fails", async () => {
+  const first = deferred(), second = deferred();
+  let saves = 0;
+  const { elements, stream } = browser((url) => url.endsWith("/completion")
+    ? (++saves === 1 ? first.promise : second.promise) : Promise.resolve(response({ rows: [row("working")] })));
+  await flush();
+  const done = () => elements.threads.children[0].children[5].children[1].children[0];
+  elements.threads.fire("click", { target: done() });
+  assert.equal(elements.threads.children.length, 0, "the row leaves Active before the server answers");
+  stream.snapshot([row("working")]);
+  assert.equal(elements.threads.children.length, 0, "a snapshot during the save does not bring it back");
+  first.resolve(response({ error: "unavailable" }, 503)); await flush();
+  assert.equal(elements.threads.children.length, 1, "a failed save restores the row");
+  elements.threads.fire("click", { target: done() });
+  assert.equal(elements.threads.children.length, 0);
+  second.resolve(response({ ok: true })); await flush();
   stream.fire("access-ended");
 });
 
@@ -580,7 +599,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   assert.equal(delay.dataset.state, "later");
   b.elements.threads.fire("click", { target: delay });
   b.elements.threads.fire("click", { target: delay });
-  assert.equal(delay.disabled, true);
+  assert.equal(b.elements.threads.children.length, 0, "Later hides the row before the save answers");
   const posts = b.requests.filter((r) => r.url.endsWith("/later"));
   assert.equal(posts.length, 1);
   assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
@@ -787,10 +806,12 @@ test("pin and unpin serialize CSRF writes, reuse rows and preserve controls in t
   const done = tr.children[5].children[1].children[0];
   b.elements["pinned-threads"].fire("click", { target: done }); await flush();
   assert.ok(b.requests.some((r) => r.url.endsWith("/completion")));
-  b.elements["pinned-threads"].fire("click", { target: pin }); await flush();
-  assert.equal(b.elements.threads.children[0], tr);
+  // Done hid the row optimistically; this fixture's server keeps it open, so it returns as a fresh row.
+  const reopened = b.elements["pinned-threads"].children[0], unpin = reopened.children[5].children[1].children[2];
+  b.elements["pinned-threads"].fire("click", { target: unpin }); await flush();
+  assert.equal(b.elements.threads.children[0], reopened, "unpin moves the same row back");
   assert.equal(b.elements["pinned-section"].hidden, true);
-  assert.equal(pin.attrs["aria-pressed"], "false");
+  assert.equal(unpin.attrs["aria-pressed"], "false");
   assert.deepEqual(JSON.parse(b.requests.filter((r) => r.url.endsWith("/pin")).at(-1).options.body), { channelId: "C1", threadTs: "1.1", pinned: false });
 });
 

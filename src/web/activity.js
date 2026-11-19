@@ -910,7 +910,9 @@ export function createActivityRouter({
       if (operation === "completion") {
         if (value) markDone(session.ownerId, channelId, threadTs); else clearDone(session.ownerId, channelId, threadTs);
       }
-      await syncThreadDoneMarker(client, channelId, threadTs);
+      // The decision is durable; the ✅/🕒 reaction is decoration. Answer now and let Slack catch
+      // up (the marker sync serializes per thread and schedules its own retry on failure).
+      syncThreadDoneMarker(client, channelId, threadTs).catch(() => {});
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 403); }
   });
