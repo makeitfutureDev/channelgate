@@ -23,6 +23,7 @@ import { createSkillsRouter } from "./skills.js";
 import { createSystemHealthRouter } from "./system-health.js";
 import { createApiTokensRouter } from "./api-tokens.js";
 import { createSubscriptionsRouter } from "./subscriptions.js";
+import { createLicensesRouter } from "./licenses.js";
 
 export function createAdminRouter({
   slack,
@@ -44,6 +45,7 @@ export function createAdminRouter({
   router.use(createUsersRouter({ slack }));
   router.use(createSkillsRouter());
   router.use(createApiTokensRouter());
+  router.use(createLicensesRouter());
 
   return router;
 }

@@ -274,7 +274,11 @@ function claudeApiLicense(claude, record) {
   const models = own.length ? own : anthropic ? claude.models : [];
   const ownIds = new Set(own.map((model) => model.value.toLowerCase()));
   const status = () => {
-    const problem = apiLicenseProblem(record) || (models.length ? "" : "no model is listed for this endpoint");
+    // A key the endpoint itself REJECTED the last time it was checked is not offered again until
+    // someone corrects it or re-verifies — it would only fail every turn that picked it.
+    const rejected = record.verification?.verified && !record.verification.ok;
+    const problem = apiLicenseProblem(record) || (models.length ? "" : "no model is listed for this endpoint")
+      || (rejected ? "the endpoint rejected this key when it was last verified" : "");
     return {
       ready: !problem, signedIn: !apiLicenseProblem(record), method: problem ? "" : "api-key", plan: null,
       detail: problem ? `Not configured — ${problem}.` : `API key · ${record.baseUrl}`, fingerprint: apiFingerprint(record),

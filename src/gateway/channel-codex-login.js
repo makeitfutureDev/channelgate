@@ -10,6 +10,7 @@ import { readCodexAuthState } from "../engines/codex-auth.js";
 import { codexEngineHome } from "../config/paths.js";
 import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
 import { invalidateEngineMcps } from "./mcp-discovery.js";
+import { licenseKindOfId, licenseLoginHome } from "../engines/license-state.js";
 
 const DEVICE_TIMEOUT_MS = 10 * 60_000;
 const KEY_TIMEOUT_MS = 30_000;
@@ -159,3 +160,13 @@ function cancelLogin(jobKey) {
 
 export const cancelChannelCodexLogin = (channelId) => cancelLogin(`channel:${channelId}`);
 export const cancelGatewayCodexLogin = () => cancelLogin("gateway");
+
+// A Codex LICENSE's own ChatGPT sign-in (src/engines/license-state.js): the same device-code flow,
+// into that license's private directory. Device code only — an API key is a different license kind.
+function codexLicenseHome(id) {
+  if (licenseKindOfId(id)?.id !== "codex-login") throw Object.assign(new Error("not a Codex sign-in license"), { statusCode: 404 });
+  return licenseLoginHome(id);
+}
+export const licenseCodexLoginStatus = (id) => loginStatus(`license:${id}`, codexLicenseHome(id));
+export const startLicenseCodexLogin = (id, options) => startLogin(`license:${id}`, codexLicenseHome(id), "device", { ...options, key: "" });
+export const cancelLicenseCodexLogin = (id) => cancelLogin(`license:${id}`);

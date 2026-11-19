@@ -109,7 +109,17 @@ export function normalizeLicenseRecord(raw) {
     apiKey: typeof raw.apiKey === "string" && !/\s/.test(raw.apiKey.trim()) ? raw.apiKey.trim().slice(0, 4096) : "",
     authScheme: API_AUTH_SCHEMES.includes(raw.authScheme) ? raw.authScheme : "x-api-key",
     models: normalizeLicenseModels(raw.models),
+    verification: normalizeLicenseVerification(raw.verification),
   });
+}
+
+// The last answer the endpoint gave to this license's key (src/config/engine-licenses.js). It is
+// a record of a check, never a credential: when, whether the endpoint was reached, and its verdict.
+function normalizeLicenseVerification(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const at = clean(raw.at, 40);
+  if (!at) return null;
+  return Object.freeze({ at, ok: raw.ok === true, verified: raw.verified === true, detail: clean(raw.detail, 300) });
 }
 
 export function normalizeLicenseRecords(value) {
@@ -123,6 +133,25 @@ export function normalizeLicenseRecords(value) {
   }
   return out;
 }
+
+// ── License selections ───────────────────────────────────────────────────────────────────────
+// Beside the license a channel, thread or the gateway runs on first, a selection may name MORE
+// licenses of the same harness to move to when that one fails: "" (none — just the one license),
+// "any" (every license of the harness the conversation may use) or an ordered list of ids. This
+// is the lenient READER of a stored value (settings.json, channel meta, a thread override row,
+// where a list is JSON text); writers validate through src/gateway/license-pool.js.
+export const LICENSE_POOL_ANY = "any";
+export function readLicensePool(value) {
+  if (value === LICENSE_POOL_ANY) return LICENSE_POOL_ANY;
+  let list = value;
+  if (typeof value === "string" && value.startsWith("[")) {
+    try { list = JSON.parse(value); } catch { return ""; }
+  }
+  if (!Array.isArray(list)) return "";
+  const ids = [...new Set(list.filter((id) => typeof id === "string" && id && id.length <= 64))].slice(0, 64);
+  return ids.length ? ids : "";
+}
+export const storeLicensePool = (pool) => (Array.isArray(pool) ? JSON.stringify(pool) : pool === LICENSE_POOL_ANY ? LICENSE_POOL_ANY : "");
 
 // ── The live snapshot ─────────────────────────────────────────────────────────────────────────
 let records = new Map();
