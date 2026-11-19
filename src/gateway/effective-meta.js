@@ -29,6 +29,8 @@ export function effectiveMeta(meta) {
       // Only a harness this build ships: a template (or DM) still naming a retired one follows
       // the gateway default instead of projecting an id no adapter answers to.
       engine: [meta.engine, t.engine].find((id) => ENGINES.includes(id)) || "",
+      // The pool travels with the license: from the DM when the DM named it, else the template's.
+      licensePool: ENGINES.includes(meta.engine) ? meta.licensePool || "" : t.licensePool || "",
     });
   }
   return normalizeModeMeta(meta);

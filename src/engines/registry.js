@@ -1,6 +1,6 @@
 import { BUILTIN_ENGINE_ADAPTERS, licenseAdaptersFor } from "./adapters.js";
 import { createAdapterRegistry } from "./contract.js";
-import { harnessLabel, harnessOfLicenseId, isHarnessId, normalizeLicenseRecords, setLicenseRecords } from "./license-state.js";
+import { LICENSE_POOL_ANY, harnessLabel, harnessOfLicenseId, isHarnessId, normalizeLicenseRecords, readLicensePool, setLicenseRecords } from "./license-state.js";
 
 export const engineRegistry = createAdapterRegistry(BUILTIN_ENGINE_ADAPTERS);
 export const ENGINE_IDS = engineRegistry.ids;
@@ -26,6 +26,17 @@ export const sameHarness = (a, b) => Boolean(harnessOf(a)) && harnessOf(a) === h
 // The licenses of a harness, built-ins first, in registry order.
 export function licensesOfHarness(harness) {
   return ENGINE_IDS.filter((id) => harnessOf(id) === harness);
+}
+// A stored license pool, read beside the license it belongs to: "any", or the listed licenses that
+// still exist and still share that license's harness. Without a license there is no pool. Readers
+// and the store use this; a submitted pool is validated strictly (gateway/license-pool.js).
+export function coherentLicensePool(pool, engine) {
+  const harness = harnessOf(engine);
+  const selection = readLicensePool(pool);
+  if (!harness || !selection) return "";
+  if (selection === LICENSE_POOL_ANY) return LICENSE_POOL_ANY;
+  const rest = selection.filter((id) => id !== engine && harnessOf(id) === harness);
+  return rest.length ? rest : "";
 }
 // What a picker calls this license once the harness is already chosen: the harness's own id is the
 // sign-in the gateway always had.
@@ -267,7 +278,13 @@ export function syncLicenseAdapters(records) {
 // directly (it never re-enters the orchestrator), so a target that also fails just rethrows the
 // original error.
 const FALLBACK_GRAPH = Object.freeze({ claude: Object.freeze(["codex"]), codex: Object.freeze(["claude"]) });
-export function fallbackTargets(engine) { return Object.freeze([...(FALLBACK_GRAPH[String(engine || "")] || [])].filter(isEngineId)); }
+// A license an administrator ADDED fails over across harnesses the way its harness's own sign-in
+// does. The other built-in licenses (dedicated logins, provider endpoints) stay outside the graph.
+export function fallbackTargets(engine) {
+  const id = String(engine || "");
+  const key = FALLBACK_GRAPH[id] ? id : adapterFor(id)?.license ? harnessOf(id) : "";
+  return Object.freeze([...(FALLBACK_GRAPH[key] || [])].filter(isEngineId));
+}
 
 // Optional adapter hook. Returns `{ known, authenticated, fingerprint }`; an engine that declares
 // no probe answers "could not tell", which every caller must treat as "carry on unchanged".

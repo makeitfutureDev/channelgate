@@ -1,22 +1,37 @@
 // Managed harness policy belongs to the conversation, independently of the current license.
 // Enterprise admits changes; a downgrade must never silently widen an existing restriction.
-import { ENGINE_IDS, adapterFor, engineLabel, isEngineId } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, engineLabel, harnessOf, isEngineId } from "../engines/registry.js";
 import { RETIRED_ENGINE_IDS, isRetiredEngineId } from "../engines/retired.js";
+import { HARNESS_IDS, harnessLabel, isLicenseShapedId } from "../engines/license-state.js";
 import { getLicenseStatus } from "../ee/license.js";
 
-// A stored policy may still name a harness an earlier release shipped (engines/retired.js). That
-// id approves nothing and is not a malformed entry either: the policy keeps its remaining
-// harnesses, so retiring an engine neither refuses every turn in the channel nor makes every
-// later save of its settings fail. A policy that named ONLY retired harnesses is kept exactly as
-// stored — it still approves nothing, because dropping it would silently widen a restriction —
-// until an entitled administrator picks the harnesses this channel may use.
+// A policy entry is a LICENSE (an engine id: only that credential may run here) or a whole
+// HARNESS, written `harness:claude` / `harness:codex`: every license of that harness, including
+// ones an administrator adds later. A plain `claude` or `codex` keeps meaning exactly what it
+// always did — that harness's default sign-in and nothing else — so no stored policy widens.
+export const HARNESS_POLICY_PREFIX = "harness:";
+export const harnessPolicyEntry = (harness) => `${HARNESS_POLICY_PREFIX}${harness}`;
+const harnessOfEntry = (id) => (typeof id === "string" && id.startsWith(HARNESS_POLICY_PREFIX) && HARNESS_IDS.includes(id.slice(HARNESS_POLICY_PREFIX.length)) ? id.slice(HARNESS_POLICY_PREFIX.length) : "");
+// Stored ids that name nothing runnable any more: a harness an earlier release shipped
+// (engines/retired.js), or a license an administrator has since removed. Both are stored data to
+// step over, never malformed input.
+const isGoneEngineId = (id) => isRetiredEngineId(id) || (isLicenseShapedId(id) && !isEngineId(id));
+const isPolicyEntry = (id) => typeof id === "string" && (isEngineId(id) || Boolean(harnessOfEntry(id)) || isGoneEngineId(id));
+
+// A stored policy may still name a harness an earlier release shipped (engines/retired.js) or a
+// license that was removed. That id approves nothing and is not a malformed entry either: the
+// policy keeps its remaining entries, so retiring an engine or deleting a license neither refuses
+// every turn in the channel nor makes every later save of its settings fail. A policy that named
+// ONLY such ids is kept exactly as stored — it still approves nothing, because dropping it would
+// silently widen a restriction — until an entitled administrator picks what this channel may use.
 export function normalizeApprovedEngines(value) {
   if (value == null) return null;
-  if (!Array.isArray(value) || !value.length || value.some(id => typeof id !== "string" || !(isEngineId(id) || isRetiredEngineId(id)))) {
-    throw Object.assign(new Error(`Approved harnesses must be null (all) or a nonempty list of: ${ENGINE_IDS.join(", ")}.`), { status: 400, statusCode: 400, code: "invalid_approved_engines" });
+  if (!Array.isArray(value) || !value.length || value.some(id => !isPolicyEntry(id))) {
+    throw Object.assign(new Error(`Approved harnesses must be null (all) or a nonempty list of harnesses (${HARNESS_IDS.map(harnessPolicyEntry).join(", ")}) and licenses (${ENGINE_IDS.join(", ")}).`), { status: 400, statusCode: 400, code: "invalid_approved_engines" });
   }
-  const current = ENGINE_IDS.filter(id => value.includes(id));
-  return current.length ? current : RETIRED_ENGINE_IDS.filter(id => value.includes(id));
+  const current = [...HARNESS_IDS.map(harnessPolicyEntry).filter(id => value.includes(id)), ...ENGINE_IDS.filter(id => value.includes(id))];
+  if (current.length) return current;
+  return [...RETIRED_ENGINE_IDS.filter(id => value.includes(id)), ...[...new Set(value)].filter(id => !isRetiredEngineId(id) && isGoneEngineId(id)).sort()];
 }
 
 export function assertApprovedEnginesUpdate(meta, value, { enterprise = getLicenseStatus().features.channelHarnessPolicy } = {}) {
@@ -37,7 +52,14 @@ export function isChannelEngineApproved(meta, engine) {
   if (policy == null) return true;
   // Malformed persisted policies are never interpreted as unrestricted. A retired harness in one
   // is stepped over (see normalizeApprovedEngines); it never approves anything by itself.
-  return Array.isArray(policy) && policy.length > 0 && policy.every(id => isEngineId(id) || isRetiredEngineId(id)) && policy.includes(engine);
+  if (!Array.isArray(policy) || !policy.length || !policy.every(isPolicyEntry)) return false;
+  return policy.includes(engine) || policy.includes(harnessPolicyEntry(harnessOf(engine)));
+}
+
+// How a stored policy reads to a person: "Claude Code (any license), Work ChatGPT".
+export function describeApprovedEngines(policy) {
+  if (!Array.isArray(policy)) return "";
+  return policy.filter(id => harnessOfEntry(id) || isEngineId(id)).map(id => harnessOfEntry(id) ? `${harnessLabel(harnessOfEntry(id))} (any license)` : engineLabel(id)).join(", ");
 }
 
 export function assertChannelEngineApproved(meta, engine) {

@@ -13,11 +13,14 @@ import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/featur
 // once at DB open and left on disk as inert backups (db/import-legacy.js importThreadOverrides).
 import { getDb } from "../db/index.js";
 import { assertChannelEngineApproved } from "./channel-engines.js";
-import { ENGINE_IDS } from "../engines/registry.js";
+import { isEngineId } from "../engines/registry.js";
+import { readLicensePool, storeLicensePool } from "../engines/license-state.js";
 import { getSessionEngine } from "./sessions.js";
 import { getEngine } from "../config/settings.js";
 
-const VALID = new Set(ENGINE_IDS);
+// Asked live, never captured: an administrator adds and removes licenses while the daemon runs,
+// and a pin naming a removed one must read as "no pin" on the very next turn.
+const VALID = Object.freeze({ has: (value) => isEngineId(value) });
 
 function getOverride(slug, threadKey, kind) {
   const row = getDb()
@@ -47,8 +50,23 @@ export async function getThreadEngine(slug, threadKey) {
   return VALID.has(v) ? v : "";
 }
 
-export async function setThreadEngine(slug, threadKey, engine) {
-  setOverride(slug, threadKey, "engine", VALID.has(engine) ? engine : "");
+// A plain engine pin (a `claude`/`codex` directive) names ONE license: whatever pool an earlier
+// pick left behind belonged to that pick, so it goes. Callers that pin a whole selection pass it.
+export async function setThreadEngine(slug, threadKey, engine, { licensePool = "" } = {}) {
+  const pinned = VALID.has(engine) ? engine : "";
+  setOverride(slug, threadKey, "engine", pinned);
+  setOverride(slug, threadKey, "license_pool", pinned ? storeLicensePool(readLicensePool(licensePool)) : "");
+}
+
+// The MORE licenses of the pinned license's harness this thread may move to when it fails
+// (src/gateway/license-pool.js): "" | "any" | [ids]. Stored beside the engine pin and meaningless
+// without one, so every writer that clears or changes the pin rewrites this in the same call.
+export async function getThreadLicensePool(slug, threadKey) {
+  return readLicensePool(getOverride(slug, threadKey, "license_pool"));
+}
+
+export async function setThreadLicensePool(slug, threadKey, pool) {
+  setOverride(slug, threadKey, "license_pool", storeLicensePool(readLicensePool(pool)));
 }
 
 // Which harness is a thread ACTUALLY on right now — the read-only twin of the engine resolution
@@ -113,7 +131,7 @@ export async function setThreadSkillModel(slug, threadKey, model) {
 
 // One native form saves a complete runtime selection. Keep the triple atomic without touching
 // the thread's independent clean/sudo posture; callers validate model compatibility/authority.
-export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "" }, { expected } = {}) {
+export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "", licensePool = "" }, { expected } = {}) {
   if (engine && !VALID.has(engine)) throw new Error("Unknown thread engine.");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
@@ -122,6 +140,7 @@ export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model 
       throw new Error("Thread settings changed. Reopen General before applying your changes.");
     }
     setOverride(slug, threadKey, "engine", engine);
+    setOverride(slug, threadKey, "license_pool", engine ? storeLicensePool(readLicensePool(licensePool)) : "");
     setOverride(slug, threadKey, "model", String(model || "").trim());
     setOverride(slug, threadKey, "effort", String(effort || "").trim());
     db.exec("COMMIT");
@@ -176,7 +195,7 @@ export async function clearThreadRuntimeOverrides(slugs) {
   if (!list.length) return 0;
   const placeholders = list.map(() => "?").join(",");
   const result = getDb()
-    .prepare(`DELETE FROM thread_overrides WHERE kind IN ('engine', 'model', 'effort', 'skill_model') AND slug IN (${placeholders})`)
+    .prepare(`DELETE FROM thread_overrides WHERE kind IN ('engine', 'license_pool', 'model', 'effort', 'skill_model') AND slug IN (${placeholders})`)
     .run(...list);
   return Number(result.changes || 0);
 }

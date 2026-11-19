@@ -41,7 +41,8 @@ export const POLICY_KEYS = Object.freeze([
   "noDefaultTokens", // refuse the org-default token fallback here
   "approvedEngines", // Enterprise channel harness approval policy
   "monthlySpendingLimitUSD", // Enterprise monthly recorded-cost admission limit
-  "engine", // per-channel engine override
+  "engine", // per-channel license (a harness + the credential it runs on)
+  "licensePool", // the more licenses of that harness a failed turn may move to ("any" or a list)
   "codexAuthSource", // gateway-wide or channel-specific Codex login
   "model",
   "effort",
@@ -84,6 +85,7 @@ function listValue(key, value) {
 function shape(key, value) {
   if (key === "skills") return Array.isArray(value) ? value.length : 0;
   if (LIST_KEYS.has(key)) return listValue(key, value);
+  if (key === "licensePool") return Array.isArray(value) ? listValue(key, value) : value === "any" ? "any" : null;
   if (value === undefined || value === null) return null;
   if (typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") return value;

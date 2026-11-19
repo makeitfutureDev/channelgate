@@ -24,6 +24,7 @@ import { isApiPrincipal } from "./api-principal.js";
 // one and no listing has to remember to mask it (see ./dead-fields.js).
 import { stripDeadFields } from "./dead-fields.js";
 import { isRetiredEngineId } from "../engines/retired.js";
+import { coherentLicensePool } from "../engines/registry.js";
 import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
 import { createWorkspaceProjectionReader, workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
@@ -248,7 +249,8 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     skillRuntimeSwap: false, // let a skill's declared preferred model switch the turn's engine/model (src/gateway/skill-runtime.js)
     noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
-    engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"
+    engine: "", // per-channel license: "" = use the global default, or an engine id (a harness's license)
+    licensePool: "", // more licenses of that harness to move to when it fails: "" | "any" | [ids]
     codexAuthSource: "gateway", // gateway login, or a separate host-side login for this channel
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
@@ -387,6 +389,11 @@ function validateChannelPolicy(current, next) {
     next.approvedEngines = assertApprovedEnginesUpdate(current, next.approvedEngines);
   }
   if (next.engine && next.engine !== current?.engine) assertChannelEngineApproved(next, next.engine);
+  // The license pool belongs to the license it was chosen beside: no license, no pool, and never a
+  // license of the other harness or one that no longer exists.
+  if (Object.hasOwn(next, "licensePool") || Object.hasOwn(current || {}, "licensePool")) {
+    next.licensePool = coherentLicensePool(next.licensePool, next.engine);
+  }
   if (next.codexAuthSource === "channel" && next.codexAuthSource !== current?.codexAuthSource) {
     assertChannelEngineApproved(next, "codex-channel");
   }

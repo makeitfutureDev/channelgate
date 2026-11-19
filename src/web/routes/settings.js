@@ -86,6 +86,7 @@ import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js
 // The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 import { gatewayCodexLoginStatus, startGatewayCodexLogin, cancelGatewayCodexLogin } from "../../gateway/channel-codex-login.js";
+import { normalizeLicensePool } from "../../gateway/license-pool.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -468,6 +469,12 @@ export function createSettingsRouter({
         if (!enabledAfter) return res.status(400).json({ error: `engine "${body.engine}" is disabled — enable it or pick another default` });
         patch.engine = body.engine;
       }
+      // The gateway default's license pool: validated beside the default license being written,
+      // and dropped when that license changes without a new pool (it was chosen for the old one).
+      if (Object.hasOwn(body, "enginePool")) {
+        try { patch.enginePool = normalizeLicensePool(body.enginePool, patch.engine || getEngine()); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      } else if (patch.engine && patch.engine !== getEngine()) patch.enginePool = "";
       if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
       if (body.modelShortcuts !== undefined) {
         const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)
