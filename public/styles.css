@@ -262,15 +262,69 @@ code {
 .toggle { display: block; position: relative; padding-left: 24px; font-size: 13px; color: var(--muted); margin: 6px 0; line-height: 1.5; }
 .toggle.inline { margin: 0; }
 .toggle > input { position: absolute; left: 0; top: 3px; margin: 0; accent-color: var(--orange); }
-/* Harness on/off switches: short labels, so they sit side by side and wrap as a group. These use
-   normal flow (not .toggle's absolutely-positioned gutter, which is built for wrapping paragraphs
-   and would overlap a one-line label). */
-.engine-toggles { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 4px 0 6px; }
+/* License on/off switches (one per row of the licenses list, below): short labels in normal flow,
+   not .toggle's absolutely-positioned gutter, which is built for wrapping paragraphs and would
+   overlap a one-line label. */
 .engine-toggle { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; white-space: nowrap; font-size: 13px; color: var(--ink); }
 .engine-toggle > input { margin: 0; accent-color: var(--orange); }
 .engine-toggle:has(> input:disabled) { color: var(--muted); cursor: not-allowed; }
 .engine-toggle > input:disabled { opacity: 0.55; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
+
+/* ── Engine licenses ───────────────────────────────────────────────────────────
+   Settings lists every license of each harness (admin-licenses.js): one row per license — its
+   on/off switch (an .engine-toggle), type, live status and actions. */
+.lic-manager { margin-bottom: 14px; }
+.lic-manager-title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.lic-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.lic-group { border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; }
+.lic-group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.lic-group-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.lic-group-head button { padding: 4px 12px; font-size: 12px; }
+.lic-rows { display: flex; flex-direction: column; }
+.lic-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 7px 0; border-top: 1px solid var(--line-soft); }
+.lic-row:first-child { border-top: none; }
+.lic-row > .engine-toggle { flex: 1 1 200px; min-width: 0; white-space: normal; }
+.lic-row .engine-toggle .state { font-size: 11px; color: var(--faint); font-style: normal; }
+.lic-type { font-size: 11.5px; color: var(--muted); }
+.lic-status { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--muted); }
+.lic-status:empty { display: none; }
+.lic-status.ok { color: var(--ok); border-color: rgba(78, 199, 122, .4); }
+.lic-status.warn { color: var(--warn); border-color: rgba(232, 176, 75, .4); }
+.lic-status.bad { color: var(--danger); border-color: rgba(229, 96, 77, .5); }
+.lic-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.lic-actions:empty { display: none; }
+.lic-detail, .lic-notice { flex-basis: 100%; font-size: 11.5px; color: var(--faint); font-style: normal; line-height: 1.5; }
+.lic-notice { margin-top: 6px; color: var(--muted); }
+.lic-notice.bad { color: var(--danger); }
+.lic-form, .lic-panel { flex-basis: 100%; box-sizing: border-box; margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.lic-form { display: flex; flex-direction: column; }
+.lic-form > strong, .lic-panel > strong { font-size: 13px; margin-bottom: 8px; }
+.lic-form .field { margin-bottom: 10px; }
+.lic-form [hidden] { display: none; }
+.lic-form .row-actions, .lic-panel .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.lic-default-fields:empty { display: none; }
+.lic-panel pre { margin: 0 0 10px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; overflow: auto; font: 12px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.lic-panel .state { font-size: 11.5px; color: var(--faint); font-style: normal; }
+.field.pulse { animation: setpulse 1.9s ease-out; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .field.pulse { animation: none; box-shadow: 0 0 0 1px var(--orange); } }
+
+/* The picker every engine choice uses: harness → license → "if it fails, also use". The two license
+   controls exist only while the harness has more than one usable license. */
+.lic-field[hidden], .lic-also-field[hidden] { display: none; }
+.lic-also-field { margin-bottom: 14px; }
+.lic-also-title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.lic-also { max-height: 140px; }
+.lic-also-field > .state { display: block; font-size: 11px; color: var(--faint); margin-top: 4px; font-style: normal; line-height: 1.5; }
+
+/* The channel lock: one "<Harness> — any license" box, then that harness's licenses indented under
+   it. A license the harness-wide box already covers is greyed. */
+.lic-lock { gap: 10px; }
+.lic-lock-group { display: flex; flex-direction: column; gap: 6px; }
+.lic-lock-license { margin-left: 22px; }
+.lic-lock-license.covered { color: var(--muted); }
+.lic-lock-license.covered > input { opacity: 0.55; }
+.lic-lock-unknown { font-size: 11.5px; color: var(--faint); font-style: normal; }
 
 /* ── Buttons ───────────────────────────────────────────────────────────────── */
 .card-foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; }

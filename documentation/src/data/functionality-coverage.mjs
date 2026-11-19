@@ -3,7 +3,7 @@ const area = (id, label, topics) => ({ id, label, topics: topics.split(' ') });
 export const functionalityAreas = [
   area(1, 'Agents working in team chat', 'features/conversations features/invocation-and-reactions features/slack features/microsoft-teams features/google-chat'),
   area(2, 'Isolation and access control', 'features/permissions features/container-isolation features/sudo-threads features/access-templates configuration/access-and-users'),
-  area(3, 'Engines, models, effort, and authentication', 'features/claude-code features/codex features/qwen features/models-and-effort features/dedicated-codex-login features/authentication-health'),
+  area(3, 'Engines, models, effort, and authentication', 'features/claude-code features/codex features/engine-licenses features/qwen features/models-and-effort features/dedicated-codex-login features/authentication-health'),
   area(4, 'Connected applications and MCP', 'features/connected-accounts features/mcp features/make-mcp features/composio-sdk configuration/connections configuration/mcp-servers'),
   area(5, 'Subagents and durable background work', 'features/subagents features/background-jobs features/progress-and-streaming features/failure-diagnosis'),
   area(6, 'Sessions and conversation continuity', 'features/threads-and-sessions features/session-recovery features/conversation-forks features/context-and-compaction features/lean-context'),

@@ -1,5 +1,97 @@
 # ChannelGate — Features
 
+## Engine licenses: two harnesses, any number of licenses (2026-11-19)
+
+There are two HARNESSES — Claude Code and Codex. Everything else that was presented as a harness
+of its own (Codex EU, a channel's own Codex account, Qwen, Bedrock) is a LICENSE of one of them:
+a credential plus the server it talks to. An administrator adds as many licenses as the
+organization holds, and a conversation picks **harness → license → model → effort**. This is the
+engine license, not the ChannelGate product license key (`src/ee/`, Settings → License), which is
+unchanged.
+
+- **Every engine id is a license of one harness** (`harnessOf`, `licensesOfHarness`,
+  `licenseLabel` in `src/engines/registry.js`; the facts in `src/engines/license-state.js`). The
+  built-in licenses are each harness's own sign-in (`claude`, `codex`, shown as "Default sign-in")
+  and the ones earlier releases shipped as harnesses (`claude-bedrock`, `qwen`, `qwen-eu`,
+  `codex-eu`, `codex-channel`). Sessions, usage rows, thread pins and approved-harness policies
+  keep naming a license by the same stable id, so no stored data changes and there is no
+  migration.
+- **Administrators add licenses** (Settings, and `/api/engine-licenses`; `src/config/engine-licenses.js`,
+  `src/web/routes/licenses.js`), up to 200. Three kinds: a **ChatGPT sign-in** for Codex
+  (`codex-lic-<8 hex>`), a **Claude sign-in** for Claude Code (`claude-lic-<8 hex>`) and an **API
+  key** for the Anthropic API or an Anthropic-compatible endpoint, run through Claude Code
+  (`claude-api-<8 hex>`; https endpoint, `x-api-key` or bearer, the model ids it serves). Each is a
+  live engine adapter (`src/engines/license-adapters.js`) registered the moment it is saved — no
+  restart — with its own sessions, usage rows, default model and effort, and on/off switch. A
+  license name is unique across built-in and added licenses.
+- **A license has a type and is verified.** Types are subscription, business, enterprise,
+  education and API (each kind allows the ones that make sense for it). A sign-in license's
+  declared type is compared with the plan the sign-in itself reports: a match is shown as
+  verified, a plan the gateway cannot map is shown as unverified, and a MISMATCH makes the
+  license not ready — it cannot be selected for a run until the right account is signed in or the
+  type is corrected. An API license is checked against its endpoint when it is added, again on
+  demand, and whenever its key or endpoint changes the stored verdict is dropped.
+- **Sign-ins stay on the gateway host.** Each sign-in license keeps its login in its own 0700
+  directory under `engine-state/licenses/<id>`, never mounted into a container. A Codex license
+  signs in from the admin UI with a device code; a Claude license with the host command the UI
+  shows. Behind the egress proxy a container holds one placeholder per license, named after the
+  license id, swapped only on that license's own hosts — two licenses of one harness can never
+  receive each other's credential. An API license's key is write-only: the API returns
+  `hasApiKey` and the last four characters, and a blank key on an edit keeps the stored one.
+- **A selection is a license plus, optionally, more licenses of the same harness**
+  (`src/gateway/license-pool.js`). The first license is the `engine` field every level already
+  stores; beside it sits a pool: nothing, **Any license** (every license of the harness the
+  conversation may use, including ones added later) or an ordered list. It exists on the gateway
+  default (`engine` + `enginePool`), a channel or DM (`engine` + `licensePool`), a thread pin and
+  a run-API call (`harness` + `licenses`). A pool never crosses harnesses; writers refuse one that
+  does.
+- **The license step appears only when there is a choice.** Every surface builds its picker from
+  one shape (`licensePicker`): with a single usable license for the chosen harness — the state of
+  every install that has added none — no license control is rendered and the harness alone is the
+  choice. With several, the picker shows **License** ("Any license" or one license) and, for a
+  specific license, **If it fails, also use**. A license is usable in a conversation when it is
+  switched on, admitted by the channel's lock, and available there (a channel's own Codex account
+  only in that channel).
+- **Failover walks the selection first.** When the license a turn runs on cannot answer (usage
+  limit, credential failure, provider outage — the same replay-safe classes cross-harness
+  failover uses), the turn moves to the next license of its selection automatically, on the same
+  harness, with a note at the top of the answer. That applies to a pinned thread too: the person
+  chose every license in the pool, and the harness does not change. A license that cannot serve a
+  model somebody picked is skipped rather than answered by another model, and a license that is
+  not signed in is stepped over. Only after the selection is exhausted does the existing
+  cross-harness failover apply — unpinned conversations only, under the same *failover* setting
+  and ask-before-switching mode, and never to a harness the channel has not approved. A turn that
+  fails after trying several licenses names them.
+- **A channel is locked to licenses or to whole harnesses.** The Enterprise *Approved harnesses*
+  policy (`meta.approvedEngines`, `src/gateway/channel-engines.js`) accepts a license id or
+  `harness:claude` / `harness:codex`. A whole-harness entry admits every license of that harness,
+  including ones added afterwards. A policy naming a removed license keeps its other entries, and
+  one that names only removed licenses stays closed rather than opening the channel.
+- **Removing a license leaves no dead ends.** Its switch, defaults and sign-in directory are
+  removed and the gateway default moves off it; a channel, thread pin or pool that still names it
+  ignores it on read and runs on what remains — the gateway default when nothing does.
+- **Every surface asks the same steps.** Admin web: Settings → Engine & runtime → *Licenses the
+  gateway may use* lists each license under "Claude Code licenses" / "Codex licenses" with its
+  type and status, and adds, edits, verifies, signs in and removes the added ones
+  (`public/admin-licenses.js`); a Codex license signs in from the browser with a device code, a
+  Claude sign-in license shows the host command to run. The gateway default, a channel and a DM
+  pick Harness → License → *If it fails, also use* → Model → Effort, and the channel lock offers
+  "<Harness> — any license" and each license. Slack: the same rows in the Settings modal for
+  the channel and the thread, a license card in the `/model` wizard, and forks that copy the
+  source thread's selection (`src/slack/license-controls.js`). Teams and Google Chat: the
+  settings cards, `/model <harness>`, and a typed `/license` (`any`, one or several names in
+  order, `default`) (`src/platforms/license-choice.js`). The run API takes `harness` +
+  `licenses`.
+- Not included: Codex licenses with an API key; Bedrock beyond the built-in license; usage
+  windows for added Claude sign-in licenses; mapping a picked model alias onto an API license's
+  own model ids (that license is skipped for the turn); a browser sign-in for Claude sign-in
+  licenses (a host terminal command); a license pool on the channel and DM templates (they
+  store one license); license-aware model shortcuts and connector-catalog engine lists (still
+  one flat list of engine ids); the schedules page and the Activity harness filter still show
+  and match the raw engine id.
+
+→ TEST-PLAN: Engine licenses.
+
 ## Container process limit: reclaim, named failures, higher default (2026-11-19)
 
 A channel container's process limit (`--pids-limit`) counts processes and threads together and is

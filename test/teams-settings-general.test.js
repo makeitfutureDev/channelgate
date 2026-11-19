@@ -273,7 +273,7 @@ test('clearing a thread engine validates dependents against its unpinned fallbac
   const ctx = context({ engine: 'claude' });
   await Promise.all([setThreadEngine(ctx.entry.slug, ctx.sessionKey, 'codex'), setThreadModel(ctx.entry.slug, ctx.sessionKey, 'gpt-6-sol')]);
   const scopes = await generalRuntimeScopes(ctx);
-  assert.match(scopes.thread.inherited.engine, /Follow channel \(Claude\)/);
+  assert.match(scopes.thread.inherited.engine, /Follow channel \(Claude Code\)/);
   await handleGeneral('settings.runtime', { scope: 'thread', field: 'engine', thread_engine: '__default__' }, ctx, ui);
   assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
   assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), '');

@@ -152,6 +152,10 @@ function extraClaudeLogin({ configDir, now }) {
     isolatedProvider: true, accessExpiresAt: Number(oauth.expiresAt) || 0,
     expiresAt: Number(oauth.refreshTokenExpiresAt) || 0,
     fingerprint: createHash("sha256").update(JSON.stringify(oauth)).digest("hex"), reason: "",
+    // The plan the sign-in itself reports. Facts for display and for verifying a license's
+    // declared type (license-adapters.js) — never a credential.
+    plan: typeof oauth.subscriptionType === "string" ? oauth.subscriptionType.slice(0, 40) : "",
+    rateLimitTier: typeof oauth.rateLimitTier === "string" ? oauth.rateLimitTier.slice(0, 80) : "",
   };
 }
 
@@ -162,6 +166,7 @@ export function extraClaudeCredentialState(options) {
     known: true, authenticated: provider.configured, method: provider.configured ? "claude-subscription" : "none",
     detail: provider.configured ? "Separate Claude subscription login" : provider.error,
     source: provider.configDir || "", fingerprint: provider.login?.fingerprint || "",
+    plan: provider.login?.plan || "",
   };
 }
 

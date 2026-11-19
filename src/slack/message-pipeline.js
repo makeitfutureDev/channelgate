@@ -10,10 +10,12 @@ import { assertEngineSelectable } from "../engines/selection.js";
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
 import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
-import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js";
+import { engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
+import { HARNESS_IDS } from "../engines/license-state.js";
+import { namedSelection, selectionLabel } from "./license-controls.js";
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
-import { runMessage, isEmptyResult } from "../gateway/run.js";
+import { runMessage, isEmptyResult, effectiveMeta } from "../gateway/run.js";
 import { modeLabel, modeNetworkGuidance, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
 import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
 
@@ -21,7 +23,7 @@ import { postModelWizard } from "./model-wizard.js";
 import { getSession, getSessionMap, clearSession, hasThreadSession, getSessionEngine, getSessionRuntime, saveSession } from "../gateway/sessions.js";
 import { planSessionAdoption } from "../gateway/session-adopt.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
-import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
+import { setThreadEngine, getThreadEngine, getThreadLicensePool, resolveThreadEngine, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 import { abortPooled, pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { logEvent } from "../util/logger.js";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
@@ -82,7 +84,7 @@ import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText }
 import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.js";
 
 import { pendingForkThreads, pendingForkSources } from "./fork-state.js";
-import { createForkThread } from "./fork-thread.js";
+import { createForkThread, forkLicensePool } from "./fork-thread.js";
 
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
 // message in the same thread waits FIFO behind the running one instead of racing it in the same
@@ -274,11 +276,14 @@ export function engineIdAlternation(ids = ENGINE_IDS) {
   return [...ids].sort((a, b) => b.length - a.length).join("|");
 }
 
-export function engineSwitchHint(err, { engines = ENGINE_IDS } = {}) {
+// The words offered are the other HARNESSES — a license of the same harness is moved to
+// automatically when the selection names it, and is never something to type. `engines` narrows
+// the offer to an explicit id list (tests).
+export function engineSwitchHint(err, { engines } = {}) {
   const details = err?.details || {};
   if (details.providerError !== true && !(details.runtimeCredential === true && details.runtimePinned)) return "";
   if (!details.runtimePinned && details.providerKind !== "usage_limit" && details.providerKind !== "authentication") return "";
-  const other = engines.filter((id) => id !== details.engine);
+  const other = engines ? engines.filter((id) => id !== details.engine) : HARNESS_IDS.filter((id) => id !== harnessOf(details.engine));
   if (!other.length) return "";
   const names = other.map((id) => `\`${id}\``).join(" or ");
   if (details.runtimePinned) {
@@ -945,6 +950,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const { forkKey, requestTs } = await createForkThread(client, {
             channelId: event.channel, slug: entry.slug, sourceThreadTs: threadKey, authorId: event.user, botUserId,
             title: task, activityTitle: forkTitle, sourceUrl, handoffNote, engine: childEngine,
+            // A shortcut names one license; otherwise the fork keeps the source's license selection.
+            licensePool: forkTarget ? "" : await forkLicensePool({ slug: entry.slug, sourceThreadTs: threadKey, engine: childEngine, meta }),
             model: forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey),
             effort: forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey), clean: sourceClean,
           });
@@ -1085,7 +1092,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // harness switch. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
         await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
-        await setThreadEngine(entry.slug, threadKey, plan.engine);
+        // The adopted id names one license. A thread already pinned to it keeps the further
+        // licenses it may move to; any other pin's pool belonged to that pin and goes.
+        await setThreadEngine(entry.slug, threadKey, plan.engine, {
+          licensePool: (await getThreadEngine(entry.slug, threadKey)) === plan.engine ? await getThreadLicensePool(entry.slug, threadKey) : "",
+        });
         // A model/effort override left over from the other harness is not a valid flag for this
         // one — same rule the engine-switch path applies.
         if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), plan.engine)) await setThreadModel(entry.slug, threadKey, "");
@@ -1268,11 +1279,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         if (m && m.index <= 12) phrase = m;
       }
       if (anchored || phrase) {
-        const eng = (anchored ? anchored[1] : phrase[1]).toLowerCase();
+        // A harness word pins this conversation's selection for that harness (license + pool);
+        // a license id pins exactly that license.
+        const picked = namedSelection((anchored ? anchored[1] : phrase[1]).toLowerCase(), effectiveMeta(meta));
+        const eng = picked.engine;
         if (!engineChoice) {
           await assertEngineSelectable(eng, { meta });
           engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
-          await setThreadEngine(entry.slug, threadKey, eng);
+          await setThreadEngine(entry.slug, threadKey, eng, { licensePool: picked.licensePool });
           // A thread model/effort pinned by the /model wizard is engine-specific — switching the
           // thread's harness drops whatever doesn't belong to the new one (mirrors the wizard).
           if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), eng)) await setThreadModel(entry.slug, threadKey, "");
@@ -1281,7 +1295,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         if (anchored) {
           prompt = anchored[2].trim();
           if (!prompt) {
-            await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `✅ This thread now uses *${engineLabel(eng)}*. What would you like me to do?` });
+            await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `✅ This thread now uses *${selectionLabel({ engine: eng, pool: picked.licensePool, meta: effectiveMeta(meta) })}*. What would you like me to do?` });
             return;
           }
         } else {
@@ -1985,6 +1999,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               transientRetries: Number(err.details.transientRetries) || 0,
               bothFailed: Boolean(ask.bothFailed),
               fallbackError: String(err.details.fallbackError || "").slice(0, 300),
+              // The other licenses of the selection the gateway already tried on its own.
+              alsoFailed: (Array.isArray(err.details.alsoFailed) ? err.details.alsoFailed : []).filter((id) => typeof id === "string").slice(0, 16),
             },
           };
           const choiceId = engineSwitchChoices.create(record);

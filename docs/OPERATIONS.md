@@ -878,12 +878,12 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the real access token again, readable by the channel's own agent (it cannot rotate anything and
   dies within hours). A daemon that authenticates Claude with its own `ANTHROPIC_API_KEY` still
   passes that key through raw — the proxy does not rewrite it.
-- **Engine keys that still reach a proxy-mode container raw.** A Qwen harness's provider key
+- **Engine keys that still reach a proxy-mode container raw.** A Qwen license's provider key
   (`ANTHROPIC_AUTH_TOKEN` pointed at the provider) still reaches that engine as a real value.
   Codex logins stored in `auth.json`, including API-key logins, are relayed behind the proxy.
 - **A self-hosted Qwen endpoint on a private address is refused in proxy mode.** The proxy never
   connects to loopback, private, link-local or CGNAT addresses, and a configured Qwen base URL is no
-  exception: point the harness at a public endpoint, or run that channel under the legacy bridge
+  exception: point the license at a public endpoint, or run that channel under the legacy bridge
   mode.
 - **Egress is policed per channel by the proxy; the switch is advisory only where the proxy is not
   the network.** Under `containerEgressMode = "bridge"` or a channel's `rawNetwork` escape the

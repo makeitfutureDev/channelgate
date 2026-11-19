@@ -106,24 +106,52 @@ export function validateEngineAdapter(adapter) {
   return Object.freeze(adapter);
 }
 
+// The registry holds two layers. The BUILT-IN adapters are fixed at boot and never change. The
+// DYNAMIC layer is the licenses an administrator added (src/engines/license-adapters.js): it is
+// replaced as a whole by `setDynamic`, live, when the stored list changes. `ids` is ONE array for
+// the life of the process, updated in place, because modules hold it by reference (`ENGINE_IDS`,
+// `ENGINES`) and a consumer that captured a frozen copy would never learn of a new license.
+// Readers must therefore never cache a derived Set of it — ask `get(id)` instead.
 export function createAdapterRegistry(adapters) {
-  const map = new Map();
+  const builtin = new Map();
   for (const raw of adapters || []) {
     const adapter = validateEngineAdapter(raw);
-    if (map.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
-    map.set(adapter.id, adapter);
+    if (builtin.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
+    builtin.set(adapter.id, adapter);
   }
+  let dynamic = new Map();
+  const ids = [...builtin.keys()];
+  const lookup = (id) => { const key = String(id || ""); return builtin.get(key) || dynamic.get(key) || null; };
+  const all = () => [...builtin.values(), ...dynamic.values()];
   return Object.freeze({
-    ids: Object.freeze([...map.keys()]),
-    get: (id) => map.get(String(id || "")) || null,
+    ids,
+    builtinIds: Object.freeze([...builtin.keys()]),
+    get: lookup,
     require(id) {
-      const adapter = map.get(String(id || ""));
+      const adapter = lookup(id);
       if (!adapter) throw new Error(`Unknown or unavailable engine: ${id || "(missing)"}`);
       return adapter;
     },
+    isBuiltin: (id) => builtin.has(String(id || "")),
+    // Replace the dynamic layer. All-or-nothing: every adapter is validated first, and an id that
+    // collides with a built-in (or repeats) refuses the whole set, so a bad record can never
+    // shadow a shipped harness or leave the registry half-applied.
+    setDynamic(list) {
+      const next = new Map();
+      for (const raw of list || []) {
+        const adapter = validateEngineAdapter(raw);
+        if (builtin.has(adapter.id) || next.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
+        next.set(adapter.id, adapter);
+      }
+      const removed = [...dynamic.keys()].filter((id) => !next.has(id));
+      dynamic = next;
+      ids.length = 0;
+      ids.push(...builtin.keys(), ...dynamic.keys());
+      return removed;
+    },
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
     // structuredClone throws on those. The UI has no use for where a transcript lives on disk.
-    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
+    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ...manifest }) => structuredClone(manifest)),
   });
 }
 

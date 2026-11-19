@@ -3,15 +3,19 @@ import { assertEngineSelectable } from "../engines/selection.js";
 // ONE command for the whole runtime (the old /engine and /effort are folded in): /model walks
 // through four steps in a single message that updates in place —
 //   1. scope   — "This channel" or "Just this thread" (buttons)
-//   2. harness — Claude / Codex (buttons; "Use defaults" clears the scope's overrides and ends)
-//   3. model   — buttons, one per model, filtered to the chosen harness
-//   4. effort  — buttons, one per effort level, filtered to the chosen harness
-// Every step is a flat list of buttons — no dropdowns anywhere in the flow. Each step persists the
+//   2. harness — Claude Code / Codex (buttons; "Use defaults" clears the scope's overrides and ends)
+//      license — only when the chosen harness has more than one license this conversation can use:
+//                "Any license" or one of them (buttons), and for a specific license the others to
+//                move to when it fails (a multi-select, then Continue)
+//   3. model   — buttons, one per model, filtered to the chosen license
+//   4. effort  — buttons, one per effort level, filtered to the chosen license
+// Every choice is a button — the one dropdown is the optional "also use" list. Each step persists the
 // moment it's clicked, so abandoning mid-wizard keeps the steps already
 // taken. Steps 2-4 also carry a "← Back" button (and the done card a "Change again"), which walks
 // the same message to an earlier step so a mis-click is corrected by re-picking rather than by
 // re-running /model. Channel scope writes meta.engine/model/effort (what the old pickers did); thread scope
-// writes the per-thread overrides (thread-engine.js), which beat the channel at run time. A channel
+// writes the per-thread overrides (thread-engine.js), which beat the channel at run time. The
+// license step writes `licensePool` beside the engine at the same level (license-pool.js). A channel
 // pick made from inside a thread applies to THAT thread as well — see applyChannelRuntimeToThread;
 // "this channel" is not "every thread except the one you are standing in". Wizard
 // state ({s: scope, t: threadTs}) rides inside every button/option value as compact JSON, because
@@ -22,15 +26,17 @@ import { getChannelEntry, getChannelMeta, patchChannelMeta, isAdmin, isApproved 
 // admin UI's save and the `/mode` command (config/channel-audit.js). Thread-scope picks are not:
 // they live in the thread override store, never in the channel's meta.
 import { logChannelPolicyChange } from "../config/channel-audit.js";
-import { isChannelEngineApproved, assertChannelEngineApproved, engineAvailableForChannel } from "../gateway/channel-engines.js";
-import { getEngine, canChangeChannelRuntime, getEnabledEngines } from "../config/settings.js";
+import { assertChannelEngineApproved } from "../gateway/channel-engines.js";
+import { getEngine, getEnginePool, canChangeChannelRuntime } from "../config/settings.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
-import { setThreadEngine, getThreadEngine, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
+import { setThreadEngine, getThreadEngine, getThreadLicensePool, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
 // Which harness MINTED the thread's live session. A channel-scope pick made inside a thread has
 // to know that before it can move the thread — see applyChannelRuntimeToThread below.
 import { getSessionEngine } from "../gateway/sessions.js";
-import { ENGINE_IDS, adapterFor, requireAdapter, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, harnessOf, requireAdapter, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
+import { HARNESS_IDS, LICENSE_POOL_ANY, harnessLabel, isHarnessId } from "../engines/license-state.js";
+import { ALSO_USE_LABEL, LICENSE_HELP_TEXT, clipLabel, harnessChoices, licenseChoices, namedSelection, nextLicenseSelection, selectionLabel, storedSelectionFor } from "./license-controls.js";
 import { isValidModel } from "./util.js";
 
 // ONE command for the whole runtime (the old /engine and /effort are folded in): /model walks
@@ -59,7 +65,17 @@ export const MODEL_WIZARD_ENGINE_RESET_ACTION = "cg_mw_engine_reset";
 export const MODEL_WIZARD_BACK_SCOPE_ACTION = "cg_mw_back_scope"; // → step 1 (scope)
 export const MODEL_WIZARD_BACK_ENGINE_ACTION = "cg_mw_back_engine"; // → step 2 (harness)
 export const MODEL_WIZARD_BACK_MODEL_ACTION = "cg_mw_back_model"; // → step 3 (model)
-export const MODEL_WIZARD_BACK_ACTION_PATTERN = /^cg_mw_back_(?:scope|engine|model)$/;
+export const MODEL_WIZARD_BACK_LICENSE_ACTION = "cg_mw_back_license"; // → the license step
+export const MODEL_WIZARD_BACK_ACTION_PATTERN = /^cg_mw_back_(?:scope|engine|license|model)$/;
+// The license step (only for a harness with more than one usable license). One button per choice
+// (`cg_mw_license_0` = "Any license", then each license), the "also use" multi-select, and
+// Continue. A multi-select with nothing selected carries no option value, so its wizard state
+// rides in the section's block_id instead (`cg_mw_also|<state>`).
+export const MODEL_WIZARD_LICENSE_ACTION = "cg_mw_license";
+export const MODEL_WIZARD_LICENSE_ACTION_PATTERN = /^cg_mw_license_\d+$/;
+export const MODEL_WIZARD_ALSO_ACTION = "cg_mw_also";
+export const MODEL_WIZARD_LICENSE_DONE_ACTION = "cg_mw_license_done";
+const ALSO_BLOCK_PREFIX = `${MODEL_WIZARD_ALSO_ACTION}|`;
 // The model/effort steps render one button per choice, and Slack requires a UNIQUE action_id inside
 // a block — so each button gets an index suffix (`cg_model_pick_2`) and both the Bolt registration
 // and the handler match on the base prefix. The bare id is still accepted: it's what the retired
@@ -134,20 +150,21 @@ function wizardScopeLabel(scope, isDM) {
   return scope === "thread" ? "just this thread" : isDM ? "this DM" : "this whole channel";
 }
 
-// Only harnesses the admin left enabled are offered — the wizard must not hand someone a button
-// that writes an override the orchestrator will immediately substitute away. Falls back to the full
-// list if the setting somehow disables everything (the getter already fails open).
-const OFFERED_ENGINE_IDS = (meta = {}) => {
-  const enabled = getEnabledEngines().filter((id) => adapterFor(id));
-  return (enabled.length ? enabled : ENGINE_IDS).filter(id => isChannelEngineApproved(meta, id) && engineAvailableForChannel(meta, id));
+// Only harnesses with a license this conversation can run on are offered (license-pool.js: switched
+// on in Settings, approved for the channel, available here) — the wizard must not hand someone a
+// button that writes an override the orchestrator will immediately substitute away. The intro line
+// names both harnesses when a policy leaves none, so the sentence still reads.
+const OFFERED_HARNESSES = (meta = {}) => harnessChoices(meta);
+const ENGINE_LABELS = (meta = {}) => {
+  const offered = OFFERED_HARNESSES(meta).map((choice) => choice.label);
+  return (offered.length ? offered : HARNESS_IDS.map(harnessLabel)).join(" / ");
 };
-const ENGINE_LABELS = (meta = {}) => OFFERED_ENGINE_IDS(meta).map((id) => requireAdapter(id).label).join(" / ");
 export const modelWizardText = (meta = {}) => `Change the model: pick scope, then harness (${ENGINE_LABELS(meta)}), then model, then effort.`;
 
 export const RETIRED_COMMAND_TEXT = (cmd) => `\`${cmd}\` was removed — \`/model\` now does it all: scope (channel or just this thread) → harness (${ENGINE_LABELS()}) → model → effort.`;
 
 function wizardButton(actionId, label, value) {
-  return { type: "button", action_id: actionId, text: { type: "plain_text", text: label, emoji: false }, value };
+  return { type: "button", action_id: actionId, text: { type: "plain_text", text: clipLabel(label), emoji: false }, value };
 }
 
 // A back/restart button carries the same wizard state as the step it sits on (scope + thread), so
@@ -185,20 +202,60 @@ export function modelWizardScopeBlocks({ threadTs, meta }) {
   ];
 }
 
-export function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
+// `threadEngine` / `threadPool` are the thread's own pin (thread scope); the channel's selection
+// is read from `meta`. The "Current" line names the stored selection in words.
+export function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "", threadPool = "" }) {
   const button = (actionId, label) => wizardButton(actionId, label, encodeWizardState({ scope, threadTs }));
-  const current = scope === "thread" ? threadEngine || "channel default" : meta.engine || "gateway default";
+  const current = scope === "thread"
+    ? (threadEngine ? selectionLabel({ engine: threadEngine, pool: threadPool, meta }) : "channel default")
+    : (meta.engine ? selectionLabel({ engine: meta.engine, pool: meta.licensePool, meta }) : "gateway default");
   return [
     { type: "section", text: { type: "mrkdwn", text: `*Which harness?* — for ${wizardScopeLabel(scope, meta.isDM)}\nCurrent: \`${current}\`` } },
     {
       type: "actions",
       elements: [
-        ...OFFERED_ENGINE_IDS(meta).map((id) => button(`cg_mw_engine_${id}`, requireAdapter(id).label)),
+        ...OFFERED_HARNESSES(meta).map((choice) => button(`cg_mw_engine_${choice.value}`, choice.label)),
         button(MODEL_WIZARD_ENGINE_RESET_ACTION, "Use defaults"),
         backButton(MODEL_WIZARD_BACK_SCOPE_ACTION, { scope, threadTs }),
       ],
     },
     { type: "context", elements: [{ type: "mrkdwn", text: "Step 2 of 4 — model and effort next. *Use defaults* instead clears the harness/model/effort overrides for this scope. *← Back* returns to the scope step." }] },
+  ];
+}
+
+// The license step: which license of the chosen harness this scope runs on. Rendered only when
+// that harness has more than one license usable here (licenseChoices returns null otherwise).
+// "Any license" moves on at once. A specific license stays on this card, which then also offers
+// the other licenses to move to when it fails; Continue goes on to the model.
+export function modelWizardLicenseBlocks({ scope, threadTs, meta, engine, pool = "" }) {
+  const license = licenseChoices({ engine, pool, meta });
+  if (!license) return null;
+  const elements = license.options.map((o, i) => {
+    const button = wizardButton(`${MODEL_WIZARD_LICENSE_ACTION}_${i}`, o.value === license.selected ? `✓ ${o.label}` : o.label, encodeWizardState({ scope, threadTs, value: o.value }));
+    return o.value === license.selected ? { ...button, style: "primary" } : button;
+  });
+  const specific = license.selected !== LICENSE_POOL_ANY;
+  const others = specific ? license.others.map((o) => ({ text: { type: "plain_text", text: clipLabel(o.label), emoji: false }, value: o.value })) : [];
+  const initial = others.filter((o) => license.also.includes(o.value));
+  return [
+    { type: "section", text: { type: "mrkdwn", text: `*Which ${harnessLabel(license.harness)} license?* — for ${wizardScopeLabel(scope, meta.isDM)}\nCurrent: \`${selectionLabel({ engine, pool, meta })}\`` } },
+    ...actionRows(elements),
+    ...(others.length ? [{
+      type: "section",
+      block_id: `${ALSO_BLOCK_PREFIX}${encodeWizardState({ scope, threadTs })}`,
+      text: { type: "mrkdwn", text: `*${ALSO_USE_LABEL}*` },
+      accessory: {
+        type: "multi_static_select", action_id: MODEL_WIZARD_ALSO_ACTION,
+        placeholder: { type: "plain_text", text: "No other license", emoji: false }, options: others,
+        // Slack refuses a message whose `initial_options` is an empty list.
+        ...(initial.length ? { initial_options: initial } : {}),
+      },
+    }] : []),
+    { type: "actions", elements: [
+      wizardButton(MODEL_WIZARD_LICENSE_DONE_ACTION, "Continue →", encodeWizardState({ scope, threadTs })),
+      backButton(MODEL_WIZARD_BACK_ENGINE_ACTION, { scope, threadTs }),
+    ] },
+    { type: "context", elements: [{ type: "mrkdwn", text: `Step 2 of 4, continued — this harness has more than one license. *Any license* uses whichever can answer. ${LICENSE_HELP_TEXT} *Continue* goes on to the model. *← Back* returns to the harness step.` }] },
   ];
 }
 
@@ -223,18 +280,19 @@ function wizardChoiceBlocks({ scope, threadTs, actionId, options, current, heade
   ];
 }
 
-export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM, locked = false }) {
+// `licenseStep`: the scope's harness has a license step, so Back returns there.
+export function modelWizardModelBlocks({ scope, threadTs, engine, current, isDM, locked = false, licenseStep = false }) {
   return wizardChoiceBlocks({
     scope,
     threadTs,
     actionId: MODEL_PICKER_ACTION,
     options: modelOptionsForEngine(engine, current),
     current,
-    backActionId: locked ? MODEL_WIZARD_BACK_SCOPE_ACTION : MODEL_WIZARD_BACK_ENGINE_ACTION,
+    backActionId: locked ? MODEL_WIZARD_BACK_SCOPE_ACTION : licenseStep ? MODEL_WIZARD_BACK_LICENSE_ACTION : MODEL_WIZARD_BACK_ENGINE_ACTION,
     header: `*Choose a ${requireAdapter(engine).label} model* — for ${wizardScopeLabel(scope, isDM)}\nCurrent: \`${current || "default"}\``,
     step: locked
       ? "Step 2 of 3 — effort next. *Gateway default* clears the model override. *← Back* returns to scope."
-      : "Step 3 of 4 — effort next. *Gateway default* clears the model override. *← Back* returns to the harness step.",
+      : `Step 3 of 4 — effort next. *Gateway default* clears the model override. *← Back* returns to the ${licenseStep ? "license" : "harness"} step.`,
   });
 }
 
@@ -251,17 +309,20 @@ export function modelWizardEffortBlocks({ scope, threadTs, engine, model, curren
   });
 }
 
-function modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort, reset = false, movedThread = false }) {
+// `selection` is the stored selection in words ("Codex · Work, then Second"); `movedThread` is
+// "harness" or "license" — what the thread this channel pick was made in was moved off.
+function modelWizardDoneBlocks({ scope, threadTs, isDM, engine, selection = "", model, effort, reset = false, movedThread = "" }) {
   const where = wizardScopeLabel(scope, isDM);
   // A channel pick applies to the thread it was made in as well. Say so only when that cost
-  // something: the thread was on the other harness, so it restarts there with its earlier
-  // messages replayed instead of resuming its own session.
+  // something: the thread was on the other harness (or another license of this one — a session
+  // belongs to the license that started it), so it restarts there with its earlier messages
+  // replayed instead of resuming its own session.
   const moved = movedThread
-    ? `\n_This thread was on another harness — your next message here starts a fresh ${requireAdapter(engine).label} session, with the thread's earlier messages replayed as context._`
+    ? `\n_This thread was on another ${movedThread === "license" ? "license" : "harness"} — your next message here starts a fresh ${requireAdapter(engine).label} session, with the thread's earlier messages replayed as context._`
     : "";
   const text = reset
     ? `✅ Cleared — ${where} now follows the ${scope === "thread" ? "channel's" : "gateway's"} default harness, model, and effort.`
-    : `✅ Runtime updated for ${where}\nHarness: *${requireAdapter(engine).label}* · Model: \`${model || "default"}\` · Effort: \`${effort || "default"}\`${moved}`;
+    : `✅ Runtime updated for ${where}\nHarness: *${selection || requireAdapter(engine).label}* · Model: \`${model || "default"}\` · Effort: \`${effort || "default"}\`${moved}`;
   return [
     { type: "section", text: { type: "mrkdwn", text } },
     // The last click ends the wizard, so a wrong final pick would otherwise cost a fresh `/model`.
@@ -304,7 +365,11 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
   // the repaint goes straight to respond(replace_original) instead of a doomed update + warn.
   const ts = body?.container?.is_ephemeral ? "" : body?.container?.message_ts || body?.message?.ts;
   const actionId = action?.action_id || "";
-  const raw = action?.selected_option?.value ?? action?.value;
+  // The "also use" multi-select has no single value (and none at all once emptied): its wizard
+  // state rides in the block_id of the section that carries it.
+  const raw = actionId === MODEL_WIZARD_ALSO_ACTION
+    ? String(action?.block_id || "").slice(ALSO_BLOCK_PREFIX.length)
+    : action?.selected_option?.value ?? action?.value;
   const state = decodeWizardState(raw);
   // Prefer the encoded thread (the ephemeral slash-command variant has no body.message); fall
   // back to the clicked message's own thread for picker messages posted before the wizard shipped.
@@ -379,11 +444,60 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     //     The pin is written ONLY when the session really is on the other harness — a thread whose
     //     session already matches (or has none yet) stays unpinned, so it keeps following the
     //     channel and keeps its cross-engine failover.
-    const applyChannelRuntimeToThread = async (engine) => {
+    //     The pin carries the channel selection's other licenses with it, so the moved thread can
+    //     still move between them.
+    const applyChannelRuntimeToThread = async (engine, licensePool = "") => {
       const minted = await getSessionEngine(entry.slug, threadTs).catch(() => "");
       await clearThreadOverrides();
-      if (minted && minted !== engine) await setThreadEngine(entry.slug, threadTs, engine);
+      if (minted && minted !== engine) await setThreadEngine(entry.slug, threadTs, engine, { licensePool });
     };
+
+    // ── The license selection of this wizard's scope ──────────────────────────────────────────
+    // effectiveMeta: what this conversation can run on (its approved harnesses, its own Codex
+    // sign-in) and, for a template-managed DM, the selection the org template supplies.
+    const effective = effectiveMeta(meta);
+    // What the scope itself stores: the thread's pin, or the conversation's own record.
+    const storedSelection = async () => scope === "thread"
+      ? { engine: await getThreadEngine(entry.slug, threadTs), licensePool: await getThreadLicensePool(entry.slug, threadTs) }
+      : { engine: meta.engine || "", licensePool: meta.licensePool || "" };
+    const hasLicenseStep = (stored) => Boolean(licenseChoices({ engine: stored.engine, pool: stored.licensePool, meta: effective }));
+    // Persist a harness/license pick at the scope, clearing any stored model/effort that doesn't
+    // belong to the new engine (they flow straight into --model / effort flags, so a leftover from
+    // another harness would break every turn). Returns the model still in force there.
+    const persistSelection = async ({ engine, licensePool }) => {
+      if (scope === "thread") {
+        await setThreadEngine(entry.slug, threadTs, engine, { licensePool });
+        const tm = await getThreadModel(entry.slug, threadTs);
+        if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadTs), engine)) await setThreadEffort(entry.slug, threadTs, "");
+        if (modelBelongsToEngine(tm, engine)) return tm;
+        await setThreadModel(entry.slug, threadTs, "");
+        return "";
+      }
+      // The store keeps a pool beside whatever engine is saved, so the pool is always written
+      // with the license it belongs to — "" when there is none.
+      const patch = { engine, licensePool };
+      if (!modelBelongsToEngine(meta.model, engine)) patch.model = "";
+      if (!effortBelongsToEngine(meta.effort, engine)) patch.effort = "";
+      const next = await patchChannelRuntime(patch);
+      // The channel choice governs the thread it was made in, not just threads opened later.
+      if (threadTs) await applyChannelRuntimeToThread(engine, licensePool);
+      return next.model || "";
+    };
+    const paintHarnessStep = async (chosen = scope) => {
+      const pinned = chosen === "thread";
+      await repaint(modelWizardEngineBlocks({
+        scope: chosen, threadTs, meta: effective,
+        threadEngine: pinned ? await getThreadEngine(entry.slug, threadTs) : "",
+        threadPool: pinned ? await getThreadLicensePool(entry.slug, threadTs) : "",
+      }));
+    };
+    // False when the stored harness has a single usable license here: there is no license step.
+    const paintLicenseStep = async (stored) => {
+      const blocks = modelWizardLicenseBlocks({ scope, threadTs, meta: effective, engine: stored.engine, pool: stored.licensePool });
+      if (blocks) await repaint(blocks);
+      return Boolean(blocks);
+    };
+    const paintModelStep = (stored, current) => repaint(modelWizardModelBlocks({ scope, threadTs, engine: stored.engine, current, isDM, licenseStep: hasLicenseStep(stored) }));
 
     // "← Back" / "Change again": repaint an EARLIER step in this same message. Nothing is written
     // or unwritten here — each step already persisted when it was clicked, and re-picking there
@@ -394,22 +508,25 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       return;
     }
     if (actionId === MODEL_WIZARD_BACK_ENGINE_ACTION) {
-      const threadEngine = scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "";
-      await repaint(modelWizardEngineBlocks({ scope, threadTs, meta: effectiveMeta(meta), threadEngine }));
+      await paintHarnessStep();
+      return;
+    }
+    if (actionId === MODEL_WIZARD_BACK_LICENSE_ACTION) {
+      // The license step may be gone by now (a license was removed or switched off): fall back
+      // to the harness step rather than repaint a card with nothing to choose.
+      if (!(await paintLicenseStep(await storedSelection()))) await paintHarnessStep();
       return;
     }
     if (actionId === MODEL_WIZARD_BACK_MODEL_ACTION) {
-      const backEngine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
+      const backEngine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effective);
       const backModel = (scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model) || "";
-      await repaint(modelWizardModelBlocks({ scope, threadTs, engine: backEngine, current: backModel, isDM }));
+      await repaint(modelWizardModelBlocks({ scope, threadTs, engine: backEngine, current: backModel, isDM, licenseStep: hasLicenseStep(await storedSelection()) }));
       return;
     }
 
     // Step 1 → 2: scope picked. (A thread pick with no resolvable thread was already refused above.)
     if (actionId === MODEL_WIZARD_SCOPE_CHANNEL_ACTION || actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION) {
-      const chosen = actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION ? "thread" : "channel";
-      const threadEngine = chosen === "thread" ? await getThreadEngine(entry.slug, threadTs) : "";
-      await repaint(modelWizardEngineBlocks({ scope: chosen, threadTs, meta: effectiveMeta(meta), threadEngine }));
+      await paintHarnessStep(actionId === MODEL_WIZARD_SCOPE_THREAD_ACTION ? "thread" : "channel");
       return;
     }
 
@@ -418,7 +535,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       if (scope === "thread") {
         await clearThreadOverrides();
       } else {
-        await patchChannelRuntime({ engine: "", model: "", effort: "" });
+        await patchChannelRuntime({ engine: "", licensePool: "", model: "", effort: "" });
         // A channel-wide reset asked for from inside a thread also drops that thread's own
         // overrides, so the reset visibly applies right where it was requested.
         if (threadTs) await clearThreadOverrides();
@@ -427,41 +544,64 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       return;
     }
 
-    // Step 2 → 3: harness picked. Persist it, clearing any stored model/effort that doesn't
-    // belong to the new engine (they flow straight into --model / effort flags, so a leftover
-    // from the other harness would break every turn).
+    // Step 2 → 3: harness picked. Persist it at once — the license and the further licenses this
+    // scope already had for that harness stay (a thread keeps its own pin's), else what the
+    // conversation runs that harness on (license-pool.js harnessSelection). A button naming a
+    // LICENSE id (cards posted before the license step existed) pins exactly that license.
     if (actionId.startsWith("cg_mw_engine_") && actionId !== MODEL_WIZARD_ENGINE_RESET_ACTION) {
-      const engine = actionId.slice("cg_mw_engine_".length);
-      if (!adapterFor(engine)) throw new Error(`Unknown engine choice: ${engine}`);
-      assertChannelEngineApproved(meta, engine);
-      await assertEngineSelectable(engine, { meta });
-      let current = "";
-      if (scope === "thread") {
-        await setThreadEngine(entry.slug, threadTs, engine);
-        const tm = await getThreadModel(entry.slug, threadTs);
-        if (modelBelongsToEngine(tm, engine)) current = tm;
-        else await setThreadModel(entry.slug, threadTs, "");
-        if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadTs), engine)) await setThreadEffort(entry.slug, threadTs, "");
-      } else {
-        const patch = { engine };
-        if (!modelBelongsToEngine(meta.model, engine)) patch.model = "";
-        if (!effortBelongsToEngine(meta.effort, engine)) patch.effort = "";
-        const next = await patchChannelRuntime(patch);
-        current = next.model || "";
-        // The channel choice governs the thread it was made in, not just threads opened later.
-        if (threadTs) await applyChannelRuntimeToThread(engine);
-      }
+      const name = actionId.slice("cg_mw_engine_".length);
+      if (!adapterFor(name)) throw new Error(`Unknown engine choice: ${name}`);
+      const own = isHarnessId(name) && scope === "thread" ? storedSelectionFor(name, await storedSelection(), effective) : null;
+      const selection = own || namedSelection(name, effective);
+      assertChannelEngineApproved(meta, selection.engine);
+      await assertEngineSelectable(selection.engine, { meta });
+      const current = await persistSelection(selection);
       // The authenticated CLI is the source of truth for selectable Codex models. Refresh only
       // when its bounded cache is stale; failure keeps the last known-good/static catalog.
-      await refreshEngineModels(engine);
-      await repaint(modelWizardModelBlocks({ scope, threadTs, engine, current, isDM }));
+      await refreshEngineModels(selection.engine);
+      // More than one license of this harness is usable here: ask which before the model.
+      if (isHarnessId(name) && await paintLicenseStep(selection)) return;
+      await paintModelStep(selection, current);
+      return;
+    }
+
+    // The license step. Every click persists, like every other step.
+    if (MODEL_WIZARD_LICENSE_ACTION_PATTERN.test(actionId) || actionId === MODEL_WIZARD_ALSO_ACTION) {
+      const stored = await storedSelection();
+      // A card left on screen after the scope went back to its default, or after the other
+      // licenses were removed: there is nothing to choose between any more.
+      if (!hasLicenseStep(stored)) {
+        await ephemeral("That license choice is no longer available — pick the harness again.");
+        await paintHarnessStep();
+        return;
+      }
+      const selection = actionId === MODEL_WIZARD_ALSO_ACTION
+        ? nextLicenseSelection({ field: "also", also: (action?.selected_options || []).map((o) => String(o?.value || "")).filter(Boolean), current: stored, meta: effective })
+        : nextLicenseSelection({ field: "license", value: String(state.value || ""), current: stored, meta: effective });
+      assertChannelEngineApproved(meta, selection.engine);
+      await assertEngineSelectable(selection.engine, { meta });
+      const current = await persistSelection(selection);
+      await refreshEngineModels(selection.engine);
+      // "Any license" has nothing more to ask. A specific license stays on this card, which now
+      // offers the other licenses to move to; Continue goes on.
+      if (selection.licensePool === LICENSE_POOL_ANY || !(await paintLicenseStep(selection))) await paintModelStep(selection, current);
+      return;
+    }
+    if (actionId === MODEL_WIZARD_LICENSE_DONE_ACTION) {
+      const stored = await storedSelection();
+      if (!stored.engine || !adapterFor(stored.engine)) {
+        await paintHarnessStep();
+        return;
+      }
+      const model = (scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model) || "";
+      await paintModelStep(stored, modelBelongsToEngine(model, stored.engine) ? model : "");
       return;
     }
 
     // Steps 3 + 4 read the harness back from what step 2 persisted (also correct for the legacy
     // pre-wizard dropdowns, which were always channel-scope on the channel's engine).
     // effectiveMeta: a template-managed DM takes its engine from the org template, as run.js will.
-    const engine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effectiveMeta(meta));
+    const engine = (scope === "thread" ? await getThreadEngine(entry.slug, threadTs) : "") || runtimeEngine(effective);
     const val = decodePickerValue(state.value);
 
     // Step 3 → 4: model picked.
@@ -515,19 +655,27 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       }
       // A harness pin on a channel-scope pick only exists because step 2 MOVED this thread onto
       // the chosen harness (applyChannelRuntimeToThread) — report that, since the move costs the
-      // thread its current engine session.
-      const movedThread = Boolean(scope === "channel" && threadTs && (await getThreadEngine(entry.slug, threadTs)));
+      // thread its current engine session. A session belongs to the license that started it, so
+      // a move between two licenses of one harness costs the same and is named as what it is.
+      const pinnedHere = scope === "channel" && threadTs ? await getThreadEngine(entry.slug, threadTs) : "";
+      const minted = pinnedHere ? await getSessionEngine(entry.slug, threadTs).catch(() => "") : "";
+      const movedThread = !pinnedHere ? "" : minted && minted !== engine && harnessOf(minted) === harnessOf(engine) ? "license" : "harness";
+      // The selection in words: the scope's own license and the further ones beside it, else
+      // what it inherits.
+      const stored = await storedSelection();
+      const pool = stored.engine === engine ? stored.licensePool : effective.engine === engine ? effective.licensePool || "" : engine === getEngine() ? getEnginePool() : "";
+      const selection = selectionLabel({ engine, pool, meta: effective });
       await updateRuntimePickerMessage({
         client,
         respond,
         channel,
         ts,
-        text: `Runtime updated for ${wizardScopeLabel(scope, isDM)}. Harness: ${engine}. Model: ${model || "default"}. Effort: ${val || "default"}.`,
-        blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, engine, model, effort: val, movedThread }),
+        text: `Runtime updated for ${wizardScopeLabel(scope, isDM)}. Harness: ${selection}. Model: ${model || "default"}. Effort: ${val || "default"}.`,
+        blocks: modelWizardDoneBlocks({ scope, threadTs, isDM, engine, selection, model, effort: val, movedThread }),
       });
     }
   } catch (e) {
     console.error("[slack] model wizard error:", e.message);
-    if (channel) await ephemeral(e.code === "engine_selection_unavailable" ? e.message : "Couldn't update runtime settings — check the gateway logs.");
+    if (channel) await ephemeral(e.code === "engine_selection_unavailable" || e.code === "invalid_license_pool" ? e.message : "Couldn't update runtime settings — check the gateway logs.");
   }
 }

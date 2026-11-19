@@ -147,8 +147,13 @@ export const containerBackend = Object.freeze({
       ...containerImagePaths(),
     };
     const selectedAdapter = adapterFor(base.meta?.engine);
-    const stateKey = selectedAdapter?.cli === "codex" ? selectedAdapter.sessionState?.containerDirKey : "";
-    if (stateKey && container[stateKey]) container.codexHome = container[stateKey];
+    // The shared Codex home, kept beside the selected engine's own: a turn that moves to another
+    // license of the channel's pool must not run in the first license's directory (run.js
+    // targetForEngine).
+    container.baseCodexHome = container.codexHome;
+    const selectedState = selectedAdapter?.cli === "codex" ? selectedAdapter.sessionState : null;
+    const selectedDir = typeof selectedState?.containerDir === "function" ? selectedState.containerDir(container) : container[selectedState?.containerDirKey || ""];
+    if (selectedDir) container.codexHome = selectedDir;
     const target = {
       ...base,
       backend: "container",

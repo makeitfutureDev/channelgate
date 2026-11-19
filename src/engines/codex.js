@@ -46,7 +46,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
-import { channelCodexHome, codexEuLoginHome, isCodexEu, isChannelCodex } from "../gateway/channel-codex-paths.js";
+import { channelCodexHome, dedicatedCodexLogin, isDedicatedCodex, isChannelCodex } from "../gateway/channel-codex-paths.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
 
@@ -683,7 +683,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
   // No anonymous usage metrics to OpenAI from any turn (src/engines/codex-telemetry.js).
   args.push("-c", CODEX_NO_TELEMETRY);
-  if (isCodexEu(runtimeTarget?.meta) || isChannelCodex(runtimeTarget?.meta)) args.push("-c", 'cli_auth_credentials_store="file"');
+  if (isDedicatedCodex(runtimeTarget?.meta) || isChannelCodex(runtimeTarget?.meta)) args.push("-c", 'cli_auth_credentials_store="file"');
   // Slack is the only interactive surface for this daemon. In non-autonomous modes, fail closed:
   // approval-required Codex actions are rejected instead of hanging on an invisible prompt. In
   // autonomous mode, route eligible approvals through Codex auto-review so safe MCP reads (for
@@ -917,7 +917,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...safeSpawnEnv(extraEnv),
       ...browserSpawnEnv(browserNamespace, { target }),
       NODE_USE_ENV_PROXY: "1",
-      ...(!isCodexEu(target?.meta) && !isChannelCodex(target?.meta) && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
+      ...(!isDedicatedCodex(target?.meta) && !isChannelCodex(target?.meta) && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
     const env = applyEgressEnv({
@@ -927,10 +927,10 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       TMPDIR: image.tmpDir,
       PATH: image.path,
     }, target);
-    if (isCodexEu(target?.meta) || isChannelCodex(target?.meta) || target?.container?.credentialMode?.codex === "relay") {
+    if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta) || target?.container?.credentialMode?.codex === "relay") {
       delete env.OPENAI_API_KEY;
       delete env.CODEX_API_KEY;
-      if (isCodexEu(target?.meta) || isChannelCodex(target?.meta)) {
+      if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta)) {
         delete env.OPENAI_BASE_URL;
         delete env.OPENAI_ORG_ID;
         delete env.OPENAI_PROJECT_ID;
@@ -950,8 +950,8 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     ...browserSpawnEnv(browserNamespace),
     NODE_USE_ENV_PROXY: "1",
   }, source);
-  if (isCodexEu(target?.meta) || isChannelCodex(target?.meta)) {
-    hostEnv.CODEX_HOME = isCodexEu(target?.meta) ? codexEuLoginHome() : channelCodexHome(target.meta.channelId);
+  if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta)) {
+    hostEnv.CODEX_HOME = dedicatedCodexLogin(target?.meta)?.home || channelCodexHome(target.meta.channelId);
     delete hostEnv.OPENAI_API_KEY;
     delete hostEnv.CODEX_API_KEY;
     delete hostEnv.OPENAI_BASE_URL;
@@ -968,7 +968,7 @@ export async function installRelayedCodexLogin(target, deps = null) {
   if (typeof target?.runtime?.writeHomeFile !== "function") {
     return "this runtime cannot hold a relayed Codex sign-in (no writeHomeFile)";
   }
-  if ((target.container?.mounts || []).some((mount) => mount.kind === (isCodexEu(target?.meta) ? "codex-eu-auth" : "codex-auth"))) {
+  if ((target.container?.mounts || []).some((mount) => mount.kind === (isDedicatedCodex(target?.meta) ? "codex-eu-auth" : "codex-auth"))) {
     return "the container still mounts the shared Codex sign-in file; it is recreated on the next run";
   }
   const credential = deps?.credential || (await import("../gateway/egress/grants.js")).containerCodexCredential;
@@ -1041,7 +1041,7 @@ export async function runCodex({
   // before any work exists to lose, so the orchestrator diverts it to the other harness with a
   // visible reason. The probe fails OPEN: only a positively absent/empty credential lands here.
   const runtime = runtimeTargetOr(target, cwd);
-  if (!isCodexEu(runtime?.meta) && isChannelCodex(runtime?.meta)) {
+  if (!isDedicatedCodex(runtime?.meta) && isChannelCodex(runtime?.meta)) {
     const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
     requireEnterpriseFeature("channelCodexLogin");
   }
@@ -1053,9 +1053,9 @@ export async function runCodex({
   // CLI will use, preserving the same fail-open credential semantics as every other probe.
   let credentialFailure = null;
   if (isolated && typeof runtime.runtime.credentialError === "function") {
-    credentialFailure = await runtime.runtime.credentialError(runtime, runtime?.meta?.engine === "codex-channel" ? "codex-channel" : isCodexEu(runtime?.meta) ? "codex-eu" : "codex");
+    credentialFailure = await runtime.runtime.credentialError(runtime, dedicatedCodexLogin(runtime?.meta)?.id || (runtime?.meta?.engine === "codex-channel" ? "codex-channel" : "codex"));
   } else if (!isolated) {
-    const channelHome = isCodexEu(runtime?.meta) ? codexEuLoginHome() : isChannelCodex(runtime?.meta) ? channelCodexHome(runtime.meta.channelId) : "";
+    const channelHome = dedicatedCodexLogin(runtime?.meta)?.home || (isChannelCodex(runtime?.meta) ? channelCodexHome(runtime.meta.channelId) : "");
     const state = await readCodexAuthState({ codexHome: channelHome || codexStateDir, hostCodexHome: channelHome || undefined, env: channelHome ? { CODEX_HOME: channelHome } : process.env });
     if (state.known && !state.authenticated) credentialFailure = describeCodexAuth(state);
   }
@@ -1064,7 +1064,7 @@ export async function runCodex({
   // src/gateway/codex-token-relay.js), written into its HOME volume right here, before every spawn,
   // so the claims it carries follow the daemon's current token. Failing to place it is a
   // credential failure like any other: replay-safe, before any work exists to lose.
-  if (!credentialFailure && isolated && (isCodexEu(runtime?.meta) || isChannelCodex(runtime?.meta) ? egressActive(runtime) : runtime.container?.credentialMode?.codex === "relay")) {
+  if (!credentialFailure && isolated && (isDedicatedCodex(runtime?.meta) || isChannelCodex(runtime?.meta) ? egressActive(runtime) : runtime.container?.credentialMode?.codex === "relay")) {
     credentialFailure = await installRelayedCodexLogin(runtime, codexRelayDeps).catch((error) => `Codex could not be signed in inside the container: ${error?.message || error}`);
   }
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.

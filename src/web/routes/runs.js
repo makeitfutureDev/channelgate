@@ -57,8 +57,8 @@ export function createRunsRouter({ slack } = {}) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
+      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({

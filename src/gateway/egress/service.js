@@ -33,6 +33,7 @@ import { normalizeChannelEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv } from "../../config/scoped-env.js";
 import { onConfigChange } from "../../config/change-events.js";
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
+import { licenseApiHosts } from "../../engines/license-state.js";
 import { resolveBedrockProvider } from "../../engines/bedrock.js";
 import { logEvent } from "../../util/logger.js";
 import { platformOr } from "../../platforms/registry.js";
@@ -119,6 +120,8 @@ function qwenHosts() {
       if (host) hosts.push(host);
     } catch { /* an unconfigured provider has no host */ }
   }
+  // Every admin-added API license's endpoint is a model API of the same standing.
+  hosts.push(...licenseApiHosts());
   return hosts;
 }
 

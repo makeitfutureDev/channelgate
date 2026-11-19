@@ -169,7 +169,9 @@ optional field exists only to short-circuit that.
   credential-entry links visible only to their requester in the original space. Opened drafts
   expire after 15 minutes; reply menu buttons are sealed and remain usable after restarts.
 - **Commands:** `/help` shows compact expandable Cards v2 with a full-text fallback. `/settings`,
-  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. In spaces
+  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. The
+  runtime tab and the typed `/model` and `/license` commands select harness, engine license, model
+  and effort as described for `/model` under Microsoft Teams below. In spaces
   mention the bot before a typed command; configured registered slash-command events also work.
   Credential entry uses private browser forms; no value is shown or prefilled. Cards render on
   both connections, but their **buttons act only with the HTTP endpoint connection** (Setup step
@@ -378,11 +380,19 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
   remain available as typed commands.
 - `/model` shows the current session selection and opens a picker in the same
-  conversation/thread, laid out like Settings → General: choose the engine and press Load models,
-  then choose from only that engine's models and effort levels and Apply to this session. Changes
-  affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
-  Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
-  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+  conversation/thread, laid out like Settings → General: choose the harness (Claude Code or Codex)
+  and press Load models, then choose from only that selection's models and effort levels and Apply
+  to this session. When a harness has more than one usable engine license in the conversation, a
+  **License** choice follows the harness (**Any license**, or one license with an optional **If it
+  fails, also use** list) and the button reads Load licenses and models. Changes affect its next
+  turn. Switched-on licenses, the channel's approved harnesses and dedicated Codex login
+  restrictions apply. Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
+  `/model <harness> <model|default>` and `/effort <level|default>` remain available. Typed
+  `/license` shows the session's license selection and the licenses it may choose between;
+  `/license any`, `/license <name, id or number>[, <more to move to when it fails>…]` and
+  `/license default` change it for the session. It answers that there is nothing to choose when
+  the harness has a single license there. An engine license is a provider credential, not the
+  ChannelGate license key; see [engine capabilities](ENGINE-CAPABILITIES.md#harnesses-and-licenses).
 - `/settings` posts a compact **Open settings** card in the original channel/thread or chat.
   Clicking it opens a large native Teams popup containing General, Variables, MCPs, Skills,
   Automations and Resume. `/secrets` uses the same launcher and opens Variables directly.
@@ -392,9 +402,9 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   The launcher and each independently opened popup expire after 15 minutes. Closing with Teams'
   close control discards unapplied inputs; applied changes remain saved. Other members open their
   own requester-bound `/settings` launcher.
-  General edits channel defaults and current-session engine/model/effort independently, with
+  General edits channel defaults and current-session harness/license/model/effort independently, with
   engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
-  or Apply to thread button saves that scope's engine/model/effort together after compatibility
+  or Apply to thread button saves that scope's harness/license/model/effort together after compatibility
   checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
   keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
   variables, connections, channel skills and automations, matching Slack Settings. Access controls

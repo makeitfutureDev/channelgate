@@ -9,13 +9,13 @@ Open **Conversations** to manage channels, direct messages, and groups across re
 
 Use the conversation type and platform/source filters to find the right row. Detail URLs preserve the selected conversation so you can return directly to its settings. The displayed name is distinct from the platform's conversation ID and filesystem slug.
 
-The detail tabs expose access, runtime/engine choices, connectors, skills, environment variables, workspace/Drive configuration, instructions, and memory where applicable. See [channel settings](/docs/configuration/channel-settings) for field-by-field setup.
+The detail tabs expose access, runtime choices (harness, [license](/docs/features/engine-licenses), model, and effort), connectors, skills, environment variables, workspace/Drive configuration, instructions, and memory where applicable. See [channel settings](/docs/configuration/channel-settings) for field-by-field setup.
 
 ## Inherit or override
 
-A blank inherited model or engine follows gateway defaults; an explicit choice stays with that conversation. Existing thread pins can override the conversation runtime. Changing a gateway default therefore need not change a thread already pinned to another engine.
+A blank inherited harness, license, or model follows gateway defaults; an explicit choice stays with that conversation. Existing thread pins can override the conversation runtime. Changing a gateway default therefore need not change a thread already pinned to another harness or license.
 
-The admin bulk runtime reset can clear conversation overrides and optionally existing thread overrides. Choose that scope deliberately: clearing a pin does not change the engine that owns an existing live session. The separate access reset re-applies the organization access policy; it leaves skills, connectors, and tokens alone.
+The admin bulk runtime reset can clear conversation overrides and optionally existing thread overrides. Choose that scope deliberately: clearing a pin does not change the license that owns an existing live session. The separate access reset re-applies the organization access policy; it leaves skills, connectors, and tokens alone.
 
 ## Save safely
 

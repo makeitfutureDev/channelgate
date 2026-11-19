@@ -22,12 +22,13 @@ import { getChannelEntry, getChannelMeta, getChannelsIndex } from "../../config/
 import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
-import { getContainerRuntime, getPerplexityResearchConfig } from "../../config/settings.js";
+import { getContainerRuntime, getPerplexityResearchConfig, refreshEngineLicenses } from "../../config/settings.js";
+import { licenseLoginHome, licenseOfRelaySecret, licenseRecord, licenseRelaySecretName } from "../../engines/license-state.js";
 import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
 import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
 import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
-import { codexEuLoginHome, isCodexEu, isChannelCodex } from "../channel-codex-paths.js";
+import { codexEuLoginHome, dedicatedCodexLogin, isChannelCodex } from "../channel-codex-paths.js";
 import path from "node:path";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
@@ -153,7 +154,45 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 // One cache per relay (secret name): the live token behind the channel placeholders, resolved —
 // and refreshed when it is about to expire — at most once a minute.
 const relayCaches = new Map(); // secret name → { at, promise }
+// One generation per relay name: a rotated sign-in must not grow an unbounded cache.
+function relayCacheFor(secretName, key, load) {
+  let cache = relayCaches.get(key);
+  if (!cache || Date.now() - cache.at > RELAY_CACHE_MS) {
+    for (const old of relayCaches.keys()) if (old.startsWith(`${secretName}:`)) relayCaches.delete(old);
+    cache = { at: Date.now(), promise: Promise.resolve().then(load) };
+    relayCaches.set(key, cache);
+    cache.promise.catch(() => { if (relayCaches.get(key) === cache) relayCaches.delete(key); });
+  }
+  return cache.promise;
+}
+
+// The live credential behind an admin-added license's placeholders. The license and its sign-in
+// are re-read BEFORE any cached token is consulted: a deleted license, a sign-out, a rotation or a
+// replaced key must take effect at the next request, even inside the cache window.
+async function licenseRelayToken(license, secretName, deps) {
+  const record = (deps.licenseRecord || licenseRecord)(license.id);
+  if (!record) return "";
+  if (license.kind === "claude-api") return String(record.apiKey || "");
+  const home = licenseLoginHome(license.id);
+  if (license.kind === "claude-login") {
+    const extra = await import("../../engines/bedrock.js");
+    const auth = (deps.licenseClaudeState || extra.extraClaudeCredentialState)({ configDir: home });
+    if (!auth.authenticated || auth.method !== "claude-subscription") return "";
+    const relay = await relayCacheFor(secretName, `${secretName}:${auth.fingerprint}`, () => (deps.licenseClaudeRelayToken || extra.resolveExtraClaudeToken)({ configDir: home }));
+    return String(relay?.token || "");
+  }
+  const auth = await (deps.licenseCodexState || (await import("../../engines/codex-eu.js")).dedicatedCodexCredentialState)({ home, label: record.label });
+  if (!auth.authenticated) return "";
+  const relay = await relayCacheFor(secretName, `${secretName}:${auth.fingerprint}`, async () => {
+    const token = await (deps.codexRelayToken || resolveContainerCodexToken)({ candidates: [path.join(home, "auth.json")] });
+    return token?.source === "chatgpt" ? token : { token: "" };
+  });
+  return String(relay?.token || "");
+}
+
 async function cachedRelayToken(secretName, deps, channelId = "") {
+  const license = licenseOfRelaySecret(secretName);
+  if (license) return licenseRelayToken(license, secretName, deps);
   if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) {
     const extra = await import("../../engines/bedrock.js");
     // Recheck the dedicated file/provider before consulting a cached token: deletion, expiry,
@@ -215,6 +254,9 @@ async function channelMetaFor(channelId, deps) {
 export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
   if (row.scope === "relay") {
+    // The license list lives in settings.json, which the stdio MCP child can also write: read it
+    // now, so a license removed there is gone here before its rule is asked for.
+    if (licenseOfRelaySecret(name) && !deps.licenseRecord) refreshEngineLicenses();
     if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
     if (name === "AWS_BEARER_TOKEN_BEDROCK") {
       const provider = (deps.bedrockProvider || (await import("../../engines/bedrock.js")).resolveBedrockProvider)();
@@ -421,13 +463,27 @@ export function containerClaudeCredential({ target, relay, channelId = "" }) {
 
 // The additional subscription gets its own live resolver and placeholder, never the regular
 // Claude relay. A raw token is admitted only to an explicitly resolved direct-host run.
-export function containerExtraClaudeCredential({ target, relay } = {}) {
-  if (!relay?.token) return { token: "", error: relay?.error || "The extra Claude subscription is not signed in" };
+// `secretName` / `label` name WHICH isolated sign-in: the built-in extra subscription by default,
+// or one admin-added Claude license (its own relay name, so its own placeholder and grant).
+export function containerExtraClaudeCredential({ target, relay, secretName = CLAUDE_EXTRA_RELAY_SECRET_NAME, label = "The extra Claude subscription" } = {}) {
+  if (!relay?.token) return { token: "", error: relay?.error || `${label} is not signed in` };
   if (target?.backend === "host") return relay;
-  if (!egressActive(target)) return { token: "", error: "The extra Claude subscription requires the egress proxy to relay its isolated login" };
+  if (!egressActive(target)) return { token: "", error: `${label} requires the egress proxy to relay its isolated login` };
   const channelId = String(target?.meta?.channelId || "");
-  if (!channelId) return { token: "", error: "the run has no channel to bind the extra Claude sign-in to" };
-  return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholderFor({ scope: "relay", channelId, secretName: CLAUDE_EXTRA_RELAY_SECRET_NAME })}`, placeholder: true };
+  if (!channelId) return { token: "", error: `the run has no channel to bind ${label}'s sign-in to` };
+  return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholderFor({ scope: "relay", channelId, secretName })}`, placeholder: true };
+}
+
+// An API license's key (engines/license-adapters.js). A container receives only the channel's
+// placeholder for THAT license, which the proxy swaps on the license's own endpoint host; the raw
+// key is admitted only to an explicitly resolved direct-host run, which holds every credential.
+export function containerLicenseApiCredential({ target, record } = {}) {
+  if (!record?.apiKey) return { token: "", error: `${record?.label || "This license"} has no API key stored` };
+  if (target?.backend === "host") return { token: record.apiKey };
+  if (!egressActive(target)) return { token: "", error: `${record.label} requires the egress proxy to relay its API key` };
+  const channelId = String(target?.meta?.channelId || "");
+  if (!channelId) return { token: "", error: `the run has no channel to bind ${record.label}'s key to` };
+  return { token: placeholderFor({ scope: "relay", channelId, secretName: licenseRelaySecretName(record.id) }), placeholder: true };
 }
 
 // The durable nested-CLI login holds only channel-bound placeholders. An API-key installation
@@ -457,8 +513,8 @@ async function channelIdOfTarget(target) {
   return Object.entries(index).find(([, entry]) => entry?.slug === slug && platformOr(entry?.platform).id === platform)?.[0] || "";
 }
 
-export function codexRelayPlaceholderFor({ channelId, eu = false, channel = false }) {
-  return placeholderFor({ scope: "relay", channelId, secretName: eu ? CODEX_EU_RELAY_SECRET_NAME : channel ? CODEX_CHANNEL_RELAY_SECRET_NAME : CODEX_RELAY_SECRET_NAME });
+export function codexRelayPlaceholderFor({ channelId, eu = false, channel = false, license = "" }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: license ? licenseRelaySecretName(license) : eu ? CODEX_EU_RELAY_SECRET_NAME : channel ? CODEX_CHANNEL_RELAY_SECRET_NAME : CODEX_RELAY_SECRET_NAME });
 }
 
 export function codexApiRelayPlaceholderFor({ channelId, channel = false }) {
@@ -474,11 +530,15 @@ export async function containerCodexCredential({ target, channelId = "", resolve
   if (!egressActive(target)) return { error: "the egress proxy is not this container's network, so Codex cannot use a relayed sign-in" };
   const key = String(channelId || target?.meta?.channelId || "") || (await channelIdOfTarget(target));
   if (!key) return { error: "the run has no channel to bind Codex's relayed sign-in to" };
-  const eu = isCodexEu(target?.meta);
-  if (eu && !(await (await import("../../engines/codex-eu.js")).codexEuCredentialState()).authenticated) return { error: "Codex EU requires the dedicated ChatGPT sign-in" };
+  // A dedicated login — Codex EU or an admin-added Codex license — is one isolated ChatGPT sign-in
+  // with its own relay name; nothing of the gateway's or the channel's own login stands in for it.
+  const dedicated = dedicatedCodexLogin(target?.meta);
+  if (dedicated && !dedicated.exists) return { error: "this Codex license no longer exists" };
+  if (dedicated && !(await (await import("../../engines/codex-eu.js")).dedicatedCodexCredentialState({ home: dedicated.home, label: dedicated.label, loginHint: dedicated.loginHint })).authenticated) return { error: `${dedicated.label} requires the dedicated ChatGPT sign-in` };
+  const eu = dedicated?.kind === "eu";
   const relay = await resolveRelay({ candidates: codexLoginCandidatesFor(target?.meta) });
   if (!relay?.token) return { error: relay?.error || "the gateway has no Codex sign-in to relay", source: relay?.source || "none" };
-  if (eu && relay.source !== "chatgpt") return { error: "Codex EU requires a ChatGPT sign-in" };
+  if (dedicated && relay.source !== "chatgpt") return { error: `${dedicated.label} requires a ChatGPT sign-in` };
   if (relay.source === "api-key") {
     return {
       authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key, channel: isChannelCodex(target?.meta) }) }),
@@ -487,7 +547,7 @@ export async function containerCodexCredential({ target, channelId = "", resolve
       placeholder: true,
     };
   }
-  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key, eu, channel: isChannelCodex(target?.meta) }), { shape: "jwt", claimsFrom: relay.token });
+  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key, eu, channel: isChannelCodex(target?.meta), license: dedicated?.kind === "license" ? dedicated.id : "" }), { shape: "jwt", claimsFrom: relay.token });
   return {
     authJson: renderContainerCodexAuth({ accessToken, idToken: relay.idToken, accountId: relay.accountId, now }),
     expiresAt: relay.expiresAt || 0,

@@ -24,14 +24,20 @@ deprecated: it acts as a fixed admin principal in *any* conversation with no per
 and every use logs a deprecation warning (one per hour). Replace it with channel tokens and clear
 it. An authenticated admin session also works from the browser.
 
-The Admin UI's HTTP run API page documents message/file inputs, harness overrides, polling,
+The Admin UI's HTTP run API page documents message/file inputs, harness and license overrides, polling,
 stopping and completion webhooks.
 
-## Harness selection
+## Harness and license selection
 
-Set `harness` to a registered harness ID for this run. `engine` remains a supported alias;
-when both fields are supplied they must name the same harness, otherwise the API returns 400.
-For example, to use the customer's connected Codex account:
+There are two harnesses, Claude Code and Codex. Every registered engine ID is a **license** of one
+of them: a credential plus the server it talks to. `claude` and `codex` are each harness's own
+default sign-in; the other IDs are further licenses (see
+[the engine capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses)). This is an engine
+license, not the ChannelGate product license key in [LICENSE-KEYS.md](LICENSE-KEYS.md).
+
+Set `harness` to the ID of the license this run starts on. `engine` remains a supported alias;
+when both fields are supplied they must name the same ID, otherwise the API returns 400.
+For example, to use the customer's connected Codex login:
 
 ```json
 {
@@ -41,25 +47,53 @@ For example, to use the customer's connected Codex account:
 }
 ```
 
-The Codex harnesses have separate selections and sessions:
+The built-in Codex licenses have separate selections and sessions:
 
-- `codex`: the gateway's Codex account.
-- `codex-channel`: **Codex (channel account)**, the dedicated account connected to the target
-  conversation. Requires Enterprise and that conversation's connected Codex account; a missing
-  connection is refused before a new job starts and never falls back to the gateway account.
-- `codex-eu`: the separate Codex EU account, when configured and enabled.
+- `codex`: the gateway's Codex login.
+- `codex-channel`: **Codex (channel account)**, the dedicated login connected to the target
+  conversation. Requires Enterprise and that conversation's connected Codex login; a missing
+  connection is refused before a new job starts and never falls back to the gateway login.
+- `codex-eu`: the separate Codex EU login, when configured and enabled.
 
-Other registered harness IDs are accepted too. The selected harness must be enabled, ready,
+Other registered license IDs are accepted too, including the ones an administrator added
+(`codex-lic-…`, `claude-lic-…`, `claude-api-…`). The selected license must be enabled, ready,
 and approved for the target conversation. An explicit `harness` or `engine` is a per-run pin:
-provider failure does not silently switch it to another harness. Omit both fields to use normal
+provider failure does not silently switch it to the other harness. Omit both fields to use normal
 thread/channel/gateway selection.
+
+### More licenses for one run: `licenses`
+
+`licenses` names the further licenses of the same harness this run may move to when the license
+in `harness` cannot answer. It is `"any"` (every license of that harness the conversation may
+use) or an ordered list of license IDs:
+
+```json
+{
+  "channel": "C0123456789",
+  "harness": "codex",
+  "licenses": ["codex-lic-1a2b3c4d", "codex-eu"],
+  "message": "Review the latest changes."
+}
+```
+
+- `licenses` requires `harness` (or `engine`); without it the API returns 400.
+- An unknown ID, or an ID of the other harness, returns 400. A selection never crosses harnesses.
+- Omitting `licenses`, or sending an empty value, runs on the named license alone.
+- Candidates are filtered when the run executes: a license that is switched off, not approved for
+  the conversation, not available there, or unable to serve the requested `model` is skipped.
+- The move happens only for a failure that is safe to replay (a usage limit, failed
+  authentication, or a temporary provider failure, before any tool call or streamed output).
+- The run still never moves to the other harness.
+
+When another license answered, the reply text starts with a note naming it, and the completed
+job's `harness` and `engine` fields carry the license that answered.
 
 POST, GET status/list and completion webhooks return `harness`, with `engine` carrying the same
 ID for existing clients. Initially this is the admission selection; for a reused conversation,
 its live thread selection is resolved after waiting for the thread queue. Status updates follow
-the resolved harness while the run executes, including any permitted failover from a default.
-At completion both fields identify the harness actually used.
-An idempotent retry returns the original job and its harness; it does not change that run.
+the resolved license while the run executes, including any permitted failover from a default.
+At completion both fields identify the license actually used.
+An idempotent retry returns the original job and its selection; it does not change that run.
 
 ## Conversations
 

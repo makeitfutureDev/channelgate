@@ -3,18 +3,21 @@ title: Engine authentication
 description: Configure Claude, Codex, and optional provider credentials without mixing them with app accounts, and choose a login that fits European data handling.
 ---
 
-An engine login authenticates the model answering a turn. It is independent of Slack credentials, connected business apps, and environment variables used to deploy a project. Enabling an engine does not sign it in.
+An engine login authenticates the model answering a turn. It is independent of Slack credentials, connected business apps, and environment variables used to deploy a project. Each login is a [license](/docs/features/engine-licenses) of one of the two harnesses, Claude Code or Codex: a credential plus the server it talks to. Switching a license on does not sign it in.
+
+This page covers the built-in licenses. Licenses that an administrator adds, how they are verified, and how a conversation selects between licenses are described in [engine licenses](/docs/features/engine-licenses). An engine license is a provider credential; it is not the ChannelGate product license key described in [license keys and limits](/docs/features/licensing).
 
 ## Login routes at a glance
 
-| Engine | Login route | Where it is configured |
+| Harness | Login route | Where it is configured |
 | --- | --- | --- |
 | Claude Code | The operator's `claude` login on the gateway host, backed by a Pro, Max, Team or Enterprise seat | Run `claude` on the host as the daemon's account |
 | Claude Code | A long-lived `claude setup-token` value | **Settings → Access & security → Container runtime → Claude token for container runs** |
 | Claude Code | An Anthropic API key, for a service install with no interactive login | `ANTHROPIC_API_KEY` in the daemon's environment |
 | Codex | **Sign in with ChatGPT**, for the gateway or for one conversation | **Settings → Agent defaults → Engine & runtime → Default gateway Codex login**, or the conversation's **Runtime → Codex authentication** |
 | Codex | **Use an OpenAI API key**, billed separately from a ChatGPT plan | The same settings |
-| Qwen and Qwen EU | The provider's own API key and endpoint, opt-in | Provider cards under **Agent defaults** |
+| Claude Code | The Qwen and Qwen EU licenses: the provider's own API key and endpoint, opt-in | Provider cards under **Agent defaults** |
+| Claude Code or Codex | A license an administrator adds: a ChatGPT sign-in, a Claude sign-in, or an API key for an Anthropic-compatible endpoint | See [engine licenses](/docs/features/engine-licenses) |
 
 The plan behind a login sets its cost, usage limits and contract terms. ChannelGate does not bundle provider access, and the [European data handling](#choose-a-login-for-work-in-europe) section below explains which login suits which kind of data.
 
@@ -35,34 +38,38 @@ In the default proxy runtime, the gateway relays the resolved login's access cre
 
 Open **Settings → Agent defaults → Engine & runtime → Default gateway Codex login**. Choose **Sign in with ChatGPT** and complete the device flow, or choose **Use an OpenAI API key** and save the key. API-key usage is billed separately from a ChatGPT subscription.
 
-Codex also supports a conversation-specific login. In the conversation's Codex sign-in controls, choose the channel login source and sign in there. Choosing this source locks the conversation and its threads to Codex. A channel-specific source must have its own usable login; it does not silently use someone else's gateway account when missing. The gateway keeps these login records outside the agent-writable workspace.
+Codex also supports a conversation-specific login. In the conversation's Codex sign-in controls, choose the channel login source and sign in there. A successful sign-in selects the license **Codex (channel account)** as the conversation default; it exists only in that conversation. A channel-specific source must have its own usable login; it does not silently use the gateway's login when missing. The gateway keeps these login records outside the agent-writable workspace.
 
-| Credential choice | Scope |
+| License | Scope |
 | --- | --- |
-| Gateway Codex login | Conversations selecting the gateway source |
-| Channel Codex login | The selected conversation |
+| Gateway Codex login (**Default sign-in**) | Conversations selecting the gateway's Codex license |
+| Channel Codex login (**Codex (channel account)**) | The selected conversation |
 
 ## Service installations and optional providers
 
 A dedicated non-login system service needs credentials configured for its service identity. Follow the service credential steps in [Installation](/docs/installation) and [Operations](/docs/operations); signing in as a different Linux user does not necessarily authenticate that service.
 
-Optional Anthropic-compatible provider harnesses have their own API-key and base-URL cards under **Agent defaults**. Configure the intended provider and explicitly enable its harness. These providers do not receive the operator's Anthropic login and do not participate in automatic Claude and Codex failover.
+The optional Anthropic-compatible provider licenses of the Claude Code harness have their own API-key and base-URL cards under **Agent defaults**. Configure the intended provider and explicitly switch on its license. These providers do not receive the operator's Anthropic login and do not participate in automatic failover between Claude Code and Codex.
 
 ## Choose a login for work in Europe
 
-Settings also offers optional **Codex EU** and **Claude Bedrock** harnesses, disabled until an
-admin enables them. Each has a setup card with the exact command to run on the gateway host as
-the service user, and independent model/effort defaults. Enable the option, save, complete its
-terminal setup, then select it for a channel or thread.
+Settings also offers two optional built-in licenses, switched off until an admin switches them
+on: **Codex EU**, a license of the Codex harness, and **Claude Extra**, a license of the Claude
+Code harness that carries the Amazon Bedrock route. Each has a setup card with the exact command
+to run on the gateway host as the service user, and independent model/effort defaults. Switch
+the license on, save, complete its terminal setup, then select it for a channel or thread.
 
 Codex EU uses a separate `CODEX_HOME` and ChatGPT Enterprise device login. The Enterprise
 workspace must have the required EU data and inference residency controls; the label does not
-set or verify them. Claude Bedrock uses a separate `CLAUDE_CONFIG_DIR`: start the displayed
-command, type `/setup-bedrock`, and choose **Amazon Bedrock API key**, AWS region and model pins.
+set or verify them. Claude Extra uses a separate `CLAUDE_CONFIG_DIR`: start the displayed
+command, then either sign in to a second Claude plan, or type `/setup-bedrock` and choose
+**Amazon Bedrock API key**, AWS region and model pins.
 This gateway integration supports Bedrock bearer keys; AWS profile, SSO and IAM signing are
-not supported. Container runs use the protected egress proxy. Both harnesses keep their own
-sessions and never automatically fail over to another account. Bedrock sessions continue in chat;
-container terminal takeover is currently unavailable.
+not supported. Container runs use the protected egress proxy. Both licenses keep their own
+sessions. Neither takes part in automatic failover to the other harness; a turn moves between
+one of them and another license of the same harness only when the conversation's selection names
+both. Claude Extra sessions continue in chat; container terminal takeover is currently
+unavailable. Bedrock exists only as this built-in license: it cannot be added as a further license.
 
 The engine login decides two things ChannelGate does not control: which provider contract covers the prompts, and where inference runs. Work folders, memory, files and conversation history stay on your host, but every turn sends prompt and context to the selected provider, as described in [privacy and data flow](/docs/privacy). The provider facts below come from the providers' own documentation as of October 2026. Check the current terms before relying on them, and treat this section as orientation for your own assessment rather than legal advice.
 
@@ -85,14 +92,14 @@ Each route below places the prompts under a commercial contract with a data proc
 | ChatGPT Enterprise sign-in for Codex | OpenAI business terms with a DPA, and [no training by default](https://openai.com/business-data/) | Eligible Enterprise workspaces can choose European data residency and [in-region inference](https://help.openai.com/en/articles/9903489-data-residency-and-inference-residency-for-chatgpt) | Available. OpenAI's residency documentation does not state whether Codex CLI traffic from the workspace is within the scope of that setting. |
 | ChatGPT Business sign-in for Codex | The same DPA and no-training default; [Codex is included](https://learn.chatgpt.com/docs/pricing) | Regional storage at rest is rolling out to Business workspaces without inference residency | Available, with US processing. |
 | OpenAI API key for Codex | OpenAI API terms with a DPA; no training | A Europe-region project processes and stores in region through `eu.api.openai.com`, [after approval for modified abuse monitoring or zero data retention](https://developers.openai.com/api/docs/guides/your-data) | In development. The Codex API-key route currently reaches `api.openai.com`; the European endpoint is being added. |
-| Qwen EU harness | Alibaba Cloud contract; a workspace created with the EU deployment scope keeps request data in the [Frankfurt region](https://www.alibabacloud.com/help/en/model-studio/regions) | Germany (Frankfurt), `eu-central-1` | Available and opt-in. The catalog is the region's own (Qwen, Kimi, GLM and DeepSeek families), the provider key reaches the engine raw, and the harness sits outside Claude and Codex failover. See [Qwen harnesses](/docs/features/qwen). |
+| Qwen EU license | Alibaba Cloud contract; a workspace created with the EU deployment scope keeps request data in the [Frankfurt region](https://www.alibabacloud.com/help/en/model-studio/regions) | Germany (Frankfurt), `eu-central-1` | Available and opt-in. The catalog is the region's own (Qwen, Kimi, GLM and DeepSeek families), the provider key reaches the harness raw, and the license sits outside failover between Claude Code and Codex. See [Qwen licenses](/docs/features/qwen). |
 | Claude through Amazon Bedrock | AWS contract and DPA; AWS states that [inputs and outputs are not used to train models or shared with model providers](https://aws.amazon.com/bedrock/faqs/) | [EU regions](https://code.claude.com/docs/en/amazon-bedrock) such as Frankfurt, Ireland and Paris, with the `eu.` inference profile keeping requests inside the EU geography | In development. The route to Claude in the EU for teams on AWS. |
 | Claude through Google Cloud Vertex AI | Google Cloud contract and DPA | [The `eu` multi-region](https://code.claude.com/docs/en/google-vertex-ai), plus [European regions](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations) including Belgium, the Netherlands, Frankfurt, Paris and Zurich | In development. The route to Claude in the EU for teams on Google Cloud. |
 
-In short: a Claude Team or Enterprise login or an Anthropic API key covers customer data under Anthropic's addendum with inference in the US or globally; Claude through Bedrock or Vertex AI, the OpenAI Europe project and the Qwen EU harness are the EU-resident routes; and the Qwen EU harness is the EU-resident route available today, with its own model catalog. The addendum, the training setting and the residency choice belong to your contract with the provider; ChannelGate records usage and enforces access, and it does not change what the provider receives.
+In short: a Claude Team or Enterprise login or an Anthropic API key covers customer data under Anthropic's addendum with inference in the US or globally; Claude through Bedrock or Vertex AI, the OpenAI Europe project and the Qwen EU license are the EU-resident routes; and the Qwen EU license is the EU-resident route available today, with its own model catalog. The addendum, the training setting and the residency choice belong to your contract with the provider; ChannelGate records usage and enforces access, and it does not change what the provider receives.
 
 ## Verify the result
 
 Save, check sign-in/runtime health, and send a simple request from a fresh thread. Login changes are resolved for subsequent runs without copying credentials into project files. Resolve authentication errors before widening tools or changing network policy.
 
-See [Claude Code](/docs/features/claude-code), [Codex](/docs/features/codex), [Qwen](/docs/features/qwen), and [Connections](/docs/configuration/connections).
+See [engine licenses](/docs/features/engine-licenses), [Claude Code](/docs/features/claude-code), [Codex](/docs/features/codex), [Qwen](/docs/features/qwen), and [Connections](/docs/configuration/connections).

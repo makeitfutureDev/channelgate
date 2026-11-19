@@ -102,7 +102,9 @@ test("a dedicated channel Codex login offers harness switching and accepts a Cla
   const card = JSON.stringify(client.updates.at(-1).blocks);
   assert.match(card, /Which harness/);
   assert.match(card, /cg_mw_engine_claude/);
-  assert.match(card, /cg_mw_engine_codex-channel/);
+  // The channel's own sign-in is a LICENSE of Codex: the harness step offers the two harnesses.
+  assert.match(card, /cg_mw_engine_codex"/);
+  assert.doesNotMatch(card, /cg_mw_engine_codex-channel/);
   await click(client, "C_MW_LOCKED", "cg_mw_engine_claude", wizardValue());
   assert.equal((await getChannelMeta(entry.slug)).engine, "claude");
   assert.equal(client.ephemerals.length, 0);

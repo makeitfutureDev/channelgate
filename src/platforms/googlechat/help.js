@@ -8,7 +8,7 @@ const QUICK_START = [
   '**Thread replies** — Stay in the same thread and mention me. In a personal chat, new messages continue your main session; replies in a thread use that thread.',
 ];
 const SHORTCUTS = [
-  '`/model` — Choose the engine, model and effort.',
+  '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open private controls for this conversation.',
   '`/files` — Browse this workspace from the current conversation.',
   '`/stop` — Stop this session’s active and queued work.',
@@ -18,13 +18,14 @@ const TOPICS = [
   { title: 'All commands', rows: [
     '`/help` — Show this guide.',
     '`/settings` — Open Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics and You.',
-    '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the engine/model/effort by typing it. `/settings help` lists the options.',
+    '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the harness/license/model/effort by typing it. `/settings help` lists the options.',
     '`/secrets` — Open Variables. Enter credential values only in the protected browser page; stored values are never shown or prefilled.',
     '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
     '`/sendfile <path>` — Open a workspace file for download.',
-    '`/status` — See the engine, model, effort and active/queued requests.',
-    '`/model` — Open the engine, model and effort picker. Choose a combination and Apply.',
-    '`/model [engine] [model|default]` — Change the runtime directly, subject to policy.',
+    '`/status` — See the harness, model, effort and active/queued requests.',
+    '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
+    '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
+    '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
@@ -42,7 +43,7 @@ const TOPICS = [
   { title: 'Settings, connections & access', rows: [
     '`/settings` opens private controls in this conversation. **Agent** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode; **Access** sets who may use and manage the conversation.',
     '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-    'Use `/model` for enabled engines and providers. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Diagnostics** shows the terminal commands that resume this session.',
+    'Use `/model` to choose the harness: Claude Code or Codex. Where a harness has several licenses — ones an admin added, or a dedicated Codex login set in the admin UI → Channel Runtime — the same picker and `/license` choose which to run on; when a license cannot answer, the turn moves to the next one you selected. **Diagnostics** shows the terminal commands that resume this session.',
     '**Variables** uses a protected browser page for secret entry. Google Chat cannot mask text input, so never paste tokens or passwords into a card or message.',
     'Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
     'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
@@ -84,7 +85,7 @@ export const GOOGLE_CHAT_HELP_TEXT = [
 // emoji section headers and a command/description split so the guide scans like a menu.
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
-  '/status': 'monitoring', '/model': 'tune', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+  '/status': 'monitoring', '/model': 'tune', '/license': 'badge', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
 };
 const QUICK_ICONS = ['person', 'groups', 'forum'];
 const HEADERS = {

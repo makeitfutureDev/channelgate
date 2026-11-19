@@ -8,10 +8,11 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
-import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
+import { readLicensePool } from "../engines/license-state.js";
 import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
@@ -38,12 +39,35 @@ const ENV_MAP = {
 };
 
 export function getSettings() {
+  let settings;
   try {
-    return stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
+    settings = stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
   } catch {
     return {};
   }
+  syncEngineLicenses(settings.engineLicenses);
+  return settings;
 }
+
+// The licenses an administrator added (`engineLicenses`) are engine adapters, registered live
+// (engines/registry.js syncLicenseAdapters). The daemon and the stdio MCP child both read this
+// file and either may write it, so the registry follows what was READ rather than what this
+// process last saved: every successful read compares the stored list with the one last applied and
+// re-registers only on a difference. A failed read (above) changes nothing — a half-written file
+// must never unregister a license mid-turn. The key is recorded BEFORE the sync because building
+// an adapter may itself read a setting.
+let syncedLicenseKey = "null";
+function syncEngineLicenses(stored) {
+  const key = JSON.stringify(stored ?? null);
+  if (key === syncedLicenseKey) return;
+  syncedLicenseKey = key;
+  try {
+    syncLicenseAdapters(Array.isArray(stored) ? stored : []);
+  } catch (error) {
+    console.warn(`[licenses] the stored license list could not be applied; keeping the previous one: ${error?.message || error}`);
+  }
+}
+export function refreshEngineLicenses() { getSettings(); }
 
 // Operators commonly enter a tunnel hostname without a scheme. Browser-facing capabilities need
 // an absolute URL, so make that convenient spelling canonical at the settings boundary. Preserve
@@ -103,6 +127,9 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    // A FUNCTION patch is computed from the settings read under this same lock, so a
+    // read-modify-write of one key (the license list) can never lose a concurrent save.
+    if (typeof patch === "function") patch = patch(current) || {};
     // Retain existing governance on downgrade: never silently strip instructions or mandatory
     // grants. New policies require Enterprise; explicit removal remains available to admins.
     if (typeof patch.agentsInstructions === "string" && patch.agentsInstructions.trim()
@@ -144,6 +171,9 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     // key and the admin password.
     writeSecretFile(settingsFile(), JSON.stringify(stripDeadSettings(next), null, 2) + "\n");
     db.exec("COMMIT");
+    // The writer sees its own license change at once: the caller that just added a license asks
+    // the registry about it on the next line, before anything has read the file again.
+    syncEngineLicenses(next.engineLicenses);
     return stripDeadSettings(next);
   } catch (e) {
     try {
@@ -405,6 +435,12 @@ export function getEngine() {
   // A disabled harness must not stay the gateway default just because it's the stored value —
   // resolve to the first enabled one instead of spawning a CLI the admin turned off.
   return isEngineEnabled(configured) ? configured : getEnabledEngines().find(id => !adapterOr(id).channelScoped) || configured;
+}
+
+// The licenses the gateway default may move to when the default license fails: "" (none), "any",
+// or a list of ids of the default's own harness (src/gateway/license-pool.js filters it live).
+export function getEnginePool() {
+  return readLicensePool(getSettings().enginePool);
 }
 
 // Gateway-wide default model, per engine. Used when a channel/DM/thread sets no model of its own,
@@ -1344,6 +1380,7 @@ export function settingsForApi() {
     modelChangeAccess: getModelChangeAccess(),
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
+    enginePool: getEnginePool(),
     engineFallback: getEngineFallback(),
     engineFallbackMode: getEngineFallbackMode(),
     codexFallback: getEngineFallback(), // legacy key — same value, kept for older API clients

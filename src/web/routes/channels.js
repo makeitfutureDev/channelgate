@@ -1,6 +1,7 @@
 import { channelBudgetStatus } from "../../gateway/channel-budget.js";
 import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
+import { normalizeLicensePool } from "../../gateway/license-pool.js";
 import { assertSpendingLimitUpdate } from "../../ee/channel-spending.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
@@ -355,6 +356,10 @@ export function createChannelsRouter({
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
       if (typeof body.skillRuntimeSwap === "boolean") next_.skillRuntimeSwap = body.skillRuntimeSwap;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
+      // A pool is chosen WITH its license: sent → validated beside it; a new license with no pool
+      // sent → the old license's pool does not carry over.
+      if (Object.hasOwn(body, "licensePool")) next_.licensePool = normalizeLicensePool(body.licensePool, next_.engine);
+      else if ((next_.engine || "") !== (current.engine || "")) next_.licensePool = "";
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
@@ -574,6 +579,9 @@ export function createChannelsRouter({
           if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
             assertChannelEngineApproved(out, effectiveMeta(out).engine || getEngine());
           }
+          // A pool is chosen WITH its license (see the DM route above).
+          if (Object.hasOwn(body, "licensePool")) out.licensePool = normalizeLicensePool(body.licensePool, out.engine);
+          else if ((out.engine || "") !== (current.engine || "")) out.licensePool = "";
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
           // written only when sent, so an unrelated save records no change to them.

@@ -1,12 +1,19 @@
-import { engineAvailableForChannel, isChannelEngineApproved } from "../../gateway/channel-engines.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 // Teams General Settings share Slack's stores/policy. Runtime forms save one complete scope;
 // legacy per-field actions remain valid for previously posted cards.
-import { getEngine, getEnabledEngines, getDefaultModel } from '../../config/settings.js';
-import { engineLabel, modelBelongsToEngine, effortBelongsToModel, modelsForEngine, effortsForModel } from '../../engines/registry.js';
+//
+// What runs is chosen as Harness → License → model → effort (src/gateway/license-pool.js). The
+// Harness control keeps the input id `<scope>_engine`; the license step is `<scope>_license` and
+// `<scope>_also`, and exists only while the harness has several licenses usable here. What is
+// stored is unchanged: the first license as `engine`, the rest as `licensePool` beside it.
+import { getEngine, getEnginePool, getDefaultModel } from '../../config/settings.js';
+import { engineLabel, harnessOf, isEngineId, modelBelongsToEngine, effortBelongsToModel, modelsForEngine, effortsForModel } from '../../engines/registry.js';
+import { harnessLabel, isHarnessId, storeLicensePool } from '../../engines/license-state.js';
+import { LICENSE_POOL_ANY, describeSelectionText, harnessSelection, licensePicker, readLicensePool, resolveLicensePick, selectableHarnesses, selectableLicenses } from '../../gateway/license-pool.js';
+import { licenseListText, readLicenseChoice } from '../license-choice.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { channelMode, modeSettingsPatch, canManage, isAuthorized, networkLabel } from '../../gateway/modes.js';
-import { getThreadEngine, getThreadModel, getThreadEffort, resolveThreadEngine, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides } from '../../gateway/thread-engine.js';
+import { getThreadEngine, getThreadModel, getThreadEffort, getThreadLicensePool, resolveThreadEngine, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides } from '../../gateway/thread-engine.js';
 import { getSessionEngine } from '../../gateway/sessions.js';
 import { RUNTIME_DEFAULT_VALUE, RUNTIME_FIELDS, nextRuntimeTriple, runtimeSettingsPatch } from '../../gateway/runtime-settings.js';
 import { channelCodexLoginStatus } from '../../gateway/channel-codex-login.js';
@@ -31,26 +38,46 @@ const actor = ctx => ({ authorId: ctx.ownerId, isAdminUser: Boolean(ctx.userIsAd
 const managed = (meta, ctx) => isAuthorized(meta, ctx.ownerId, Boolean(meta.isDM), actor(ctx)) && canManage(meta, actor(ctx));
 const defaultChoice = label => ({ label, value: RUNTIME_DEFAULT_VALUE });
 const compatible = (candidates, engine) => candidates.find(value => value && modelBelongsToEngine(value, engine)) || '';
-const parentEngine = meta => effectiveMeta({ ...meta, engine: '' }).engine || getEngine();
+// A selection is compared and drafted as text: "" | "any" | a JSON list (what a thread row stores).
+const poolKey = pool => storeLicensePool(readLicensePool(pool));
+const SELECTION_FIELDS = Object.freeze([...RUNTIME_FIELDS, 'licensePool']);
+const usableHere = (meta, engine) => selectableLicenses(harnessOf(engine), meta).includes(engine);
+const describe = (meta, engine, pool) => describeSelectionText({ engine, pool, meta }) || engineLabel(engine);
+// What a scope runs on when it names no harness of its own: the DM template's selection, else the
+// gateway default's.
+function parentSelection(meta) {
+  const parent = effectiveMeta({ ...meta, engine: '', licensePool: '' });
+  return parent.engine ? { engine: parent.engine, pool: parent.licensePool || '' } : { engine: getEngine(), pool: getEnginePool() };
+}
+const parentEngine = meta => parentSelection(meta).engine;
+// The level ABOVE each scope, in the shape harnessSelection reads: a channel sits on its parent,
+// a session on the conversation.
+const aboveChannel = meta => { const parent = parentSelection(meta); return { ...meta, engine: parent.engine, licensePool: parent.pool }; };
+const aboveThread = meta => effectiveMeta(meta);
+const ownChannel = meta => ({ engine: meta.engine || '', model: meta.model || '', effort: meta.effort || '', licensePool: poolKey(meta.licensePool) });
+// A pool row means nothing without a pin.
+const ownThread = (engine, model, effort, pool) => ({ engine, model, effort, licensePool: engine ? poolKey(pool) : '' });
 
 export async function generalRuntimeScopes(ctx) {
   const meta = ctx.meta, effective = effectiveMeta(meta), locked = false;
   const engine = effective.engine || getEngine();
+  const pool = effective.engine ? effective.licensePool || '' : getEnginePool();
   const inheritedModel = compatible([effectiveMeta({ ...meta, model: '' }).model, getDefaultModel(engine)], engine);
   const model = compatible([effective.model, inheritedModel], engine);
   const inheritedEffort = effectiveMeta({ ...meta, effort: '' }).effort || '';
   const efforts = effortsForModel(engine, model);
-  const engines = getEnabledEngines().filter(value => engineAvailableForChannel(meta, value) && isChannelEngineApproved(meta, value)).map(value => ({ label: engineLabel(value), value }));
+  const harnesses = selectableHarnesses(meta).map(value => ({ label: harnessLabel(value), value }));
+  const parent = parentSelection(meta);
   const channel = {
-    engine, model, inheritedEngine: parentEngine(meta),
-    values: { engine: meta.engine || '', model: meta.model || '', effort: meta.effort || '' },
-    inherited: { engine: `Inherited default (${engineLabel(parentEngine(meta))})`, model: inheritedModel ? `Inherited default (${inheritedModel})` : 'Engine default', effort: inheritedEffort && efforts.includes(inheritedEffort) ? `Inherited default (${inheritedEffort})` : 'Engine default' },
-    engines,
+    engine, pool, model, inheritedEngine: parent.engine,
+    values: ownChannel(meta),
+    inherited: { engine: `Inherited default (${describe(meta, parent.engine, parent.pool)})`, model: inheritedModel ? `Inherited default (${inheritedModel})` : 'Engine default', effort: inheritedEffort && efforts.includes(inheritedEffort) ? `Inherited default (${inheritedEffort})` : 'Engine default' },
+    harnesses,
   };
   if (!ctx.sessionKey) return { channel, thread: null, locked };
-  const [pin, pinModel, pinEffort, activeEngine, mintedEngine] = await Promise.all([
-    getThreadEngine(ctx.entry.slug, ctx.sessionKey), getThreadModel(ctx.entry.slug, ctx.sessionKey), getThreadEffort(ctx.entry.slug, ctx.sessionKey), resolveThreadEngine(ctx.entry.slug, ctx.sessionKey, effective),
-    getSessionEngine(ctx.entry.slug, ctx.sessionKey),
+  const [pin, pinModel, pinEffort, pinPool, activeEngine, mintedEngine] = await Promise.all([
+    getThreadEngine(ctx.entry.slug, ctx.sessionKey), getThreadModel(ctx.entry.slug, ctx.sessionKey), getThreadEffort(ctx.entry.slug, ctx.sessionKey), getThreadLicensePool(ctx.entry.slug, ctx.sessionKey),
+    resolveThreadEngine(ctx.entry.slug, ctx.sessionKey, effective), getSessionEngine(ctx.entry.slug, ctx.sessionKey),
   ]);
   const inheritedThreadModel = compatible([model, getDefaultModel(activeEngine)], activeEngine);
   const threadModel = compatible([pinModel, inheritedThreadModel], activeEngine);
@@ -58,10 +85,10 @@ export async function generalRuntimeScopes(ctx) {
   const sessionEngine = !pin && activeEngine !== engine ? activeEngine : '';
   const source = sessionEngine ? 'Session default' : 'Follow channel';
   return { channel, locked, thread: {
-    engine: activeEngine, model: threadModel, engines, sessionEngine,
+    engine: activeEngine, pool: pin ? pinPool : pool, model: threadModel, harnesses, sessionEngine,
     inheritedEngine: mintedEngine || engine,
-    values: { engine: pin, model: pinModel, effort: pinEffort },
-    inherited: { engine: `${mintedEngine && mintedEngine !== engine ? 'Session default' : 'Follow channel'} (${engineLabel(mintedEngine || engine)})`, model: inheritedThreadModel ? `${source} (${inheritedThreadModel})` : `${source} (engine default)`, effort: threadEffort ? `${source} (${threadEffort})` : `${source} (engine default)` },
+    values: ownThread(pin, pinModel, pinEffort, pinPool),
+    inherited: { engine: `${mintedEngine && mintedEngine !== engine ? 'Session default' : 'Follow channel'} (${describe(meta, mintedEngine || engine, pool)})`, model: inheritedThreadModel ? `${source} (${inheritedThreadModel})` : `${source} (engine default)`, effort: threadEffort ? `${source} (${threadEffort})` : `${source} (engine default)` },
   } };
 }
 
@@ -72,24 +99,48 @@ async function roster(ctx) {
     (ctx.isHumanMember ? ctx.isHumanMember(member) : !member.id.startsWith('28:') && member.id !== ctx.connector.botId));
 }
 
-function runtimeRows(scope, snapshot, locked, ui) {
+// The license step of one picker: License ("Any license" + each), then — for a specific license
+// that has others beside it — the licenses to move to when it fails. Nothing at all while the
+// harness has a single license usable here.
+export function licenseStepRows(ui, prefix, picker) {
+  if (!picker.show) return [];
+  const rows = [ui.choice(`${prefix}license`, 'License', picker.selected, [{ label: 'Any license', value: LICENSE_POOL_ANY }, ...picker.licenses.map(item => ({ label: item.label, value: item.id }))])];
+  if (picker.selected !== LICENSE_POOL_ANY && picker.others.length) {
+    rows.push({ type: 'Input.ChoiceSet', id: `${prefix}also`, label: 'If it fails, also use', isMultiSelect: true, style: 'compact',
+      value: picker.also.join(','), choices: picker.others.map(item => ({ title: String(item.label).slice(0, 100), value: item.id })) });
+  }
+  rows.push(ui.text('When a license cannot answer, the turn moves to the next one.'));
+  return rows;
+}
+// Whether any harness offered here has a license step at all — it decides the wording of the
+// reload button, so a conversation with one license per harness reads exactly as before.
+export const hasLicenseStep = meta => selectableHarnesses(meta).some(harness => selectableLicenses(harness, meta).length > 1);
+export const loadLabel = meta => hasLicenseStep(meta) ? 'Load licenses and models' : 'Load models';
+
+function runtimeRows(scope, snapshot, locked, ui, meta) {
   const body = [];
   const models = modelsForEngine(snapshot.engine);
   const efforts = [...new Set([
     ...effortsForModel(snapshot.engine), ...models.flatMap(item => effortsForModel(snapshot.engine, item.value)),
   ])];
   for (const field of RUNTIME_FIELDS) {
-    let choices = field === 'engine' ? snapshot.engines : field === 'model' ? models : efforts.map(value => ({ label: value, value }));
+    if (field === 'engine') {
+      const harness = snapshot.values.engine ? harnessOf(snapshot.values.engine) : '';
+      body.push(ui.choice(`${scope}_engine`, 'Harness', harness || RUNTIME_DEFAULT_VALUE, [defaultChoice(snapshot.inherited.engine), ...snapshot.harnesses]));
+      if (harness) body.push(...licenseStepRows(ui, `${scope}_`, licensePicker({ harness, meta, engine: snapshot.values.engine, pool: snapshot.values.licensePool })));
+      // Teams ChoiceSets do not send change events. Refresh the dependent lists without saving.
+      body.push(ui.buttons([ui.execute(loadLabel(meta), 'settings.runtime.models', { scope })]));
+      continue;
+    }
+    let choices = field === 'model' ? models : efforts.map(value => ({ label: value, value }));
     // Keep a saved compatible full model ID visible even if live discovery no longer lists it.
     const saved = snapshot.values[field];
     const selected = field === 'model' && saved && !modelBelongsToEngine(saved, snapshot.engine) ? '' : saved;
     if (field === 'model' && selected && modelBelongsToEngine(selected, snapshot.engine) && !choices.some(item => item.value === selected)) choices = [...choices, { label: `Current: ${selected}`, value: selected }];
-    const inherited = field === 'engine' ? snapshot.inherited.engine : field === 'model'
+    const inherited = field === 'model'
       ? scope === 'thread' ? 'Follow compatible channel model / selected engine default' : 'Default model for selected engine'
       : scope === 'thread' ? 'Follow compatible channel effort / engine default' : 'Engine default';
     body.push(ui.choice(`${scope}_${field}`, field[0].toUpperCase() + field.slice(1), selected || RUNTIME_DEFAULT_VALUE, [defaultChoice(inherited), ...choices]));
-    // Teams ChoiceSets do not send change events. Refresh the dependent list without saving.
-    if (field === 'engine') body.push(ui.buttons([ui.execute('Load models', 'settings.runtime.models', { scope })]));
   }
   body.push(ui.buttons([ui.execute(scope === 'channel' ? 'Apply to channel' : 'Apply to thread', 'settings.runtime.apply', { scope })]));
   return body;
@@ -98,13 +149,13 @@ function runtimeRows(scope, snapshot, locked, ui) {
 function runtimeDisplay(ctx, scope, snapshot, locked) {
   const draft = ctx.state.runtimeDrafts?.[scope];
   if (!draft) return snapshot;
+  const shown = draft.values.engine || snapshot.inheritedEngine;
   if (draft.locked !== locked || draft.inheritedEngine !== snapshot.inheritedEngine ||
-    RUNTIME_FIELDS.some(field => draft.baseline[field] !== snapshot.values[field]) ||
-    !snapshot.engines.some(item => item.value === (draft.values.engine || snapshot.inheritedEngine))) {
+    SELECTION_FIELDS.some(field => draft.baseline[field] !== snapshot.values[field]) || !usableHere(ctx.meta, shown)) {
     delete ctx.state.runtimeDrafts[scope];
     return snapshot;
   }
-  return { ...snapshot, engine: draft.values.engine || snapshot.inheritedEngine, values: draft.values };
+  return { ...snapshot, engine: shown, values: draft.values };
 }
 
 // `part` slices the page the way Slack's modal does: 'agent' is the runtime, the mode with its
@@ -115,7 +166,10 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
   ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
   const agent = part !== 'access', access = part !== 'agent';
-  const body = !agent ? [] : [ui.text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply for that scope. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui)];
+  const steps = hasLicenseStep(ctx.meta)
+    ? 'Licenses and models are shown only for the selected harness. After changing Harness or License, use Load licenses and models, then choose model and effort and Apply for that scope.'
+    : 'Models are shown only for the selected harness. After changing Harness, use Load models, then choose model and effort and Apply for that scope.';
+  const body = !agent ? [] : [ui.text(`${steps} Channel defaults affect new sessions; thread overrides apply to this session.`), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui, ctx.meta)];
   if (agent && ctx.meta.codexAuthSource === 'channel') {
     const login = await channelCodexLoginStatus(ctx.channelId).catch(error => {
       if (error.code === "enterprise_required") return { enterpriseRequired: true };
@@ -124,8 +178,8 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
     body.push(ui.text(`Channel Codex login: ${login.enterpriseRequired ? 'Enterprise required; switch to the gateway login in admin Settings to resume runs' : login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
   }
   if (agent && thread) {
-    body.push(ui.heading('Current session'), ...runtimeRows('thread', runtimeDisplay(ctx, 'thread', thread, locked), locked, ui));
-    if (thread.sessionEngine) body.push(ui.text(`This session already runs on ${engineLabel(thread.sessionEngine)}. A channel default does not replace its live engine; choose an engine here to switch it.`));
+    body.push(ui.heading('Current session'), ...runtimeRows('thread', runtimeDisplay(ctx, 'thread', thread, locked), locked, ui, ctx.meta));
+    if (thread.sessionEngine) body.push(ui.text(`This session already runs on ${describe(ctx.meta, thread.sessionEngine, thread.pool)}. A channel default does not replace its live engine; choose a harness here to switch it.`));
     body.push(ui.buttons([ui.execute('Follow channel default', 'settings.thread.reset', {}, 'none')]));
   }
   body.push(ui.heading(part === 'agent' ? 'Mode' : ctx.meta.isDM ? 'Mode and network' : 'Access'), ui.text('Only current managers can change channel access settings. Admin tool permissions still require an admin author.'));
@@ -189,6 +243,74 @@ function readRuntimeInput(data, scope, field) {
   if (typeof value !== 'string' || value.length > 128) throw new Error('Select a runtime value and try again.');
   return value === RUNTIME_DEFAULT_VALUE ? '' : value.trim();
 }
+const optionalInput = (data, key) => {
+  const value = data[key];
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('Select a runtime value and try again.');
+  return value.trim();
+};
+// The Harness control and the license step of one scope, as submitted.
+const readSelectionInput = (data, scope) => ({ harness: readRuntimeInput(data, scope, 'engine'),
+  license: optionalInput(data, `${scope}_license`), also: optionalInput(data, `${scope}_also`) });
+// The license step on the card belongs to another harness: Harness was changed and the card was
+// not reloaded, so the person never saw the licenses their choice would save.
+export const staleLicenseStep = input => isHarnessId(input.harness) && Boolean(input.license)
+  && input.license !== LICENSE_POOL_ANY && harnessOf(input.license) !== input.harness;
+// Say WHY a choice cannot be made (switched off, not configured, unknown) before the picker's own
+// refusal: a harness with no usable license is asked as its own license, anything that is not a
+// harness as the license id it claims to be.
+export async function admitSubmittedHarness(value, meta, channelId) {
+  if (!value) return;
+  if (!isHarnessId(value) || !selectableLicenses(value, meta).length) await assertEngineSelectable(value, { meta, channelId });
+}
+// A submitted Harness + license step → the `engine` + `licensePool` to store. `own` is the
+// scope's stored selection and `above` the level it inherits from: a harness sent WITHOUT a
+// license step (one license here, or a card that did not show the step for it) keeps the scope's
+// own selection when it is already on that harness, else takes the one the level above runs that
+// harness on. A license id in place of a harness — a card posted before the step existed, or a
+// typed command — is that one license.
+export function submittedSelection(input, { meta, own, above }) {
+  const { harness, license = '', also = '' } = input;
+  if (!harness) return { engine: '', licensePool: '' };
+  if (!isHarnessId(harness)) {
+    if (!isEngineId(harness)) throw new Error('That engine is no longer enabled.');
+    return resolveLicensePick({ harness: harnessOf(harness), meta, license: harness });
+  }
+  if (staleLicenseStep(input)) throw new Error('The harness changed. Load its licenses and models before applying.');
+  if (license) return resolveLicensePick({ harness, meta, license, also: license === LICENSE_POOL_ANY ? [] : also.split(',').map(id => id.trim()).filter(Boolean) });
+  // Refuses a harness with nothing usable here.
+  if (!selectableLicenses(harness, meta).length) return resolveLicensePick({ harness, meta });
+  // Nothing about the licenses was on the card, so nothing about them changes: a selection whose
+  // other licenses are switched off for now is kept as it was stored.
+  if (own.engine && harnessOf(own.engine) === harness && usableHere(meta, own.engine)) return { engine: own.engine, licensePool: readLicensePool(own.licensePool) };
+  return harnessSelection(harness, above);
+}
+// Channel writes resolve the selection twice: before the write, to ask the license whether it is
+// ready (that check is async), and inside it against the record actually being replaced.
+const SETTINGS_MOVED = 'These settings changed. Reopen General before applying your changes.';
+async function admitSelection(selection, meta, channelId) {
+  if (selection?.engine) await assertEngineSelectable(selection.engine, { meta, channelId });
+  return selection;
+}
+function sameSelection(planned, selection) {
+  if (planned.engine !== selection.engine) throw new Error(SETTINGS_MOVED);
+  return selection;
+}
+// A typed license choice (`/settings license …`): names, ids or list numbers of the licenses of
+// the harness this scope is on. Empty = follow the inherited default again.
+function typedLicenseSelection(value, { meta, own, inheritedEngine }) {
+  if (!value) return { engine: '', licensePool: '' };
+  const engine = own.engine || inheritedEngine, harness = harnessOf(engine);
+  const picker = licensePicker({ harness, meta, engine, pool: own.engine ? own.licensePool : '' });
+  if (!picker.show) throw new Error(`${harnessLabel(harness)} has a single license here, so there is nothing to choose.`);
+  const choice = readLicenseChoice(value, picker.licenses);
+  if (choice.error) {
+    // Typed-command replies are one short line; a long list is left to /license.
+    const listed = `${choice.error} ${harnessLabel(harness)} licenses here: ${licenseListText(picker.licenses)}.`;
+    throw new Error(listed.length <= 300 ? listed : `${choice.error} Send /license to see the licenses here.`);
+  }
+  return resolveLicensePick({ harness, meta, license: choice.license, also: choice.also });
+}
 function validatedSelection(current, field, value, inheritedEngine) {
   // Validate the submitted field before dependent fields are cleared. A forged model must
   // produce an error rather than silently clearing the existing model.
@@ -200,13 +322,12 @@ function validatedSelection(current, field, value, inheritedEngine) {
 
 function assertRuntimeBaseline(ctx, scope, own, locked) {
   const baseline = ctx.state.runtimeBaseline?.[scope];
-  if (!baseline || baseline.locked !== locked || RUNTIME_FIELDS.some(field => baseline[field] !== own[field])) {
+  if (!baseline || baseline.locked !== locked || SELECTION_FIELDS.some(field => baseline[field] !== own[field])) {
     throw new Error('These settings changed. Reopen General before applying your changes.');
   }
 }
-function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
-  const form = Object.fromEntries(RUNTIME_FIELDS.map(field => [field,
-    readRuntimeInput(data, scope, field)]));
+function combinedRuntimeSelection(data, scope, meta, inheritedEngine, engine) {
+  const form = { engine, model: readRuntimeInput(data, scope, 'model'), effort: readRuntimeInput(data, scope, 'effort') };
   // Resolve defaults against the newly selected engine, including template/channel inheritance.
   const { patch, actualEngine } = runtimeSettingsPatch({ ...form, effort: '' }, { gatewayEngine: inheritedEngine });
   const inherited = scope === 'channel' ? effectiveMeta({ ...meta, engine: actualEngine, model: '', effort: '' }) : effectiveMeta(meta);
@@ -217,87 +338,120 @@ function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
   return { ...patch, effort: form.effort };
 }
 
+// Repaint one scope for the submitted Harness and License without saving anything: Teams
+// ChoiceSets send no change events, so this is how the dependent lists follow a choice.
+async function stageRuntimeDraft(ctx, scope, data, notice) {
+  const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
+  const scopes = await generalRuntimeScopes(fresh), snapshot = scopes[scope];
+  assertRuntimeBaseline(ctx, scope, snapshot.values, scopes.locked);
+  const submitted = readSelectionInput(data, scope);
+  // A license step left over from the previous harness says nothing about the new one.
+  const input = staleLicenseStep(submitted) ? { harness: submitted.harness } : submitted;
+  await admitSubmittedHarness(input.harness, fresh.meta, fresh.channelId);
+  const selection = await admitSelection(submittedSelection(input, { meta: fresh.meta, own: snapshot.values,
+    above: scope === 'channel' ? aboveChannel(fresh.meta) : aboveThread(fresh.meta) }), fresh.meta, fresh.channelId);
+  runtimeSettingsPatch({ engine: selection.engine }, { gatewayEngine: snapshot.inheritedEngine });
+  const triple = nextRuntimeTriple({ engine: selection.engine, model: readRuntimeInput(data, scope, 'model'), effort: readRuntimeInput(data, scope, 'effort') },
+    'engine', selection.engine, snapshot.inheritedEngine);
+  ctx.state.runtimeDrafts ||= {};
+  ctx.state.runtimeDrafts[scope] = { values: { ...triple, licensePool: poolKey(selection.licensePool) }, baseline: { ...snapshot.values }, locked: scopes.locked, inheritedEngine: snapshot.inheritedEngine };
+  ctx.state.tab = 'general';
+  ctx.state.notice = notice(hasLicenseStep(fresh.meta));
+  return true;
+}
+
 export async function handleGeneral(action, data, ctx, _ui) {
   if (action === 'settings.runtime.models') {
     const { scope } = data;
     if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
     if (scope === 'thread') requireSession(ctx);
-    const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
-    const scopes = await generalRuntimeScopes(fresh), snapshot = scopes[scope];
-    assertRuntimeBaseline(ctx, scope, snapshot.values, scopes.locked);
-    const engine = readRuntimeInput(data, scope, 'engine');
-    if (engine) await assertEngineSelectable(engine, { meta: fresh.meta, channelId: fresh.channelId });
-    runtimeSettingsPatch({ engine }, { gatewayEngine: snapshot.inheritedEngine });
-    const values = nextRuntimeTriple(Object.fromEntries(RUNTIME_FIELDS.map(field => [field,
-      readRuntimeInput(data, scope, field)])), 'engine', engine, snapshot.inheritedEngine);
-    ctx.state.runtimeDrafts ||= {};
-    ctx.state.runtimeDrafts[scope] = { values, baseline: { ...snapshot.values }, locked: scopes.locked, inheritedEngine: snapshot.inheritedEngine };
-    ctx.state.tab = 'general';
-    ctx.state.notice = 'Model choices refreshed. Use Apply to save your selection.';
-    return true;
+    return stageRuntimeDraft(ctx, scope, data, licenses => `${licenses ? 'License and model' : 'Model'} choices refreshed. Use Apply to save your selection.`);
   }
   if (action === 'settings.runtime.apply') {
     const { scope } = data;
     if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
+    if (scope === 'thread') requireSession(ctx);
+    const input = readSelectionInput(data, scope);
+    // Harness was changed without reloading, so the card still shows the previous harness's
+    // licenses. Saving would store licenses the person never saw — show them instead.
+    if (staleLicenseStep(input)) {
+      return stageRuntimeDraft(ctx, scope, data, () => 'Harness changed, so its licenses and models were loaded. Nothing was saved yet — check the selection, then Apply.');
+    }
     if (scope === 'channel') {
-      const requestedEngine = readRuntimeInput(data, scope, 'engine');
-      if (requestedEngine) await assertEngineSelectable(requestedEngine, { meta: ctx.meta, channelId: ctx.channelId });
+      await admitSubmittedHarness(input.harness, ctx.meta, ctx.channelId);
+      const planned = await admitSelection(submittedSelection(input, { meta: ctx.meta, own: ownChannel(ctx.meta), above: aboveChannel(ctx.meta) }), ctx.meta, ctx.channelId);
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
         const locked = false;
-        const own = { engine: current.engine || '', model: current.model || '', effort: current.effort || '' };
+        const own = ownChannel(current);
         assertRuntimeBaseline(ctx, scope, own, locked);
-        const next = combinedRuntimeSelection(data, scope, current, parentEngine(current));
-        return next;
+        const selection = sameSelection(planned, submittedSelection(input, { meta: current, own, above: aboveChannel(current) }));
+        const next = combinedRuntimeSelection(data, scope, current, parentEngine(current), selection.engine);
+        return { ...next, licensePool: selection.licensePool };
       });
     } else {
       const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
       try {
         const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
-        const [engine, model, effort] = await Promise.all([
-          getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session),
+        const [engine, model, effort, pool] = await Promise.all([
+          getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getThreadLicensePool(ctx.entry.slug, session),
         ]);
         const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
-        const locked = false;
-        assertRuntimeBaseline(ctx, scope, { engine: engine, model, effort }, locked);
+        const locked = false, own = ownThread(engine, model, effort, pool);
+        assertRuntimeBaseline(ctx, scope, own, locked);
         // The roster check above can outlive a turn that creates/replaces this live session.
         const mintedEngine = await getSessionEngine(ctx.entry.slug, session);
         const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
-        const next = combinedRuntimeSelection(data, scope, latest.meta, inheritedEngine);
-        if (next.engine) await assertEngineSelectable(next.engine, { meta: latest.meta, channelId: ctx.channelId });
-        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, engine: next.engine }, { expected: { engine, model, effort } });
+        await admitSubmittedHarness(input.harness, latest.meta, ctx.channelId);
+        const selection = submittedSelection(input, { meta: latest.meta, own, above: aboveThread(latest.meta) });
+        const next = combinedRuntimeSelection(data, scope, latest.meta, inheritedEngine, selection.engine);
+        await admitSelection(next, latest.meta, ctx.channelId);
+        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, licensePool: selection.licensePool }, { expected: { engine, model, effort } });
       } finally { release(); }
     }
     if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];
     ctx.state.tab = 'general';
     ctx.state.notice = `${scope === 'channel' ? 'Channel defaults' : 'Thread overrides'} updated. Applies to the next turn.`;
     await logEvent(scope === 'channel' ? 'channel_runtime_updated' : 'thread_runtime_updated', {
-      channel: ctx.channelId, slug: ctx.entry.slug, author: ctx.ownerId, fields: [...RUNTIME_FIELDS],
+      channel: ctx.channelId, slug: ctx.entry.slug, author: ctx.ownerId, fields: [...SELECTION_FIELDS],
     });
     return true;
   }
   if (action === 'settings.runtime') {
+    // One field at a time: cards posted before the combined form, and the typed settings commands.
+    // `engine` takes a harness (or one license id); `license` takes typed license names for the
+    // harness the scope is on.
     const { scope, field } = data;
-    if (!['channel', 'thread'].includes(scope) || !RUNTIME_FIELDS.includes(field)) throw new Error('Unknown runtime control.');
-    const value = readRuntimeInput(data, scope, field);
-    if (field === 'engine' && value) await assertEngineSelectable(value, { meta: ctx.meta, channelId: ctx.channelId });
+    if (!['channel', 'thread'].includes(scope) || ![...RUNTIME_FIELDS, 'license'].includes(field)) throw new Error('Unknown runtime control.');
+    const typed = field === 'license' ? optionalInput(data, `${scope}_license`) : '';
+    const value = field !== 'license' ? readRuntimeInput(data, scope, field) : typed === RUNTIME_DEFAULT_VALUE ? '' : typed;
+    // → the selection this field names, or null when the field is the model or the effort.
+    const selectionFor = ({ meta, own, above, inheritedEngine }) => field === 'engine' ? submittedSelection({ harness: value }, { meta, own, above })
+      : field === 'license' ? typedLicenseSelection(value, { meta, own, inheritedEngine }) : null;
+    if (field === 'engine') await admitSubmittedHarness(value, ctx.meta, ctx.channelId);
     if (scope === 'channel') {
+      const planned = await admitSelection(selectionFor({ meta: ctx.meta, own: ownChannel(ctx.meta), above: aboveChannel(ctx.meta), inheritedEngine: parentEngine(ctx.meta) }), ctx.meta, ctx.channelId);
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
-        const own = { engine: current.engine || '', model: current.model || '', effort: current.effort || '' };
-        const next = validatedSelection(own, field, value, parentEngine(current));
-        return next;
+        const own = ownChannel(current), inheritedEngine = parentEngine(current);
+        const selection = planned && sameSelection(planned, selectionFor({ meta: current, own, above: aboveChannel(current), inheritedEngine }));
+        const next = validatedSelection(own, selection ? 'engine' : field, selection ? selection.engine : value, inheritedEngine);
+        return selection ? { ...next, licensePool: selection.licensePool } : next;
       });
     } else {
       const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
       try {
         const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
-        const [engine, model, effort, mintedEngine] = await Promise.all([getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getSessionEngine(ctx.entry.slug, session)]);
+        const [engine, model, effort, pool, mintedEngine] = await Promise.all([getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getThreadLicensePool(ctx.entry.slug, session), getSessionEngine(ctx.entry.slug, session)]);
         const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
         const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
-        const next = validatedSelection({ engine, model, effort }, field, value, inheritedEngine);
-        if (field === "engine" && next.engine) await assertEngineSelectable(next.engine, { meta: latest.meta, channelId: ctx.channelId });
-        await Promise.all([setThreadEngine(ctx.entry.slug, session, next.engine), setThreadModel(ctx.entry.slug, session, next.model), setThreadEffort(ctx.entry.slug, session, next.effort)]);
+        const own = ownThread(engine, model, effort, pool);
+        const selection = selectionFor({ meta: latest.meta, own, above: aboveThread(latest.meta), inheritedEngine });
+        const next = validatedSelection({ engine, model, effort }, selection ? 'engine' : field, selection ? selection.engine : value, inheritedEngine);
+        if (selection) await admitSelection(next, latest.meta, ctx.channelId);
+        // A model or effort change leaves the pin's licenses as they are; setThreadEngine clears
+        // a pool it is not handed.
+        await Promise.all([setThreadEngine(ctx.entry.slug, session, next.engine, { licensePool: selection ? selection.licensePool : pool }), setThreadModel(ctx.entry.slug, session, next.model), setThreadEffort(ctx.entry.slug, session, next.effort)]);
       } finally { release(); }
     }
     if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];

@@ -25,16 +25,16 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
-import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
+import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine, sameHarness } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getRunConcurrency, getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getRunConcurrency, getEngine, getEnginePool, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
 import { getPerplexityResearchConfig } from "../config/settings.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
-import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo, getThreadSkillModel, setThreadSkillModel } from "./thread-engine.js";
+import { getThreadEngine, getThreadLicensePool, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo, getThreadSkillModel, setThreadSkillModel } from "./thread-engine.js";
 import { decideSkillSwap, registerSkillSwapHandler, skillSwapKey, skillSwapReply } from "./skill-runtime.js";
 import { authorizedSudoSchedule } from "./schedule-sudo.js";
 import { hasSudoRuntimeAuthority } from "../runtimes/sudo-authority.js";
@@ -54,6 +54,8 @@ import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
+import { codexHarnessFor } from "./channel-codex-paths.js";
+import { licensePoolCandidates, readLicensePool } from "./license-pool.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -797,6 +799,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const threadEngine = overrides?.engine && ENGINES.includes(overrides.engine) ? "" : await getThreadEngine(entry.slug, threadKey);
   const channelEngine = ENGINES.includes(meta.engine) ? meta.engine : "";
   let engine = threadEngine || channelEngine || getEngine();
+  // The MORE licenses of that harness this turn may move to when the license fails
+  // (license-pool.js). A selection is one thing — a license and its alternatives — so the pool
+  // comes from the same level that named the license, never mixed across levels.
+  const licensePool = overrides?.engine && ENGINES.includes(overrides.engine) ? readLicensePool(overrides.licensePool)
+    : threadEngine ? await getThreadLicensePool(entry.slug, threadKey)
+      : channelEngine ? readLicensePool(meta.licensePool) : getEnginePool();
   // Explicit = the ask names an engine for THIS thread/run specifically (per-run API override or
   // per-thread directive/wizard). Channel/global values are defaults, not asks — an existing
   // thread outranks them and keeps running on the engine its session was born under (see
@@ -849,7 +857,13 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
       };
     }
-    const substitute = getEnabledEngines().find(id => isChannelEngineApproved(channelMeta, id) && (!requireAdapter(id).channelScoped || channelMeta.codexAuthSource === "channel")) || "";
+    // The selection's own other licenses first, then any license of the same harness — the
+    // conversation keeps its harness whenever one of its licenses can still run — then anything.
+    const usableHere = (id) => isChannelEngineApproved(channelMeta, id) && (!requireAdapter(id).channelScoped || channelMeta.codexAuthSource === "channel");
+    const enabledEngines = getEnabledEngines();
+    const substitute = licensePoolCandidates({ engine, pool: licensePool, meta: channelMeta })[0]
+      || enabledEngines.find(id => sameHarness(id, engine) && usableHere(id))
+      || enabledEngines.find(usableHere) || "";
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);
       engine = substitute;
@@ -936,7 +950,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const target = runtimeResolver(entry.slug, {
     ...meta,
     engine: runtimeEngine,
-    codexHarness: runtimeEngine === "codex-eu" ? "eu" : "",
+    codexHarness: codexHarnessFor(runtimeEngine),
     ...(overrides ? { adminMode: Boolean(meta.adminMode || channelAdminMode) } : {}),
   }, { isAdminAuthor: trustedAdminAuthor });
   const isolatedRuntime = runtimeSupports(target, "isolated");
@@ -1752,16 +1766,87 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // the other harness never reaches the CLI, so it must not silently disable failover either.
   const modelPinnedByUser = [threadModel, overrides?.model].some((m) => m && modelBelongsToEngine(m, engine));
   const runtimePinned = enginePinnedByUser || modelPinnedByUser;
-  const fallbackEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "" : "";
-  // `fallbackPolicy` is the caller's word on WHO decides a switch: "auto" (or nothing — every
-  // unattended origin) switches here; "ask" (a watched Slack thread, Settings → engineFallbackMode)
-  // throws the replay-safe failure back with `details.askFallback` so the thread gets a card with
-  // buttons and nothing runs until someone clicks. `canAsk` — a person is watching, so a failure
-  // both harnesses could not answer may also be handed back as a choice.
-  const askFallback = Boolean(fallbackEngine) && fallbackPolicy === "ask";
-  const canAsk = Boolean(fallbackEngine) && (fallbackPolicy === "ask" || fallbackPolicy === "auto");
-  const fallbackOn = Boolean(fallbackEngine) && !askFallback;
-  const runFallbackEngine = async (note, failureContext = "a usage/spend limit") => {
+  // Two kinds of "somewhere else to answer", tried in this order:
+  //   1. the OTHER LICENSES of this selection (license-pool.js) — same harness, chosen by the same
+  //      person who chose this license, so moving between them is automatic and applies to a
+  //      pinned thread too. A license that cannot serve a model somebody picked is not a candidate;
+  //   2. the other HARNESS (cross-engine failover) — only for an unpinned turn, and only when the
+  //      gateway setting allows it.
+  const pickedModel = [threadModel, overrides?.model, meta.model].find((m) => m && modelBelongsToEngine(m, engine)) || "";
+  const poolEngines = licensePoolCandidates({ engine, pool: licensePool, meta: channelMeta, model: pickedModel });
+  const crossEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "" : "";
+  // `fallbackPolicy` is the caller's word on WHO decides a switch of HARNESS: "auto" (or nothing —
+  // every unattended origin) switches here; "ask" (a watched Slack thread, Settings →
+  // engineFallbackMode) throws the replay-safe failure back with `details.askFallback` so the
+  // thread gets a card with buttons and nothing runs until someone clicks. Licenses of the
+  // selection are never asked about: with a pool, the card appears only once every license of it
+  // has failed. `canAsk` — a person is watching, so a failure nothing could answer may also be
+  // handed back as a choice.
+  const askEngine = crossEngine && fallbackPolicy === "ask" ? crossEngine : "";
+  const fallbackQueue = [...poolEngines, ...(crossEngine && !askEngine ? [crossEngine] : [])];
+  const fallbackEngine = fallbackQueue[0] || askEngine;
+  const askFallback = Boolean(askEngine) && !poolEngines.length;
+  const canAsk = Boolean(crossEngine) && (fallbackPolicy === "ask" || fallbackPolicy === "auto");
+  const fallbackOn = fallbackQueue.length > 0;
+  // The runtime target an engine other than the turn's own runs in: the SAME machine boundary,
+  // with the credential facts re-pointed at that engine — which login its container run is relayed
+  // (`meta.engine`, `codexHarness`) and which directory holds its sessions. Without this a move
+  // from one Codex license to another would run in the first license's directory, as its login.
+  const targetForEngine = (candidate) => {
+    if (candidate === target.meta?.engine) return target;
+    const candidateMeta = { ...target.meta, engine: candidate, codexHarness: codexHarnessFor(candidate) };
+    if (!target.container) return { ...target, meta: candidateMeta };
+    const container = { ...target.container, codexHome: target.container.baseCodexHome || target.container.codexHome };
+    const state = adapterFor(candidate)?.cli === "codex" ? adapterFor(candidate).sessionState : null;
+    const dir = typeof state?.containerDir === "function" ? state.containerDir(container) : container[state?.containerDirKey || ""];
+    if (dir) container.codexHome = dir;
+    return { ...target, meta: candidateMeta, container };
+  };
+  const coolingDown = (id) => (engineLimitedUntil.get(`${id}::${entry.slug}`) || 0) > Date.now() || (engineAuthFailedUntil.get(id) || 0) > Date.now();
+  const labelList = (labels) => labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0] || "";
+  // Walk the queue until something answers. `noteFor(label)` is the sentence the answer leads
+  // with. A candidate hands the turn on only when it provably did nothing — it never spawned, or
+  // its runner classified the failure replay-safe; anything else ends the walk, exactly as a
+  // failed single fallback always has. The thrown error is the LAST candidate's, carrying
+  // `fallbackTried` (every candidate that was tried, in order) for the caller's one sentence.
+  // A takeover that failed ends the whole turn only when it cannot be repeated: the channel's
+  // spending limit, or a turn that stopped part-way through real work. A license that was refused
+  // before any tool ran (its own usage limit, a rejected sign-in) reports an incomplete turn too,
+  // but a replay-safe one — nothing happened, so the next license may try.
+  const fallbackEndsTurn = (error) => error?.code === "channel_spending_limit"
+    || Boolean(error?.details?.incompleteTurn && error.details.replaySafe !== true);
+  const runFallbackEngine = async (noteFor, failureContext = "a usage/spend limit") => {
+    // A license known to be limited right now is tried last, not re-probed first.
+    const order = [...fallbackQueue.filter((id) => !coolingDown(id)), ...fallbackQueue.filter(coolingDown)];
+    const tried = [];
+    for (const candidate of order) {
+      const attempt = { spawned: false };
+      const note = tried.length
+        ? `⚠️ _${labelList([engineLabel(engine), ...tried.map((t) => t.label)])} could not answer — using ${engineLabel(candidate)}._\n\n`
+        : noteFor(engineLabel(candidate));
+      try {
+        return await runFallbackOn(candidate, note, failureContext, attempt);
+      } catch (error) {
+        if (fallbackEndsTurn(error)) throw error;
+        tried.push({ engine: candidate, label: engineLabel(candidate), message: String(error?.message || error) });
+        const kind = replaySafeFallbackKind(error, candidate);
+        if (kind === "authentication") await rememberAuthFailure(candidate);
+        else if (kind === "usage_limit") engineLimitedUntil.set(`${candidate}::${entry.slug}`, Date.now() + LIMIT_COOLDOWN_MS);
+        const untouched = !attempt.spawned || error?.details?.replaySafe === true;
+        if (!untouched || candidate === order.at(-1)) throw Object.assign(error, { fallbackTried: tried });
+        console.warn(`[gateway] ${candidate} could not take over in ${entry.slug} (${error.message}) — trying the next one`);
+      }
+    }
+    throw new Error("no fallback engine is available");
+  };
+  const runFallbackOn = async (fallbackEngine, note, failureContext, attempt) => {
+    // Shadows the turn's own target for the rest of this function: everything below spawns, probes
+    // and mints for the FALLBACK engine, so it must read that engine's view of the runtime.
+    const target = targetForEngine(fallbackEngine);
+    // A license of the same harness continues the turn's own picks: the model and effort somebody
+    // chose stay (the queue only holds licenses that can serve a picked model). Another harness
+    // cannot, so it runs on its own defaults.
+    const sameHarnessMove = sameHarness(engine, fallbackEngine);
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
     const fallbackAdapter = requireAdapter(fallbackEngine);
     // Same fail-closed check the primary engine gets: an isolated runtime that cannot authenticate
@@ -1794,14 +1879,20 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           turnText;
       }
     }
-    // This turn runs on the FALLBACK engine, so the resolved `model` above (picked for the engine
-    // that just failed) must not apply — use the channel's own override only if it belongs to the
-    // fallback's model family (a Claude model would be rejected by `codex -m`, and vice versa),
-    // else that engine's gateway default.
+    // This turn runs on the FALLBACK engine. Another license of the same harness keeps the turn's
+    // model and effort when it can serve them. Another harness cannot use the resolved `model`
+    // (picked for the engine that just failed) — it gets the channel's own override only if that
+    // belongs to its model family (a Claude model would be rejected by `codex -m`, and vice versa),
+    // else its gateway default.
     const fallbackGatewayDefaultModel = getDefaultModel(fallbackEngine);
-    let fallbackModel = meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
+    // "The turn's model" is one somebody picked, or — when the license has no default of its own —
+    // the default the turn was already running on.
+    const keepsTurnModel = sameHarnessMove && Boolean(model) && modelBelongsToEngine(model, fallbackEngine)
+      && (Boolean(pickedModel) || !fallbackGatewayDefaultModel);
+    let fallbackModel = keepsTurnModel ? model
+      : meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
-    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
+    const fallbackDefaultEffort = (keepsTurnModel && effortForModel(model)) || getDefaultEffort(fallbackEngine);
     try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
     const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
@@ -1829,14 +1920,15 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
       await assertChannelBudget(channelId, entry.slug);
       engineStarted = true;
+      attempt.spawned = true;
       const attemptResult = await fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
-        // The SAME runtime target: failing over to the other harness changes which CLI runs, not
-        // which machine boundary the channel runs behind.
+        // The SAME machine boundary: failing over changes which CLI or which license runs, not
+        // what the channel runs behind (targetForEngine re-points only the credential facts).
         target, claudeOauthToken: fallbackClaudeToken, artifactDir: target.artifactDir,
         runtime: { target, claudeOauthToken: fallbackClaudeToken, claudeTokenFingerprint: fallbackClaudeTokenFp, artifactDir: target.artifactDir,
           preferCold: true, keepAliveMs: 0, poolKey: `${entry.slug}::${fbKey}`, dangerouslySkip,
@@ -1929,6 +2021,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       isNew: !prior,
       fellBack: true,
       fallbackFrom: engine,
+      // The same harness on another of the selection's licenses, as opposed to another harness.
+      licenseSwitched: sameHarnessMove,
       fellBackToCodex: fallbackEngine === "codex",
     };
     // `model` = the configured pick that governed the fallback (shown in the footer);
@@ -2058,14 +2152,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       const authUntil = engineAuthFailedUntil.get(engine) || 0;
       if (authUntil > Date.now() && !(await engineCredentialReplaced(engine))) {
         return await runFallbackEngine(
-          `⚠️ _${engineLabel(engine)} authentication is unavailable right now — using ${engineLabel(fallbackEngine)}._\n\n`,
+          (label) => `⚠️ _${engineLabel(engine)} authentication is unavailable right now — using ${label}._\n\n`,
           "its authentication was unavailable before any tool call",
         );
       }
       if (authUntil) { engineAuthFailedUntil.delete(engine); engineAuthFailedFingerprint.delete(engine); }
       const until = engineLimitedUntil.get(limitKey) || 0;
       if (until > Date.now()) {
-        return await runFallbackEngine(`⚠️ _${engineLabel(engine)} is at its usage limit right now — using ${engineLabel(fallbackEngine)}._\n\n`);
+        return await runFallbackEngine((label) => `⚠️ _${engineLabel(engine)} is at its usage limit right now — using ${label}._\n\n`);
       }
       if (until) engineLimitedUntil.delete(limitKey); // expired — retry this engine and drop the entry
     }
@@ -2243,7 +2337,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           // Ask mode: hand the decision to the person watching the thread. No cooldown is written —
           // "try again" must be a real re-probe, not a pre-decided switch.
           if (askFallback && switchKind) {
-            err.details = { ...(err.details || {}), askFallback: { to: fallbackEngine, kind: switchKind } };
+            err.details = { ...(err.details || {}), askFallback: { to: askEngine, kind: switchKind } };
             throw err;
           }
           if (fallbackKind) {
@@ -2257,11 +2351,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             console.warn(`[gateway] replay-safe ${engine} ${fallbackKind} failure in ${entry.slug} — falling back to ${fallbackEngine}`);
             try {
               return await runFallbackEngine(
-                fallbackKind === "authentication"
-                  ? `⚠️ _${engineLabel(engine)} authentication failed — using ${engineLabel(fallbackEngine)}._\n\n`
+                (label) => fallbackKind === "authentication"
+                  ? `⚠️ _${engineLabel(engine)} authentication failed — using ${label}._\n\n`
                   : transient
-                    ? `⚠️ _${engineLabel(engine)} hit a temporary provider error — retried ${retries}× before giving up — using ${engineLabel(fallbackEngine)}._\n\n`
-                    : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${engineLabel(fallbackEngine)}._\n\n`,
+                    ? `⚠️ _${engineLabel(engine)} hit a temporary provider error — retried ${retries}× before giving up — using ${label}._\n\n`
+                    : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${label}._\n\n`,
                 fallbackKind === "authentication"
                   ? "its authentication failed before any tool call"
                   : transient
@@ -2269,17 +2363,21 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
                     : "it hit a usage limit before any tool call",
               );
             } catch (fallbackError) {
-              if (fallbackError?.code === "channel_spending_limit" || fallbackError?.details?.incompleteTurn) throw fallbackError;
-              // Both harnesses failed. Keep the original error authoritative (its details drive every
-              // consumer), but say the whole story in one sentence, and — when a person is watching —
-              // hand it back as a choice (try either harness again) instead of a dead end.
-              console.warn(`[gateway] ${fallbackEngine} fallback also failed (${fallbackError.message}) — preserving the original ${engine} provider error`);
+              if (fallbackEndsTurn(fallbackError)) throw fallbackError;
+              // Everything that could take over failed too. Keep the original error authoritative
+              // (its details drive every consumer), but say the whole story in one sentence, and —
+              // when a person is watching — hand it back as a choice instead of a dead end: the
+              // other harness when ask mode kept it out of the walk, else "try either again".
+              const tried = fallbackError?.fallbackTried?.length ? fallbackError.fallbackTried : [{ engine: fallbackEngine, label: engineLabel(fallbackEngine) }];
+              console.warn(`[gateway] ${tried.map((t) => t.engine).join(", ")} could not take over either (${fallbackError.message}) — preserving the original ${engine} provider error`);
               err.details = {
                 ...(err.details || {}),
                 fallbackError: fallbackError.message,
-                ...(canAsk ? { askFallback: { to: fallbackEngine, kind: fallbackKind, bothFailed: true } } : {}),
+                alsoFailed: tried.map((t) => t.engine),
+                ...(askEngine ? { askFallback: { to: askEngine, kind: fallbackKind } }
+                  : canAsk ? { askFallback: { to: crossEngine, kind: fallbackKind, bothFailed: true } } : {}),
               };
-              err.message = `${err.message} — ${engineLabel(fallbackEngine)} could not answer either: ${fallbackError.message}`;
+              err.message = `${err.message} — ${labelList(tried.map((t) => t.label))} could not answer either: ${fallbackError.message}`;
               throw err;
             }
           } else if (!fresh && isSessionNotFound(err)) {
@@ -2402,7 +2500,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // error (0 tokens, no tool: the runner proved it did nothing).
     if (askFallback && isUsageLimited(result)) {
       throw Object.assign(new Error(`${engineLabel(engine)} usage limit reached: ${String(result.content || "").replace(/\s+/g, " ").trim().slice(0, 300)}`), {
-        details: { engine, providerError: true, providerKind: "usage_limit", replaySafe: true, toolUseCount: 0, askFallback: { to: fallbackEngine, kind: "usage_limit" } },
+        details: { engine, providerError: true, providerKind: "usage_limit", replaySafe: true, toolUseCount: 0, askFallback: { to: askEngine, kind: "usage_limit" } },
       });
     }
     if (!fallbackOn && runtimePinned && isUsageLimited(result)) {
@@ -2415,10 +2513,17 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       engineLimitedUntil.set(limitKey, Date.now() + LIMIT_COOLDOWN_MS);
       console.warn(`[gateway] ${engine} usage limit in ${entry.slug} — falling back to ${fallbackEngine} for ${LIMIT_COOLDOWN_MS / 60000}m`);
       try {
-        return await runFallbackEngine(`⚠️ _${engineLabel(engine)} hit its usage limit — answered with ${engineLabel(fallbackEngine)}._\n\n`);
+        return await runFallbackEngine((label) => `⚠️ _${engineLabel(engine)} hit its usage limit — answered with ${label}._\n\n`);
       } catch (e) {
-        if (e?.code === "channel_spending_limit" || e?.details?.incompleteTurn) throw e;
+        if (fallbackEndsTurn(e)) throw e;
         console.warn(`[gateway] ${fallbackEngine} fallback failed (${e.message}) — returning the limit notice`);
+        // Ask mode kept the other harness out of the walk: every license of the selection is
+        // limited, so the person watching now gets the choice.
+        if (askEngine) {
+          throw Object.assign(new Error(`${engineLabel(engine)} usage limit reached: ${String(result.content || "").replace(/\s+/g, " ").trim().slice(0, 300)}`), {
+            details: { engine, providerError: true, providerKind: "usage_limit", replaySafe: true, toolUseCount: 0, alsoFailed: (e?.fallbackTried || []).map((t) => t.engine), askFallback: { to: askEngine, kind: "usage_limit" } },
+          });
+        }
         // fall through to return the limited engine's own notice
       }
     }

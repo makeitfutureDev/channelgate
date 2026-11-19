@@ -47,7 +47,7 @@ Digests identify participating users' threads awaiting their reply. A configured
 
 Under **Agent defaults → Agent instructions**, **Memory review model** and **Background memory review** control the reviewer. The interval defaults to five turns; `0` disables background review. When review is enabled, recognized corrections and decisions can trigger it before that interval. **Post 🧠 Memory updated** defaults on and makes successful reviewer saves visible.
 
-**Public URL** and **Approval links** under **Connection** enable browser decisions on surfaces without native approval buttons. **How a failover happens → Ask** applies to live Slack turns; unattended schedules, background runs, and API work use automatic recovery when eligible.
+**Public URL** and **Approval links** under **Connection** enable browser decisions on surfaces without native approval buttons. **How a failover happens → Ask** applies to live Slack turns and to the move to the other harness; unattended schedules, background runs, and API work use automatic recovery when eligible. Moving between the [licenses](/docs/features/engine-licenses) of one selection is automatic in both modes.
 
 Routine saved limits and preferences apply without restarting. Hand-editing startup configuration or service environment may require a restart; inspect the resulting schedule and recipient before testing unattended delivery.
 

@@ -1,10 +1,18 @@
-# Optional provider harnesses
+# Optional built-in licenses: Codex EU and Claude Extra
+
+ChannelGate has two harnesses, Claude Code and Codex. **Codex EU** is an optional built-in
+license of the Codex harness and **Claude Extra** an optional built-in license of the Claude Code
+harness: each is a separate credential with its own server route, not a separate harness. (The
+file name predates that vocabulary.) Licenses an administrator adds, and how a conversation
+selects and fails over between licenses, are described in
+[the engine capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses). An engine license
+is not the ChannelGate product license key in [LICENSE-KEYS.md](LICENSE-KEYS.md).
 
 An organization admin can enable **Codex EU** and **Claude Extra** in Settings → Engine &
-runtime → Harnesses the gateway may use. They start disabled. Save the toggle, then authenticate
+runtime → Licenses the gateway may use. They start disabled. Save the toggle, then authenticate
 on the computer/VPS running ChannelGate, in a terminal as the **gateway service user**. Each
 setup card displays the actual directory and command for that deployment. After authentication,
-select the harness as a default or approve it for a channel and use `/model` in a new thread.
+select the license as a default or approve it for a channel and use `/model` in a new thread.
 The options share the installed CLIs and preserve gateway confinement, tools and connector rules.
 
 ## Codex EU
@@ -19,7 +27,7 @@ The normal gateway Codex login and any channel-specific Codex login remain separ
 Container turns require the egress proxy. Legacy bridge-only containers cannot use this
 dedicated login; no real refresh-token file is mounted into those containers.
 
-Codex follows the selected workspace's available retention and residency controls. The harness
+Codex follows the selected workspace's available retention and residency controls. The license
 label and isolated directory do not configure or prove EU data or inference residency. Confirm
 those controls with your workspace administrator. See [OpenAI authentication documentation](https://learn.chatgpt.com/docs/auth).
 
@@ -33,7 +41,7 @@ for compatibility. Its isolated configuration remains
 Run the displayed `CLAUDE_CONFIG_DIR=... claude` command as the gateway service user. For a
 subscription, sign in normally to the intended Claude account and exit after login completes.
 Verify authentication using the **same** `CLAUDE_CONFIG_DIR`. A login made in the operator's
-regular `~/.claude` belongs to the regular Claude harness, not Claude Extra.
+regular `~/.claude` belongs to Claude Code's default sign-in, not Claude Extra.
 
 When no AWS/Bedrock setup is configured in the isolated directory, Claude Extra uses only its
 own OAuth login. It never substitutes the regular Claude account, a setup-token from gateway
@@ -71,12 +79,15 @@ The `opus`, `sonnet` and `haiku` model aliases work in either mode. Native Claud
 belong to subscription mode; AWS model IDs and inference-profile ARNs belong to Bedrock mode.
 Choose defaults that match the configured provider when changing terminal authentication.
 
-Neither optional harness automatically fails over to a different account/provider. Terminal
+Neither optional license is a source or target of automatic failover to the other harness. A turn
+moves between one of them and another license of the same harness only when the conversation's
+selection names both (**Any license**, or an **If it fails, also use** list). Bedrock exists only
+as this built-in license; it cannot be added as a further license. Terminal
 credential changes take effect on subsequent cold turns. Bedrock token usage is recorded
 without an invented AWS dollar cost. Complete the live checks in `TEST-PLAN.md` after configuring
 the new accounts; unit fixtures do not certify live credentials or provider availability.
 
-Chat continuation resumes each harness's own session. Claude Extra container terminal takeover
+Chat continuation resumes each license's own session. Claude Extra container terminal takeover
 is currently unavailable; its Resume Session command explains this instead of opening the
 session under the default Anthropic account. Use the same chat thread to continue it. Terminal
 setup on the gateway host remains available independently.

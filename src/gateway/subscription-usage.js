@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { codexEuLoginHome } from "./channel-codex-paths.js";
 import { adapterFor } from "../engines/registry.js";
+import { licenseKindOfId, licenseLoginHome } from "../engines/license-state.js";
 import { resolveClaudeLogin } from "./claude-login.js";
 import { readDaemonClaudeAccessToken } from "./claude-token-relay.js";
 import { resolveCodexLogin, readDaemonCodexAccessToken } from "./codex-token-relay.js";
@@ -136,12 +137,14 @@ export function createDaemonSubscriptionCredentials({ resolveClaude = resolveCla
       const current = login.kind === "settings" ? { token: claudeToken() } : readClaude(login);
       return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "", source: login.kind, profile: "claude" };
     }
-    const dedicated = usage.login === "codex-eu";
-    const login = resolveCodex(dedicated ? { env: {}, candidates: [path.join(euHome(), "auth.json")] } : {});
+    // A dedicated login — Codex EU or an admin-added Codex license — reports ITS account's windows.
+    const licensed = licenseKindOfId(usage.login)?.id === "codex-login";
+    const dedicated = usage.login === "codex-eu" || licensed;
+    const login = resolveCodex(dedicated ? { env: {}, candidates: [path.join(licensed ? licenseLoginHome(usage.login) : euHome(), "auth.json")] } : {});
     if (dedicated && login.kind !== "chatgpt") return { kind: "none" };
     if (login.kind !== "chatgpt") return { kind: login.kind === "none" && env.OPENAI_API_KEY ? "api-key" : login.kind };
     const current = readCodex(login);
-    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: dedicated ? "codex-eu" : "chatgpt", account: codexSubscriptionAccount(current), profile: "codex" };
+    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: dedicated ? usage.login : "chatgpt", account: codexSubscriptionAccount(current), profile: "codex" };
   };
 }
 const daemonCredentials = createDaemonSubscriptionCredentials();

@@ -2,7 +2,9 @@
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
-import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
+import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
+import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
+import { SESSION_RUNTIME_SAVED } from '../conversation-controls.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -14,7 +16,7 @@ import { createTeamsInteractionHandler, teamsCardErrorResponse, normalizeTeamsIn
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
-import { generalRuntimeScopes } from './settings-general.js';
+import { generalRuntimeScopes, hasLicenseStep, licenseStepRows, loadLabel, staleLicenseStep } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
 import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
@@ -41,39 +43,60 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     await ctx.authorize();
     return buildTeamsSettings(ctx, stateId);
   }
-  // Teams ChoiceSets send no change events, so the card cannot narrow the model list on its own
-  // when the engine changes. Like /settings → General, Load models repaints the card with the
-  // chosen engine's models and efforts without saving; Apply saves. The engine whose models are
-  // on the card is held server-side, and Apply must name that same engine.
+  // Teams ChoiceSets send no change events, so the card cannot narrow the license and model lists
+  // on its own when the harness changes. Like /settings → General, the Load button repaints the
+  // card with the chosen harness's licenses and the chosen license's models and efforts without
+  // saving; Apply saves. The harness and the license whose models are on the card are held
+  // server-side, and Apply must name that same harness and a license those models belong to.
   async function modelRuntime(state) {
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
     return generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
   }
-  async function modelCard(state, stateId, { engine: requested = state.loadedEngine, draft = null, notice = '' } = {}) {
+  // The license step as submitted: the License control and the "also use" multi-select (Teams
+  // sends its values as one comma-separated string). Both are absent when the step was not shown.
+  const licenseInput = data => {
+    const read = key => { const value = data[key]; if (value === undefined || value === null || value === '') return ''; if (typeof value !== 'string' || value.length > 4096) throw new Error('Choose a license and try again.'); return value.trim(); };
+    return { harness: data.engine, license: read('license'), also: read('also') };
+  };
+  const pickOf = (input, meta) => input.license && !staleLicenseStep(input)
+    ? resolveLicensePick({ harness: input.harness, meta, license: input.license, also: input.also.split(',').map(id => id.trim()).filter(Boolean) }) : null;
+  // `pick` is the license step just chosen on the card ({ engine, licensePool }); without one the
+  // card opens on the session's own selection when it is on this harness, else on the
+  // conversation's selection for it.
+  async function modelCard(state, stateId, { harness: requested = state.loadedHarness, pick = null, draft = null, notice = '' } = {}) {
     const { thread: current } = await modelRuntime(state);
-    const summary = text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
+    const summary = text(`Current harness: ${describeSelectionText({ engine: current.engine, pool: current.pool, meta: state.meta }) || current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
     if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
       return card('Session model', [summary, text('Runtime changes in this conversation are restricted to administrators.')]);
     }
-    const offered = value => current.engines.some(item => item.value === value);
-    const engine = [requested, current.engine].find(offered) || current.engines[0]?.value;
-    state.loadedEngine = engine;
+    const offered = value => current.harnesses.some(item => item.value === value);
+    const harness = [requested, harnessOf(current.engine)].find(offered) || current.harnesses[0]?.value;
+    if (!harness) return card('Session model', [summary, text('No harness has a license this conversation can use.')]);
+    const stored = pick || (harness === harnessOf(current.engine) ? { engine: current.engine, licensePool: current.pool } : harnessSelection(harness, effectiveMeta(state.meta)));
+    const picker = licensePicker({ harness, meta: state.meta, engine: stored.engine, pool: stored.licensePool });
+    // The license whose models the card shows: the one a turn would run on.
+    const engine = resolveLicensePick({ harness, meta: state.meta, license: picker.selected }).engine;
+    const previous = state.loadedEngine;
+    state.loadedHarness = harness; state.loadedEngine = engine;
     const ui = teamsSettingsUi(stateId);
     const models = [...modelsForEngine(engine)];
-    // Keep the saved model and effort, or the ones chosen before Load models, while they still fit.
-    const wanted = draft || (engine === current.engine ? current.values : {});
+    // Keep the saved model and effort, or the ones chosen before the reload, while they still fit.
+    const wanted = draft ? (engine === previous ? draft : {}) : engine === current.engine ? current.values : {};
     const savedModel = wanted.model && wanted.model !== 'default' && modelBelongsToEngine(wanted.model, engine) ? wanted.model : '';
     if (savedModel && !models.some(item => item.value === savedModel)) models.push({ value: savedModel, label: `Current: ${savedModel}` });
     const efforts = [...new Set([...effortsForModel(engine), ...models.flatMap(item => effortsForModel(engine, item.value))])];
     const savedEffort = efforts.includes(wanted.effort) ? wanted.effort : '';
+    const steps = hasLicenseStep(state.meta)
+      ? 'Licenses and models are shown only for the selected harness. After changing Harness or License, use Load licenses and models, then choose model and effort and Apply to this session.'
+      : 'Models are shown only for the selected harness. After changing Harness, use Load models, then choose model and effort and Apply to this session.';
     const body = [summary, ...(notice ? [text(notice)] : []),
-      text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.'),
-      ui.choice('engine', 'Engine', engine, current.engines), ui.buttons([ui.execute('Load models', 'model.load')]),
+      text(`${steps} Changes apply to the next turn. Use /settings → General for conversation defaults.`),
+      ui.choice('engine', 'Harness', harness, current.harnesses), ...licenseStepRows(ui, '', picker), ui.buttons([ui.execute(loadLabel(state.meta), 'model.load')]),
       ui.choice('model', 'Model', savedModel || 'default', [{ label: 'Default model for selected engine', value: 'default' }, ...models]),
       ui.choice('effort', 'Effort', savedEffort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))])];
-    // Apply names the same engine whose models were loaded into this card.
-    return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine })]);
+    // Apply names the same harness whose licenses and models were loaded into this card.
+    return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine: harness })]);
   }
   async function files(state, stateId, context, relative = '', page = 0, signal) {
     const listing = await listVisibleDirectory(context.root, normalizeRelativePath(relative), { page, pageSize: 12 });
@@ -226,7 +249,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         if (recipient && connector.botId && recipient !== connector.botId) throw new Error('This command is addressed to a different bot.');
         await deliverCard({ ...args, modelCommand: true }, modelCard);
       }
-      catch (error) { await reply(`${error.message} You can change this session with /model <engine> <model|default> and /effort <level|default>.`); }
+      catch (error) { await reply(`${error.message} You can change this session with /model <harness> <model|default>, /license and /effort <level|default>.`); }
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -321,39 +344,55 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         messageId: state.messageId, card: updated, text: 'Session model settings' });
       return response(updated);
     };
+    const offeredHarness = async harness => {
+      if (typeof harness !== 'string' || !harness || harness.length > 64) throw new Error('Choose a harness first.');
+      const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      if (!scopes.thread.harnesses.some(item => item.value === harness)) throw new Error('Choose an enabled harness.');
+      return scopes.thread;
+    };
     if (interaction.action === 'model.load') {
       if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
-      const { engine, model: draftModel, effort } = interaction.data;
-      if (typeof engine !== 'string' || !engine || engine.length > 64) throw new Error('Choose an engine first.');
-      const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-      if (!scopes.thread.engines.some(item => item.value === engine)) throw new Error('Choose an enabled engine.');
-      const draft = engine === state.loadedEngine ? { model: String(draftModel || ''), effort: String(effort || '') } : {};
-      return repaintModel(await modelCard(state, interaction.data.stateId, { engine, draft }));
+      const { engine: harness, model: draftModel, effort } = interaction.data;
+      await offeredHarness(harness);
+      // A license step left over from another harness says nothing about this one.
+      const pick = harness === state.loadedHarness ? pickOf(licenseInput(interaction.data), state.meta) : null;
+      return repaintModel(await modelCard(state, interaction.data.stateId, { harness, pick, draft: { model: String(draftModel || ''), effort: String(effort || '') } }));
     }
     if (interaction.action === 'model.save') {
       if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
-      if (!state.loadedEngine || typeof interaction.data.engine !== 'string') throw new Error('Reopen /model.');
-      // Apply must name the engine whose models the card shows. A changed Engine without Load
-      // models loads them instead of saving a model chosen from the other engine's list.
-      if (interaction.data.engine !== state.loadedEngine) {
-        const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-        if (!scopes.thread.engines.some(item => item.value === interaction.data.engine)) throw new Error('Choose an enabled engine.');
-        return repaintModel(await modelCard(state, interaction.data.stateId, { engine: interaction.data.engine, draft: {},
-          notice: 'Engine changed, so its models were loaded and nothing was saved. Choose a model and effort, then Apply.' }));
+      if (!state.loadedHarness || !state.loadedEngine || typeof interaction.data.engine !== 'string') throw new Error('Reopen /model.');
+      const harness = interaction.data.engine;
+      // Apply must name the harness whose licenses and models the card shows. A changed Harness
+      // without a reload loads them instead of saving a choice made from the other harness's lists.
+      if (harness !== state.loadedHarness) {
+        await offeredHarness(harness);
+        return repaintModel(await modelCard(state, interaction.data.stateId, { harness, draft: {},
+          notice: `Harness changed, so its ${hasLicenseStep(state.meta) ? 'licenses and ' : ''}models were loaded and nothing was saved. Choose a model and effort, then Apply.` }));
       }
       if (['model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select a model and effort before applying.');
-      const engine = state.loadedEngine, model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
-      const { thread: current } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      const input = licenseInput(interaction.data), pick = pickOf(input, state.meta);
+      // No license step on the card: the harness alone is the choice, and its models are the loaded ones.
+      const engine = pick ? pick.engine : state.loadedEngine;
+      const model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
+      await offeredHarness(harness);
       const inheritedModel = effectiveMeta(state.meta).model;
       const actualModel = model || (modelBelongsToEngine(inheritedModel, engine) ? inheritedModel : '') || getDefaultModel(engine);
-      if (!current.engines.some(item => item.value === engine) || (model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) throw new Error('Select a compatible enabled engine, model, and effort.');
+      if ((model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) {
+        // The model list on the card belongs to the license that was loaded. Another license
+        // that cannot run this choice gets its own list instead of an error.
+        if (engine === state.loadedEngine) throw new Error('Select a compatible enabled harness, model, and effort.');
+        return repaintModel(await modelCard(state, interaction.data.stateId, { harness, pick, draft: {},
+          notice: 'License changed, so its models were loaded and nothing was saved. Choose a model and effort, then Apply.' }));
+      }
       if (states.get(interaction.data.stateId) !== state) throw new Error('These settings were already submitted. Reopen the controls.');
       states.delete(interaction.data.stateId);
       const replies = [];
-      const command = async value => state.controls.command({ ...state, slug: state.entry.slug, message: { ...state.message, text: value }, reply: async value => replies.push(value) });
-      await command(`/model ${engine} ${model || 'default'}`);
+      const command = async (value, extra = {}) => state.controls.command({ ...state, ...extra, slug: state.entry.slug, message: { ...state.message, text: value }, reply: async value => replies.push(value) });
+      // The license step chosen on the card travels beside the harness word; without one this is
+      // a bare harness pick, as when it is typed.
+      await command(`/model ${harness} ${model || 'default'}`, { picked: pick ? { license: input.license, also: input.also.split(',').map(id => id.trim()).filter(Boolean) } : null });
       // A busy-lane refusal must not be followed by another mutation.
-      if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
+      if (replies.at(-1)?.startsWith(SESSION_RUNTIME_SAVED)) await command(`/effort ${effort || 'default'}`);
       return repaintModel(card('Session settings', replies.map(text)));
     }
     const relative = normalizeRelativePath(interaction.data.relative || '');

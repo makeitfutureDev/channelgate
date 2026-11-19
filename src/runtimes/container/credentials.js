@@ -40,6 +40,7 @@ import { egressEnv } from "./egress-env.js";
 import { egressActive, egressErrorFor } from "./egress-hook.js";
 import { codexLoginCandidatesFor } from "../../gateway/channel-codex-auth.js";
 import { codexEuLoginHome, codexEuLoginHint } from "../../gateway/channel-codex-paths.js";
+import { licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseRecord } from "../../engines/license-state.js";
 
 export const AGENT_HOME = CONTAINER_HOME;
 export const CLAUDE_CONTAINER_CONFIG_DIR = CONTAINER_CLAUDE_CONFIG_DIR;
@@ -213,6 +214,13 @@ export function credentialError(target, engineId, env = process.env) {
     if (!egressActive(target)) return new Error("Codex EU requires the container egress proxy to relay its isolated ChatGPT login. Enable proxy egress or use an authorized /sudo host thread.");
     const file = readable(path.join(codexEuLoginHome(), "auth.json"));
     return file ? null : new Error(`Codex EU is not signed in — run \`${codexEuLoginHint()}\` on the gateway host.`);
+  }
+  // An admin-added Codex license: an isolated ChatGPT sign-in, relayed like Codex EU's.
+  if (licenseKindOfId(engineId)?.id === "codex-login") {
+    const record = licenseRecord(engineId);
+    if (!record) return new Error("This Codex license no longer exists. Choose another license for this conversation.");
+    if (!egressActive(target)) return new Error(`${record.label} requires the container egress proxy to relay its isolated ChatGPT login. Enable proxy egress or use an authorized /sudo host thread.`);
+    return readable(path.join(licenseLoginHome(engineId), "auth.json")) ? null : new Error(`${record.label} is not signed in — run \`${licenseLoginCommand(record)}\` on the gateway host.`);
   }
   if (engineId === "codex") {
     const candidates = codexLoginCandidatesFor(target?.meta);

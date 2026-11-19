@@ -1,4 +1,4 @@
-import { assertApprovedEnginesUpdate, assertChannelEngineApproved, engineAvailableForChannel, isChannelEngineApproved } from "../gateway/channel-engines.js";
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved, engineAvailableForChannel, harnessPolicyEntry } from "../gateway/channel-engines.js";
 import { getLicenseStatus } from "../ee/license.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 import { randomUUID } from "node:crypto";
@@ -22,11 +22,11 @@ export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
 // Re-exported for existing importers (web/app.js, tests) — moved to slack/approvals.js.
 export { requestApproval };
-import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, modelWizardText, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
+import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_WIZARD_LICENSE_ACTION_PATTERN, MODEL_WIZARD_ALSO_ACTION, MODEL_WIZARD_LICENSE_DONE_ACTION, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, modelWizardText, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
 // Re-exported for existing importers (tests) — moved to slack/model-wizard.js.
 export { modelOptionsForEngine };
 import { getSessionMap } from "../gateway/sessions.js";
-import { getThreadEffort, getThreadEngine, getThreadModel, resolveThreadEngine, setThreadEffort, setThreadEngine, setThreadModel } from "../gateway/thread-engine.js";
+import { getThreadEffort, getThreadEngine, getThreadLicensePool, getThreadModel, resolveThreadEngine, setThreadEffort, setThreadEngine, setThreadModel } from "../gateway/thread-engine.js";
 
 import { logEvent } from "../util/logger.js";
 import { nextRuntimeTriple, runtimeSettingsPatch } from "../gateway/runtime-settings.js";
@@ -38,7 +38,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEnabledEngines, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
@@ -48,7 +48,9 @@ import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
 import { personalSkillPicker } from "../gateway/user-settings.js";
 import { skillModelPreference } from "../gateway/skill-runtime.js";
-import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
+import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, harnessOf, licenseLabel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
+import { HARNESS_IDS, harnessLabel } from "../engines/license-state.js";
+import { harnessChoices, licenseChoices, namedSelection, nextLicenseSelection, samePool, selectionLabel } from "./license-controls.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
@@ -75,7 +77,7 @@ import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
   buildConnectionsEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
-  readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget, readHarnessSelection,
+  readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget, RUNTIME_LICENSE_FIELDS, readHarnessSelection,
   normalizeTab as normalizeSettingsTab, settingsCommand,
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
@@ -1259,7 +1261,13 @@ function channelSettingsSnapshot(meta = {}) {
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork, skillRuntimeSwap: Boolean(effective.skillRuntimeSwap) },
     runtime: {
       approvedEngines: meta.approvedEngines ?? null,
-      harnessOptions: ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) })),
+      // What a channel can be locked to: a whole harness (every license of it, including ones
+      // added later) or single licenses (channel-engines.js).
+      harnessOptions: [
+        ...HARNESS_IDS.map((harness) => ({ value: harnessPolicyEntry(harness), label: `${harnessLabel(harness)} (any license)` })),
+        // A single license is named with its harness: "Codex · Default sign-in" beside "Codex (any license)".
+        ...ENGINE_IDS.map((id) => ({ value: id, label: `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` })),
+      ],
       channelLogin,
       configuredEngineId: effective.engine || "",
       configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
@@ -1332,9 +1340,12 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
 // effectiveMeta with that one field blank, so the dropdown's "inherited" label and the validation
 // that accepts the next pick can never disagree about what an unset field means.
 function inheritedChannelRuntime(meta = {}) {
-  const engine = effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
+  const blank = effectiveMeta({ ...meta, engine: "", licensePool: "" });
+  const engine = blank.engine || getEngine();
   return {
     engine,
+    // The further licenses travel with the license that names them: the template's, else the gateway's.
+    licensePool: blank.engine ? blank.licensePool || "" : getEnginePool(),
     model: effectiveMeta({ ...meta, model: "" }).model || getDefaultModel(engine) || "",
     effort: effectiveMeta({ ...meta, effort: "" }).effort || "",
   };
@@ -1359,7 +1370,11 @@ async function threadRuntimeEngine(slug, threadKey, meta) {
 // thread inside a Claude channel offers Codex models rather than the channel's.
 export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   const runtime = snapshot.runtime;
-  const engines = getEnabledEngines().filter((id) => isChannelEngineApproved(meta, id) && engineAvailableForChannel(meta, id)).map((id) => ({ label: engineLabel(id), value: id }));
+  // The first dropdown lists HARNESSES; the license step beside it comes from the one picker
+  // shape (license-pool.js) and is absent while the harness has a single license usable here.
+  const effective = effectiveMeta(meta);
+  const engines = harnessChoices(effective);
+  const channelPool = runtime.configuredEngineId ? effective.licensePool || "" : "";
   const channelEngine = runtime.effectiveEngineId;
   const channelModel = runtime.configuredModel || getDefaultModel(channelEngine) || "";
   const parent = inheritedChannelRuntime(meta);
@@ -1372,16 +1387,19 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   const parentEffort = parent.effort && effortBelongsToModel(parent.effort, channelEngine, runtime.configuredModel || parentModel) ? parent.effort : "";
   const channel = {
     values: { engine: runtime.configuredEngineId, model: runtime.configuredModel, effort: runtime.configuredEffort },
+    license: licenseChoices({ engine: runtime.configuredEngineId, pool: channelPool, meta: effective }),
+    selection: runtime.configuredEngineId ? selectionLabel({ engine: runtime.configuredEngineId, pool: channelPool, meta: effective }) : "",
     inherited: {
-      engine: `Inherited default (${engineLabel(parent.engine)})`,
+      engine: `Inherited default (${selectionLabel({ engine: parent.engine, pool: parent.licensePool, meta: effective })})`,
       model: parentModel ? `Inherited default (${parentModel})` : "Engine default",
       effort: parentEffort ? `Inherited default (${parentEffort})` : "Engine default",
     },
     options: { engines: engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
   };
   if (!slug || !threadKey) return { channel, thread: null };
-  const [engine, model, effort, activeEngine] = await Promise.all([
+  const [engine, licensePool, model, effort, activeEngine] = await Promise.all([
     getThreadEngine(slug, threadKey),
+    getThreadLicensePool(slug, threadKey),
     getThreadModel(slug, threadKey),
     getThreadEffort(slug, threadKey),
     threadRuntimeEngine(slug, threadKey, meta),
@@ -1394,12 +1412,14 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
     channel,
     thread: {
       values: { engine, model, effort },
+      license: licenseChoices({ engine, pool: licensePool, meta: effective }),
+      selection: engine ? selectionLabel({ engine, pool: licensePool, meta: effective }) : "",
       pinned: Boolean(engine || model || effort),
       // Named only when it is the reason this thread differs from the channel, so the tab explains
       // a surprising engine instead of repeating what the dropdown already says.
       sessionEngineLabel: !engine && activeEngine !== channelEngine ? engineLabel(activeEngine) : "",
       inherited: {
-        engine: `Follow channel (${engineLabel(channelEngine)})`,
+        engine: `Follow channel (${selectionLabel({ engine: channelEngine, pool: runtime.configuredEngineId ? channelPool : parent.licensePool, meta: effective })})`,
         model: inheritedModel ? `Follow channel (${inheritedModel})` : "Follow channel (engine default)",
         effort: inheritedEffort ? `Follow channel (${inheritedEffort})` : "Follow channel (engine default)",
       },
@@ -1425,7 +1445,16 @@ async function clearThreadRuntime(slug, threadKey) {
 // channel policy change and are not audited as one (the /model wizard draws the same line). The
 // pin is all that is written: gateway/run.js notices the harness moved, starts a fresh session on
 // it and replays the thread, exactly as it does for an in-thread `claude` / `codex` directive.
-export async function applyThreadRuntimeSelection({ entry, meta, state, actorId, field, value }) {
+// A dispatched Harness / License / "also use" control → the selection (`engine` + `licensePool`)
+// to store, or null for a model or effort control. `current` is the selection stored at that scope.
+function runtimeSelectionPick({ field, value, also, current, meta }) {
+  const effective = effectiveMeta(meta);
+  if (field === "engine") return !value || value === SETTINGS_DEFAULT_VALUE ? { engine: "", licensePool: "" } : namedSelection(value, effective);
+  if (RUNTIME_LICENSE_FIELDS.includes(field)) return nextLicenseSelection({ field, value, also, current, meta: effective });
+  return null;
+}
+
+export async function applyThreadRuntimeSelection({ entry, meta, state, actorId, field, value, also = [] }) {
   const threadKey = requireThread(state);
   // A cleared thread field falls back to what this thread would run with no pin at all — the same
   // engine whose catalogs the dropdown just offered, not the channel's when a live session differs.
@@ -1435,23 +1464,30 @@ export async function applyThreadRuntimeSelection({ entry, meta, state, actorId,
     model: await getThreadModel(entry.slug, threadKey),
     effort: await getThreadEffort(entry.slug, threadKey),
   };
-  const next = nextRuntimeTriple(current, field, value, inheritedEngine);
+  const currentPool = await getThreadLicensePool(entry.slug, threadKey);
+  // A harness or license pick is an engine change for the model and effort beside it.
+  const picked = runtimeSelectionPick({ field, value, also, current: { engine: current.engine, licensePool: currentPool }, meta });
+  const next = picked ? nextRuntimeTriple(current, "engine", picked.engine, inheritedEngine) : nextRuntimeTriple(current, field, value, inheritedEngine);
   const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
   assertChannelEngineApproved(meta, actualEngine);
-  if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine, { meta });
-  if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
+  if (picked && patch.engine) await assertEngineSelectable(patch.engine, { meta });
+  // The pool is stored beside the pin and rewritten with it; a model or effort pick leaves both.
+  const licensePool = picked ? picked.licensePool : currentPool;
+  if (patch.engine !== current.engine || !samePool(licensePool, currentPool)) await setThreadEngine(entry.slug, threadKey, patch.engine, { licensePool });
   if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
   if (patch.effort !== current.effort) await setThreadEffort(entry.slug, threadKey, patch.effort);
   await logEvent("thread_runtime_updated", {
     channel: state.channelId, slug: entry.slug, thread: threadKey, engine: actualEngine,
     model: patch.model || "default", effort: patch.effort || "default", author: actorId,
   });
-  return runtimeNotice("thread", patch, actualEngine);
+  return runtimeNotice("thread", { ...patch, licensePool }, actualEngine, meta);
 }
 
-function runtimeNotice(scope, { engine, model, effort }, resolvedEngine) {
+function runtimeNotice(scope, { engine, model, effort, licensePool = "" }, resolvedEngine, meta = {}) {
   const where = scope === "thread" ? "This thread" : "Channel default";
-  const engineText = engine ? engineLabel(engine) : `${engineLabel(resolvedEngine)} (inherited)`;
+  const engineText = engine
+    ? selectionLabel({ engine, pool: licensePool, meta: effectiveMeta(meta) })
+    : `${harnessLabel(harnessOf(resolvedEngine)) || engineLabel(resolvedEngine)} (inherited)`;
   return `✅ ${where}: *${engineText}* · \`${model || "inherited model"}\` · \`${effort || "inherited effort"}\`.`;
 }
 
@@ -2533,23 +2569,31 @@ async function connectAndWire(app) {
         const { scope, field } = runtimeTarget;
         assertRuntimeChangeAllowed(meta, userIsAdmin);
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
+        // "If it fails, also use" is a multi-select: every dispatch carries the whole list.
+        const also = (action?.selected_options || []).map((entry) => String(entry?.value || "")).filter(Boolean);
         let notice;
         if (scope === "channel") {
           // The channel's OWN stored triple, so a pick never materializes an inherited value into
           // the record — but validated against the engine an unset field really falls back to.
           const inheritedEngine = inheritedChannelRuntime(meta).engine;
-          const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
+          const stored = { engine: meta.engine, model: meta.model, effort: meta.effort };
+          const effective = effectiveMeta(meta);
+          // A harness or license pick is an engine change for the model and effort beside it.
+          const picked = runtimeSelectionPick({ field, value, also, current: { engine: effective.engine || "", licensePool: effective.licensePool || "" }, meta });
+          const next = picked ? nextRuntimeTriple(stored, "engine", picked.engine, inheritedEngine) : nextRuntimeTriple(stored, field, value, inheritedEngine);
           const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
           assertChannelEngineApproved(meta, actualEngine);
-          if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine, { meta });
-          meta = await patchAuditedChannelSettings(entry, clicker, patch);
+          if (picked && patch.engine) await assertEngineSelectable(patch.engine, { meta });
+          // The store keeps a pool beside whatever engine is saved, so a pick that names the
+          // license always writes the pool that belongs to it — "" when there is none.
+          meta = await patchAuditedChannelSettings(entry, clicker, picked ? { ...patch, licensePool: picked.licensePool } : patch);
           await logEvent("channel_runtime_updated", {
             channel: state.channelId, slug: entry.slug, engine: actualEngine,
             model: patch.model || "default", effort: patch.effort || "default", author: clicker,
           });
-          notice = runtimeNotice(scope, patch, actualEngine);
+          notice = runtimeNotice(scope, { ...patch, licensePool: picked ? picked.licensePool : effective.licensePool || "" }, actualEngine, meta);
         } else {
-          notice = await applyThreadRuntimeSelection({ entry, meta, state, actorId: clicker, field, value });
+          notice = await applyThreadRuntimeSelection({ entry, meta, state, actorId: clicker, field, value, also });
         }
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { tab: "agent", notice }), { guardHash: false });
         return;
@@ -2969,6 +3013,11 @@ async function connectAndWire(app) {
   app.action(MODEL_WIZARD_SCOPE_THREAD_ACTION, handleModelWizard);
   app.action(/^cg_mw_engine_(?!reset$)[a-z0-9_-]+$/, handleModelWizard);
   app.action(MODEL_WIZARD_ENGINE_RESET_ACTION, handleModelWizard);
+  // The license step (shown only for a harness with more than one usable license): one button
+  // per license, the "also use" multi-select, and Continue.
+  app.action(MODEL_WIZARD_LICENSE_ACTION_PATTERN, handleModelWizard);
+  app.action(MODEL_WIZARD_ALSO_ACTION, handleModelWizard);
+  app.action(MODEL_WIZARD_LICENSE_DONE_ACTION, handleModelWizard);
   // "← Back" on steps 2–4 and "Change again" on the done card — same handler, which reads the
   // destination step off the action_id.
   app.action(MODEL_WIZARD_BACK_ACTION_PATTERN, handleModelWizard);

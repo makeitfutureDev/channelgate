@@ -36,6 +36,7 @@ import {
   defaultChannelMeta,
 } from "../config/store.js";
 import { assertChannelEngineApproved } from "./channel-engines.js";
+import { normalizeLicensePool } from "./license-pool.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
@@ -524,7 +525,7 @@ function countInflight() {
 // Returns job admission/session facts plus conversationKey/threadTs/threadReused/threadPermalink.
 // or { ok:false, code, error }. The run itself proceeds in the background.
 export async function startApiRun(input = {}) {
-  const { message, file, fileUrl, engine: engineIn, harness: harnessIn, model, effort, mode, idempotencyKey } = input;
+  const { message, file, fileUrl, engine: engineIn, harness: harnessIn, licenses, model, effort, mode, idempotencyKey } = input;
   const msg = String(message ?? "").trim();
   const hasFile = Boolean((typeof file?.dataBase64 === "string" && file.dataBase64) || (typeof file === "string" && file) || fileUrl);
   if (!msg && !hasFile) return { ok: false, code: 400, error: "Provide a `message` (and/or a file)." };
@@ -557,9 +558,16 @@ export async function startApiRun(input = {}) {
   if (engineOv && !ENGINES.includes(engineOv)) return { ok: false, code: 400, error: `harness (or engine) must be one of: ${ENGINES.join(", ")}` };
   const modeOv = mode ? normalizeMode(mode) : "";
   if (modeOv === "invalid") return { ok: false, code: 400, error: "mode must be one of: read, worker, auto, full, lean (aliases: bash→worker, admin→full)" };
+  // `licenses`: the more licenses of the named harness this one run may move to when the named
+  // license fails — "any", or a list of license ids. It rides with the harness override only.
+  let poolOv = "";
+  if (licenses != null && licenses !== "") {
+    if (!engineOv) return { ok: false, code: 400, error: "licenses needs a harness: name the license to start on in `harness`." };
+    try { poolOv = normalizeLicensePool(licenses, engineOv); } catch (error) { return { ok: false, code: 400, error: error.message }; }
+  }
   const overrides =
     engineOv || model || effort || modeOv
-      ? { engine: engineOv || undefined, model: model ? String(model) : undefined, effort: effort ? String(effort) : undefined, mode: modeOv || undefined }
+      ? { engine: engineOv || undefined, licensePool: poolOv || undefined, model: model ? String(model) : undefined, effort: effort ? String(effort) : undefined, mode: modeOv || undefined }
       : null;
 
   // Idempotency: a repeat POST carrying the same key within the TTL returns the ORIGINAL job

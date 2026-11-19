@@ -1,5 +1,6 @@
-import { BUILTIN_ENGINE_ADAPTERS } from "./adapters.js";
+import { BUILTIN_ENGINE_ADAPTERS, licenseAdaptersFor } from "./adapters.js";
 import { createAdapterRegistry } from "./contract.js";
+import { LICENSE_POOL_ANY, harnessLabel, harnessOfLicenseId, isHarnessId, normalizeLicenseRecords, readLicensePool, setLicenseRecords } from "./license-state.js";
 
 export const engineRegistry = createAdapterRegistry(BUILTIN_ENGINE_ADAPTERS);
 export const ENGINE_IDS = engineRegistry.ids;
@@ -12,6 +13,38 @@ export function engineSupports(engine, capability) { return Boolean(adapterFor(e
 export function mintsOwnSessionId(engine) { return Boolean(adapterFor(engine)?.mintsOwnSessionId); }
 export function usesMcpConfigFile(engine) { return requireAdapter(engine).mcpTransport === "file"; }
 export function engineLabel(engine) { return adapterFor(engine)?.label ?? String(engine || ""); }
+
+// ── Harness and license (license-state.js) ────────────────────────────────────────────────────
+// Every engine id is a LICENSE of one of the two harnesses; the harness is the CLI that runs it.
+// A license-shaped id of a license deleted since still answers, so a stored reference can be
+// explained ("a removed Codex license") instead of read as an unknown engine.
+export function harnessOf(engine) {
+  const cli = adapterFor(engine)?.cli;
+  return isHarnessId(cli) ? cli : harnessOfLicenseId(String(engine || ""));
+}
+export const sameHarness = (a, b) => Boolean(harnessOf(a)) && harnessOf(a) === harnessOf(b);
+// The licenses of a harness, built-ins first, in registry order.
+export function licensesOfHarness(harness) {
+  return ENGINE_IDS.filter((id) => harnessOf(id) === harness);
+}
+// A stored license pool, read beside the license it belongs to: "any", or the listed licenses that
+// still exist and still share that license's harness. Without a license there is no pool. Readers
+// and the store use this; a submitted pool is validated strictly (gateway/license-pool.js).
+export function coherentLicensePool(pool, engine) {
+  const harness = harnessOf(engine);
+  const selection = readLicensePool(pool);
+  if (!harness || !selection) return "";
+  if (selection === LICENSE_POOL_ANY) return LICENSE_POOL_ANY;
+  const rest = selection.filter((id) => id !== engine && harnessOf(id) === harness);
+  return rest.length ? rest : "";
+}
+// What a picker calls this license once the harness is already chosen: the harness's own id is the
+// sign-in the gateway always had.
+export function licenseLabel(engine) {
+  const adapter = adapterFor(engine);
+  if (!adapter) return String(engine || "");
+  return adapter.id === adapter.cli ? "Default sign-in" : adapter.label;
+}
 // The provider-failure kinds this engine's runner reports as "the provider did not answer" — the
 // only kinds the orchestrator replays in place (src/gateway/run.js withTransientRetry). An engine
 // that declares none is simply never retried that way.
@@ -45,7 +78,11 @@ export function engineSessionState(engine) {
 export function engineStateDir(engine, target = null) {
   const state = engineSessionState(engine);
   if (!state) return "";
-  const inContainer = target?.container?.[state.containerDirKey];
+  // A license's directory is computed per license (no fixed key on the image's path table can
+  // name one); every other engine names a key the container backend filled in.
+  const inContainer = target?.container
+    ? (typeof state.containerDir === "function" ? state.containerDir(target.container) : target.container[state.containerDirKey])
+    : "";
   return inContainer ? String(inContainer) : state.hostDir({ channelId: target?.meta?.channelId || "" });
 }
 
@@ -175,6 +212,9 @@ export function createEngineModelCatalog(registry, {
 
   return Object.freeze({
     snapshot,
+    // Drop what is cached for an engine whose adapter was replaced or removed: the next read
+    // rebuilds it from the adapter the registry holds now.
+    forget(engine) { states.delete(engine); inFlight.delete(engine); },
     refresh(engine = "", options = {}) {
       if (engine) return refreshOne(engine, options);
       return Promise.all(registry.ids.map((id) => refreshOne(id, options)));
@@ -206,7 +246,29 @@ export function effortBelongsToModel(effort, engine, model = "") {
   const value = String(effort || "").trim().toLowerCase();
   return !value || effortsForModel(engine, model).includes(value);
 }
-export function engineUiManifest() { return modelCatalog.manifests(); }
+export function engineUiManifest() {
+  return modelCatalog.manifests().map((manifest) => ({
+    ...manifest,
+    harness: harnessOf(manifest.id),
+    harnessLabel: harnessLabel(harnessOf(manifest.id)),
+    licenseLabel: licenseLabel(manifest.id),
+    builtin: engineRegistry.isBuiltin(manifest.id),
+  }));
+}
+
+// Replace the admin-added licenses with `records` (the stored `engineLicenses` list). Called by
+// src/config/settings.js whenever it reads a changed list, in every process that reads settings.
+// All-or-nothing: a set the registry refuses leaves the previous licenses in place.
+export function syncLicenseAdapters(records) {
+  const list = normalizeLicenseRecords(records);
+  const dynamicBefore = ENGINE_IDS.filter((id) => !engineRegistry.isBuiltin(id));
+  engineRegistry.setDynamic(licenseAdaptersFor(list));
+  setLicenseRecords(list);
+  // An edited license is a NEW adapter under the same id (its model list may have changed), so
+  // every dynamic id's cached catalog goes, not only the removed ones.
+  for (const id of new Set([...dynamicBefore, ...list.map((record) => record.id)])) modelCatalog.forget(id);
+  return list.map((record) => record.id);
+}
 
 // Directed, ordered failover graph. The orchestrator consumes IDs generically; adapters advertise
 // no implicit target and an unknown node cannot inherit another engine's route.
@@ -216,7 +278,13 @@ export function engineUiManifest() { return modelCatalog.manifests(); }
 // directly (it never re-enters the orchestrator), so a target that also fails just rethrows the
 // original error.
 const FALLBACK_GRAPH = Object.freeze({ claude: Object.freeze(["codex"]), codex: Object.freeze(["claude"]) });
-export function fallbackTargets(engine) { return Object.freeze([...(FALLBACK_GRAPH[String(engine || "")] || [])].filter(isEngineId)); }
+// A license an administrator ADDED fails over across harnesses the way its harness's own sign-in
+// does. The other built-in licenses (dedicated logins, provider endpoints) stay outside the graph.
+export function fallbackTargets(engine) {
+  const id = String(engine || "");
+  const key = FALLBACK_GRAPH[id] ? id : adapterFor(id)?.license ? harnessOf(id) : "";
+  return Object.freeze([...(FALLBACK_GRAPH[key] || [])].filter(isEngineId));
+}
 
 // Optional adapter hook. Returns `{ known, authenticated, fingerprint }`; an engine that declares
 // no probe answers "could not tell", which every caller must treat as "carry on unchanged".

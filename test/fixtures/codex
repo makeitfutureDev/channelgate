@@ -75,6 +75,10 @@ for arg in "$@"; do
     *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
     *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
     *CODEX_STUB_LIMIT_FAIL_SAFE*) limit_fail="yes" ;;
+    # The same limit on every login, and on every login EXCEPT an added license's own
+    # CODEX_HOME: the default sign-in is exhausted while a second license still answers.
+    *CODEX_STUB_LIMIT_ALL_LICENSES*) limit_fail="yes" ;;
+    *CODEX_STUB_LIMIT_DEFAULT_LICENSE*) case "$CODEX_HOME" in *codex-lic-*) : ;; *) limit_fail="yes" ;; esac ;;
     *CODEX_STUB_LIMIT_STDERR*) limit_stderr="yes" ;;
     *CODEX_STUB_LIMIT_AFTER_TOOL*) limit_after_tool="yes" ;;
     *CODEX_STUB_AUTH_HANG*) auth_hang="yes" ;;

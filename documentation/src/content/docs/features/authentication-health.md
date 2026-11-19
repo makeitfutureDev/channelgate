@@ -19,7 +19,7 @@ The first watch is delayed until after boot so the chat connection can establish
 
 ## Practical workflow
 
-If a task unexpectedly switches engines, inspect the original engine's health before changing models. Restore the relevant account, confirm the next small turn, then check whether failover has returned according to the configured recovery policy.
+If a task unexpectedly switches to another license or harness, inspect the original license's health before changing models. Restore the relevant login, confirm the next small turn, then check whether failover has returned according to the configured recovery policy.
 
 ## Limits
 
@@ -31,4 +31,4 @@ The proactive expiry watch described here is for Claude. Do not infer identical 
 - [Health endpoints](/docs/features/health-endpoints)
 - [Engine authentication](/docs/configuration/engine-authentication)
 
-A successful cross-engine failover can leave the existing thread on the engine that answered it. Repairing the original login does not automatically switch that thread back; use the model/engine control deliberately when you want to change it.
+A successful failover to the other harness can leave the existing thread on the harness that answered it. Repairing the original login does not automatically switch that thread back; use the harness and license controls deliberately when you want to change it. Licenses that an administrator adds report their own sign-in and verification status; see [engine licenses](/docs/features/engine-licenses).
