@@ -3,7 +3,7 @@ title: Gateway settings
 description: Set organization defaults and understand which changes apply to existing conversations.
 ---
 
-Gateway settings define the deployment's chat connections, available engines, default behavior, shared integrations, and security policy. They are separate from a conversation's own settings and from a person's connected accounts.
+Gateway settings define the deployment's chat connections, available harnesses and their licenses, default behavior, shared integrations, and security policy. They are separate from a conversation's own settings and from a person's connected accounts.
 
 ## Where to configure
 
@@ -12,20 +12,22 @@ Sign in to the admin web interface and open **Settings**. Use **Search settings�
 | Section | What it controls |
 | --- | --- |
 | Connection | Slack, Microsoft Teams, Google Chat, public URL, approval links |
-| Agent defaults | Enabled harnesses, engine/model defaults, failover, instructions, memory, scheduling limits |
+| Agent defaults | Engine licenses and which are switched on, the default harness, license, model and effort, failover, instructions, memory, scheduling limits |
 | Access Templates | Starting conversation settings and reusable skill assignments |
 | Integrations | Shared environment variables, Composio mode and endpoints, organization token defaults |
-| License | License key, verification state, conversation message allowance |
+| License | The ChannelGate product license key, verification state, conversation message allowance |
 | Access & security | Organization grants, default conversation access, model-change policy, container runtime |
 | System | Admin authentication, run API token, reconnect and restart controls |
 
 ## Choose a starting policy
 
 1. Configure at least one chat platform and one working engine login.
-2. Set the default engine and model under **Agent defaults → Engine & runtime**.
+2. Set the default harness and model under **Agent defaults → Engine & runtime**. When the harness has more than one usable license, also choose the default **License**.
 3. Review **Access & security → Default channel access** before adding the bot to new conversations.
 4. Review the channel and DM templates under **Access Templates**. A new channel's template can include Worker, Auto, and network access; a user's DM has its own template.
 5. Save and send a small test request from an approved account.
+
+Two settings use the word license. The **License** section holds the ChannelGate product license key, which sets the installation's tier and limits; see [license keys and limits](/docs/features/licensing). An engine license is a provider credential for Claude Code or Codex. Administrators add, verify, switch off, and remove engine licenses with the engine settings; see [engine licenses](/docs/features/engine-licenses).
 
 An example organization instruction is:
 

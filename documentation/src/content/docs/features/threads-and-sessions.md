@@ -22,7 +22,7 @@ Claude supports `/compact` to reduce accumulated context. Codex does not support
 
 Open **Settings → Resume Session** or use `/resume` for the current thread's handoff information. An eligible local session can be adopted into a Slack thread only when its working directory belongs to that channel workspace. Session IDs are engine-specific: a Claude session cannot be resumed directly by Codex.
 
-Open **Settings → General** to inspect both the channel defaults and the thread's own engine, model, and effort selections. An explicit thread selection takes precedence. An existing session can keep the engine that created it even after a default changes; the settings view makes that state visible.
+Open **Settings → General** to inspect both the channel defaults and the thread's own harness, [license](/docs/features/engine-licenses), model, and effort selections. An explicit thread selection takes precedence. An existing session can keep the license that created it even after a default changes; the settings view makes that state visible.
 
 ## Branch or manage accumulated context
 

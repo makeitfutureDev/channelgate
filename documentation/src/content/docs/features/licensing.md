@@ -5,6 +5,8 @@ description: Apply your organization license key and understand conversation lim
 
 ChannelGate can run without a key, with a free organization key, or under an Enterprise agreement. License limits govern admitted engine work; provider API bills and model subscriptions remain separate.
 
+This page is about the ChannelGate product license. The provider credentials that Claude Code and Codex run on are also called licenses; they are described in [engine licenses](/docs/features/engine-licenses) and do not change the tier or limits described here.
+
 ## Set up a key
 
 Create the organization's account on the ChannelGate platform, then open **Settings → License** in your installation. Enter its **License key**, save, and choose **Verify now**. The page shows the current tier, verification status, and per-conversation usage for this UTC month.

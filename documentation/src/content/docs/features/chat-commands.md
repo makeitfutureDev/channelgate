@@ -10,9 +10,9 @@ Chat controls let you manage an agent conversation without describing every chan
 | Control | Use |
 | --- | --- |
 | `/menu` | Open the conversation's Files, Variables, and Settings controls. |
-| `/model` | Choose the supported engine, model, and effort using the scope picker. |
+| `/model` | Choose the supported harness, license, model, and effort using the scope picker. |
 | `/context` | Inspect the latest context usage recorded for the thread. |
-| `/clear` | Clear the thread's engine session and start fresh on its next turn. |
+| `/clear` | Clear the thread's session and start fresh on its next turn. |
 | `/resume` | Show a terminal resume command, or adopt an eligible local session with an argument. |
 | `/fork <task>` | Create a new Slack thread from an eligible completed Claude or Codex container session. |
 | `/compact` | Compact a supported Claude session; Codex does not support this control. |
@@ -32,7 +32,7 @@ Clearing a session does not delete shared files, memory, or standing instruction
 
 `/sudo` explicitly selects direct-host execution for an administrator-only thread. `/update` starts the supported administrator update flow. Their availability does not grant an ordinary user administrator authority.
 
-The old `/engine`, `/effort`, and `/files` controls have been replaced by `/model` and the file explorer controls. Commands and rich controls can differ on Microsoft Teams and Google Chat; consult the [platform reference](/docs/platforms).
+The old `/engine`, `/effort`, and `/files` controls have been replaced by `/model` and the file explorer controls. Commands and rich controls can differ on Microsoft Teams and Google Chat; consult the [platform reference](/docs/platforms). On those platforms, the typed `/license` command shows and changes the [engine licenses](/docs/features/engine-licenses) of the current session: `/license any`, `/license` followed by one or more license names separated by commas, or `/license default` to follow the conversation again.
 
 ## Related guides
 

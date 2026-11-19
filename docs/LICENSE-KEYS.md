@@ -186,10 +186,23 @@ required before relying on them for unattended work. Tier changes never weaken c
 ## Enterprise channel harness approvals
 
 Organization admins can configure **Approved harnesses** in the admin channel editor or Slack
-Settings → Agent. Leave the policy unrestricted, or approve one or more known harnesses. The
-channel default must be approved. Channel selection, explicit thread pins, saved sessions,
-per-run overrides, queued work and automatic failover are checked against the saved policy.
-A disallowed selected harness produces a notice; it is never silently substituted to bypass a pin.
+Settings → Agent. Leave the policy unrestricted, or approve any mix of whole harnesses and single
+engine licenses. An engine license is a provider credential of the Claude Code or Codex harness
+(see [the engine capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses)); it is
+unrelated to the ChannelGate license key this document describes.
+
+- A **whole-harness** entry (`harness:claude`, `harness:codex`, shown as "Claude Code (any
+  license)") admits every license of that harness, including licenses added later.
+- A **license** entry admits only that license. A policy saved before engine licenses existed
+  that names `claude` or `codex` keeps meaning only that harness's default sign-in.
+- A policy that names only a license that has since been removed approves nothing: the channel
+  stays closed until an entitled admin selects again. The remaining entries of a longer policy
+  keep working.
+
+The channel default must be approved. Channel selection, the further licenses of a selection,
+explicit thread pins, saved sessions, per-run overrides, queued work and automatic failover are
+checked against the saved policy. A channel locked to one harness never fails over to the other.
+A disallowed selected license produces a notice; it is never silently substituted to bypass a pin.
 Background/scheduled/API turns use the same launch boundary. The Claude memory reviewer is
 skipped when Claude is not approved.
 
