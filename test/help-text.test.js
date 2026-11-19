@@ -19,7 +19,7 @@ test("Teams /help includes practical workflows and its supported commands", () =
     'always …', 'gateway-usage', 'channel-memory', 'remind me in 2 hours', 'list schedules',
     'delete schedule <id>', 'run it in the background', 'Resume',
     '`/help`', '`/settings`', '`/files [folder]`', '`/secrets`', '`/sendfile <path>`',
-    '`/status`', '`/model [engine] [model|default]`', '`/effort [level|default]`',
+    '`/status`', '`/model [harness] [model|default]`', '`/license [any|name[, name…]|default]`', '`/effort [level|default]`',
     '`/stop`', '`/cancel`', '`/clear`',
   ]) assert.ok(TEAMS_HELP_TEXT.includes(expected), `Teams guide missing: ${expected}`);
 

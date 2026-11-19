@@ -40,21 +40,21 @@ function fixture({ meta = {}, isAdmin = true, isDM = false, now = Date.now } = {
       value: legacy ? { ...action.data, ...data } : { action: { type: 'Action.Execute', verb: action.verb, data: { ...action.data, ...data } } } };
     return native.onInvoke(activity);
   };
-  // Choose the engine and press Load models, then Apply the model/effort inputs with that engine.
+  // Choose the harness and press Load models, then Apply the model/effort inputs with that harness.
   const load = (engine, options = {}) => submit({ engine }, { ...options, verb: 'model.load' });
   const apply = async (engine, data, options = {}) => { await load(engine, options); return submit({ engine, ...data }, options); };
   return { native, connector, controls, args, context, sent, replies, submit, load, apply };
 }
 saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { qwen: false } });
 
-test('bare /model matches Settings: Engine, Load models, then only that engine\'s models and efforts', async () => {
+test('bare /model matches Settings: Harness, Load models, then only that harness\'s models and efforts', async () => {
   const f = fixture();
   await saveSession(f.args.entry.slug, f.args.sessionKey, 'retained-codex-session', 'codex');
   await setThreadRuntimeOverrides(f.args.entry.slug, f.args.sessionKey, { model: 'gpt-6-sol', effort: 'high' });
   f.args.message.text = '  /MODEL  ';
   assert.equal(await f.native.onCommand(f.args), true);
   const opened = f.sent[0].card;
-  assert.match(opened.body[1].text, /Current engine: codex; model: gpt-6-sol; effort: high/);
+  assert.match(opened.body[1].text, /Current harness: Codex; model: gpt-6-sol; effort: high/);
   assert.equal(opened.body.find(item => item.id === 'engine').value, 'codex');
   const loadButton = opened.body.find(item => item.type === 'ActionSet').actions[0];
   assert.equal(loadButton.title, 'Load models');
@@ -76,7 +76,7 @@ test('bare /model matches Settings: Engine, Load models, then only that engine\'
   assert.equal(claude.body.find(item => item.id === 'model').value, 'default', 'another engine\'s saved model is not preselected');
   adaptiveCardAttachment(claude);
 
-  // Changing Engine and pressing Apply without Load models loads that engine instead of saving.
+  // Changing Harness and pressing Apply without Load models loads that harness instead of saving.
   await f.submit({ engine: 'codex', model: 'claude-opus-5-5', effort: 'default' });
   const reloaded = f.sent.at(-1).card;
   assert.match(JSON.stringify(reloaded), /nothing was saved/);
@@ -97,7 +97,7 @@ for (const legacy of [false, true]) test(`Apply persists session runtime and rep
   assert.equal(f.context.meta.engine, 'claude');
   assert.equal(f.sent[2].messageId, 'card-1');
   assert.equal(f.sent[2].conversationId, f.args.message.rawConversationId);
-  assert.match(JSON.stringify(f.sent[2].card), /Session engine: codex/);
+  assert.match(JSON.stringify(f.sent[2].card), /Session harness: Codex/);
   const loaded = f.sent[1].card.actions.find(item => item.verb === 'model.save');
   await f.native.onInvoke({ type: 'invoke', name: 'adaptiveCard/action', serviceUrl: 'https://smba.trafficmanager.net/teams/',
     from: { id: f.args.message.userId }, conversation: { id: f.args.message.rawConversationId },
@@ -182,7 +182,7 @@ test('typed arguments and reactions keep their existing dispatch; card failures 
   assert.equal(await f.native.onCommand(f.args), false);
   f.args.message.trigger = 'message'; f.args.replyCard = async () => { throw new Error('Cards unavailable'); };
   assert.equal(await f.native.onCommand(f.args), true);
-  assert.match(f.replies[0], /\/model <engine> <model\|default>/);
+  assert.match(f.replies[0], /\/model <harness> <model\|default>/);
 });
 
 test('ingest posts model picker before engine execution and maps quoted card to source group session', async () => {

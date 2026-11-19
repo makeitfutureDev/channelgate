@@ -12,6 +12,7 @@ import { nextCronRun } from '../../util/cron.js';
 import { zonedStamp, daemonTimeZone } from '../../util/timezone.js';
 import { resolveResumeSession } from '../../slack/resume-session.js';
 import { effectiveMeta } from '../../gateway/run.js';
+import { describeSelectionText } from '../../gateway/license-pool.js';
 import { renderGeneral, handleGeneral } from './settings-general.js';
 import { renderCatalogPage, handleCatalogAction } from './settings-catalog.js';
 
@@ -110,6 +111,8 @@ function automations(ctx, ui, title = 'Automations') {
   return { body, actions };
 }
 
+// The harness — and, where it has several here, the license — a session was started on.
+const ranOn = (ctx, engine) => describeSelectionText({ engine, meta: ctx.meta }) || engine || '';
 const PICKER_NOTE = 'The native pickers do not list sessions started from chat: Claude\'s /resume skips "claude -p" sessions, and Codex shows them only with "codex resume --include-non-interactive". Resume by id with the commands above.';
 async function resume(ctx, ui, part) {
   if (part === 'commands') return resumeCommands(ctx, ui);
@@ -118,7 +121,7 @@ async function resume(ctx, ui, part) {
   if (!current.command) body.push(ui.text(current.sessionId && ctx.isShared
     ? 'This session has a private administrator runtime. Open Resume in authenticated settings.'
     : current.inThread ? 'This session has not run a turn yet.' : 'Open settings from the session you want to resume.'));
-  else body.push(ui.text(`Engine: ${current.engine}`), ui.text(`Session: ${current.sessionId}`), ui.text(`Folder: ${current.workDir}`),
+  else body.push(ui.text(`Harness: ${ranOn(ctx, current.engine)}`), ui.text(`Session: ${current.sessionId}`), ui.text(`Folder: ${current.workDir}`),
     { ...ui.input('resumeCommand', 'Copy terminal command', current.command), isMultiline: true });
   return { body, actions: [] };
 }
@@ -132,7 +135,7 @@ async function resumeCommands(ctx, ui) {
   if (!current.inThread) body.push(ui.text('Open settings from the session you want to resume in a terminal.'));
   else if (!current.sessionId) body.push(ui.text('This session has not run a turn yet. Send it a message first, then open Diagnostics again.'));
   else {
-    body.push(ui.text(`Engine: ${current.engine || 'unknown'} · Session: ${current.sessionId}${current.runtimeScope ? ` · ${current.runtimeScope} runtime` : ''}`), ui.text(`Folder: ${current.workDir || '—'}`));
+    body.push(ui.text(`Harness: ${ranOn(ctx, current.engine) || 'unknown'} · Session: ${current.sessionId}${current.runtimeScope ? ` · ${current.runtimeScope} runtime` : ''}`), ui.text(`Folder: ${current.workDir || '—'}`));
     const host = current.hostCommand, shell = current.shellCommand;
     if (!host && !shell) body.push(ui.text('This session belongs to the conversation\'s administrator runtime. Ask an admin for its resume command.'));
     else {
@@ -177,7 +180,7 @@ function confirmationDetails(action, data, ctx) {
   if (action === 'settings.email.remove') return data.emailScope === 'personal' ? `Remove your personal email account ${name}?` : `Remove the email account ${name} from this conversation?`;
   if (action === 'settings.connections.remove') return `Disconnect the ${data.connection} connection for this conversation?`;
   if (action === 'settings.personal.remove') return `Disconnect your personal ${data.connection} connection?`;
-  if (action === 'settings.thread.reset') return 'Clear this session’s engine, model and effort overrides?';
+  if (action === 'settings.thread.reset') return 'Clear this session’s harness, model and effort overrides?';
   if (action === 'settings.automation.delete') {
     const row = listForChannel(ctx.channelId).find(item => item.id === data.id);
     if (!row) throw new Error('This automation is no longer in this conversation.');

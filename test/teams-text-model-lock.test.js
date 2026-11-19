@@ -5,6 +5,7 @@ ensureTestEnv();
 const { createConversationControls } = await import('../src/platforms/conversation-controls.js');
 const { makeInbound } = await import('../src/platforms/inbound.js');
 const { saveSettings } = await import('../src/config/settings.js');
+const { harnessLabel } = await import('../src/engines/license-state.js');
 const { getThreadEngine, getThreadModel, getThreadEffort, resolveThreadEngine, setThreadRuntimeOverrides } = await import('../src/gateway/thread-engine.js');
 const { getDb } = await import('../src/db/index.js');
 
@@ -26,7 +27,7 @@ for (const kind of ['channel', 'dm']) {
     const slug = `teams-text-lock-${kind}`, before = { engine: 'codex', model: 'gpt-6-sol', effort: 'high' };
     setThreadRuntimeOverrides(slug, 'root', before);
     const meta = { engine: 'codex', codexAuthSource: 'channel', model: 'gpt-6-sol' };
-    assert.match(await command(slug, '/model claude sonnet', meta, { kind }), /Session engine: claude/);
+    assert.match(await command(slug, '/model claude sonnet', meta, { kind }), /Session harness: Claude Code/);
     assert.deepEqual(await snapshot(slug), { engine: 'claude', model: 'sonnet', effort: '' });
     assert.equal(await resolveThreadEngine(slug, 'root', meta), 'claude');
   });
@@ -38,7 +39,7 @@ for (const selection of ['/model codex gpt-6-astra', '/model gpt-6-astra']) {
     const slug = `teams-text-lock-valid-${selection.includes('codex ') ? 'explicit' : 'implicit'}`;
     setThreadRuntimeOverrides(slug, 'root', { engine: 'codex', model: 'gpt-6-sol', effort: 'high' });
     const meta = { engine: 'codex', codexAuthSource: 'channel' };
-    assert.match(await command(slug, selection, meta), /Session engine: codex; model: gpt-6-astra/);
+    assert.match(await command(slug, selection, meta), /Session harness: Codex · Default sign-in; model: gpt-6-astra/);
     assert.deepEqual(await snapshot(slug), { engine: 'codex', model: 'gpt-6-astra', effort: 'high' });
   });
 }
@@ -49,7 +50,7 @@ for (const engine of ['claude', 'codex']) {
     settings();
     const slug = `teams-text-switch-${engine}`;
     setThreadRuntimeOverrides(slug, 'root', { engine: other, model: other === 'claude' ? 'opus' : 'gpt-6-astra', effort: 'high' });
-    assert.match(await command(slug, `/model ${engine} ${model}`, { engine: other }), new RegExp(`Session engine: ${engine}; model: ${model}`));
+    assert.match(await command(slug, `/model ${engine} ${model}`, { engine: other }), new RegExp(`Session harness: ${harnessLabel(engine)}; model: ${model}`));
     assert.deepEqual(await snapshot(slug), { engine, model, effort: '' });
     assert.equal(await resolveThreadEngine(slug, 'root', { engine: other }), engine);
     assert.match(await command(slug, '/effort high', { engine: other }), /Session effort: high/);
@@ -69,11 +70,11 @@ test('Teams /status and /effort use the selected engine compatible model and eff
   const slug = 'teams-text-compatible-inheritance';
   setThreadRuntimeOverrides(slug, 'root', { engine: 'claude', model: '', effort: '' });
   const meta = { engine: 'codex', model: 'gpt-6-sol', effort: 'ultra' };
-  assert.match(await command(slug, '/status', meta), /Engine: claude; model: sonnet; effort: engine default/);
+  assert.match(await command(slug, '/status', meta), /Harness: Claude Code; model: sonnet; effort: engine default/);
   assert.match(await command(slug, '/effort ultra', meta), /Choose an effort/);
   assert.equal((await snapshot(slug)).effort, '');
   assert.match(await command(slug, '/effort high', meta), /Session effort: high/);
-  assert.match(await command(slug, '/status', meta), /Engine: claude; model: sonnet; effort: high/);
+  assert.match(await command(slug, '/status', meta), /Harness: Claude Code; model: sonnet; effort: high/);
 });
 
 test('Teams /model default clears the model override and reports the compatible inherited model', async () => {
@@ -81,9 +82,9 @@ test('Teams /model default clears the model override and reports the compatible 
   const slug = 'teams-text-default';
   setThreadRuntimeOverrides(slug, 'root', { engine: 'claude', model: 'opus', effort: 'high' });
   const meta = { engine: 'codex', model: 'gpt-6-sol' };
-  assert.match(await command(slug, '/model claude default', meta), /Session engine: claude; model: inherited default/);
+  assert.match(await command(slug, '/model claude default', meta), /Session harness: Claude Code; model: inherited default/);
   assert.deepEqual(await snapshot(slug), { engine: 'claude', model: '', effort: 'high' });
-  assert.match(await command(slug, '/status', meta), /Engine: claude; model: sonnet; effort: high/);
+  assert.match(await command(slug, '/status', meta), /Harness: Claude Code; model: sonnet; effort: high/);
 });
 
 // Delay concurrent operations until admission, after the initial idle check. This deterministic
@@ -144,7 +145,7 @@ test('Teams /model exposes only complete runtime triples to concurrent readers',
       for (let step = 0; step < 8; step += 1) { observed.push(storedTriple(slug)); await Promise.resolve(); }
     })();
   });
-  assert.match(await command(slug, '/model codex gpt-6-sol', meta), /Session engine: codex/);
+  assert.match(await command(slug, '/model codex gpt-6-sol', meta), /Session harness: Codex/);
   await observer;
   assert.ok(observed.length, 'reader must run during admission/save');
   assert.deepEqual(storedTriple(slug), after);

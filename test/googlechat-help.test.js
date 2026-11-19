@@ -65,7 +65,7 @@ test('help card lays commands out as icon rows with bold commands and escaped de
 });
 
 test('plain help fallback contains all commands and fits the Google formatter message budget', () => {
-  for (const command of ['help', 'settings', 'secrets', 'files', 'sendfile', 'status', 'model', 'effort', 'stop', 'cancel', 'clear']) {
+  for (const command of ['help', 'settings', 'secrets', 'files', 'sendfile', 'status', 'model', 'license', 'effort', 'stop', 'cancel', 'clear']) {
     assert.ok(GOOGLE_CHAT_HELP_TEXT.includes(`/${command}`));
     assert.ok(JSON.stringify(createGoogleChatHelpCard()).includes(`/${command}`));
   }

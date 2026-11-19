@@ -11,7 +11,7 @@ const QUICK_START = [
   '**Group replies** — To continue, quote the original message or my reply and mention me. A new unquoted message starts a new session.',
 ];
 const SHORTCUTS = [
-  '`/model` — Choose the engine, model and effort.',
+  '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open your settings in a private Teams popup.',
   '`/files` — Open this workspace from the current conversation.',
   '`/stop` — Stop this session’s active and queued work.',
@@ -37,9 +37,10 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/sendfile <path>` — Open a workspace file for download from this conversation.',
       ] },
       { title: 'Your current session', rows: [
-        '`/status` — See the engine, model, effort and active/queued requests.',
-        '`/model` — Open the engine, model and effort picker. Choose a combination and Apply.',
-        '`/model [engine] [model|default]` — Change the runtime directly, subject to policy.',
+        '`/status` — See the harness, model, effort and active/queued requests.',
+        '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
+        '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
+        '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
         '`/effort [level|default]` — Show or change reasoning effort.',
         '`/stop` or `/cancel` — Stop this session’s active and queued work.',
         '`/clear` — Stop and clear this session. Your next request starts fresh.',
@@ -65,7 +66,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       { title: 'Make it yours', rows: [
         '`/settings` opens a private popup for this conversation. **General** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode.',
         '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-        'Use `/model` for enabled engines and providers, including opt-in Qwen. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; Codex (channel account) then appears as a separate harness in that conversation. **Resume** shows the available terminal command.',
+        'Use `/model` to choose the harness: Claude Code or Codex. Where a harness has several licenses — ones an admin added, or a dedicated Codex login set in the admin UI → Channel Runtime — the same picker and `/license` choose which to run on; when a license cannot answer, the turn moves to the next one you selected. **Resume** shows the available terminal command.',
       ] },
       { title: 'Variables & connections', rows: [
         '`/secrets` opens Variables. Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
