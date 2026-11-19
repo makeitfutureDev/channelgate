@@ -10449,11 +10449,17 @@ none` for its cases and live gates. Kept as history.
       `test/recovery-queue.test.js`): automatic pickup without a click, exact-message dedupe,
       waiting-only cancellation, stale clicks, steering with Claude/Codex child fixtures,
       queue reordering, controls beyond ten minutes, recovery FIFO and explicit steering order,
-      legacy pending-card compatibility. Fixtures use fake engines; this is not live acceptance.
+      legacy pending-card compatibility, green queue acknowledgement and dismiss-only behavior
+      with Claude/Codex child fixtures (durable record and waiting slot unchanged; no duplicate
+      dispatch or active-turn interruption). Fixtures use fake engines; this is not live acceptance.
 - [ ] Automatic busy-thread queue (repeat in Claude and Codex Worker fixtures; warm and cold
       Claude for interrupt behavior): start `Run sleep 30 then reply ACTIVE`; send `Reply A`,
-      then `Reply B` while running. Without clicks, both show queued controls with only Steer
-      Conversation and Cancel Request and run exactly once in FIFO order after ACTIVE. `/next`
+      then `Reply B` while running. Both cards say no action is needed, with a green Added to
+      queue button alongside Steer Conversation and Cancel Request. Click Added to queue on A:
+      only its card disappears; ACTIVE continues and A keeps its durable run and queue position.
+      Leave B's card untouched. Both run exactly once in FIFO order after ACTIVE; stale clicks
+      on A's dismissed controls cannot steer/cancel it. Repeat with an isolated restart after
+      dismissing A, before pickup: A still resumes once. `/next`
       remains a queue alias. Hold hydration so two requests initially see idle; the actual waiter
       must still receive controls. A failed card delivery must not lose the accepted message.
 - [ ] Cancel a queued message: repeat with A and B, cancel A while waiting. ACTIVE and B finish;

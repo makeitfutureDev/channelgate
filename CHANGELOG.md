@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show a green **Added to queue** button on busy-thread cards and clarify that no action is
+  needed. Clicking it dismisses the card while the already queued message keeps waiting and
+  runs automatically.
+
 - Recover channel containers that run out of process slots. A full container with no other work
   inside is restarted before the next turn runs in it, and the reply says so; a crash the limit
   caused names it with the kernel's numbers instead of "crashed after aborting itself". Every
