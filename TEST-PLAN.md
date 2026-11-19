@@ -2283,6 +2283,27 @@ unexecuted; private QA registry remains pending. These automated checks are not 
 - Private QA registry update pending: the requesting user's personal Airtable connection is not
   connected in this run. Do not treat the missing registry or unexecuted live case as passed.
 
+## Workspace migration keeps runtime scratch hidden (2026-11-19)
+
+- Automated regression (`test/migrate-workspace.test.js`, engine-independent — an update script,
+  no engine runs): a scratch channel whose metadata folder holds `.claude/`, `sessions.json`,
+  `thread-models.json`, `runtime/env/run-1.env`, `notes.md` and `uploads/a.txt`. Run
+  `migrateWorkspace()`. Pass: `notes.md` and `uploads/` are in the work folder; the work folder
+  has no `runtime`; the env file is still in the metadata folder with its content; the log names
+  2 moved items and never the env value; a second run changes nothing.
+- Tidy rules, same file: a work-folder `runtime/` that is empty or holds only an empty `env/` is
+  removed; one holding `env/run-9.env` is kept and reported as an environment file without its
+  value; one with a project file or other scratch, a symlink named `runtime`, and a file named
+  `runtime` are all left untouched. A channel with a custom work folder is skipped entirely.
+- Drift guard, same file: the top-level folder of `envFileDir()` under the metadata folder must
+  be on `CHANNEL_FOLDER_DAEMON_ENTRIES`.
+- Live gate (engine-independent): on a deployment with channels created since its last update,
+  note `ls -d ~/ChannelGate/*/*/runtime | wc -l` and the same for
+  `~/.channelgate/channels/*/*/runtime`, then run the transactional update. Pass: the update log's
+  workspace-migration line moves no `runtime` item; every hidden `runtime/` is still there; the
+  work-folder count drops to the folders the log lists as not empty; a turn in a channel created
+  after the previous update still runs.
+
 ## Channel metadata write scaling (2026-11-19)
 
 - Automated regression (`test/store-patch.test.js`, "one metadata patch decides each custom work

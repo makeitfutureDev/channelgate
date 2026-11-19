@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { attachRuntime } from "../contract.js";
-import { channelFolder } from "../../config/paths.js";
+import { CHANNEL_RUNTIME_DIR, channelFolder } from "../../config/paths.js";
 import { cliEnv } from "./cli.js";
 import { containerEnvDefaults } from "./credentials.js";
 import { applyEgressEnv } from "./egress-env.js";
@@ -28,7 +28,7 @@ export const DEFAULT_DETACHED_POLL_MS = 5_000;
 // The env files live beside the other per-channel runtime scratch, under the metadata folder — the
 // one place a container can never see.
 export function envFileDir(target) {
-  return path.join(channelFolder(target.slug, target.platform), "runtime", "env");
+  return path.join(channelFolder(target.slug, target.platform), CHANNEL_RUNTIME_DIR, "env");
 }
 
 export function normalizeSignal(signal) {
