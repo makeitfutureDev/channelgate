@@ -2,6 +2,25 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add engine licenses. ChannelGate now treats Claude Code and Codex as the two harnesses and
+  everything else — the dedicated Codex login, a channel's own Codex account, Qwen, Bedrock — as
+  a license of one of them. Administrators can add as many licenses as the organization holds, in
+  Settings: a further ChatGPT sign-in for Codex, a further Claude sign-in, or an API key for the
+  Anthropic API or a compatible endpoint. Each license has a type (subscription, business,
+  enterprise, education or API); a sign-in's declared type is checked against the plan the
+  sign-in reports, and an API key is checked against its endpoint. Wherever a harness is chosen —
+  the gateway default, a channel, a thread, `/model`, a run API call — the choice is now harness,
+  then license, then model and effort. A license can be one license, several, or *Any license*;
+  when the one a turn runs on cannot answer, the turn moves to the next selected license on its
+  own and says so at the top of the answer. Only after those does the existing switch to the
+  other harness apply, and never for a pinned thread. With a single usable license for a harness
+  the license step is not shown, so installs that add none see the same screens as before with
+  the first picker labelled *Harness*. *Approved harnesses* (Enterprise) can lock a channel to
+  individual licenses or to a whole harness, which also covers licenses added later. Nothing
+  needs migrating. Removing a license sends the channels and threads that used it back to their
+  defaults. Not included yet: Codex licenses with an API key, and usage windows for added Claude
+  sign-in licenses. This is separate from the ChannelGate license key under Settings → License.
+
 - Fix turns interrupted by a restart not being resumed in Slack channels. Recovery started the
   moment Slack connected, while the gateway was still re-checking which channels the bot is in,
   so the resumed turn was refused with "Slack channel membership has not been verified" and the

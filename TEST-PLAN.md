@@ -1,5 +1,148 @@
 # ChannelGate — Test Plan
 
+## Engine licenses (2026-11-19)
+
+Two harnesses, any number of licenses per harness; a selection is one license plus optional
+further licenses of the same harness, and failover walks the selection before it crosses harness.
+"License" here is the engine license; the product license key has its own sections.
+
+- [x] `test/engine-licenses.test.js` (always runs): the store refuses an unknown kind, a type the
+      kind does not allow, an empty name, a name another license or a built-in already uses (409),
+      a non-https endpoint, a key that is not key-shaped and an endpoint with no model list; an
+      added license is a registered engine on the next line (no restart, no settings re-read)
+      with the right harness and label, and any number can be added. The key of an API license is
+      absent from `licenseForApi`, the settings listing and the engine manifest (`hasApiKey` +
+      last four only); a blank key on an edit keeps the stored one and its verdict, a changed
+      endpoint drops the verdict. Removing a license unregisters it, clears its switch, its
+      per-license defaults, the gateway default and pool that named it and its sign-in directory;
+      removing it twice is a 404. Verification: a sign-in license is not ready until signed in,
+      ready when the plan its sign-in reports matches the declared type, NOT ready on a mismatch
+      (a Plus sign-in declared Enterprise) and ready again once the type is corrected; the
+      credential fingerprint never leaves the daemon. An API license is checked through an
+      injected fetch that only ever dials the license's own endpoint: a 401 leaves it not ready
+      and unselectable, a 200 makes it ready, and neither answer carries the key. Pools: `""`,
+      `"any"` and an ordered list on settings, channel meta (audited, dropped with the license it
+      sat beside) and thread pins (a plain pin drops an earlier pool); a pool naming an unknown
+      license or one of the other harness is refused with `invalid_license_pool`. Run-time
+      candidates follow the live state (switched on, approved, available in this conversation,
+      able to serve a picked model). Picker shape: `licensePicker().show` is false with one
+      usable license and true with two; "Any license" with one license stores no pool; a pick the
+      channel's lock does not admit is refused; a bare harness pick inherits the conversation's
+      own license and pool only when its default is on that harness. Locks: a license entry
+      admits only that license, `harness:codex` admits every Codex license including one added
+      afterwards, a stored `codex` entry never widens to other Codex licenses, an unknown harness
+      entry is refused, changing the policy needs Enterprise, and a policy naming only removed
+      licenses stays closed. The admin API over HTTP adds (201), lists with the catalog, edits,
+      verifies and removes, refuses sign-in routes (400) for a kind that has none and never
+      returns a key; `enginePool` round-trips through `PUT /api/settings` and is validated
+      against the default license.
+- [x] `test/engine-licenses-failover.test.js` (always runs; the real orchestrator against the stub
+      CLIs under the fake runtime): a limited license hands the turn to the next selected license
+      of the same harness (`licenseSwitched`, the answer's note names both, the session is stamped
+      with the license that answered, and that license ran on its own `CODEX_HOME`); "Any license"
+      reaches a license added after the channel was configured; a channel that selected one
+      license never borrows another; with every selected license limited the turn crosses to the
+      other harness and names what was tried; with cross-harness failover off it fails naming the
+      licenses (`details.alsoFailed`); in ask mode the move inside the selection is silent and
+      only the harness change is asked; a pinned thread moves inside the pool it was pinned with
+      and never across harnesses; a license that is not signed in is stepped over; a channel
+      locked to `harness:codex` keeps its pool and is never offered Claude; a channel whose
+      license was removed is answered by the gateway default.
+- [x] `test/engine-licenses-web.test.js` (four tests always run; the page test needs a browser,
+      `CG_BROWSER_MODULE=<playwright module> node --test test/engine-licenses-web.test.js`): the
+      browser-side picker and lock in `public/admin-licenses.js` give the same answers as the
+      server's `license-pool.js` — no license control with one license per harness, a License
+      control with two, the same `engine` + pool for every pick, a harness-wide lock entry stored
+      once. In the real page: the Settings manager lists every license under "Claude Code
+      licenses" / "Codex licenses", a built-in license has no Remove, editing an API license
+      shows an empty password box with `•••• <last four>` and the key appears nowhere in the
+      page, a Codex license is added through the form (201, switched on, "Not signed in") and
+      signed in through its own `/login` route, the channel picker then shows License and "If it
+      fails, also use" and saves `engine` + `licensePool`, and the lock saves `harness:<id>`.
+- [x] `test/engine-licenses-slack.test.js` (always runs): with one license per harness neither
+      the Settings modal nor the `/model` wizard shows a license control; with two the modal
+      shows License and, for a specific license, the also-use control; a pick resolves to the
+      `engine` + pool every level stores; the wizard saves "Any license" as the harness's
+      license plus the pool `any`; a thread pin carries its pool; a harness word at the start of
+      a message pins the channel's selection for that harness and a license id pins exactly that
+      license; a fork keeps the selection of the thread it was forked from; the ask card names
+      every license that was tried and offers only the other harness; admin-typed labels are cut
+      to Slack's option limits.
+- [x] `test/engine-licenses-platforms.test.js` (always runs): typed license choices (number, id,
+      name, `any`, an ordered comma list); `/license` with one license per harness has nothing
+      to choose and writes nothing, lists the licenses when there are several, saves `any`, a
+      named list in the order typed and `default`, refuses an unknown name and keeps `/model`'s
+      guards; `/model <harness>` takes the conversation's own licenses for that harness;
+      `/status` names the harness alone or the harness and its licenses; the Teams General card
+      and `/model` card show no license control with one license per harness, show License and
+      "If it fails, also use" with several, save them per scope and refuse a license they did not
+      offer; typed settings accept `harness` and `license`.
+- [x] Existing suites updated for the harness wording and the license step and still passing:
+      `test/channel-settings-modal.test.js`, `test/model-wizard-buttons.test.js`,
+      `test/model-wizard-channel-scope-thread.test.js`, `test/teams-text-model-lock.test.js`,
+      `test/teams-model-command.test.js`, `test/teams-controls.test.js`,
+      `test/teams-settings-general.test.js`, `test/help-text.test.js`,
+      `test/googlechat-help.test.js`, `test/engine-enable-api.test.js`,
+      `test/channel-engine-picker-browser.test.js`, `test/channel-codex-login-browser.test.js`.
+- [ ] Live `LICENSE-01` (one usable license per harness — every install before a license is
+      added; run once per harness). Fixture: a disposable Worker channel `C`, no added licenses.
+      Action: open Admin → Channels → `C`, the Slack channel Settings → General tab, and the
+      `/model` wizard. Expect a **Harness** picker listing the enabled harnesses and NO License
+      control on any of the three. Pick the harness under test, save, post "@bot reply with the
+      single word ready". Pass: an ordinary answer whose footer names that harness's model, and
+      `SELECT json_extract(data,'$.engine'), json_extract(data,'$.licensePool') FROM channel_meta
+      WHERE slug='<slug of C>'` returns the harness id and an empty pool.
+- [ ] Live `LICENSE-02` Codex (add, verify, select, fail over). Fixture: a second ChatGPT
+      workspace or seat. Setup: Admin → Settings → Codex licenses → Add license, kind *ChatGPT
+      sign-in*, name `QA second seat`, the type that seat really has; sign in with the device
+      code. Expect status ready with the reported plan shown as verified; repeat once with a
+      deliberately wrong type and expect "not ready" naming both plans, then correct it. In `C`
+      choose Harness Codex → License *Default sign-in* → If it fails, also use `QA second seat`,
+      save. Force the first license to fail without touching the second: on the gateway host
+      move the default Codex login aside (`mv ~/.codex/auth.json ~/.codex/auth.json.qa`), post
+      "@bot reply with the single word ready", then move it back. Pass: the answer begins with a
+      note that Codex could not answer and `QA second seat` is used, the footer shows a Codex
+      model, the thread's `/status` names `QA second seat`, a `usage` row for the turn carries
+      the license id, and no Claude process was started for the turn (`events` shows no
+      cross-harness fallback).
+- [ ] Live `LICENSE-02` Claude. Same case with a second Claude subscription added as a *Claude
+      sign-in* license (signed in with the host command the UI shows), or an Anthropic API key
+      added as an *API key* license with endpoint `https://api.anthropic.com`. Force the first
+      license to fail by switching the gateway's Claude login to a setup token that has been
+      revoked (Settings → Claude login), post the same message, restore the login. Pass: as for
+      Codex, with a Claude model in the footer and no Codex process started.
+- [ ] Live `LICENSE-03` Any license (run once per harness). In `C` choose License *Any license*,
+      save, then add a further license of that harness and sign it in. Fail the default license
+      as in `LICENSE-02`. Pass: the turn is answered by one of the other licenses, including the
+      one added after the channel was saved.
+- [ ] Live `LICENSE-04` pinned thread (run once per harness). In a thread of a channel whose
+      default is the OTHER harness, pin the harness under test with a second license as "also
+      use" (`/model` → this thread). Fail every license of the selection. Pass: the turn fails
+      with that harness's own error naming the licenses tried and the manual-switch hint; the
+      other harness never answers.
+- [ ] Live `LICENSE-05` lock (Enterprise; engine-independent apart from the harness named). Lock
+      `C` to *Codex — any license*. Pass: the Harness picker offers only Codex on every surface, a
+      `claude` directive is refused with "… is not an approved harness for this channel", a Codex
+      license added afterwards is selectable in `C` without touching the lock. Then lock `C` to
+      one license only: the License control disappears in `C` (one usable license) while another
+      channel still shows it.
+- [ ] Live `LICENSE-06` removal (run once per harness). With `C` running on an added license and
+      a thread pinned to it, remove the license in Settings. Pass: the confirmation says
+      conversations fall back to their defaults; the next message in the channel and in the
+      pinned thread is answered by the gateway default in a fresh session with the transcript
+      replayed; no `run_error` event; the license's directory under
+      `~/.channelgate/engine-state/licenses/` is gone.
+- [ ] Live `LICENSE-07` secrets (engine-independent). With an API license stored, load
+      `/api/settings`, `/api/engine-licenses` and the Settings page source. Pass: the key appears
+      in none of them (only `hasApiKey` and the last four characters), and inside a proxy-mode
+      container `env | grep -c <first 8 characters of the key>` prints 0 during a turn on that
+      license.
+- [ ] Live `LICENSE-08` Teams and Google Chat (Beta surfaces; run once per harness). In a
+      conversation with two usable licenses send `/license`, `/license any`,
+      `/license <second name>, <first name>` and `/license default`. Pass: the list numbers both
+      licenses, each change is confirmed with the selection in words, `/status` shows it, and
+      with one usable license `/license` answers that there is nothing to choose.
+
 ## Retired harness ids (2026-11-19)
 
 The OpenCode engine was removed. These cases prove that data written by an earlier release, which

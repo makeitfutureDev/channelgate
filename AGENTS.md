@@ -241,6 +241,23 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   + `session-pool.js`/`persistent-session.js` (warm pool), `codex.js`, `qwen.js`. `retired.js` lists the ids of
   harnesses this build no longer ships (today `opencode`), so a stored channel default, thread pin,
   approval list or session stamp naming one resolves to the normal default instead of throwing.
+  **Harnesses and licenses:** there are two harnesses (an adapter's `cli`: Claude Code, Codex) and
+  every engine id is a LICENSE of one — a credential plus its server. `license-state.js` holds the
+  dependency-free facts (harnesses, license kinds and types, id shapes `codex-lic-`/`claude-lic-`/
+  `claude-api-<8 hex>`, pool reader, sign-in directories, relay names); `license-adapters.js`
+  turns each admin-added record (`settings.engineLicenses`, CRUD + verification in
+  `src/config/engine-licenses.js`, admin routes `src/web/routes/licenses.js` at
+  `/api/engine-licenses`) into a live adapter, re-synced by `settings.js` on every changed read
+  and right after a write, so `ENGINE_IDS` is ONE array updated in place — never cache a copy or a
+  Set of it. A selection is `engine` (the first license) plus a pool of more licenses of the same
+  harness (`""` | `"any"` | ordered ids): settings `enginePool`, channel meta `licensePool`,
+  thread override `license_pool`, run API `harness` + `licenses`. `src/gateway/license-pool.js`
+  is the one place that validates a pool, lists a conversation's usable licenses and builds the
+  picker shape every surface renders (`licensePicker`: no license control when a harness has one
+  usable license); `run.js` walks the pool before cross-harness failover, and a pool applies to a
+  pinned thread because the harness does not change. The approved-harness lock
+  (`src/gateway/channel-engines.js`) takes license ids and `harness:<cli>` entries. This is NOT
+  the product license in `src/ee/`; new code says `engine-licenses` / `licensePool`.
   Shared: `stream.js` (NDJSON → deltas/events), `watchdog.js` (the ONE stall watchdog),
   `child-env.js` (the child env and passthrough list; `buildClaudeEnv`/`buildCodexEnv`
   live in their runners), `network-policy.js` (the switch checked against the
