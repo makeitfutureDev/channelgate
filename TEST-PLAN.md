@@ -2581,6 +2581,7 @@ Running label acceptance (Claude and Codex; updated 2026-11-12): in a Slack agen
   with the setting at **None**: every request shares the loopback bucket, so the 4th onwards is
   429/delayed regardless of the spoofed header. PASS when both hold and the setting round-trips
   after a daemon restart.
+
 ## Admin password in the environment, boot posture warnings, webhook pre-parse gate (2026-11-18)
 
 Engine-independent: none of this is reachable from an engine turn.
@@ -2589,7 +2590,8 @@ Engine-independent: none of this is reachable from an engine turn.
   test/skills-standalone.test.js` — `src/web/password-hash.js` imports only `node:crypto` and
   `security.js` re-exports the same functions; a hashed and a legacy cleartext value both verify
   and a malformed record never does; `scripts/hash-password.mjs` prints
-  `ADMIN_PASSWORD='scrypt$…'` from stdin, never echoes the password, takes nothing from argv,
+  `ADMIN_PASSWORD='scrypt$…'` from stdin, never echoes the password, turns the terminal echo off
+  before either prompt is written, takes nothing from argv,
   exits 1 on empty input, and its line round-trips through Node's `.env` loader; boot warnings
   for a cleartext environment value, for one shadowed by the admin-UI password (cleartext or
   hashed) and for a Public URL on a loopback bind with no declared proxy, with no warning for a
@@ -2599,20 +2601,41 @@ Engine-independent: none of this is reachable from an engine turn.
   parser running, and the mount puts it ahead of `express.raw`.
 - [x] `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage`
   (`web-boundary` now covers `password-hash.js` and `boot-posture.js`).
-- [ ] Live (shell on the deployment): run `npm run hash-password`, enter a test password twice, put
-  the printed line in `.env` in place of `ADMIN_PASSWORD`, remove the admin-UI password if one is
-  set, restart with `systemctl --user restart channelgate`. PASS when the journal shows NO
-  cleartext warning, the test password signs in through the browser and a wrong one does not.
-  This is the case that proves systemd's `EnvironmentFile` passes the `$`-separated value intact.
-- [ ] Live: with a cleartext `ADMIN_PASSWORD` in `.env` and a password also set in the admin UI,
-  restart. PASS when the journal carries exactly one `ADMIN_PASSWORD … is unused while a password
-  is set in the admin UI … stored in cleartext` warning and the value appears nowhere in it.
-- [ ] Live: on a deployment behind a tunnel with Public URL set, set Behind a reverse proxy to
-  **None**, restart: the journal carries the `no reverse proxy is declared` warning. Set it back to
-  the real proxy and restart: the warning is gone.
-- [ ] Live: `curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:4747/api/skills/webhook/github
-  --data-binary @/dev/null` answers 404 with no webhook secret configured and 401 with one
-  configured; a real GitHub "Redeliver" of a push still answers 200 and triggers the sync.
+- [x] Live (2026-11-19, beta `3d3803a5`): an ISOLATED second instance — its own HOME, runtime
+  root, work root and port, started with `systemd-run --user -p EnvironmentFile=<file>` from a
+  working directory with no `.env`, so systemd's parser is the only path the value takes. Put the
+  line `npm run --silent hash-password` printed into that file. PASS observed: the daemon's
+  environment holds the hash byte-identical to the file (both `$` separators intact), the log has
+  NO cleartext warning and no generated first-boot password, `POST /api/login` answers 200 for
+  the test password and 401 for a wrong one and for one with a trailing space, and
+  `GET /api/settings` answers 200 with the session and 401 without it.
+- [x] Live (same instance): cleartext `ADMIN_PASSWORD` in the environment file and a password set
+  through `PUT /api/settings`, restart. PASS observed: exactly one `ADMIN_PASSWORD … is unused
+  while a password is set in the admin UI … and it is stored in cleartext` warning, neither value
+  anywhere in the log, the environment password answers 401 and the admin-UI one 200. Removing the
+  admin-UI password then makes the environment one answer 200 at once (the warning's premise),
+  and the next boot carries exactly one `stored in cleartext … npm run hash-password` warning.
+  With a HASHED environment value under an admin-UI password the boot carries the shadowed
+  warning without the cleartext clause.
+- [x] Live (same instance): Public URL set, bind on loopback, Behind a reverse proxy **None**,
+  restart: exactly one `no reverse proxy is declared` warning. Set to `cloudflare`, restart: gone.
+  The served beta deployment (Public URL, `cloudflare` declared, no environment password) boots
+  with none of the three warnings.
+- [x] Live (same instance; the served deployment also answers 404): `POST
+  /api/skills/webhook/github` with no secret configured answers 404 for an empty body, for a
+  well-formed signature and for a 3 MB body. With a secret configured it answers 401 for a
+  missing, a malformed and a `sha1=` signature and for a 3 MB body with none (the parser's own
+  413 is reached only behind a well-formed signature), 401 for a well-formed wrong signature, and
+  200 for a correctly signed `ping` and `push`.
+- [ ] Live, needs a deployment with a webhook-synced git skill source: a real GitHub "Redeliver"
+  of a push answers 200 and triggers the sync. (The isolated run signed its own deliveries and had
+  no matching source, so `sources` was empty.)
+- [x] Live, real pseudo-terminal: `npm run hash-password` typed at the prompt with no delay, 15
+  runs — the password is never echoed and every run prints a valid line; a mismatched repeat
+  exits 1 with `the two entries differ` and prints nothing to stdout. The same 15 runs against the
+  first version echoed the password every time, because the prompt was written before the
+  terminal left cooked mode; raw mode is now set first (regression test in
+  `test/web-auth-posture.test.js`).
 
 ## Web and Slack surface hardening, batch 1 (2026-10-25)
 
