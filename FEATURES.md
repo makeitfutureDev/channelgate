@@ -625,6 +625,20 @@ Google Chat use it before adding their native requester mention. Explicit mentio
 answer remain available. The `set_my_reply_mentions` tool changes only the verified requester's
 setting; agent principals and untrusted API attribution cannot change another person's preference.
 
+## Voice auto-start in agent threads (2026-11-19)
+
+Each user can turn on **Start on voice clips in agent threads** (off by default). With it on, a
+voice clip that person sends as a reply in a Slack thread where this agent posted most recently
+starts a turn without an @mention or 🤖 reaction. The clip is transcribed and answered exactly
+as if the person had mentioned the agent: same authorization, transcript post, busy-thread choice
+and the person's own credentials. It never applies to a top-level channel message, a DM (which
+needs no mention anyway), a clip whose text mentions someone, or a thread where another agent
+spoke after this one. A thread this agent never spoke in, one it cannot read and one longer than
+1,000 messages are skipped too, so the person mentions the agent there instead. Opted-out authors
+cost no extra Slack call. Change it in Slack App Home → **Help & settings**, on the Activity
+dashboard → **Settings**, or ask the agent (`set_my_voice_auto_start`, which changes only the
+verified requester). Slack only; Teams and Google Chat still need a mention.
+
 ## Installed-app passkey sign-in (2026-11-14)
 
 On macOS, installed Chromium Activity apps continue passkey sign-in in a regular browser tab

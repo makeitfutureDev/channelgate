@@ -1070,6 +1070,30 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   fixture preferences. Private QA cases `REPLY-MENTIONS-01` and `REPLY-MENTIONS-02` cover both engines. Teams and Google
   Chat live testing remains on the existing owner hold; their mocked delivery checks are separate.
 
+## Voice auto-start in agent threads (2026-11-19)
+
+- Automated: `test/voice-auto-trigger.test.js` covers the candidate shape (thread reply only; top
+  level, thread root, DM, non-audio, video, person mention, bot/app/missing author and edits
+  refused), the latest-agent thread walk (self last, another agent after us, never spoke, cursor
+  to the end, over-long thread and unreadable thread fail closed, trigger message excluded),
+  default-off and no Slack call for opted-out authors, the Home toggle's actor-only write, and the
+  real Slack intake with both fake engine CLIs: off → nothing posted or spawned; on → transcript
+  then answer in the same thread; then top-level clip, clip mentioning a person and a thread where
+  another agent spoke last each start nothing. `test/user-settings.test.js` covers the Activity
+  Settings action (owner only, boolean validation); `test/gateway-mcp-authz.test.js` covers
+  `set_my_voice_auto_start` for the verified requester and its refusal of untrusted API
+  attribution and agent principals.
+- Live, Claude and Codex separately (one owned test channel per engine, local Whisper on or a
+  Slack clip with a completed transcript): as an approved member with the setting **off**, @mention
+  the agent with `Reply exactly VOICE_AUTO_ROOT`; after it answers, reply in that thread with a
+  voice clip saying "Reply exactly VOICE_AUTO_OK" and no mention. Pass: no transcript, no reply.
+  Turn the setting on in Slack Home → Help & settings, send the same clip. Pass: the transcript
+  posts in the thread, then one answer containing `VOICE_AUTO_OK` from the selected engine. Post
+  the clip top-level in the channel: no answer. Add a caption mentioning a colleague: no answer.
+  In a thread where another agent bot replied after this one: no answer. Turn it off in Activity →
+  Settings and repeat the thread clip: no answer. Capture the Slack permalinks, engine, author and
+  the `voice_auto_start` event row. Restore the setting.
+
 ## Apple app-site association (2026-11-18)
 
 - Automated (engine-independent): `test/apple-app-site-association.test.js` — strict id parsing

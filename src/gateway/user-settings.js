@@ -5,7 +5,7 @@
 // values are write-only: the snapshot carries configured/last4 facts and never a value.
 import { getComposioMode, userNudgesEnabled } from "../config/settings.js";
 import { getUser, setUser } from "../config/store.js";
-import { userReplyMentionsEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
+import { userReplyMentionsEnabled, userVoiceAutoStartEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
 import { listUserEnv, patchUserEnv } from "../config/scoped-env.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
@@ -63,7 +63,7 @@ export async function userSettingsSnapshot(userId) {
   ]);
   return {
     account: { id: userId, name: str(user.name, 120), role: isAdmin ? "admin" : user.approved ? "member" : "guest" },
-    general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user) },
+    general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user), voiceAutoStart: userVoiceAutoStartEnabled(user) },
     // How the voice talks to this person on a call (gateway/voice/calls.js). Plain preferences,
     // nothing secret; the closed sets travel with the values so the page offers exactly them.
     voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
@@ -115,6 +115,13 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       await setUser(userId, { replyMentions: input.enabled });
       await logEvent("user_reply_mentions_changed", { author: userId, enabled: input.enabled, via: "activity_settings" });
       return { notice: `Reply mentions are ${input.enabled ? "on" : "off"}.` };
+    }
+    case "voiceAutoStart": {
+      if (typeof input.enabled !== "boolean") fail("Choose on or off.");
+      await authorize();
+      await setUser(userId, { voiceAutoStart: input.enabled });
+      await logEvent("user_voice_auto_start_changed", { author: userId, enabled: input.enabled, via: "activity_settings" });
+      return { notice: `Starting on voice clips is ${input.enabled ? "on" : "off"}.` };
     }
     case "voice.save": {
       // Only the person's own voice preferences change; every field is bounded or closed-set.

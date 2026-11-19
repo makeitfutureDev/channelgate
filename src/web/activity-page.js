@@ -1234,10 +1234,13 @@ function settingsBrowser(config, browser, theme, connections) {
       const mentions = card("Mention me in replies", "Automatically mention you when delivering your replies in channels and group conversations. Follows you across conversations; direct messages never need a mention.");
       const mentioned = Boolean(data.general.replyMentions);
       mentions.append(row(mentioned ? "On" : "Off", "", [button(mentioned ? "Turn off" : "Turn on", () => { void send({ action: "replyMentions", enabled: !mentioned }); }, "settings-button" + (mentioned ? "" : " primary"))]));
+      const voiceStart = card("Start on voice clips in agent threads", "When you reply with a voice clip in a Slack thread where the agent answered last, it starts without an @mention or 🤖. Never on top-level channel messages, and never when the clip mentions someone.");
+      const voiceStarts = Boolean(data.general.voiceAutoStart);
+      voiceStart.append(row(voiceStarts ? "On" : "Off", "", [button(voiceStarts ? "Turn off" : "Turn on", () => { void send({ action: "voiceAutoStart", enabled: !voiceStarts }); }, "settings-button" + (voiceStarts ? "" : " primary"))]));
       const keys = card("Passkeys", "Sign back in to this dashboard without a new Slack link.");
       const link = node("a", "settings-button", "Manage passkeys"); link.href = base + "/passkeys";
       keys.append(link);
-      return [account, appearance, reminders, mentions, keys];
+      return [account, appearance, reminders, mentions, voiceStart, keys];
     },
     voice() {
       const v = data.voice || { language: "", style: "brief", patience: "normal", instructions: "", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } };

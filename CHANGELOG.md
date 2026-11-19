@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add *Start on voice clips in agent threads*, a personal setting that is off by default. With it
+  on, a voice clip you send as a reply in a Slack thread where the agent answered last starts the
+  agent without an @mention or 🤖. It never applies to top-level channel messages, to a clip that
+  mentions someone, or to a thread where another agent spoke after this one. Turn it on in Slack
+  Home → Help & settings, on the Activity dashboard → Settings, or by asking the agent.
+
 - Stop updates from moving a channel's runtime scratch folder into its work folder. The update's
   workspace migration treated the hidden `runtime/` folder as legacy work content and moved it
   into the folder the channel's container mounts, on the first update after a channel was
