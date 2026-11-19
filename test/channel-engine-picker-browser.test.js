@@ -50,11 +50,17 @@ test("channel runtime picker offers enabled providers and preserves their pins o
   for (const { channelId, entry, provider } of channels) {
     await page.goto(`http://127.0.0.1:${server.address().port}/conversations/channel/${channelId}`);
     await page.locator('[data-pane="runtime"].subtab').click();
-    const engine = page.locator(".ch-engine");
-    const offered = await engine.locator("option").evaluateAll((options) => options.map((option) => option.value));
-    for (const id of ["", "claude", "codex", ...QWEN_PROVIDERS.map((p) => p.id)]) assert.ok(offered.includes(id), `enabled ${id || "default"} is offered`);
-    assert.ok(!offered.includes("claude-bedrock"), "disabled harness stays out of the picker");
-    assert.equal(await engine.inputValue(), provider.id, "the existing provider remains selected");
+    // Harness first, then the license of that harness: a Qwen provider is a Claude Code license.
+    const harness = page.locator(".ch-engine");
+    const license = page.locator(".ch-engine-field + .lic-field .lic-select");
+    const harnesses = await harness.locator("option").evaluateAll((options) => options.map((option) => option.value));
+    assert.deepEqual(harnesses, ["", "claude", "codex"], "the first picker lists the harnesses");
+    assert.equal(await harness.inputValue(), "claude", "the provider's harness is selected");
+    assert.equal(await license.isVisible(), true, "several usable licenses show the License control");
+    const offered = await license.locator("option").evaluateAll((options) => options.map((option) => option.value));
+    for (const id of ["any", "claude", ...QWEN_PROVIDERS.map((p) => p.id)]) assert.ok(offered.includes(id), `enabled ${id} is offered`);
+    assert.ok(!offered.includes("claude-bedrock"), "disabled license stays out of the picker");
+    assert.equal(await license.inputValue(), provider.id, "the existing provider remains selected");
     assert.equal(await page.locator(".ch-model").inputValue(), provider.models[0].value);
     await page.locator('[data-pane="access"].subtab').click();
     await page.locator(".ch-network-wrap").click();
@@ -65,13 +71,14 @@ test("channel runtime picker offers enabled providers and preserves their pins o
     assert.equal(response.status(), 200);
     const body = response.request().postDataJSON();
     assert.equal(body.engine, provider.id, "unrelated save sends the original engine");
+    assert.equal(body.licensePool, "", "and no further licenses");
     assert.equal((await getChannelMeta(entry.slug)).engine, provider.id);
     assert.equal((await getChannelMeta(entry.slug)).model, provider.models[0].value);
     await page.reload();
     await page.locator('[data-pane="runtime"].subtab').click();
-    assert.equal(await engine.inputValue(), provider.id, "the provider survives reload");
+    assert.equal(await license.inputValue(), provider.id, "the provider survives reload");
     const next = QWEN_PROVIDERS.find((p) => p.id !== provider.id);
-    await engine.selectOption(next.id);
+    await license.selectOption(next.id);
     await page.locator(".ch-model").selectOption(next.models[0].value);
     const switched = page.waitForResponse((r) => r.url().endsWith(`/api/channels/${channelId}/meta`) && r.request().method() === "PUT");
     await page.locator(".save-channel").click();

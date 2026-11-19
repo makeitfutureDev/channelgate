@@ -48,8 +48,16 @@ test("channel login offers a separate harness, preserves switching, and copies t
   assert.equal(await page.locator(".ch-engine-field").isVisible(), true);
   await page.locator(".ch-codex-auth-source").selectOption("channel");
   assert.equal(await page.locator(".ch-engine-field").isVisible(), true);
-  assert.ok(await page.locator('.ch-engine option[value="codex-channel"]').count());
+  // The channel's own sign-in is a second Codex license of THIS channel: the License control
+  // appears under the Codex harness, and the gateway default never offers it.
+  const license = page.locator(".ch-engine-field + .lic-field .lic-select");
+  assert.equal(await license.isVisible(), false, "the inherited default shows no license control");
+  await page.locator(".ch-engine").selectOption("codex");
+  assert.equal(await license.isVisible(), true);
+  assert.ok(await license.locator('option[value="codex-channel"]').count());
+  await page.locator(".ch-engine").selectOption("");
   assert.equal(await page.locator('#set-engine option[value="codex-channel"]').count(), 0);
+  assert.equal(await page.locator('#view-settings .lic-select option[value="codex-channel"]').count(), 0);
   assert.equal(await page.locator(".ch-auth-channel-panel .ch-codex-api-section").isVisible(), false);
   await page.locator(".ch-auth-channel-panel .ch-codex-login-method").selectOption("device");
   await page.locator(".ch-auth-channel-panel .ch-codex-device-value").filter({ hasText: "ABCD-EFGH5" }).waitFor();
@@ -62,11 +70,13 @@ test("channel login offers a separate harness, preserves switching, and copies t
   assert.equal(await page.locator(".ch-auth-channel-panel .ch-codex-device-section").isVisible(), false);
   await page.locator(".ch-auth-channel-panel .ch-codex-api-key").fill("sk-BROWSER-ACCOUNT-FIXTURE-12345");
   await page.locator(".ch-auth-channel-panel .ch-codex-key-save").click();
-  await page.locator('.ch-engine option[value="codex-channel"]:checked').waitFor({ state: "attached" });
+  await license.locator('option[value="codex-channel"]:checked').waitFor({ state: "attached" });
+  assert.equal(await page.locator(".ch-engine").inputValue(), "codex", "a completed sign-in selects the Codex harness");
   assert.equal(await page.locator(".ch-engine-field").isVisible(), true);
-  await page.locator(".ch-engine").selectOption("codex");
-  assert.equal(await page.locator(".ch-engine").inputValue(), "codex");
+  await license.selectOption("codex");
+  assert.equal(await license.inputValue(), "codex");
   await page.locator(".ch-engine").selectOption("claude");
+  assert.equal(await license.isVisible(), false, "Claude Code has one license here");
   const saved = page.waitForResponse(response => response.url().endsWith(`/api/channels/${id}/meta`) && response.request().method() === "PUT");
   await page.locator(".save-channel").click();
   assert.equal((await saved).status(), 200);

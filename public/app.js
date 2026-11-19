@@ -32,6 +32,7 @@ import { mountComposioInventory } from "./admin-composio.js";
 import { syncComposioPolicyUi, paintComposioPolicy, readComposioPolicy } from "./admin-composio-policy.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
+import { engineChoices, engineDisplayName, harnessOf, mountLicenseLock, mountLicensePicker, mountLicensesManager, policyAdmits } from "./admin-licenses.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
 const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z"/></svg>`;
@@ -51,8 +52,8 @@ let DMS = [];
 let DM_TEMPLATES = {};
 let GLOBAL_ENGINE = "claude";
 let ENGINE_MANIFESTS = [];
-// Which harnesses the admin left switched on. A disabled engine must not appear in ANY picker —
-// global, per channel, or per DM — so every engine <select> is built from this filter.
+// Which licenses the admin left switched on. A license that is off must not appear in ANY picker —
+// global, per channel, or per DM — so every engine picker is built from this filter.
 let ENGINE_ENABLED = {};
 let GLOBAL_COMPOSIO_MODE = "personal";
 let orgGrantsEditor = null;
@@ -77,7 +78,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card, .lic-form, .lic-panel";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -118,21 +119,22 @@ function applyEngineManifests(manifests) {
   )])));
 }
 
-function engineIsEnabled(id) {
-  return ENGINE_ENABLED[id] !== false;
+// Where an engine picker stands (admin-licenses.js): the manifest and the on/off map, plus — for a
+// channel — whether it signed in its own Codex account and which licenses its lock admits.
+function licenseEnv({ codexAuthSource = "", policy = null } = {}) {
+  return { manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED, codexAuthSource, policy };
 }
 
-// Enabled harnesses only — but never an EMPTY list: if the map hasn't loaded yet (or somehow
-// disables everything) fall back to the full manifest so a picker is never blank.
-function selectableEngines(meta = null) {
-  const available = ENGINE_MANIFESTS.filter((m) => !m.channelScoped || meta?.codexAuthSource === "channel");
-  const enabled = available.filter((m) => engineIsEnabled(m.id));
-  return enabled.length ? enabled : available;
+// What an engine id reads as wherever one is printed. From the manifest — a license an admin added
+// has an id nobody can read.
+function engineLabel(id) {
+  return engineDisplayName(ENGINE_MANIFESTS, id);
 }
 
-function engineOptionsHtml({ includeDefault = false, meta = null } = {}) {
-  return (includeDefault ? '<option value="">Default (global setting)</option>' : "") +
-    selectableEngines(meta).map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
+// The one-control form of the picker, for a row that stores a single engine id and nothing beside
+// it (a model shortcut, the connector catalog switch): one option per usable license.
+function engineOptionsHtml() {
+  return engineChoices(licenseEnv()).map((choice) => `<option value="${escapeHtml(choice.id)}">${escapeHtml(choice.label)}</option>`).join("");
 }
 
 function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value, engine: pinnedEngine, blankLabel = "default" }) {
@@ -144,7 +146,7 @@ function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, val
   const current = value !== undefined ? value : effortSelect.value;
   effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(v ? text : blankLabel)}</option>`).join("");
   effortSelect.value = options.some(([v]) => v === current) ? current : "";
-  if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
+  if (label) label.textContent = `Effort (${engineLabel(engine)})`;
 }
 
 // Model choices per engine — mirrors the Slack /model wizard's buttons. Every value passes the
@@ -216,7 +218,7 @@ function addModelShortcutRow(name = "", target = {}) {
   row.className = "model-shortcut-row";
   row.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0";
   row.innerHTML = `<input class="shortcut-name" type="text" maxlength="24" placeholder="astra" aria-label="Shortcut name" style="max-width:120px" />
-    <select class="shortcut-engine" aria-label="Engine"></select>
+    <select class="shortcut-engine" aria-label="Harness"></select>
     <select class="shortcut-model" aria-label="Model"></select>
     <button type="button" class="clear-tok shortcut-remove">Remove</button>`;
   const engineSelect = row.querySelector(".shortcut-engine");
@@ -225,7 +227,7 @@ function addModelShortcutRow(name = "", target = {}) {
   if (target.engine && ![...engineSelect.options].some((option) => option.value === target.engine)) {
     const option = document.createElement("option");
     option.value = target.engine;
-    option.textContent = `${target.engine} (disabled)`;
+    option.textContent = `${engineLabel(target.engine)} (disabled)`;
     engineSelect.add(option);
   }
   engineSelect.value = target.engine || engineSelect.options[0]?.value || "claude";
@@ -537,7 +539,7 @@ function renderAuditRows() {
     const when = new Date(r.ts).toLocaleString();
     const conv = r.channelName || r.slug || "?";
     const author = r.authorName || r.authorId || "?";
-    const eng = (r.engine || "?") + (r.taskKind && r.taskKind !== "interactive" ? " · " + r.taskKind : "");
+    const eng = (engineLabel(r.engine) || "?") + (r.taskKind && r.taskKind !== "interactive" ? " · " + r.taskKind : "");
     const tok = fmtNum((r.tokensIn || 0) + (r.tokensOut || 0));
     const cost = r.costUSD == null ? "—" : fmtUSD(r.costUSD) + (r.costEstimated ? "*" : "");
     return `<tr class="audit-row" data-i="${i}" tabindex="0">
@@ -640,7 +642,7 @@ function openSessionDetail(r) {
   const author = r.authorName || r.authorId || "?";
   const totalTok = (r.tokensIn || 0) + (r.tokensOut || 0);
   const cost = r.costUSD == null ? "—" : fmtUSD(r.costUSD) + (r.costEstimated ? " · estimated" : "");
-  const engine = (r.engine || "?") + (r.model ? " · " + r.model : "");
+  const engine = (engineLabel(r.engine) || "?") + (r.model ? " · " + r.model : "");
   const rows = [
     ["Time", new Date(r.ts).toLocaleString()],
     ["Conversation", conv + (r.slug && r.slug !== conv ? ` · ${r.slug}` : "")],
@@ -696,7 +698,7 @@ async function loadAudit() {
   const byLabel = (a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" });
   fillAuditSelect(document.getElementById("audit-channel"), [...chanOpts.entries()].sort(byLabel), "All conversations");
   fillAuditSelect(document.getElementById("audit-user"), [...userOpts.entries()].sort(byLabel), "All users");
-  fillAuditSelect(document.getElementById("audit-engine"), [...engineSet].sort().map((e) => [e, e]), "All engines");
+  fillAuditSelect(document.getElementById("audit-engine"), [...engineSet].sort().map((e) => [e, engineLabel(e)]), "All engines");
 
   auditShown = AUDIT_PAGE;
   renderAuditRows();
@@ -1009,10 +1011,12 @@ let activeRunsLive = false;
 let activeRunsSource = null;
 let activeModalTimer = null;
 
+// A run counts under its harness whichever license it is on; the manifest says which that is.
 function dashboardActiveRuns() {
+  const harnessOfRun = (run) => harnessOf(ENGINE_MANIFESTS.find((m) => m.id === run.engine));
   return dashHarness === "all"
     ? ACTIVE_RUNS
-    : ACTIVE_RUNS.filter((run) => String(run.engine || run.engineName || "").toLowerCase() === dashHarness);
+    : ACTIVE_RUNS.filter((run) => String(run.engine || run.engineName || "").toLowerCase() === dashHarness || harnessOfRun(run) === dashHarness);
 }
 
 function renderActiveSessions() {
@@ -1820,7 +1824,7 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = ""
   el.className = "access-grants-editor";
   el.innerHTML = `
     <div class="grid grid-2">
-      <label class="field"><span>Connector engine</span><select class="grant-engine"></select></label>
+      <label class="field"><span>Connector harness</span><select class="grant-engine"></select></label>
     </div>
     <div class="grid grid-2">
       <div class="col tools-col">
@@ -1835,10 +1839,9 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = ""
       </div>
     </div>`;
   const engineSelect = el.querySelector(".grant-engine");
-  engineSelect.innerHTML = selectableEngines()
-    .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`)
-    .join("");
+  engineSelect.innerHTML = engineOptionsHtml();
   engineSelect.value = effectiveEngine(GLOBAL_ENGINE) || "claude";
+  if (engineSelect.selectedIndex < 0) engineSelect.selectedIndex = 0;
   const mcpsBox = el.querySelector(".grant-mcps");
   const mcpsCount = el.querySelector(".grant-mcps-count");
   initializeMcpBox(mcpsBox, {
@@ -2360,23 +2363,48 @@ function renderChannelDetail(ch) {
   } else {
     approvedBox.textContent = "";
   }
-  const engineSelect = card.querySelector(".ch-engine");
-  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta });
-  engineSelect.value = meta.engine || "";
+  const authSource = card.querySelector(".ch-codex-auth-source");
+  authSource.value = meta.codexAuthSource || "gateway";
+  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
+  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
+  const channelPanel = card.querySelector(".ch-auth-channel-panel");
+  const modelSelect = card.querySelector(".ch-model");
+  const effortSelect = card.querySelector(".ch-effort");
+  const effortLabel = card.querySelector(".ch-effort-label");
+  // The lock: whole harnesses (`harness:<id>`) and single licenses this channel may run on.
   const harnessPolicy = card.querySelector(".ch-harness-policy");
   const harnessRestrict = card.querySelector(".ch-harness-restrict");
   const harnessOptions = card.querySelector(".ch-harness-options");
   const harnessHelp = card.querySelector(".ch-harness-help");
   let harnessPolicyDirty = false;
   harnessRestrict.checked = Array.isArray(meta.approvedEngines);
-  checkboxList(harnessOptions, ENGINE_MANIFESTS.map((m) => ({ value: m.id, label: m.label })), meta.approvedEngines || [], "value", "label");
-  const approvedHarnesses = () => harnessRestrict.checked ? explicitCheckedValues(harnessOptions) : null;
+  const harnessLock = mountLicenseLock(harnessOptions, { manifests: ENGINE_MANIFESTS, policy: meta.approvedEngines });
+  const approvedHarnesses = () => harnessRestrict.checked ? harnessLock.values() : null;
+  const approvalAdmits = (id) => policyAdmits(approvedHarnesses(), ENGINE_MANIFESTS.find((m) => m.id === id));
+  // The channel default: harness → license → "if it fails, also use" (meta `engine` + `licensePool`).
+  // It offers what this channel may run on right now — the lock and the Codex sign-in as they
+  // stand on the card, saved or not. `engineSelect.value` is the engine id, "" = the gateway default.
+  const engineSelect = mountLicensePicker({
+    harnessSelect: card.querySelector(".ch-engine"),
+    env: () => licenseEnv({ codexAuthSource: authSource.value, policy: approvedHarnesses() }),
+    engine: meta.engine || "",
+    pool: meta.licensePool || "",
+    includeDefault: true,
+    defaultAllowed: () => approvalAdmits(effectiveEngine("")),
+    onChange: () => syncChannelRuntime(),
+  });
+  let shownEngine = engineSelect.value;
+  // Model and effort belong to the engine the picker resolved to; so does the MCP catalog.
+  const syncChannelRuntime = () => {
+    shownEngine = engineSelect.value;
+    syncModelOptions({ engineSelect, modelSelect, blankLabel: "gateway default (Settings)" });
+    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
+  };
   const paintHarnessPolicy = () => {
     harnessOptions.hidden = !harnessRestrict.checked;
-    const approved = approvedHarnesses();
-    for (const option of engineSelect.options) {
-      option.disabled = approved !== null && !approved.includes(option.value || GLOBAL_ENGINE || "claude");
-    }
+    engineSelect.repaint();
+    if (engineSelect.value !== shownEngine) syncChannelRuntime();
   };
   harnessPolicy.addEventListener("change", () => { harnessPolicyDirty = true; paintHarnessPolicy(); });
   paintHarnessPolicy();
@@ -2400,75 +2428,34 @@ function renderChannelDetail(ch) {
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
       ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
-      : "Approve one or more harnesses, then choose an approved channel default. Thread pins and automatic fallback must also use approved harnesses. Uncheck to allow all harnesses.";
+      : "Lock this channel to whole harnesses or to single licenses, then choose an approved channel default. A whole harness includes licenses added to it later. Thread pins and automatic fallback must also stay inside the approved set. Uncheck to allow everything.";
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
-  const authSource = card.querySelector(".ch-codex-auth-source");
-  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
-  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
-  const channelPanel = card.querySelector(".ch-auth-channel-panel");
-  const modelSelect = card.querySelector(".ch-model");
-  const effortSelect = card.querySelector(".ch-effort");
-  const effortLabel = card.querySelector(".ch-effort-label");
+
   const paintAuthScope = () => {
     const dedicated = authSource.value === "channel";
     channelPanel.hidden = !dedicated;
-    const currentEngine = engineSelect.value;
-    engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta: { ...meta, codexAuthSource: authSource.value } });
-    engineSelect.value = currentEngine === "codex-channel" && !dedicated ? "" : currentEngine;
-    paintHarnessPolicy();
-    syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
-    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
+    // The channel's own Codex license exists only while the channel signs in for itself: leaving
+    // that returns the channel to the gateway default rather than to another license silently.
+    if (!dedicated && ENGINE_MANIFESTS.find((m) => m.id === engineSelect.value)?.channelScoped) engineSelect.set("", "");
+    else engineSelect.repaint();
+    syncChannelRuntime();
   };
-  authSource.value = meta.codexAuthSource || "gateway";
   authSource.addEventListener("change", paintAuthScope);
   mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
     onComplete: () => {
       authSource.value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex-channel" };
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex-channel", licensePool: "" };
       meta.codexAuthSource = "channel";
-      engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta });
-      engineSelect.value = "codex-channel";
+      engineSelect.set("codex-channel", "");
       delete AVAILABLE_MCPS[`codex-channel:${ch.channelId}`];
       paintAuthScope();
     },
   });
-  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
-  syncModelOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    value: meta.model || "",
-    blankLabel: "gateway default (Settings)",
-  });
-  syncEffortOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    effortSelect: card.querySelector(".ch-effort"),
-    label: card.querySelector(".ch-effort-label"),
-    value: meta.effort || "",
-  });
+  syncModelOptions({ engineSelect, modelSelect, value: meta.model || "", blankLabel: "gateway default (Settings)" });
+  syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: meta.effort || "" });
   paintAuthScope();
-  engineSelect.addEventListener("change", () => {
-    syncModelOptions({
-      engineSelect,
-      modelSelect: card.querySelector(".ch-model"),
-      blankLabel: "gateway default (Settings)",
-    });
-    syncEffortOptions({
-      engineSelect,
-      modelSelect: card.querySelector(".ch-model"),
-      effortSelect: card.querySelector(".ch-effort"),
-      label: card.querySelector(".ch-effort-label"),
-    });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
-  });
-  card.querySelector(".ch-model").addEventListener("change", () => syncEffortOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    effortSelect: card.querySelector(".ch-effort"),
-    label: card.querySelector(".ch-effort-label"),
-  }));
+  modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (meta.hasComposioToken ? "" : "no token (uses org default)");
@@ -2562,9 +2549,9 @@ function renderChannelDetail(ch) {
     const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
       const approvals = approvedHarnesses();
-      if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness.");
-      if (approvals !== null && !approvals.includes(authSource.value === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
-        throw new Error("Choose a channel default from its approved harnesses.");
+      if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness or license.");
+      if (approvals !== null && !approvalAdmits(authSource.value === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
+        throw new Error("Choose a channel default from its approved harnesses and licenses.");
       }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
@@ -2596,6 +2583,8 @@ function renderChannelDetail(ch) {
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
+          // Beside the license it belongs to; "" when the choice is a single license or inherited.
+          licensePool: engineSelect.pool ?? "",
           codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
           ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
             ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
@@ -2610,7 +2599,7 @@ function renderChannelDetail(ch) {
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
           ...(clearMakeToolbox ? { clearMakeToolbox: true } : {}),
-        }).filter(([key]) => !meta.workspaceLink?.fields?.includes(key)))),
+        }).filter(([key]) => !meta.workspaceLink?.fields?.includes(key === "licensePool" ? "engine" : key)))),
       });
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
@@ -2787,7 +2776,9 @@ function renderChannelDetail(ch) {
 // a network switch, then the Tools (MCP/Skills) and Runtime (engine/model/effort) blocks — so a
 // template is configured with the exact same elements as a channel. getValues() returns the flat
 // flag shape the template/DM save expects (no `profile` field — it's re-derived from the flags).
-function buildConfigEditor(cfg = {}) {
+// `storesPool` is false where only `engine` is stored (the settings templates): the license step
+// then offers single licenses, with no "Any license" and no "also use".
+function buildConfigEditor(cfg = {}, { storesPool = false } = {}) {
   const el = document.createElement("div");
   el.className = "cfg-editor";
   el.innerHTML = `
@@ -2830,8 +2821,8 @@ function buildConfigEditor(cfg = {}) {
 
     <p class="fldlab" style="margin-top:20px">Runtime</p>
     <div class="grid grid-2">
-      <label class="field"><span>Engine (which CLI drives this)</span>
-        <select class="cfg-engine"><option value="">Default (global setting)</option><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+      <label class="field"><span>Harness (which CLI drives this)</span>
+        <select class="cfg-engine"><option value="">Default (global setting)</option></select></label>
       <label class="field"><span>Model</span>
         <select class="cfg-model"></select></label>
       <label class="field"><span class="cfg-effort-label">Effort</span>
@@ -2851,43 +2842,28 @@ function buildConfigEditor(cfg = {}) {
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, el.querySelector(".cfg-skills-filter"), el.querySelector(".cfg-skills-count"));
   fillSkillTemplateSelect(el.querySelector(".cfg-skill-template"), cfg.skillTemplate || "", el.querySelector(".cfg-skill-template-state"));
-  const engineSelect = el.querySelector(".cfg-engine");
-  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
-  engineSelect.value = cfg.engine || "";
+  const modelSelect = el.querySelector(".cfg-model");
+  const effortSelect = el.querySelector(".cfg-effort");
+  const effortLabel = el.querySelector(".cfg-effort-label");
+  // Harness → license (→ "if it fails, also use" where a pool is stored). `engineSelect.value` is
+  // the engine id, "" = the gateway default.
+  const engineSelect = mountLicensePicker({
+    harnessSelect: el.querySelector(".cfg-engine"),
+    env: () => licenseEnv(),
+    engine: cfg.engine || "",
+    pool: storesPool ? cfg.licensePool || "" : "",
+    includeDefault: true,
+    allowPool: storesPool,
+    onChange: () => {
+      syncModelOptions({ engineSelect, modelSelect, blankLabel: "gateway default (Settings)" });
+      syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+      renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+    },
+  });
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
-  syncModelOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    value: cfg.model || "",
-    blankLabel: "gateway default (Settings)",
-  });
-  syncEffortOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    effortSelect: el.querySelector(".cfg-effort"),
-    label: el.querySelector(".cfg-effort-label"),
-    value: cfg.effort || "",
-  });
-  engineSelect.addEventListener("change", () => {
-    syncModelOptions({
-      engineSelect,
-      modelSelect: el.querySelector(".cfg-model"),
-      blankLabel: "gateway default (Settings)",
-    });
-    syncEffortOptions({
-      engineSelect,
-      modelSelect: el.querySelector(".cfg-model"),
-      effortSelect: el.querySelector(".cfg-effort"),
-      label: el.querySelector(".cfg-effort-label"),
-    });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
-  });
-  el.querySelector(".cfg-model").addEventListener("change", () => syncEffortOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    effortSelect: el.querySelector(".cfg-effort"),
-    label: el.querySelector(".cfg-effort-label"),
-  }));
+  syncModelOptions({ engineSelect, modelSelect, value: cfg.model || "", blankLabel: "gateway default (Settings)" });
+  syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: cfg.effort || "" });
+  modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
 
   // Capability cards → hidden flag checkboxes (identical mapping + copy to the channel Access tab).
   const flags = {
@@ -2940,6 +2916,7 @@ function buildConfigEditor(cfg = {}) {
     allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
       .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
     engine: engineSelect.value,
+    ...(storesPool ? { licensePool: engineSelect.pool } : {}),
     model: el.querySelector(".cfg-model").value,
     effort: el.querySelector(".cfg-effort").value,
     adminMode: flags.adminMode.checked,
@@ -3068,10 +3045,10 @@ function renderDmDetail(id) {
     customBox.innerHTML = "";
     ed = null;
     if (tplSel.value === "custom") {
-      ed = buildConfigEditor(dm.meta || {});
+      ed = buildConfigEditor(dm.meta || {}, { storesPool: true });
       customBox.appendChild(ed.el);
       if (dm.meta?.workspaceLink) for (const input of ed.el.querySelectorAll("input,select,button")) {
-        if (!input.matches(".cfg-engine,.cfg-model,.cfg-effort")) input.disabled = true;
+        if (!input.matches(".cfg-engine,.lic-select,.lic-also input,.cfg-model,.cfg-effort")) input.disabled = true;
       }
     }
   };
@@ -3086,7 +3063,7 @@ function renderDmDetail(id) {
     async () => {
       const tpl = tplSel.value;
       const values = tpl === "custom" && ed ? ed.getValues() : {};
-      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
+      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key === "licensePool" ? "engine" : key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
       showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
       dm.template = tpl;
@@ -3965,13 +3942,17 @@ function enterSettingsView(hash = "") {
 // Deep-jump to ONE control (not a whole section) and mark it, for cross-page links like the API
 // docs' "generate a token" pointer.
 function revealSetting(id) {
+  const el = document.getElementById(id);
+  revealSettingsNode(el?.closest(".setcard") || el);
+}
+
+// The same jump for a node that has no id of its own (a card cloned from a template, one field).
+function revealSettingsNode(card) {
+  if (!card) return;
   settingsJumps += 1;
   settingsJumpTarget = null;
   settingsJumpUntil = 0;
   clearSettingsSearch();
-  const el = document.getElementById(id);
-  const card = el?.closest(".setcard") || el;
-  if (!card) return;
   scrollSettingsTo(card);
   card.classList.remove("pulse");
   void card.offsetWidth; // restart the animation when the same card is targeted twice
@@ -4158,48 +4139,60 @@ function collectQwenProviders() {
   return body;
 }
 
-// One checkbox per known harness. Re-rendered (not patched) on every change so the engine pickers
-// and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
-function paintEngineToggles() {
-  const box = document.getElementById("engine-enabled-box");
-  if (!box || !ENGINE_MANIFESTS.length) return;
-  const onCount = ENGINE_MANIFESTS.filter((m) => !m.channelScoped && engineIsEnabled(m.id)).length;
-  box.replaceChildren(...ENGINE_MANIFESTS.map((m) => {
-    const on = engineIsEnabled(m.id);
-    const label = document.createElement("label");
-    label.className = "engine-toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = on;
-    // The last enabled harness can't be switched off — the daemon would have nothing to run, and
-    // the API refuses that state anyway. Disable the box rather than let the save 400.
-    input.disabled = on && !m.channelScoped && onCount === 1;
-    input.title = input.disabled ? "At least one harness must stay enabled" : "";
-    input.addEventListener("change", () => {
-      ENGINE_ENABLED[m.id] = input.checked;
-      const globalSelect = document.getElementById("set-engine");
-      const chosen = globalSelect?.value;
-      paintEngineToggles();
-      if (globalSelect) {
-        globalSelect.innerHTML = engineOptionsHtml();
-        // Turning off the harness that IS the default silently re-points the default at an enabled
-        // one — visibly, in the select, before the admin saves.
-        globalSelect.value = engineIsEnabled(chosen) ? chosen : selectableEngines()[0]?.id || chosen;
-      }
+// ── Settings: engine licenses ─────────────────────────────────────────────────────────────────────
+// Every license of each harness, switched on and off here (admin-licenses.js draws the list and
+// owns adding, editing, verifying and removing one). Re-rendered — not patched — on every change, so
+// the pickers and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
+// (These are ENGINE licenses. The ChannelGate product license is loadLicense(), further down.)
+let HEALTH_ENGINES = null; // /api/health → engines: the status shown for a license the gateway ships with
+let licensesManager = null;
+let gatewayEnginePicker = null; // #set-engine as the harness step of the gateway default
+
+// Where a license the gateway ships with is configured on this page, if it is: its own card, or
+// the default-model field named after it.
+function builtinLicenseSettings(id) {
+  return TERMINAL_HARNESS_CARDS.find((card) => card.id === id)?.modelSelect.closest(".setcard")
+    || QWEN_PROVIDER_CARDS.find((card) => card.id === id)?.keyInput.closest(".setcard")
+    || document.getElementById(`set-default-${id}-model`)?.closest(".field")
+    || null;
+}
+
+function paintEngineLicenses() {
+  const root = document.getElementById("engine-enabled-box");
+  if (!root || !ENGINE_MANIFESTS.length) return;
+  licensesManager ||= mountLicensesManager({
+    root,
+    api,
+    confirm: confirmDialog,
+    copyText: copyTerminalCommand,
+    mountCodexLogin: mountCodexLoginBox,
+    state: () => ({ manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED }),
+    health: (id) => HEALTH_ENGINES?.[id] || null,
+    setEnabled: (id, on) => {
+      ENGINE_ENABLED[id] = on;
+      licensesManager.paint();
+      // Switching off the license that IS the default re-points the default at one that is on —
+      // visibly, in the picker, before the admin saves.
+      gatewayEnginePicker?.repaint();
       markSettingsDirty();
-    });
-    label.append(input, document.createTextNode(` ${m.label}`));
-    // An OPT-IN harness needs a provider credential of its own, so say where that lives. Without
-    // this the checkbox reads like every other one and the admin only discovers the missing key
-    // when a run fails in Slack.
-    if (m.optIn && !SETTINGS_HAVE_PROVIDER_KEY[m.id]) {
-      const hint = document.createElement("em");
-      hint.className = "state";
-      hint.textContent = m.terminalSetup ? " · configure in terminal below" : " · needs an API key below";
-      label.append(hint);
-    }
-    return label;
-  }));
+    },
+    // A license that needs a provider credential of its own says where that lives. Without this the
+    // switch reads like every other one and the admin only discovers the missing key when a run
+    // fails in Slack.
+    builtinNote: (m) => !m.optIn || SETTINGS_HAVE_PROVIDER_KEY[m.id] ? ""
+      : m.terminalSetup ? " · configure in terminal below" : " · needs an API key below",
+    openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => revealSettingsNode(builtinLicenseSettings(m.id)) : null,
+    blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
+    reload: loadSettings,
+  });
+  licensesManager.paint();
+}
+
+// The gateway default as the picker stores it: `engine` + `enginePool`.
+function readGatewayEngine() {
+  return gatewayEnginePicker
+    ? { engine: gatewayEnginePicker.value, enginePool: gatewayEnginePicker.pool }
+    : { engine: document.getElementById("set-engine").value };
 }
 
 // Read the whole Settings form into the API's shape. Separate from the save handler because it is
@@ -4275,7 +4268,7 @@ function readSettingsForm() {
     ...(document.getElementById("clear-license-key").classList.contains("armed") ? { clearLicenseKey: true } : {}),
     platformUrl: document.getElementById("set-platform-url").value,
     contextWindow: Number(document.getElementById("set-ctxwindow").value) || undefined,
-    engine: document.getElementById("set-engine").value,
+    ...readGatewayEngine(),
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
     defaultClaudeEffort: document.getElementById("set-default-claude-effort").value,
@@ -4381,17 +4374,15 @@ function paintSettings(s) {
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
-  // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
+  // Before the licenses paint: they annotate an opt-in license whose provider key is still missing.
   paintQwenProviders(s.qwenProviders);
   for (const p of s.qwenProviders || []) SETTINGS_HAVE_PROVIDER_KEY[p.id] = p.hasApiKey === true;
   paintTerminalHarnesses(s.terminalHarnesses, s);
-  paintEngineToggles();
+  paintEngineLicenses();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });
   orgGrantsHost.replaceChildren(orgGrantsEditor.el);
   wireGrantTierNavigation(document.getElementById("org-grant-tier"), "organization");
-  const globalEngineSelect = document.getElementById("set-engine");
-  if (globalEngineSelect && ENGINE_MANIFESTS.length) globalEngineSelect.innerHTML = engineOptionsHtml();
   document.getElementById("state-bot").textContent = tokenState(s.tokens.hasBotToken, s.tokens.botTokenLast4);
   document.getElementById("state-app").textContent = tokenState(s.tokens.hasAppToken, s.tokens.appTokenLast4);
   document.getElementById("state-sign").textContent = s.tokens.hasSigningSecret ? "set" : "not set";
@@ -4456,7 +4447,11 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-default-composio"), { has: s.hasDefaultComposioToken, last4: "", fetch: revealSecret("settings", "defaultComposioToken") });
   document.getElementById("set-default-composio-label").value = s.defaultComposioTokenLabel || "";
   document.getElementById("set-ctxwindow").value = s.contextWindow || "";
-  if (s.engine) document.getElementById("set-engine").value = s.engine;
+  // The gateway default: harness → license → "if it fails, also use" (settings `engine` + `enginePool`).
+  if (ENGINE_MANIFESTS.length) {
+    gatewayEnginePicker ||= mountLicensePicker({ harnessSelect: document.getElementById("set-engine"), env: () => licenseEnv() });
+    gatewayEnginePicker.set(s.engine || "", s.enginePool || "");
+  } else if (s.engine) document.getElementById("set-engine").value = s.engine;
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
@@ -4578,6 +4573,9 @@ async function loadSettings() {
   USERS = directory.users || {};
   paintSettings(settings);
   await Promise.all([loadLicense(), loadOrgSecrets(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
+  // The admin-added engine licenses: their type, sign-in state and verification (the manifest
+  // painted above already lists them by name).
+  await licensesManager?.load();
 }
 
 // ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
@@ -4901,6 +4899,9 @@ function bindSettings() {
     try { form = readSettingsForm(); }
     catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
+    // The pool sits beside the license it belongs to: a save that moves the default sends both,
+    // or the daemon would clear the pool as it does for a bare engine change.
+    if (Object.hasOwn(patch, "engine") && Object.hasOwn(form, "enginePool")) patch.enginePool = form.enginePool;
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
     // settings change just persists and takes effect on the next message, no reconnect.
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
@@ -5086,8 +5087,12 @@ async function loadHealth() {
     // One chip per harness. An installed CLI that is signed OUT looks healthy to a version probe
     // and then fails every turn, so the chip reports the credential, not just the binary.
     const engines = h.engines && typeof h.engines === "object" ? h.engines : { claude: h.claude || {} };
+    const firstHealth = !HEALTH_ENGINES;
+    HEALTH_ENGINES = engines;
+    if (firstHealth) licensesManager?.paint();
     const engineChips = Object.entries(engines).filter(([, check]) => check?.enabled !== false).map(([id, check]) => {
-      const name = id.charAt(0).toUpperCase() + id.slice(1);
+      // Named from the manifest — a license an admin added has an id nobody can read.
+      const name = ENGINE_MANIFESTS.some((m) => m.id === id) ? engineLabel(id) : id.charAt(0).toUpperCase() + id.slice(1);
       const signedOut = check?.auth?.known === true && check.auth.authenticated === false;
       const ok = !!check?.available && !signedOut;
       const label = !check?.available
