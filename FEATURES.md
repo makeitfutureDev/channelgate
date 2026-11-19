@@ -5210,7 +5210,12 @@ are retired, bullet by bullet; everything else stands.
   per-run environment — which carries the channel's own provider logins — rides a 0600 `--env-file`
   under the channel's metadata folder (host side, never mounted) and never `-e KEY=VALUE`, because
   argv is world-readable in `ps`; the file is deleted when the child closes, and files a crashed
-  daemon left behind are swept. Values a line-oriented env file cannot represent are DROPPED and
+  daemon left behind are swept. That folder (`runtime/`, `CHANNEL_RUNTIME_DIR`) is on
+  `CHANNEL_FOLDER_DAEMON_ENTRIES` in `src/config/paths.js`, the list of metadata-folder entries
+  the update's workspace migration (`scripts/migrate-workspace.mjs`) never moves into a work
+  folder; the migration also removes an EMPTY `runtime/` an earlier update left in a default work
+  folder (rmdir only) and reports one that has content, naming environment files as a secret
+  exposure without printing them. Values a line-oriented env file cannot represent are DROPPED and
   their names logged rather than silently truncated. Host-only variables (`PATH`, `NODE_PATH`,
   `TMPDIR`, the XDG set, `SSH_AUTH_SOCK`, …) are stripped so the image's own values stand, and
   `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `CG_RUNTIME` are owned by the backend.

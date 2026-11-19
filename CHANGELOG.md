@@ -2,6 +2,14 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Stop updates from moving a channel's runtime scratch folder into its work folder. The update's
+  workspace migration treated the hidden `runtime/` folder as legacy work content and moved it
+  into the folder the channel's container mounts, on the first update after a channel was
+  created. That folder holds a run's environment file while the run starts, so an update during a
+  live run could have put the channel's secrets where the container reads them. The folder now
+  stays hidden, and an update removes the empty `runtime/` folders earlier updates left behind.
+  Folders with content are left in place and listed in the update log.
+
 - Let admins approve private MCP servers on the local network. Settings → Container runtime →
   *Private MCP servers on your network* takes exact `host:port` entries, such as a CAD
   workstation's MCP plugin at `192.168.130.33:10500`. Custom MCP connections can then reach those

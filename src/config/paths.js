@@ -192,6 +192,18 @@ export function settingsFile() {
 export function channelFolder(slug, platform) {
   return path.join(channelsDir(), platformFolder(platform), slug);
 }
+// Per-channel runtime scratch under that folder — today the container exec env files, which carry
+// a run's environment and so its secrets. It lives in the metadata folder because that is the one
+// per-channel place a container never mounts.
+export const CHANNEL_RUNTIME_DIR = "runtime";
+// Everything in a channel's metadata folder that is the DAEMON's, not the agent's work: the
+// workspace migration (scripts/migrate-workspace.mjs) must leave these where they are. A new
+// daemon-owned entry is added here in the same change that starts writing it.
+export const CHANNEL_FOLDER_DAEMON_ENTRIES = Object.freeze([
+  "meta.json", "sessions.json", ".claude", CHANNEL_RUNTIME_DIR,
+  // Pre-SQLite per-thread overrides, kept as inert backups after their one-time import.
+  "thread-engines.json", "thread-models.json", "thread-efforts.json", "thread-clean.json",
+]);
 export function channelMetaFile(slug, platform) {
   return path.join(channelFolder(slug, platform), "meta.json");
 }
