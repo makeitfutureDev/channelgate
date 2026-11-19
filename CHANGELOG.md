@@ -321,7 +321,7 @@
   The Agent page no longer carries the command.
 
 - Add a Settings page to the Activity dashboard. Each person manages their own reminders,
-  reply mentions, theme, passkeys, Composio and Toolbox tokens, email accounts, MCP servers, variables, skills
+  reply mentions, theme, passkeys, Composio tokens, email accounts, MCP servers, variables, skills
   and SSH keys from the browser. Secrets stay write-only, and every change affects only the
   signed-in person.
 
@@ -1353,7 +1353,7 @@ product overview.
   longer crowd the normal list. Existing alias settings keep working and stay visible when selected.
 - **Codex no longer sends usage metrics to OpenAI.** Claude Code's telemetry was already off, but Codex still sent OpenAI its anonymous usage and health metrics by default. Every Codex process the gateway starts now runs with `analytics.enabled=false`: chat turns, background work, the memory reviewer, SSH and VS Code sessions, and the gateway's own checks.
 - **A channel's database can be read page by page, and counted.** `query_channel_database` used to return at most 100 rows with no way to ask for the next ones. Ordered by a table's primary key, a read now also returns `nextCursor`; passing it back as `after` gets the next page, until it comes back empty. The new `count_rows` returns how many rows match, so an agent can show that nothing was missed. The extractor image has to be rebuilt (`npm run vpn -- build --channel ID`, then VPN off and on); until then the running one keeps working and a paged or counted request says it needs the rebuild.
-- **A connector outage at the provider no longer looks like a gateway bug.** When Composio or a toolbox answered a connection attempt with an error, a container run just lost the connector and the daemon logged only `remote MCP unavailable`. A brief 502/503/504 or network blip is now retried once after a second, so it no longer drops the connector for the whole turn. A lasting failure is logged with the server and the upstream status, for example `remote MCP unavailable (composio-user: upstream HTTP 502)`. The container still sees only the fixed sentence.
+- **A connector outage at the provider no longer looks like a gateway bug.** When Composio or the Make toolbox answered a connection attempt with an error, a container run just lost the connector and the daemon logged only `remote MCP unavailable`. A brief 502/503/504 or network blip is now retried once after a second, so it no longer drops the connector for the whole turn. A lasting failure is logged with the server and the upstream status, for example `remote MCP unavailable (composio-user: upstream HTTP 502)`. The container still sees only the fixed sentence.
 - **Slack Settings has an Automations page, and the tabs are reordered.** The tabs now read General
   · Variables · MCPs · Skills · Automations · Resume. **Automations** lists the conversation's
   scheduled tasks, reminders and `/loop` wake-ups with their next run time, and lets anyone allowed
@@ -1379,7 +1379,7 @@ product overview.
   `ERR_INTERNET_DISCONNECTED` in a proxy-mode channel. They are now comma-separated.
 - **Leftover credential files are cleaned out of channel containers.** A crashed or interrupted run
   could leave its MCP config or Codex secret bundle in the channel's artifact folder, where later
-  turns could read it (files from before the MCP relay held real Composio and toolbox tokens). The
+  turns could read it (files from before the MCP relay held real Composio and Make tokens). The
   gateway now deletes such files older than six hours before a channel container is created or
   started, and at boot for containers already running.
 - **Idle channels no longer flood the audit log.** An idle warm Claude process's telemetry, refused
@@ -1466,8 +1466,8 @@ product overview.
   Enterprise SDK-mode Composio started its Composio connection without the run's grant, so the
   gateway refused it and Codex had no Composio tools. It now connects like the other relayed
   servers.
-- **Composio and toolbox tokens no longer enter a channel container.** In a container, the
-  `composio-user`, `composio-agent`, MakeItFuture toolbox and Make toolbox connections are now
+- **Composio and Make toolbox tokens no longer enter a channel container.** In a container, the
+  `composio-user`, `composio-agent` and Make toolbox connections are now
   reached through the gateway itself: the engine holds only its signed run grant, and the daemon
   dials the service with the real token and relays the tools. Before, the token sat in a file in
   the channel's run folder that any process in the container could read. This applies to Claude
@@ -1759,7 +1759,7 @@ product overview.
   0600), outside the `ENV_MAP` that can reach the daemon's own environment. **Personal** secrets
   belong to a person and are injected only into runs THEY authored, in any conversation, never into
   someone else's turn in the same room; they live on the user record beside the personal Composio
-  and Toolbox tokens. Precedence is organization → personal → channel, most specific last, so a
+  token. Precedence is organization → personal → channel, most specific last, so a
   conversation's own account is never displaced by a personal token. The run preamble names each
   variable's scope, the warm-pool fingerprint covers the merged set (a process started for one
   author is never reused for another's turn), an unauthenticated run-API caller gets no personal
@@ -1774,7 +1774,7 @@ product overview.
   canonical admin-UI input wherever it is mounted instead of inheriting whatever its host gave it;
   in the user drawer it stacks full-width like the token fields directly above. `.desc` is now
   small everywhere rather than only inside a `.setcard`.
-- Admin UI: the "owner — whose account?" note beside every Composio/Toolbox token field
+- Admin UI: the "owner — whose account?" note beside every Composio token field
   (`.tok-label`) now styles itself instead of relying on an ancestor. It was only ever styled where
   it happened to sit inside a `.field` — in Settings — so the same input rendered as a small grey
   browser-default box in the conversation card and the user drawer. It now matches the token field
@@ -2596,7 +2596,7 @@ full live QA campaign is pending. This is not approval for stable-release promot
   files, so the `makeitfuture-skills` MCP injection, the organization/channel/user Skills Manager
   tokens (with their tools, routes, admin UI fields and secret readers), the favorites stubs and
   the App Home favorites fetch are gone. Stub folders left in older channel folders are pruned on
-  the next message. Skills Manager itself remains a standalone product; Toolbox is unchanged.
+  the next message.
 
 ### Changed
 - **Skill exclusions stick.** A skill an admin removes from the catalog (the Skills view,
@@ -2885,7 +2885,7 @@ full live QA campaign is pending. This is not approval for stable-release promot
   `tools/list` (two Node bootstraps, an OAuth-discovery round trip that a static-header server
   never needs, then a duplicated initialize) — inside the cold window, outside every warm one,
   while the local gateway server always made both. Header-bearing remote MCP servers (both Composio
-  identities and both toolboxes) are now dialled by Codex itself over its native streamable-HTTP
+  identities and the Make toolbox) are now dialled by Codex itself over its native streamable-HTTP
   transport, which answers in about 1.2s, and their credential is produced by a per-run
   `http_headers_helper` script that reads the run's existing 0600 secret bundle — so the token is
   still absent from Codex's argv and environment, and never reaches the shell snapshots Codex
@@ -3103,7 +3103,7 @@ full live QA campaign is pending. This is not approval for stable-release promot
 - **Composio (and every other injected remote MCP server) is back for Claude in channels that pick
   a global MCP server.** The channel lockdown lists a picked server by URL, and Claude Code then
   matches every REMOTE server by URL: a `serverName` entry no longer admits it, so `composio-user`,
-  `composio-agent`, Skills Manager, Toolbox and the Make toolbox were dropped as "blocked by
+  `composio-agent`, Skills Manager and the Make toolbox were dropped as "blocked by
   enterprise policy" — silently, before any connection attempt, which is why the run config still
   showed both Composio identities resolved while the model reported no Composio tools. Codex was
   never affected (it has no such allowlist). The lockdown now carries each injected remote server's
@@ -3751,8 +3751,7 @@ copying cross-channel auto-memory.
 - Slack app manifest: `home_tab_enabled`, `app_home_opened`, and the `/status` slash command.
 
 ## 2026-06-23
-- Embedded **Toolbox MCP** with user / channel / org-default tokens.
-- **Org-default** Composio / Skills tokens as the final fallback (channel → user → org).
+- **Org-default** Composio tokens as the final fallback (channel → user → org).
 - **Per-channel clean mode**: run bare for the lowest token cost (no MCP servers, skills, or
   favorites block) — closest to the model's base prompt.
 - Background-jobs **auto-continue** shipped (Slice 7): the daemon owns long shell work and re-injects

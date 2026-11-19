@@ -112,7 +112,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   `mcp-capability.js` — the per-run MCP payload: the `gateway` control server (always; over the
   read-only socket bridge in containers, carrying only a signed HMAC run capability with a toolset
   and TTL), `composio-user` (the author's personal token only), `composio-agent` (channel token →
-  organization default; suppressed in DMs), the toolbox/Make servers when a token resolves, then
+  organization default; suppressed in DMs), the Make toolbox server when a token resolves, then
   — through the engine adapter — the channel/organization-selected catalog servers ("Cloud MCP")
   and plugin-package servers mapped onto explicitly selected connections, plus the custom MCP
   connections people add by URL + Bearer token (`custom-mcps.js` rules, `custom-mcp-store.js`
@@ -277,7 +277,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   DB mount, no port), `socket-bridge.js` is the container-side stdio↔socket pipe copied into the
   image verbatim, `secret-env-bridge.js` launches credentialed stdio MCPs from a 0600 bundle so a
   secret never rides argv (`remote-secret-bridge.js` was retired in container-secrets P4). In a container the header-bearing
-  remotes (Composio token mode, the toolboxes) are the socket's `remote-mcp` service instead:
+  remotes (Composio token mode, the Make toolbox) are the socket's `remote-mcp` service instead:
   `remote-mcp-registry.js` holds their URL + headers in daemon memory under the capability's jti,
   `remote-relay.js` dials them and relays the tools, so the credential never enters the container.
   `egress-forwarder.js` is the container-side half of the egress proxy (127.0.0.1:3128 → the
