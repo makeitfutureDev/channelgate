@@ -33,6 +33,7 @@ import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from
 import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
+import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation } from "../gateway/automations-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
@@ -352,7 +353,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
+      const view = req.path.endsWith("/automations") ? "automations" : req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
@@ -550,6 +551,47 @@ export function createActivityRouter({
   router.get("/:id/settings/connections", serveDashboard);
   router.get("/:id/settings/connections/new", serveDashboard);
   router.get("/:id/calls", serveDashboard);
+  router.get("/:id/automations", serveDashboard);
+  // Automations: every request re-derives access from the session owner; channel and schedule
+  // ids from the browser only ever narrow what that access already allows.
+  router.get("/:id/api/automations", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const data = await automationChannels(await accessContext(client, session.ownerId), session.ownerId);
+      await context(req);
+      return res.json({ channels: data });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.get("/:id/api/automations/:channelId", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const access = await accessContext(client, session.ownerId);
+      const entry = await checkedChannel(access, session.ownerId, req.params.channelId);
+      const automations = channelAutomations(access, session.ownerId, entry);
+      await context(req);
+      return res.json({ automations });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.get("/:id/api/automations/:channelId/:scheduleId/runs", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const access = await accessContext(client, session.ownerId);
+      const entry = await checkedChannel(access, session.ownerId, req.params.channelId);
+      const runs = automationRuns(access, entry, String(req.params.scheduleId).slice(0, 64));
+      await context(req);
+      return res.json({ runs });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/automations/:channelId/:scheduleId/delete", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      const access = await accessContext(client, session.ownerId);
+      const entry = await checkedChannel(access, session.ownerId, req.params.channelId);
+      await context(req);
+      return res.json({ ok: deleteAutomation(access, session.ownerId, entry, String(req.params.scheduleId).slice(0, 64)) });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
 
   router.get("/:id/api/calls", async (req, res) => {
     try {

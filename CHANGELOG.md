@@ -675,6 +675,7 @@ product overview.
 
 ## Unreleased
 
+- Add an Automations tab to the Activity dashboard: pick any conversation you can access (your DM shows your personal ones), see its automations with recurrence in plain words, expand for run history, and delete ones you own.
 - Require Enterprise for new mandatory organization skill grants and organization-wide agent instructions. Saved policies remain active after downgrade; explicit removal remains available.
 
 
