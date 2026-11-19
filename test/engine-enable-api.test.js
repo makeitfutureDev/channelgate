@@ -30,15 +30,15 @@ const putSettings = async (body) => {
 };
 
 test("disabling every harness is refused", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
-  const res = await putSettings({ engineEnabled: { claude: false, codex: false, opencode: false } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
+  const res = await putSettings({ engineEnabled: { claude: false, codex: false } });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /at least one engine/i);
   assert.equal(isEngineEnabled("claude"), true, "the refused patch must not have been applied");
 });
 
 test("a partial map only changes the engines it names", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   const res = await putSettings({ engineEnabled: { codex: false, bogus: false } });
   assert.equal(res.status, 200);
   assert.equal(isEngineEnabled("codex"), false);
@@ -47,7 +47,7 @@ test("a partial map only changes the engines it names", async () => {
 });
 
 test("the default engine is validated against the enable state being saved in the SAME request", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
 
   const conflicting = await putSettings({ engine: "codex", engineEnabled: { codex: false } });
   assert.equal(conflicting.status, 400);

@@ -210,7 +210,7 @@ test("more-specific grant tiers replace a duplicate connector shape", () => {
   );
 });
 
-test("admin grant payloads are shape-cleaned and OpenCode stays MCP-off", () => {
+test("admin grant payloads are shape-cleaned and a retired harness's selection is dropped", () => {
   assert.deepEqual(cleanAccessGrants({
     skills: [" one ", "one", 2, "visualize:visualize", "../../escape", "nested/skill", "nested\\skill", "..", "bad\u0000name"],
     allowedMcps: [
@@ -223,7 +223,6 @@ test("admin grant payloads are shape-cleaned and OpenCode stays MCP-off", () => 
     skills: ["one", "visualize:visualize"],
     allowedMcps: [{ name: "ok", namespace: "mcp__ok", match: { serverName: "ok" } }],
     allowedCodexMcps: [{ id: "local-test", name: "test", kind: "server", serverName: "local-test" }],
-    allowedOpenCodeMcps: [],
   });
 });
 

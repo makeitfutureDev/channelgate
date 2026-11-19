@@ -27,7 +27,7 @@ For a Claude thread, use:
 
 The command goes to the engine's native compaction behavior. Compaction can summarize accumulated history to reduce context pressure. It does not delete workspace files or replace durable channel memory. Keep essential project decisions in files or [memory](/docs/features/memory) so a later independent thread can find them.
 
-The explicit `/compact` control is unsupported for Codex and the OpenCode proof adapter. Their own session behavior should not be confused with the gateway's Claude command.
+The explicit `/compact` control is unsupported for Codex. Its own session behavior should not be confused with the gateway's Claude command.
 
 ## Start fresh or reduce injected context
 

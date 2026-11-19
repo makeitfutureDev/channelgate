@@ -28,15 +28,14 @@ import { access, constants, realpath, stat } from "node:fs/promises";
 import readline from "node:readline";
 import { getDb } from "../db/index.js";
 import { findCodexRollout } from "../engines/codex-usage.js";
-import { engineLabel, engineStateDir, ENGINE_IDS } from "../engines/registry.js";
+import { engineLabel, engineStateDir } from "../engines/registry.js";
 import { runtimeCanInspectState } from "../runtimes/contract.js";
 import { expandCarryEntry } from "../runtimes/copy.js";
 import { listChannels } from "../config/store.js";
 import { effectiveWorkDir } from "./folders.js";
 
-// Engines whose sessions live in a local, gateway-readable store and can therefore be adopted.
-// OpenCode keeps its history in its own server-side store with no cwd we can verify, so a session
-// of its cannot pass the same-channel check and is refused explicitly rather than silently bound.
+// Engines whose sessions live in a local, gateway-readable store and can therefore be adopted:
+// only a transcript whose cwd we can verify passes the same-channel check.
 const ADOPTABLE = new Set(["claude", "codex"]);
 
 // The real state dirs — the same expressions run-grant-artifacts.js uses to build the engine
@@ -78,7 +77,6 @@ const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 const COMMAND_FORMS = [
   { engine: "claude", re: /\bclaude\b[^&|;]*?\s(?:--resume|-r)\s+("[^"]+"|'[^']+'|\S+)/i },
   { engine: "codex", re: /\bcodex\b(?:\s+exec)?\s+resume\s+("[^"]+"|'[^']+'|\S+)/i },
-  { engine: "opencode", re: /\bopencode\b[^&|;]*?\s--session\s+("[^"]+"|'[^']+'|\S+)/i },
 ];
 
 const CD_RE = /\bcd\s+("[^"]+"|'[^']+'|[^\s&|;]+)/i;
@@ -463,12 +461,9 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
         "```/resume cd \"/path/to/folder\" && claude --resume <session-id>```",
     };
   }
-  // Only an EXPLICIT harness in the pasted text can make the request unadoptable. An inherited
-  // thread engine is a guess, so a bare id in an OpenCode thread still gets looked up properly.
-  if (parsed.engine && !ENGINE_IDS.includes(parsed.engine)) return { ok: false, message: `I don't know the \`${parsed.engine}\` harness, so I can't resume its sessions.` };
-  if (parsed.engine && !ADOPTABLE.has(parsed.engine)) {
-    return { ok: false, message: `${engineLabel(parsed.engine)} sessions can't be adopted into a thread — it keeps no local transcript I can verify belongs to this channel.` };
-  }
+  // A harness named in the pasted text is always an adoptable one (COMMAND_FORMS recognizes no
+  // other). An inherited thread engine is only a guess, so a bare id in a thread on any other
+  // harness still gets looked up properly.
   const engine = parsed.engine || (ADOPTABLE.has(threadEngine) ? threadEngine : "claude");
 
   // When the text named no harness, the thread's engine is only a first guess — Claude and Codex

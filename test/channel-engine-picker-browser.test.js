@@ -14,7 +14,7 @@ test("channel runtime picker offers enabled providers and preserves their pins o
   const { QWEN_PROVIDERS } = await import("../src/engines/qwen.js");
   const { upsertChannelEntry, saveChannelMeta, getChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
   saveSettings({
-    engineEnabled: { claude: true, codex: true, qwen: true, "qwen-eu": true, opencode: false },
+    engineEnabled: { claude: true, codex: true, qwen: true, "qwen-eu": true, "claude-bedrock": false },
     ...Object.fromEntries(QWEN_PROVIDERS.flatMap((provider) => [
       [provider.settings.apiKey, `qa-picker-${provider.id}-dummy-key`],
       [provider.settings.baseUrl, `https://${provider.id}.example/anthropic`],
@@ -53,7 +53,7 @@ test("channel runtime picker offers enabled providers and preserves their pins o
     const engine = page.locator(".ch-engine");
     const offered = await engine.locator("option").evaluateAll((options) => options.map((option) => option.value));
     for (const id of ["", "claude", "codex", ...QWEN_PROVIDERS.map((p) => p.id)]) assert.ok(offered.includes(id), `enabled ${id || "default"} is offered`);
-    assert.ok(!offered.includes("opencode"), "disabled harness stays out of the picker");
+    assert.ok(!offered.includes("claude-bedrock"), "disabled harness stays out of the picker");
     assert.equal(await engine.inputValue(), provider.id, "the existing provider remains selected");
     assert.equal(await page.locator(".ch-model").inputValue(), provider.models[0].value);
     await page.locator('[data-pane="access"].subtab').click();

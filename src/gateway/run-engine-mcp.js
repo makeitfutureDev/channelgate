@@ -28,7 +28,7 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps, { channelId: engine === "codex-channel" ? target.meta.channelId : "" }) || {};
   const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
   try {
-    const managed = requireAdapter(engine).mcpTransport === "none" ? {} : perplexityResearchMcp(target);
+    const managed = perplexityResearchMcp(target);
     return finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRuntime, fingerprintNow, identity });
   } catch (error) {
     // A payload the caller never receives must not leave its relay registration behind.

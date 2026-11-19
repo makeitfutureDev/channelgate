@@ -27,7 +27,7 @@ Security-sensitive changes also need the security coverage gate. Keep `FEATURES.
 
 An engine implements a runner and validated manifest/contract, including session identity, supported network modes, authentication health, settings, and interruption. A chat surface implements its adapter/connector and capability description. Extend registries rather than spreading engine/platform-specific conditionals through the orchestrator.
 
-An experimental or proof adapter must state its restrictions; adding it to a registry does not establish production parity. Microsoft Teams and Google Chat remain Beta. OpenCode is a restricted proof adapter.
+An experimental or proof adapter must state its restrictions; adding it to a registry does not establish production parity. Microsoft Teams and Google Chat remain Beta.
 
 ## Licensing boundary
 

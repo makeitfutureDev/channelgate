@@ -26,7 +26,9 @@ export function effectiveMeta(meta) {
       allowNetwork: t.allowNetwork,
       autoMode: t.autoMode,
       cleanMode: t.cleanMode,
-      engine: meta.engine || t.engine,
+      // Only a harness this build ships: a template (or DM) still naming a retired one follows
+      // the gateway default instead of projecting an id no adapter answers to.
+      engine: [meta.engine, t.engine].find((id) => ENGINES.includes(id)) || "",
     });
   }
   return normalizeModeMeta(meta);

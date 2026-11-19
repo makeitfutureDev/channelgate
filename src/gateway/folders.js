@@ -198,9 +198,7 @@ export function channelSwitchesNote(meta = {}) {
   const networkLine =
     network === "on"
       ? `**on** — this conversation is meant to use the internet. There is no per-domain allow-list${enforced ? "; requests go through the gateway's egress proxy, which refuses private, loopback and cloud-metadata addresses" : ""}.`
-      : network === "unsupported"
-        ? "requested **on**, but this conversation's engine cannot run with the network on — treat it as off."
-        : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${enforced ? "The gateway's egress proxy enforces this: only the engine endpoints and this conversation's selected connectors are reachable, and any other request is refused." : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
+      : `**off** — this conversation is NOT meant to use the internet: don't fetch, install, push or call out; say the switch is off instead. ${enforced ? "The gateway's egress proxy enforces this: only the engine endpoints and this conversation's selected connectors are reachable, and any other request is refused." : `The switch is ${NETWORK_ADVISORY_NOTE}, so a request may still succeed — that is not permission.`}`.trim();
   return [
     "**This conversation's switches** (an admin sets them; they apply from the next message):",
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,

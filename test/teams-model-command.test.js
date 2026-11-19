@@ -45,7 +45,7 @@ function fixture({ meta = {}, isAdmin = true, isDM = false, now = Date.now } = {
   const apply = async (engine, data, options = {}) => { await load(engine, options); return submit({ engine, ...data }, options); };
   return { native, connector, controls, args, context, sent, replies, submit, load, apply };
 }
-saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { opencode: false } });
+saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { qwen: false } });
 
 test('bare /model matches Settings: Engine, Load models, then only that engine\'s models and efforts', async () => {
   const f = fixture();
@@ -109,7 +109,7 @@ for (const legacy of [false, true]) test(`Apply persists session runtime and rep
 test('invalid, incomplete, disabled, tampered and foreign submissions never mutate runtime', async () => {
   const f = fixture(); await f.native.onCommand(f.args);
   const failed = result => assert.equal(result.body.value.body[0].text, 'Action could not be completed');
-  failed(await f.load('opencode'));
+  failed(await f.load('qwen'));
   failed(await f.load('codex', { actor: '29:other' }));
   await f.load('codex');
   for (const [data, envelope] of [
@@ -117,7 +117,7 @@ test('invalid, incomplete, disabled, tampered and foreign submissions never muta
     [{ engine: 'codex', model: 'claude-opus-5-5', effort: 'default' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'impossible' }],
     [{ engine: 'codex', model: 'gpt-6-sol' }],
-    [{ engine: 'opencode', model: 'default', effort: 'default' }],
+    [{ engine: 'qwen', model: 'default', effort: 'default' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { actor: '29:other' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { conversation: 'a:other' }],
   ]) {

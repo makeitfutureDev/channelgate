@@ -135,7 +135,7 @@ test("/fork without a completed source session refuses before posting a new Slac
   assert.equal(client.posted.some((m) => !m.thread_ts), false);
 });
 
-for (const engine of ["qwen", "qwen-eu", "opencode", "unknown-engine"]) {
+for (const engine of ["qwen", "qwen-eu", "unknown-engine"]) {
   test(`/fork explains unsupported ${engine} sessions without creating a child`, async () => {
     const user = `U_FORK_UNSUPPORTED_${engine}`;
     const channel = `D_FORK_UNSUPPORTED_${engine}`;

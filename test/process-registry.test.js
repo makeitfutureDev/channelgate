@@ -40,7 +40,7 @@ test("tracked children are removed when they close", () => {
 });
 
 test("absolute shutdown sweep synchronously SIGKILLs every tracked process group", () => {
-  const child = trackEngineChild(new FakeChild(424244), { engine: "opencode" });
+  const child = trackEngineChild(new FakeChild(424244), { engine: "codex" });
   const calls = [];
   const realKill = process.kill;
   process.kill = (pid, signal) => {

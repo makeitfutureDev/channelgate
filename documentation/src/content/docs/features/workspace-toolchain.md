@@ -16,7 +16,7 @@ The versioned conversation image supplies the tools the agent and authorized dev
 | Media | FFmpeg, OpenCV, faster-whisper and its video-analysis model |
 | Tool transport | MCP helpers and gateway socket/egress helpers |
 
-Exact versions are pinned in the image contract and listed in the [compatibility reference](/docs/compatibility). The OpenCode proof CLI is not shipped by the standard image.
+Exact versions are pinned in the image contract and listed in the [compatibility reference](/docs/compatibility).
 
 ## Ask for a concrete tool check
 

@@ -17,7 +17,7 @@ unavailable; chat continuation still resumes its own session. See
 
 Slack `/fork` requires the adapter's `supports.nativeFork` capability. Claude and Codex declare
 it; Claude Extra, Codex EU and Codex channel accounts inherit it with their own session state.
-Qwen harnesses and OpenCode do not declare it. A shortcut to a different engine uses a fresh
+Qwen harnesses do not declare it. A shortcut to a different engine uses a fresh
 child with bounded Slack history, even when both engines share the same CLI.
 
 | Capability | Claude | Codex | Qwen harnesses (Claude Code CLI) |
@@ -47,7 +47,6 @@ precisely so a conversation cannot redirect its own provider. Such a spawn remov
 Anthropic credential family before applying its own, so the operator's login never leaves with it.
 A provider whose endpoint is account-specific ships no default and stays unconfigured — failing
 closed with the remedy named — until an operator saves theirs.
-OpenCode is omitted from the table above; see `docs/OPENCODE-ADAPTER.md`.
 
 ## Engine-literal exceptions
 

@@ -6,7 +6,7 @@
 [![CI](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml)
 [![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2024.0.0-3c873a)](./docs/COMPATIBILITY.md)
 [![Chat platforms and support status](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](#supported-platforms-and-ai-engines)
-[![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode-8a3ffc)](#supported-platforms-and-ai-engines)
+[![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex-8a3ffc)](#supported-platforms-and-ai-engines)
 
 ChannelGate is a **self-hosted AI agent gateway** that brings coding, research and workflow
 automation into your team's conversations. Use it as a Slack AI bot, or connect Microsoft Teams
@@ -21,7 +21,7 @@ their external services; see [privacy and data flow](./docs/PRIVACY-AND-DATA-FLO
 
 **Support status:** Slack is the primary supported surface. **Microsoft Teams and Google Chat are
 Beta. Composio SDK mode is Enterprise-only and Beta**; standard Composio MCP mode is available in
-every tier. OpenCode is experimental and restricted to its documented read profile.
+every tier.
 
 [Get started](#getting-started) · [Team benefits](#what-you-get) · [Full feature list](#full-feature-list) ·
 [Use cases](#use-cases) · [License and tiers](#licensing--partners) · [Documentation](#documentation)
@@ -290,11 +290,9 @@ release gate. They do not provide every Slack interaction or artifact. See
 | --- | --- | --- |
 | **Claude Code** | Default engine | Warm processes, thread resume, steering, skills, MCP tools and provider-reported cost. |
 | **OpenAI Codex** | Supported engine | Fresh process per turn with thread resume, skills, MCP tools, token usage and configured cost estimates. |
-| **OpenCode** | Experimental | Restricted workspace read profile; shell, edits, external tools/MCP and bypass modes are unavailable. |
 
-Claude and Codex versions are pinned in the runtime image. Check the [compatibility matrix](./docs/COMPATIBILITY.md),
-[engine capabilities](./docs/ENGINE-CAPABILITIES.md) and [OpenCode restrictions](./docs/OPENCODE-ADAPTER.md)
-before choosing a deployment profile.
+Claude and Codex versions are pinned in the runtime image. Check the [compatibility matrix](./docs/COMPATIBILITY.md)
+and [engine capabilities](./docs/ENGINE-CAPABILITIES.md) before choosing a deployment profile.
 
 ## How it works
 

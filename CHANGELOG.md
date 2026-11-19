@@ -2,6 +2,15 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Remove the OpenCode harness. ChannelGate no longer ships the experimental OpenCode adapter, its
+  settings, its pickers or its documentation; the supported harnesses are Claude Code and Codex
+  (with their account variants) and Qwen. Nothing needs migrating: a channel default, DM
+  template, thread pin or thread session that still names `opencode` follows the normal default
+  and starts a fresh session with the chat transcript replayed, and an approved-harness list keeps
+  its other entries. A channel whose approved-harness list named only OpenCode keeps approving
+  nothing until an admin picks its harnesses again. The admin UI no longer labels a channel
+  "network unsupported"; every remaining harness honors the *Allow network* switch.
+
 - Add *Start on voice clips in agent threads*, a personal setting that is off by default. With it
   on, a voice clip you send as a reply in a Slack thread where the agent answered last starts the
   agent without an @mention or 🤖. It never applies to top-level channel messages, to a clip that

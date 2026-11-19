@@ -1041,7 +1041,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // into this thread. The engine is the thread's own (override → session-born → channel →
         // gateway default), so the printed command resumes with the harness that minted the id.
         const workDir = effectiveWorkDir(entry.slug, meta);
-        const sessionId = (await getSessionMap(entry.slug).catch(() => ({})))[threadKey] || "";
+        const sessionId = (await getSession(entry.slug, threadKey).catch(() => "")) || "";
         const threadEngine = await resolveThreadEngine(entry.slug, threadKey, meta);
         // WHERE the channel runs decides both halves of `/resume`: which line to print, and where
         // to look for a pasted id. A session minted inside the channel's container cannot be

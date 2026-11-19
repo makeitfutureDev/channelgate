@@ -163,11 +163,6 @@ export const featureGroups = [
         "description": "Configure an opt-in compatible provider through the Claude harness."
       },
       {
-        "slug": "opencode",
-        "label": "OpenCode proof adapter",
-        "description": "Use the restricted third engine only for admitted read-only, network-off work."
-      },
-      {
         "slug": "subagents",
         "label": "Agent teams and in-turn delegation",
         "description": "Split a substantial task into bounded agent scopes and collect their results within the turn."

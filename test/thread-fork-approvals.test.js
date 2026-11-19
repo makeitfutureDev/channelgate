@@ -154,7 +154,7 @@ test("source boundary and access are rechecked before proposing a batch", async 
     if (invalid === "missing") await clearSession(f.slug, f.threadKey);
     if (invalid === "host") await saveSession(f.slug, f.threadKey, "s", "claude", null, JSON.stringify({ backend: "host", scope: "project" }));
     if (invalid === "scope") await saveSession(f.slug, f.threadKey, "s", "claude", null, JSON.stringify({ backend: "container", scope: "admin" }));
-    if (invalid === "engine") await saveSession(f.slug, f.threadKey, "s", "opencode", null, JSON.stringify({ backend: "container", scope: "project" }));
+    if (invalid === "engine") await saveSession(f.slug, f.threadKey, "s", "qwen", null, JSON.stringify({ backend: "container", scope: "project" }));
     if (invalid === "sudo") await setThreadSudo(f.slug, f.threadKey, true);
     if (invalid === "revoked") await setUser(f.authorId, { approved: false, isAdmin: false });
     await assert.rejects(prepareThreadForkApproval(f.ctx, { forks }), undefined, invalid);

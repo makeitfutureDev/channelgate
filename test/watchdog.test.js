@@ -197,7 +197,7 @@ test("every engine runner reports stderr as LIVENESS — never as progress", asy
   // re-armed the silence budget on every retry line kept wedged turns alive forever (the Codex
   // signed-out hang). Both halves of that contract are asserted here, on every runner.
   const { readFile } = await import("node:fs/promises");
-  for (const runner of ["claude.js", "codex.js", "opencode.js", "persistent-session.js"]) {
+  for (const runner of ["claude.js", "codex.js", "persistent-session.js"]) {
     const src = await readFile(new URL(`../src/engines/${runner}`, import.meta.url), "utf8");
     // Structural, not length-capped: take each handler from its `stderr.on("data",` to the first
     // line that closes it, so a handler growing a body never silently drops out of this check.

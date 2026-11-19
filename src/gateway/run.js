@@ -385,6 +385,11 @@ export function buildHealedPrompt(ctx, turnText) {
 // continues on that engine. New or unlabeled (pre-v4) sessions have nothing to stick to.
 export function decideThreadEngine({ requested, sessionEngine, isNew, explicit }) {
   if (isNew || !sessionEngine || sessionEngine === requested) return { engine: requested, switch: false };
+  // A row stamped by a harness this build does not ship (a retired engine, engines/retired.js)
+  // has nothing to stick to: no adapter can open its session id. The thread moves onto the
+  // requested engine exactly like an explicit switch — fresh session, transcript replayed —
+  // instead of ending every later turn on an engine that no longer exists.
+  if (!adapterFor(sessionEngine)) return { engine: requested, switch: true };
   return explicit ? { engine: requested, switch: true } : { engine: sessionEngine, switch: false };
 }
 
@@ -2376,9 +2381,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
 
     assertCompletedTurn(result, engine, sid);
 
-    // Self-minting engines (Codex, OpenCode) return their own thread_id (result.sessionId) —
-    // persist it over the locally-minted UUID so the next turn's resume actually finds the
-    // thread. Stamp the row with THIS run's engine: a literal here silently migrates any other
+    // Self-minting engines (Codex and its account variants) return their own thread_id
+    // (result.sessionId) — persist it over the locally-minted UUID so the next turn's resume
+    // actually finds the thread. Stamp the row with THIS run's engine: a literal here silently migrates any other
     // self-minting engine's thread onto that engine on its second turn.
     if ((mintsOwnSessionId(engine) || forkSourceSessionId) && result.sessionId && result.sessionId !== sid) {
       await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStampFor(engine));

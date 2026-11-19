@@ -54,9 +54,10 @@ test("engine facts: state dirs come from the target, and an engine that declares
   const containerTarget = { container: { claudeConfigDir: "/home/agent/.claude", codexHome: "/home/agent/.codex" } };
   assert.equal(engineStateDir("claude", containerTarget), "/home/agent/.claude");
   assert.equal(engineStateDir("codex", containerTarget), "/home/agent/.codex");
-  // OpenCode declares no session state: the carry is skipped, never guessed at.
-  assert.equal(engineSessionState("opencode"), null);
-  assert.deepEqual(engineSessionFiles("opencode", { cwd: "/x", sessionId: SESSION }), []);
+  // An engine that declares no session state (here an unregistered id): the carry is skipped,
+  // never guessed at.
+  assert.equal(engineSessionState("future-engine"), null);
+  assert.deepEqual(engineSessionFiles("future-engine", { cwd: "/x", sessionId: SESSION }), []);
   // No session id, nothing to locate.
   assert.deepEqual(engineSessionFiles("claude", { cwd: "/x", sessionId: "" }), []);
 });
@@ -269,12 +270,12 @@ test("carry: a backend that throws never fails the turn — it logs and hands ba
 test("carry: an engine with no session-state fact, and a backend that cannot carry, are both skipped", async () => {
   const noFact = carryHarness("nofact");
   const skipped = await carrySession({
-    engine: "opencode", sessionId: SESSION, cwd: "/w/nofact", storedRuntime: "",
+    engine: "future-engine", sessionId: SESSION, cwd: "/w/nofact", storedRuntime: "",
     target: noFact.containerTarget, slug: "nofact", threadKey: "1.5", log: noFact.log,
   });
   assert.equal(skipped, null);
   assert.equal(noFact.calls.copyIn.length, 0);
-  assert.match(noFact.logs.join("\n"), /opencode does not declare where it keeps a session/);
+  assert.match(noFact.logs.join("\n"), /future-engine does not declare where it keeps a session/);
 
   const noCarry = carryHarness("nocarry");
   write(claudeHostFile(SESSION, "/w/nocarry"), "transcript\n");
@@ -363,7 +364,7 @@ test("engine facts: Codex names the source of a paginated fork from the rollout'
   assert.equal(engineSessionParent("codex", "{not json"), "");
   assert.equal(engineSessionParent("codex", JSON.stringify({ type: "session_meta", payload: { id: CHILD, history_mode: "paginated", forked_from_id: CHILD } })), "");
   assert.equal(engineSessionParent("claude", codexMeta(CHILD, PARENT)), "", "Claude's --fork-session copies the history: nothing to follow");
-  assert.equal(engineSessionParent("opencode", codexMeta(CHILD, PARENT)), "");
+  assert.equal(engineSessionParent("future-engine", codexMeta(CHILD, PARENT)), "");
 });
 
 test("engine facts: a parentSession fact that is not a function does not load", async () => {

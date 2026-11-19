@@ -1,4 +1,3 @@
-import { adapterFor } from "../engines/registry.js";
 import { NETWORK_ADVISORY_NOTE, networkEnforcedFor } from "../engines/network-policy.js";
 import { authorizeSudoRuntime } from "../runtimes/sudo-authority.js";
 
@@ -71,14 +70,12 @@ export function modeSettingsPatch(current = {}, { mode, autoMode, cleanMode } = 
   return patch;
 }
 
-// The channel's Allow-network switch as one of three honest words. "off" is a real state and must
+// The channel's Allow-network switch as one of two honest words. "off" is a real state and must
 // be SAID: the old label appended a suffix only when the switch was on, so every surface rendered
 // "off" and "nobody ever configured it" identically — the one thing an operator (or the engine)
 // cannot afford to guess about the network.
 export function networkState(meta = {}) {
-  if (!meta.allowNetwork) return "off";
-  const engine = String(meta.engine || "claude");
-  return (adapterFor(engine)?.supports?.networkModes || []).includes("on") ? "on" : "unsupported";
+  return meta.allowNetwork ? "on" : "off";
 }
 
 // `detail` adds the honest caveat for the OFF state where the switch is only advisory for this
