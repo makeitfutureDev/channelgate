@@ -27,7 +27,7 @@ export function zoneHint() {
 // A read-time preview, never a new persisted scheduling field. Cron uses the same daemon
 // clock/helper as creation; one-time/interval rows retain their stored due time, even if overdue.
 // This describes nominal eligibility, not a guarantee of immediate delivery or engine admission.
-function scheduleNextRun(schedule, now) {
+export function scheduleNextRun(schedule, now) {
   if (!schedule.enabled) return null;
   const next = schedule.once || schedule.intervalDays
     ? new Date(schedule.runAt)

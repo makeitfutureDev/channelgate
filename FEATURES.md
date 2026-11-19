@@ -49,6 +49,23 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 
 → TEST-PLAN: Container process limit (2026-11-19).
 
+## Activity Automations page (2026-11-19)
+
+The Activity dashboard has an **Automations** tab (`/activity/<session>/automations`). A conversation
+picker lists every Slack conversation the viewer may open under the dashboard's own access rule
+(`accessContext().allows`), the viewer's OWN direct messages first as "Your direct messages
+(personal)"; another person's DM is never listed. For the selected conversation it shows each
+scheduled task, reminder and thread loop with its title, its recurrence in plain words ("At 09:00 on
+weekdays (Europe/Bucharest)", "Every 15 minutes", "Every 3 days", "Once, on …" — never the cron
+expression; an unphraseable cron reads "On a custom schedule"), the next run, paused state, the
+instructions, and — on expand — the last 30 runs from `schedule_runs` (status, start, duration,
+cost inside the plan's cost window, summary or error). Sudo schedules are visible only to admins.
+**Delete** is offered to the automation's creator, an organization admin, or anyone in their own
+DM; it is CSRF-checked, re-authorized server-side and scoped to the checked conversation. Run
+history survives deletion. Code: `src/gateway/automations-view.js`, `src/web/automations-page.js`,
+routes in `src/web/activity.js`.
+→ TEST-PLAN: Activity Automations page (2026-11-19).
+
 ## Activity connection management (2026-11-18)
 
 Activity → Settings → Connections opens a compact, full-width application grid with Connected and

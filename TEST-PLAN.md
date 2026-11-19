@@ -63,6 +63,19 @@
       recreating its container with `--pids-limit 4096` (`podman inspect --format
       '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
 
+## Activity Automations page (2026-11-19)
+
+Engine-independent (reads stored schedules and runs; no engine turn). Regression:
+`test/activity-automations.test.js`.
+
+Live: as an approved non-admin with (a) one schedule they created in a shared channel, (b) one
+created by someone else there, (c) one in their own DM, open Activity → Automations.
+Pass when: the picker lists their DM first as "Your direct messages (personal)" and only
+conversations they can open; recurrences read in words with the gateway zone and no `*`; expanding
+shows run history; Delete appears on (a) and (c) but not (b); deleting (a) removes it from the list
+and from `list_schedules`, its runs remain; a second user's DM never appears; an admin also sees
+sudo schedules and may delete (b).
+
 ## Activity Connections settings (2026-11-18)
 
 - Compact catalog revision: `test/activity-connections-compact-browser.test.js` checks the real
