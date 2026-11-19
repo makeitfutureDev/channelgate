@@ -161,6 +161,8 @@ Historical Slack checkmark completion is reconciled to the person who added it, 
 
 Done is shared across a conversation, while leaving Active is personal. When somebody else completes a thread, its green Done row remains in your Activity until you Hide it. Completing it yourself removes it from Active and retains it in Completed; pins cannot override this. Hide remains separate and affects only your list. Reopen resets automatic completion dismissals while preserving manual Hide, and your next newer original message restores your own visibility. Existing starter-only dashboard and voice completion authority is unchanged. Existing running tasks continue, but shared Done remains the displayed state.
 
+The browser dashboard applies Done, Hide, Later and Pin optimistically: the row moves on click, survives any live snapshot that arrives before the save is confirmed, and is restored with an error message if the save fails. The server answers as soon as the decision is durable and after its usual access rechecks; the Slack ✅/🕒 root reaction follows in the background, serialized per thread, with the existing one-minute retry when Slack fails.
+
 ## Mark threads Done by voice (2026-11-17)
 
 During a voice call, “mark this thread done” or “close this conversation” invokes a direct

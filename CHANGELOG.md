@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make Done, Hide, Later and Pin on the Activity dashboard respond instantly. The row used to
+  stay put for several seconds while the gateway rechecked access with Slack, added the ✅
+  reaction and reloaded the whole list. The row now moves on click and comes back with an error
+  if the change can't be saved; the ✅ is added right after the change is saved, retrying on its
+  own if Slack is slow.
+
 - Add *Start on voice clips in agent threads*, a personal setting that is off by default. With it
   on, a voice clip you send as a reply in a Slack thread where the agent answered last starts the
   agent without an @mention or 🤖. It never applies to top-level channel messages, to a clip that
