@@ -480,6 +480,20 @@ work folder. Repeat with Codex: the reply names it, and `.agents/skills/qa-skill
 the next Claude and Codex turns no longer name it. In "Only me", tick it, then in a different channel
 ask the same question with each engine: it is named only in runs this user starts.
 
+Waiting for approval: `test/activity-skills.test.js` covers another member's pending request showing
+to the viewer without its files, "Only me" listing the viewer's own requests, the picker counts, and
+a decided request leaving the list. `test/activity-skills-pending-browser.test.js` (headless
+Chromium, 390px) covers the section being hidden when empty, the option suffix, the row text, the
+note rendering as text and no sideways scroll.
+
+Live `ACT-SKILLS-03` (Claude and Codex): in `#cg-qa-a`, as a non-admin member, ask the bot (once per
+engine) to "propose changing the description of the organization skill <name> to …". The reply says
+the change waits for an admin. A SECOND non-admin member of `#cg-qa-a` opens Activity → Skills →
+`#cg-qa-a`. Pass when: "Waiting for approval" lists each request with the skill, "Edit an
+organization skill", the first member's name and the note, and the picker shows "· 2 waiting for
+approval"; a user who is not a member of `#cg-qa-a` cannot open it (403); the first member sees both
+under "Only me". After an admin rejects one in Skills → Review, Refresh shows one left.
+
 Live `ACT-SKILLS-02` (engine-independent, UI): with unsaved changes, switching conversation or Refresh asks
 to discard and Cancel keeps the ticks; at phone width the page does not scroll sideways. Save from a revoked
 Activity session fails with the session message and changes nothing.

@@ -86,6 +86,26 @@ test("a template-managed DM is detached to its own copy on the first skill chang
   assert.deepEqual(after.skills.map((s) => s.toLowerCase()).sort(), [...shown, "deploy-helper"].sort());
 });
 
+test("requests waiting for an admin show to every member of the conversation they were filed in", async () => {
+  const entry = { ...team, channelId: "CSKILL1" };
+  assert.deepEqual((await view.channelSkillsView(access, "U_ME", entry)).pending, []);
+  const { proposal } = authoring.proposeSkillChange({ skill: "org-policy", kind: "change", files: [md("Org Policy", "stricter")], note: "Tighten the wording", proposedBy: "U_OTHER", channelSlug: team.slug });
+  const mine = authoring.proposeSkillChange({ skill: "release-notes", kind: "delete", note: "Unused", proposedBy: "U_ME", channelSlug: dm.slug }).proposal;
+  // Another member's request is visible to the viewer, without the proposed files.
+  const pending = (await view.channelSkillsView(access, "U_ME", entry)).pending;
+  assert.deepEqual(pending.map((p) => [p.id, p.skill, p.kind, p.by, p.note]), [[proposal.id, "Org Policy", "change", "Other", "Tighten the wording"]]);
+  assert.equal(pending[0].action, "Edit an organization skill");
+  assert.equal("files" in pending[0], false);
+  // "Only me" lists the viewer's own requests wherever they were filed; the picker counts both.
+  assert.deepEqual((await view.personalSkillsView("U_ME", false)).pending.map((p) => p.id), [mine.id]);
+  const channels = await view.skillChannels(access, "U_ME");
+  assert.deepEqual(channels.map((c) => [c.channelId, c.pending]), [["me", 1], ["DSKILL1", 1], ["CSKILL1", 1]]);
+  // A decided request leaves the list.
+  await authoring.decideSkillProposal(proposal.id, { decision: "reject", decidedBy: "U_ADMIN" });
+  assert.deepEqual((await view.channelSkillsView(access, "U_ME", entry)).pending, []);
+  await authoring.decideSkillProposal(mine.id, { decision: "reject", decidedBy: "U_ADMIN" });
+});
+
 test("selection diff is case-insensitive", () => {
   assert.deepEqual(picker.skillSelectionDiff(["A", "b"], ["a", "C"]), { added: ["C"], removed: ["b"] });
 });
@@ -95,6 +115,7 @@ test("the dashboard renders a Skills tab and page; Settings points to it", () =>
   assert.match(page.html, /<title>Skills · ChannelGate/);
   assert.match(page.html, /id="skills-channel"/);
   assert.match(page.html, /id="skills-search"/);
+  assert.match(page.html, /id="skills-pending"[^>]* hidden/);
   assert.match(page.html, /\/skills" aria-current="page">Skills</);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, />Skills<\/a>/);
   assert.match(activityPage({ sessionId: "s", csrf: "c", view: "settings" }).html, /Open the Skills page/);

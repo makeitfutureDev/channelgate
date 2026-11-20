@@ -7,6 +7,9 @@
   the skills it loads and save. Organization and template skills show as always on. Settings →
   Skills now links there. Changing a skill in a direct message that follows the organization's
   default setup now takes effect (it used to be silently ignored) by giving the DM its own copy.
+- Show skill requests **waiting for approval** on the Activity Skills page: each conversation lists
+  the requests made in it that an organization admin has not decided yet, to every member of that
+  conversation; "Only me" lists your own. The conversation picker shows how many are waiting.
 - Keep the admin dashboard signed in across gateway restarts: sessions now persist in the
   database (only the cookie token's hash is stored). A passkey or password-plus-Slack-code
   sign-in lasts thirty days and survives seven idle days instead of thirty minutes idle / twelve

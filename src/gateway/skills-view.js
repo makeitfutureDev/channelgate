@@ -4,7 +4,7 @@
 // Slack Settings → Skills uses (skills/channel-picker.js), so both surfaces admit exactly the same
 // people and skills. "Only me" is the viewer's personal tier (user-settings.js), which follows them
 // into every conversation.
-import { listChannels, getChannelMeta, patchChannelMeta } from "../config/store.js";
+import { listChannels, getChannelMeta, getUser, patchChannelMeta } from "../config/store.js";
 import { getOrgAccessGrants } from "../config/settings.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { platformOfConversation } from "../platforms/ids.js";
@@ -14,7 +14,7 @@ import { sharedSkillGrants } from "./access-grants.js";
 import { checkedChannel } from "./automations-view.js";
 import { effectiveMeta } from "./effective-meta.js";
 import { ensureChannelFolder } from "./folders.js";
-import { getSkill } from "./skills/catalog.js";
+import { getSkill, listProposals } from "./skills/catalog.js";
 import { applyChannelSkillSelection, channelSkillRows, skillSelectionDiff } from "./skills/channel-picker.js";
 import { channelSkillGrants, templateOfMeta } from "./skills/templates.js";
 import { UserSettingsError, personalSkillPicker, savePersonalSkills } from "./user-settings.js";
@@ -39,9 +39,44 @@ export async function detachDmTemplateForSkills(entry, actor, source) {
   return after;
 }
 
+const PENDING_KINDS = {
+  change: "Edit an organization skill", promote: "Share with the whole organization", delete: "Delete from the catalog",
+  template: "Add to a skill template", feedback: "Feedback",
+};
+
+/**
+ * Skill requests still waiting for an organization admin. For a conversation: every request filed
+ * FROM it, shown to everyone who may open it (the caller has already checked that). For "Only me":
+ * the viewer's own requests, wherever they filed them. Read-only — only an admin decides one — and
+ * never the proposed files, only what a member could already read in the thread that filed it.
+ */
+export async function pendingSkillApprovals({ channelSlug = "", proposedBy = "" } = {}) {
+  if (!channelSlug && !proposedBy) return [];
+  const rows = listProposals({ status: "pending", channelSlug, proposedBy, limit: 100 });
+  const names = new Map();
+  for (const id of new Set(rows.map((row) => row.proposedBy).filter(Boolean))) {
+    names.set(id, String((await getUser(id).catch(() => null))?.name || id));
+  }
+  return rows.map((row) => ({
+    id: row.id, kind: row.kind, action: PENDING_KINDS[row.kind] || row.kind,
+    skill: String(getSkill(row.slug)?.name || row.slug), key: row.slug, target: row.target || "",
+    note: String(row.note || "").slice(0, 400), by: names.get(row.proposedBy) || "", createdAt: row.createdAt,
+  }));
+}
+
+function pendingCounts() {
+  const counts = new Map();
+  for (const row of listProposals({ status: "pending", limit: 1000 })) {
+    if (row.channelSlug) counts.set(`c:${row.channelSlug}`, (counts.get(`c:${row.channelSlug}`) || 0) + 1);
+    if (row.proposedBy) counts.set(`u:${row.proposedBy}`, (counts.get(`u:${row.proposedBy}`) || 0) + 1);
+  }
+  return counts;
+}
+
 /** Every Slack conversation the viewer may configure: "Only me", their own DM, then channels. */
 export async function skillChannels(access, userId) {
   const rows = [];
+  const waiting = pendingCounts();
   const entries = (await listChannels()).filter((entry) => platformOfConversation(entry.channelId) === "slack");
   // Membership checks for private conversations are Slack calls: a few at a time.
   for (let i = 0; i < entries.length; i += 8) {
@@ -52,13 +87,13 @@ export async function skillChannels(access, userId) {
       if (dm && meta?.dmUserId && meta.dmUserId !== userId) return null; // only the viewer's OWN DM
       const effective = effectiveMeta({ ...meta, channelId: entry.channelId });
       const name = dm ? "Your direct messages" : `#${String(await activityChannelName(entry)).replace(/^#+/, "")}`;
-      return { channelId: entry.channelId, name, personal: dm, count: channelSkillGrants(effective).length, linked: Boolean(meta?.workspaceLink) };
+      return { channelId: entry.channelId, name, personal: dm, count: channelSkillGrants(effective).length, linked: Boolean(meta?.workspaceLink), pending: waiting.get(`c:${entry.slug}`) || 0 };
     }));
     rows.push(...batch.filter(Boolean));
   }
   rows.sort((a, b) => Number(b.personal) - Number(a.personal) || a.name.localeCompare(b.name));
   const mine = await personalSkillPicker(userId, access.user?.isAdmin === true).catch(() => ({ selected: [] }));
-  return [{ channelId: PERSONAL_SKILLS_ID, name: "Only me — every conversation", personal: true, count: mine.selected.length, linked: false }, ...rows];
+  return [{ channelId: PERSONAL_SKILLS_ID, name: "Only me — every conversation", personal: true, count: mine.selected.length, linked: false, pending: waiting.get(`u:${userId}`) || 0 }, ...rows];
 }
 
 function sourceOf(row) {
@@ -74,15 +109,16 @@ export async function channelSkillsView(access, userId, entry) {
   const stored = (await getChannelMeta(entry.slug)) || {};
   const meta = { ...effectiveMeta(stored), channelId: entry.channelId };
   const userIsAdmin = access.user?.isAdmin === true;
+  const pending = await pendingSkillApprovals({ channelSlug: entry.slug });
   if (stored.workspaceLink) {
     // A linked conversation shares the source's setup: its skills are edited there.
-    return { kind: "channel", editable: false, linked: { name: String(stored.workspaceLink.name || stored.workspaceLink.slug || "another conversation") }, skills: [] };
+    return { kind: "channel", editable: false, pending, linked: { name: String(stored.workspaceLink.name || stored.workspaceLink.slug || "another conversation") }, skills: [] };
   }
   const template = templateOfMeta(meta);
   const organization = getOrgAccessGrants().skills || [];
   const notLoaded = sharedSkillGrants({ organization, channel: channelSkillGrants(meta), lookupSkill: getSkill }).skipped.map((item) => item.name);
   return {
-    kind: "channel", editable: true, linked: null,
+    kind: "channel", editable: true, linked: null, pending,
     template: template ? String(template.name || template.slug) : "",
     dmTemplate: Boolean(stored.isDM && ["user", "admin"].includes(stored.template)),
     notLoaded,
@@ -98,6 +134,7 @@ export async function personalSkillsView(userId, isAdmin) {
   const mine = new Set(picker.selected.map((slug) => slug.toLowerCase()));
   return {
     kind: "personal", editable: true, linked: null, template: "", notLoaded: picker.foreign,
+    pending: await pendingSkillApprovals({ proposedBy: userId }),
     skills: picker.options.map((option) => ({ key: option.key, name: option.label, description: String(option.description || "").slice(0, 600),
       selected: mine.has(option.key.toLowerCase()), locked: false, source: mine.has(option.key.toLowerCase()) ? "personal" : "" }))
       .sort((a, b) => Number(b.selected) - Number(a.selected) || a.name.localeCompare(b.name)),
