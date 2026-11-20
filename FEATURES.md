@@ -570,14 +570,18 @@ fixed saved width (2026-11-20).
 The Activity dashboard adapts to phone, tablet and desktop widths instead of squeezing the
 desktop layout:
 
-- **Header menu (900px and narrower).** The page links (Activity, Calls, Automations, Skills,
-  Subscriptions, Settings) and the theme switch fold into a ☰ menu button, so the header stays on
-  one line. Subscription meters and the Call button stay visible; on phones Call shows only its
-  icon. The menu closes on Escape, a click outside it, or the button again.
-- **Status menu (900px and narrower).** The status tabs (Active, Working, Waiting, Error, Idle,
+- **Header menu (1100px and narrower, which covers every iPad in portrait).** The page links
+  (Activity, Calls, Automations, Skills, Subscriptions, Settings) and the theme switch fold into a
+  ☰ menu button, so the header stays on one line. Subscription meters and the Call button stay
+  visible; on phones Call shows only its icon. The menu closes on Escape, a click outside it, or the button again.
+- **Subscription meters never widen the page.** Below 1500px each meter is a ring with its
+  percentage, and the account name moves to its tooltip; wider screens show names up to 180px
+  with an ellipsis. Long names such as `Claude Code · contact@…` used to make the page wider than
+  an iPad's screen, so Safari zoomed out and cut off the right side.
+- **Status menu (1100px and narrower).** The status tabs (Active, Working, Waiting, Error, Idle,
   Later, Completed, All open, Hidden) become one dropdown with each count, instead of a strip that
   scrolls out of view.
-- **Row actions (1024px and narrower).** Each row shows Open and Done plus **More actions (⋯)**.
+- **Row actions (1100px and narrower).** Each row shows Open and Done plus **More actions (⋯)**.
   Tapping it unfolds a labelled strip under the row with every action (Open in Slack, Call the
   agent, Done/Reopen, Later/Resume, Pin/Unpin, Hide/Show, Fewer actions). The Actions column
   shrinks to 96px, so the conversation title gets the room.
@@ -587,7 +591,8 @@ desktop layout:
 - **Separate layout for touch screens.** Column order, widths and hidden columns are saved twice
   per viewer: once for computers and once for touch screens (phones and tablets, detected by a
   coarse pointer without hover). Rearranging on an iPad never changes the computer layout, and
-  the reverse. Until a touch layout is saved, touch screens start from the computer layout. On
+  the reverse. Until a touch layout is saved, touch screens use the computer column order and hidden
+  columns with default widths, since widths sized for a monitor push a tablet's columns off-screen. On
   touch screens, header drag-to-move is off because it fights scrolling; the Columns dialog
   rearranges instead, and column edges have a larger grab area.
 

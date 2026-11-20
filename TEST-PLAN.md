@@ -934,10 +934,16 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   closes it. The status dropdown lists every status with its count and filters the rows. Each row
   shows Slack, Done and ⋯ without overlapping the channel pin. ⋯ unfolds labelled actions under
   the row; Fewer actions folds them. No horizontal page scroll.
-- iPad portrait (768–834px, touch): status dropdown, Group by, Columns and search on one toolbar
-  line; conversation titles get at least two readable lines; the Actions column holds Slack, Done
-  and ⋯. iPad landscape (1180px) and desktop (1440px) keep the full tab strip, the page links and
-  all six row buttons, unchanged.
+- iPad portrait (768–1032px, touch): one-line header (logo, meter rings, Call, ☰); status
+  dropdown, Group by, Columns and search on one toolbar line; conversation titles get at least two
+  readable lines; the Actions column holds Slack, Done and ⋯. iPad landscape (1180px) and desktop
+  (1440px) keep the full tab strip, the page links and all six row buttons.
+- Overflow regression: use four subscription accounts with long names (for example
+  `Claude Code · contact@makeitfuture.com`) and a saved computer layout with Actions first and
+  Conversation at 900px. At 375, 700, 834, 1032, 1180, 1440 and 1920px, `scrollWidth` must equal
+  the window width (no sideways page scroll, no zoom-out on iOS). Below 1500px the meters are rings
+  with percentages; the header is one line from 700px up. A touch screen without its own layout
+  shows the Actions-first order with default widths, so every column is visible at 1032px.
 - Per-device layout: on the touch device, use Columns to hide Comment and Channel and move Status
   up, then save and reload. Expect the touch layout back, with the dialog saying the layout is for
   phones and tablets. In a desktop browser for the same viewer, expect the earlier computer

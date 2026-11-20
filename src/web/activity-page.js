@@ -275,7 +275,9 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const raw = own ? data.columnsTouchVersion : data.columnsVersion;
     const version = Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
     if (!validColumnOrder(layout.order) || (source === columnsSource && version < columnsVersion) || (columnsSource === "touch" && source !== "touch")) return;
-    columnOrder = [...layout.order]; columnWidths = cleanWidths(layout.widths); columnHidden = cleanHidden(layout.hidden);
+    // Widths sized for a computer screen would push a tablet's columns off-screen, so a touch screen
+    // without its own layout takes the computer order and hidden columns but the default widths.
+    columnOrder = [...layout.order]; columnWidths = own || columnsDevice === "desktop" ? cleanWidths(layout.widths) : {}; columnHidden = cleanHidden(layout.hidden);
     columnsVersion = version; columnsSource = source;
     applyColumns();
   }
@@ -1588,7 +1590,8 @@ a:hover{text-decoration:none}
 .top .subscription-quick{display:flex;align-items:center;gap:7px;padding:0;background:none;border:0;border-radius:0;font-size:11.5px;color:var(--muted);white-space:nowrap;--m:var(--ok)}
 .top .subscription-quick.warning{--m:var(--warn)}.top .subscription-quick.critical{--m:var(--danger)}.top .subscription-quick.unavailable{--m:transparent}
 .top .subscription-quick.stale{opacity:.6}
-.top .subscription-quick-name{font-size:11.5px}
+.top .subscription-quick-name{font-size:11.5px;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.top .subscription-quick-list{min-width:0;flex-wrap:wrap}
 .top .subscription-quick progress{width:46px;height:4px;border-radius:4px;background:var(--line-2);accent-color:var(--m)}
 .top .subscription-quick progress::-webkit-progress-bar{background:var(--line-2);border-radius:4px}
 .top .subscription-quick progress::-webkit-progress-value{background:var(--m);border-radius:4px}
@@ -1838,7 +1841,7 @@ select.settings-input{height:32px}
 }
 /* Tablets and phones: a row shows Open and Done plus a More button that unfolds a labelled strip
    of every action under the row, so seven 28px buttons never crowd out the conversation. */
-@media(max-width:1024px){
+@media(max-width:1100px){
   :root{--col-actions:96px;--col-comment-min:90px}
   .actions .more-toggle{display:inline-grid}
   tbody tr:not([data-more]) .actions .call-link,tbody tr:not([data-more]) .actions .toggle[data-operation]{display:none}
@@ -1849,8 +1852,15 @@ select.settings-input{height:32px}
   tbody tr[data-more] .actions :is(.open-link,.call-link,.toggle,.more-toggle){width:auto;height:34px;padding:0 12px 0 32px;font-size:12.5px;line-height:32px;text-indent:0;white-space:nowrap}
   tbody tr[data-more] .actions :is(.open-link,.call-link,.toggle,.more-toggle)::before{inset:0 auto 0 11px;margin:auto 0}
 }
+/* Below 1500px (tablets, phones, small laptops): each subscription meter is a ring and its percentage (the name stays in
+   its tooltip), so long account names never push the page wider than the screen. */
+@media(max-width:1500px){
+  .top .subscription-quick progress,.top .subscription-quick-name{display:none}
+  .subscription-ring{display:block}
+  .top .subscription-quick-list{gap:10px}
+}
 /* Narrow windows: status tabs become one menu, and the header folds into a menu button. */
-@media(max-width:900px){
+@media(max-width:1100px){
   .filters{display:none}
   .filter-pick{display:block}
   .nav-toggle{display:grid}
@@ -1875,8 +1885,6 @@ select.settings-input{height:32px}
   .top{padding:8px 12px;gap:8px 10px}
   .agent-name{max-width:150px}
   .top .subscription-quick-list{order:1;gap:10px}
-  .top .subscription-quick progress,.top .subscription-quick-name{display:none}
-  .subscription-ring{display:block}
   .call-text{display:none}
   #call-agent{padding:0 9px}
   .bar{flex-wrap:wrap;padding:6px 8px;gap:6px}
