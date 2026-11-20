@@ -8,8 +8,8 @@ selects and fails over between licenses, are described in
 [the engine capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses). An engine license
 is not the ChannelGate product license key in [LICENSE-KEYS.md](LICENSE-KEYS.md).
 
-An organization admin can enable **Codex EU** and **Claude Extra** in Settings → Engine &
-runtime → Licenses the gateway may use. They start disabled. Save the toggle, then authenticate
+An organization admin can enable **Codex EU** and **Claude Extra** in Settings → Engine
+licenses. They start disabled. Save the toggle, then authenticate
 on the computer/VPS running ChannelGate, in a terminal as the **gateway service user**. Each
 setup card displays the actual directory and command for that deployment. After authentication,
 select the license as a default or approve it for a channel and use `/model` in a new thread.
@@ -81,8 +81,10 @@ Choose defaults that match the configured provider when changing terminal authen
 
 Neither optional license is a source or target of automatic failover to the other harness. A turn
 moves between one of them and another license of the same harness only when the conversation's
-selection names both (**Any license**, or an **If it fails, also use** list). Bedrock exists only
-as this built-in license; it cannot be added as a further license. Terminal
+selection names both (**Any license**, or an **If it fails, also use** list). Further Bedrock
+credentials, Google Vertex AI, Microsoft Azure and custom servers are admin-added licenses
+(Settings → Engine licenses; [the capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses)),
+which take a Bedrock API key rather than this license's terminal setup. Terminal
 credential changes take effect on subsequent cold turns. Bedrock token usage is recorded
 without an invented AWS dollar cost. Complete the live checks in `TEST-PLAN.md` after configuring
 the new accounts; unit fixtures do not certify live credentials or provider availability.

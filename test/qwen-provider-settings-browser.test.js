@@ -59,7 +59,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
 
   // An opt-in harness with no key of its own says so on its enable toggle, by provider.
   const toggles = page.locator("#engine-enabled-box label");
-  assert.match(await toggles.filter({ hasText: euEntry.label }).textContent(), /needs an API key below/);
+  assert.match(await toggles.filter({ hasText: euEntry.label }).textContent(), /needs an API key \(Settings button\)/);
 
   // The model picker is the provider's OWN catalog, not the other provider's.
   const euModels = await eu.locator('[data-role="default-model"] option').allInnerTexts();

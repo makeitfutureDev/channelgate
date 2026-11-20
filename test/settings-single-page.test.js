@@ -17,7 +17,7 @@ const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 
-const SECTIONS = ["connection", "appearance", "agent", "templates", "integrations", "license", "access", "admin-access", "system"];
+const SECTIONS = ["connection", "appearance", "agent", "engine-licenses", "templates", "integrations", "license", "access", "admin-access", "system"];
 
 // ── The pure matcher ─────────────────────────────────────────────────────────────
 test("query normalization folds the typography the admin markup actually uses", () => {
@@ -188,6 +188,9 @@ test("real settings text is searchable: representative queries land in the right
   assert.ok(sectionsFor("container runtime").includes("access"));
   assert.ok(sectionsFor("trusted bot apps").includes("access"));
   assert.ok(sectionsFor("license").includes("license"));
+  // The engine licenses and the product license are two sections, and both answer to the word.
+  assert.ok(sectionsFor("license").includes("engine-licenses"));
+  assert.ok(sectionsFor("engine licenses").includes("engine-licenses"));
   assert.ok(sectionsFor("passkeys").includes("admin-access"));
 
   // Secrets are never part of the index: only the input's markup is, never a typed/stored value.

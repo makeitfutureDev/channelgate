@@ -379,14 +379,46 @@ export function mountLicenseLock(container, { manifests, policy = null } = {}) {
 // /api/engine-licenses). The on/off switch is the page's own `engineEnabled` map and is saved by
 // the page's Save; adding, editing, verifying and removing a license are requests of their own.
 //
-// A license's API key is typed into a password box, sent once, and never read back: the listing
-// carries `hasApiKey` + `apiKeyLast4` only, and nothing here writes a key into the page.
+// A license's credential — an API key, or a Google service-account key file — is typed into a
+// write-only box, sent once, and never read back: the listing carries `hasApiKey` + `apiKeyLast4`
+// (or `hasServiceAccount` + the account's address) only, and nothing here writes one into the page.
 
-// What each KIND of license (how it authenticates — not which engine it is) asks of the form.
-const kindTraits = (kind) => ({
-  api: /-api$/.test(String(kind || "")),          // endpoint + key + models
-  browserSignIn: kind === "codex-login",          // device code, through /api/engine-licenses/:id/login
-});
+// What each KIND of license (how it authenticates — not which engine it is) asks of the form. The
+// catalog entry of the kind says it (`fields`, in order); nothing here knows a kind by name except
+// the one sign-in that happens in the browser.
+const kindTraits = (kind, catalog = null) => {
+  const id = String(typeof kind === "string" ? kind : kind?.id || "");
+  const entry = (typeof kind === "object" && kind) || list(catalog?.kinds).find((k) => k.id === id) || null;
+  const fields = list(entry?.fields);
+  return {
+    fields,
+    provider: Boolean(entry?.provider) || fields.length > 0, // typed credentials, checked against a server
+    browserSignIn: id === "codex-login",                     // device code, through /api/engine-licenses/:id/login
+  };
+};
+const AUTH_SCHEME_LABELS = { bearer: "Authorization: Bearer", "x-api-key": "x-api-key header", "api-key": "api-key header" };
+// How each field reads for each provider. Wording only — which fields exist is the catalog's.
+const FIELD_COPY = {
+  baseUrl: {
+    custom: ["Server address", "https only. The vendor's own API, or any compatible server."],
+    azure: ["Azure endpoint", "Your resource's endpoint, https only."],
+  },
+  apiKey: {
+    custom: ["API key or token"],
+    bedrock: ["Bedrock API key", "A Bedrock API key from the AWS console — not an access key ID and secret."],
+    azure: ["Azure API key"],
+  },
+  region: {
+    bedrock: ["AWS region", "The region your Bedrock models are enabled in."],
+    vertex: ["Location", "global, or a region such as europe-west1."],
+  },
+  projectId: { vertex: ["Google Cloud project ID", "Blank takes the project named in the key file."] },
+  serviceAccount: { vertex: ["Service-account key (JSON)"] },
+  apiVersion: { azure: ["API version", "Optional. Only for endpoints that require an api-version parameter."] },
+  authScheme: { custom: ["How the key is sent"], azure: ["How the key is sent"] },
+  models: { custom: ["Models"], bedrock: ["Models"], vertex: ["Models"], azure: ["Models / deployments"] },
+};
+const fieldCopy = (field, provider) => FIELD_COPY[field]?.[provider] || FIELD_COPY[field]?.custom || [field];
 
 const CODEX_LOGIN_MARKUP = `
   <select class="ch-codex-login-method" hidden aria-hidden="true" tabindex="-1"><option value=""></option><option value="device">Sign in with ChatGPT</option><option value="api-key"></option></select>
@@ -506,7 +538,7 @@ export function mountLicensesManager({
     if (refuseIfBlocked(harness)) return;
     const ok = await confirm({
       title: `Remove the license "${license.label}"?`,
-      body: "Channels and threads that selected this license fall back to their defaults. Its stored sign-in or API key is deleted and cannot be recovered.",
+      body: "Channels and threads that selected this license fall back to their defaults. Its stored sign-in, API key or service-account key is deleted and cannot be recovered.",
       confirmLabel: "Remove license",
       danger: true,
     });
@@ -602,7 +634,6 @@ export function mountLicensesManager({
     const urlInput = make("input", "lic-base-url");
     urlInput.type = "url";
     urlInput.autocomplete = "off";
-    urlInput.placeholder = "https://api.anthropic.com";
     urlInput.value = license?.baseUrl || "";
     // Write-only. The stored key is never sent to the page; an edit shows its last four characters
     // as a placeholder and a blank box keeps it.
@@ -611,20 +642,48 @@ export function mountLicensesManager({
     keyInput.autocomplete = "new-password";
     keyInput.placeholder = license?.hasApiKey ? `•••• ${license.apiKeyLast4 || ""}`.trim() : "API key";
     const schemeSelect = make("select", "lic-auth-scheme");
-    schemeSelect.replaceChildren(...list(catalog?.authSchemes).map((scheme) => option(scheme, scheme === "bearer" ? "Authorization: Bearer" : scheme)));
-    if (license?.authScheme) schemeSelect.value = license.authScheme;
-    else if (list(catalog?.authSchemes).includes("x-api-key")) schemeSelect.value = "x-api-key";
+    const regionInput = make("input", "lic-region");
+    regionInput.type = "text";
+    regionInput.autocomplete = "off";
+    regionInput.maxLength = 40;
+    regionInput.value = license?.region || "";
+    const projectInput = make("input", "lic-project-id");
+    projectInput.type = "text";
+    projectInput.autocomplete = "off";
+    projectInput.maxLength = 30;
+    projectInput.placeholder = "my-project-123456";
+    projectInput.value = license?.projectId || "";
+    // Write-only like the key: the stored file is never sent back, only whose key it is.
+    const accountInput = make("textarea", "lic-service-account");
+    accountInput.rows = 4;
+    accountInput.autocomplete = "off";
+    accountInput.spellcheck = false;
+    accountInput.placeholder = license?.hasServiceAccount
+      ? `Stored: ${license.serviceAccountEmail || "a service-account key"}. Paste a new key file to replace it.`
+      : 'Paste the key file: { "type": "service_account", … }';
+    const versionInput = make("input", "lic-api-version");
+    versionInput.type = "text";
+    versionInput.autocomplete = "off";
+    versionInput.maxLength = 40;
+    versionInput.placeholder = "e.g. 2025-04-01-preview";
+    versionInput.value = license?.apiVersion || "";
     const modelsInput = make("textarea", "lic-models");
     modelsInput.rows = 3;
     modelsInput.placeholder = "One model id per line, or comma-separated";
     modelsInput.value = list(license?.models).map((model) => model.value).join("\n");
+    const keep = license ? " Leave blank to keep the stored one." : " Sent once and never shown again.";
+    // One labelled row per field a kind can ask for; paintKind shows the ones this kind does.
+    const providerControls = {
+      baseUrl: urlInput, region: regionInput, projectId: projectInput, apiKey: keyInput,
+      serviceAccount: accountInput, authScheme: schemeSelect, apiVersion: versionInput, models: modelsInput,
+    };
+    const providerRows = Object.fromEntries(Object.entries(providerControls).map(([name, control]) => {
+      const row = field(name, control, " ");
+      row.classList.add("lic-provider-field");
+      row.dataset.field = name;
+      return [name, row];
+    }));
     const apiFields = make("div", "lic-api-fields");
-    apiFields.append(
-      field("Endpoint base URL", urlInput, "The Anthropic API, or an Anthropic-compatible endpoint. https only."),
-      field("API key", keyInput, license ? "Write-only. Leave blank to keep the stored key." : "Write-only: it is sent once and never shown again."),
-      field("How the key is sent", schemeSelect),
-      field("Models", modelsInput, "The model ids this endpoint serves. Optional for api.anthropic.com."),
-    );
 
     // Per-license defaults are ordinary settings keys the manifest names (defaultModelKey / defaultEffortKey).
     const modelSelect = make("select", "lic-default-model");
@@ -644,13 +703,32 @@ export function mountLicensesManager({
       const kind = kinds.find((entry) => entry.id === kindSelect.value) || list(catalog?.kinds).find((entry) => entry.id === kindSelect.value);
       kindHelp.textContent = kind?.description || "";
       const types = list(kind?.types);
-      const keep = typeSelect.value || license?.type || "";
+      const keepType = typeSelect.value || license?.type || "";
       typeSelect.replaceChildren(...types.map((id) => option(id, typeLabel(id))));
       // A stored type its kind no longer lists stays selectable on an edit; switching the kind of
       // a new license never carries a type the new kind does not have.
       if (license?.type && !types.includes(license.type)) typeSelect.append(option(license.type, typeLabel(license.type)));
-      typeSelect.value = [...typeSelect.options].some((entry) => entry.value === keep) ? keep : types[0] || "";
-      apiFields.hidden = !kindTraits(kindSelect.value).api;
+      typeSelect.value = [...typeSelect.options].some((entry) => entry.value === keepType) ? keepType : types[0] || "";
+      const traits = kindTraits(kind || kindSelect.value, catalog);
+      apiFields.hidden = !traits.provider;
+      // Rows in the order the kind lists its fields, worded for its provider.
+      apiFields.replaceChildren(...traits.fields.map((name) => providerRows[name]).filter(Boolean));
+      for (const name of traits.fields) {
+        const row = providerRows[name];
+        if (!row) continue;
+        const [label, help = ""] = fieldCopy(name, kind?.provider);
+        const secret = name === "apiKey" || name === "serviceAccount";
+        row.querySelector("span").textContent = label;
+        row.querySelector("em").textContent = `${name === "models" ? kind?.hints?.models || help : help}${secret ? `${help ? " " : ""}Write-only.${keep}` : ""}`.trim();
+      }
+      urlInput.placeholder = kind?.hints?.baseUrl || kind?.defaultBaseUrl || "https://";
+      regionInput.placeholder = kind?.hints?.region || "";
+      const schemes = list(kind?.authSchemes);
+      const scheme = schemeSelect.value || license?.authScheme || "";
+      schemeSelect.replaceChildren(...schemes.map((id) => option(id, AUTH_SCHEME_LABELS[id] || id)));
+      schemeSelect.value = schemes.includes(scheme) ? scheme : schemes[0] || "";
+      // A kind with one way to send its key has nothing to choose.
+      if (providerRows.authScheme) providerRows.authScheme.hidden = schemes.length < 2;
     };
     kindSelect.addEventListener("change", paintKind);
     paintKind();
@@ -661,15 +739,20 @@ export function mountLicensesManager({
       const kind = kindSelect.value;
       const body = { label: nameInput.value, type: typeSelect.value };
       if (!license) body.kind = kind;
-      // The key leaves the box before the request does; it is in this one body and nowhere else.
+      // A credential leaves its box before the request does; it is in this one body and nowhere else.
       const typedKey = keyInput.value;
+      const typedAccount = accountInput.value;
       keyInput.value = "";
-      if (kindTraits(kind).api) {
-        body.baseUrl = urlInput.value.trim();
-        body.authScheme = schemeSelect.value;
-        body.models = parseModelList(modelsInput.value);
-        if (typedKey.trim()) body.apiKey = typedKey.trim();
-      }
+      accountInput.value = "";
+      const asks = new Set(kindTraits(kind, catalog).fields);
+      if (asks.has("baseUrl")) body.baseUrl = urlInput.value.trim();
+      if (asks.has("region")) body.region = regionInput.value.trim();
+      if (asks.has("projectId")) body.projectId = projectInput.value.trim();
+      if (asks.has("apiVersion")) body.apiVersion = versionInput.value.trim();
+      if (asks.has("authScheme")) body.authScheme = schemeSelect.value;
+      if (asks.has("models")) body.models = parseModelList(modelsInput.value);
+      if (asks.has("apiKey") && typedKey.trim()) body.apiKey = typedKey.trim();
+      if (asks.has("serviceAccount") && typedAccount.trim()) body.serviceAccount = typedAccount.trim();
       save.disabled = true;
       formState.textContent = "Saving…";
       try {
@@ -684,7 +767,7 @@ export function mountLicensesManager({
         await afterMutation();
       } catch (error) {
         save.disabled = false;
-        formState.textContent = `✗ ${error.message}${body.apiKey ? " Enter the API key again." : ""}`;
+        formState.textContent = `✗ ${error.message}${body.apiKey ? " Enter the API key again." : ""}${body.serviceAccount ? " Paste the key file again." : ""}`;
       }
     });
     const actions = make("div", "row-actions");
@@ -723,7 +806,10 @@ export function mountLicensesManager({
     toggle.append(input, " ", make("span", "lic-name", record?.label || licenseLabelOf(manifest)));
     const note = record ? "" : builtinNote(manifest);
     if (note) toggle.append(make("em", "state", note));
-    row.append(toggle, make("span", "lic-type", record ? record.typeLabel || record.type || "" : "Built-in"));
+    // A provider license says where it runs as well as how it is billed: "Amazon Bedrock · API".
+    const kindLabel = record && kindTraits(record.kind, catalog).provider ? record.kindLabel || "" : "";
+    const typeText = record ? [kindLabel, record.typeLabel || record.type || ""].filter(Boolean).join(" · ") : "Built-in";
+    row.append(toggle, make("span", "lic-type", typeText));
 
     let badge = null;
     if (record) badge = licenseStatusBadge(record);
@@ -741,7 +827,7 @@ export function mountLicensesManager({
 
     const actions = make("span", "lic-actions");
     if (record) {
-      const traits = kindTraits(record.kind);
+      const traits = kindTraits(record.kind, catalog);
       if (traits.browserSignIn) actions.append(button("Sign in", "clear-tok lic-signin", () => openSignIn(record, harness)));
       else if (record.loginCommand) actions.append(button("Sign in", "clear-tok lic-signin", () => openHostSignIn(record, harness)));
       actions.append(

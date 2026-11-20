@@ -23,7 +23,7 @@ import { normalizeHost } from "./rules.js";
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
 import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
 import { resolveBedrockProvider } from "../../engines/bedrock.js";
-import { licenseApiHost, licenseOfRelaySecret, licenseRecord } from "../../engines/license-state.js";
+import { LICENSE_KINDS, licenseHosts, licenseOfRelaySecret, licenseRecord } from "../../engines/license-state.js";
 
 export const SWAP_FORMATS = Object.freeze(["bearer", "raw", "basic-password", "basic-user"]);
 export const DEFAULT_RULE_HEADERS = Object.freeze(["authorization"]);
@@ -74,8 +74,9 @@ export function relayRuleFor(secretName) {
     if (!record) return null;
     if (license.kind === "codex-login") return CODEX_RELAY_RULE;
     if (license.kind === "claude-login") return RELAY_RULE;
-    const host = licenseApiHost(record);
-    return { hosts: host ? [host] : [], headers: ["authorization", "x-api-key"], format: ["bearer", "raw"] };
+    // A provider license: its credential on the hosts its own endpoint resolves to, in the
+    // headers its kind sends a key in (`api-key` is Azure's and not a default swap header).
+    return { hosts: licenseHosts(record), headers: [...LICENSE_KINDS[record.kind].relayHeaders], format: ["bearer", "raw"] };
   }
   return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
 }

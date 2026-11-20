@@ -47,12 +47,14 @@ const ANTHROPIC_CREDENTIAL_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
 function applyProviderEnv(env, providerEnv) {
   if (!providerEnv) return env;
   for (const name of ANTHROPIC_CREDENTIAL_NAMES) delete env[name];
-  // Provider routing must be atomic too. Bedrock's bearer key lives only at its regional AWS
-  // endpoint; neither an inherited Anthropic login nor a channel's AWS profile/endpoint may
-  // displace it. The provider adapter adds back its reviewed pins after this cleanup.
-  if (providerEnv.CLAUDE_CODE_USE_BEDROCK === "1" || providerEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+  // Provider routing must be atomic too. A cloud route (Bedrock, Vertex, Foundry) sends its
+  // credential only to that cloud's endpoint; neither an inherited Anthropic login nor a channel's
+  // AWS profile, Google region pin or another route's switch may displace or redirect it. The
+  // provider adapter adds back its reviewed pins after this cleanup.
+  const cloudRoute = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"].some((name) => providerEnv[name] === "1");
+  if (cloudRoute || providerEnv.CLAUDE_CODE_OAUTH_TOKEN) {
     for (const name of Object.keys(env)) {
-      if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_)/.test(name)) delete env[name];
+      if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_|CLAUDE_CODE_SKIP_|CLOUD_ML_|VERTEX_REGION_|GOOGLE_APPLICATION_CREDENTIALS$|GOOGLE_CLOUD_PROJECT$|GCLOUD_PROJECT$)/.test(name)) delete env[name];
     }
   }
   for (const [name, value] of Object.entries(providerEnv)) {

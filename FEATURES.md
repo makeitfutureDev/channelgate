@@ -1,5 +1,80 @@
 # ChannelGate — Features
 
+## Provider licenses and the Engine licenses settings section (2026-11-20)
+
+An engine license can now be an account at a model PROVIDER, for either harness, and all licenses
+are managed in their own Settings section. "License" is the engine license throughout; the
+ChannelGate product license (Settings → License, `src/ee/`) is untouched.
+
+- **Eight provider kinds beside the two sign-in kinds** (`LICENSE_KINDS` in
+  `src/engines/license-state.js`; ids `<kind>-<8 hex>`). For Claude Code: **API key or custom
+  server** (`claude-api`, the Anthropic API or any server speaking the Anthropic Messages API),
+  **Amazon Bedrock** (`claude-aws`), **Google Vertex AI** (`claude-gcp`) and **Microsoft Azure**
+  (`claude-azure`, Claude in Foundry). For Codex: **API key or custom server** (`codex-api`, the
+  OpenAI API or any server speaking the OpenAI Responses API), **Amazon Bedrock** (`codex-aws`,
+  Codex's own Bedrock provider), **Google Vertex AI** (`codex-gcp`, Codex's own Vertex provider)
+  and **Microsoft Azure** (`codex-azure`, Azure OpenAI). Types: API, Business, Enterprise.
+- **Each kind declares what it needs, once.** The fields a kind asks for, the ways its key may be
+  sent, the request header the egress proxy may swap it into, its default server and whether its
+  model list may stay empty are facts on the kind. The store (`src/config/engine-licenses.js`),
+  the admin form, the relay rule (`relayRuleFor` in `src/gateway/egress/catalog-rules.js`) and
+  both runners read them from there — there is no per-provider branch outside
+  `license-adapters.js`. A custom server needs an `https://` address, a key and the model ids it
+  serves (the list may stay empty only for `api.anthropic.com` / `api.openai.com`); Bedrock a
+  region and a **Bedrock API key**; Vertex a project id (taken from the key file when blank), a
+  location and a **service-account key file**; Azure the resource endpoint, the key, how it is
+  sent (`x-api-key`/bearer for Foundry, `api-key`/bearer for Azure OpenAI) and, for Codex, an
+  optional `api-version` and the deployment names.
+- **"A server and a token" is the whole setup only for a compatible server.** Claude Code speaks
+  the Anthropic Messages API and Codex the OpenAI Responses API; Codex has no chat-completions
+  mode, so a chat-completions-only server cannot be a Codex license. Bedrock takes a Bedrock API
+  key and not AWS access keys, roles or SSO: those sign each request, and a placeholder cannot be
+  substituted into a request after it was signed.
+- **No provider credential enters a container.** A run receives the channel's placeholder for the
+  license (`containerLicenseApiCredential` in `src/gateway/egress/grants.js`); the egress proxy
+  swaps it for the stored key only on that license's hosts and only in the header its kind
+  declares. A Vertex license's key file stays in the daemon, which signs an assertion for Google's
+  FIXED token endpoint (never the `token_uri` inside the uploaded file), caches the access token
+  per key and hands the proxy the current one (`src/gateway/vertex-token.js`); the container
+  holds neither the file nor a token. Outside the egress proxy (legacy bridge mode) a provider
+  license refuses to run. A direct-host `/sudo` turn receives the real value — a Vertex token
+  with at least 50 minutes left, which a longer single host turn can outlive. Keys and key files
+  are write-only: listings return `hasApiKey` + last four, or `hasServiceAccount` + the account's
+  address; there is no reveal path, and the audit rows name only THAT a credential changed.
+- **Routing is per run and cannot be redirected by a channel.** Claude Code gets the route's own
+  switches (`CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY` with their region, project and
+  endpoint pins) and, on a cloud route, every inherited or channel-stored `ANTHROPIC_*`, `AWS_*`,
+  Vertex and Foundry variable is removed from that process first. Codex gets `-c
+  model_providers.*` overrides, reads its credential from one gateway-owned environment name
+  applied after the channel's secrets, and runs in the license's own `CODEX_HOME` so its session
+  rollouts stay apart from every other license's.
+- **Verification says what was actually proven.** A license with a key is checked against its
+  server's model list when added, when its credential, server, region or key scheme changes, and
+  on demand: accepted → ready; 401/403 → not ready; no model list (or a Bedrock key whose policy
+  forbids listing) → ready and marked "verified by the first turn that uses it". A Vertex license
+  is proven by Google accepting the key file; model access in the project is confirmed by the
+  first turn.
+- **Cost stays honest.** A dollar figure is recorded only on the vendor's own API (Anthropic's
+  reported cost; the Codex estimate for `api.openai.com`). Every other server and every cloud
+  route records tokens and no dollar amount — the harness's price table is not that provider's
+  bill.
+- **Settings → Engine licenses** is a section of its own (`#set-engine-licenses`, right after Agent
+  defaults; the product license keeps its own License section): the license manager with "Claude Code licenses" /
+  "Codex licenses", an **Add license** button per harness, and a "What each kind needs" card.
+  The add/edit form is drawn from the catalog the API returns — choosing a kind shows exactly
+  that kind's fields, with its own labels, examples and hints — and after saving, each license
+  shows its status with **Sign in** (a device code for Codex, the host command for Claude),
+  **Verify**, **Edit** and **Remove**. Agent defaults → Engine & runtime keeps the default
+  harness/license/model/effort pickers and links to the new section.
+- Not included: AWS SigV4 credentials (access keys, roles, SSO) for an added Bedrock license —
+  the built-in Claude Extra license keeps its terminal setup; workload identity or a personal
+  `gcloud` login for Vertex; chat-completions-only servers for Codex; usage windows for provider
+  licenses; a dollar cost for cloud routes; live acceptance against real Bedrock, Vertex and
+  Azure accounts, which this deployment does not hold (see TEST-PLAN — the CLI behavior was
+  established against local mock servers).
+
+→ TEST-PLAN: Provider licenses.
+
 ## Engine licenses: two harnesses, any number of licenses (2026-11-19)
 
 There are two HARNESSES — Claude Code and Codex. Everything else that was presented as a harness
@@ -17,10 +92,11 @@ unchanged.
   keep naming a license by the same stable id, so no stored data changes and there is no
   migration.
 - **Administrators add licenses** (Settings, and `/api/engine-licenses`; `src/config/engine-licenses.js`,
-  `src/web/routes/licenses.js`), up to 200. Three kinds: a **ChatGPT sign-in** for Codex
-  (`codex-lic-<8 hex>`), a **Claude sign-in** for Claude Code (`claude-lic-<8 hex>`) and an **API
-  key** for the Anthropic API or an Anthropic-compatible endpoint, run through Claude Code
-  (`claude-api-<8 hex>`; https endpoint, `x-api-key` or bearer, the model ids it serves). Each is a
+  `src/web/routes/licenses.js`), up to 200. The kinds are a **ChatGPT sign-in** for Codex
+  (`codex-lic-<8 hex>`), a **Claude sign-in** for Claude Code (`claude-lic-<8 hex>`) and the
+  provider kinds — first an **API key** for the Anthropic API or an Anthropic-compatible endpoint
+  (`claude-api-<8 hex>`; https endpoint, `x-api-key` or bearer, the model ids it serves), since
+  2026-11-20 seven more (see *Provider licenses* above). Each is a
   live engine adapter (`src/engines/license-adapters.js`) registered the moment it is saved — no
   restart — with its own sessions, usage rows, default model and effort, and on/off switch. A
   license name is unique across built-in and added licenses.
@@ -70,8 +146,8 @@ unchanged.
 - **Removing a license leaves no dead ends.** Its switch, defaults and sign-in directory are
   removed and the gateway default moves off it; a channel, thread pin or pool that still names it
   ignores it on read and runs on what remains — the gateway default when nothing does.
-- **Every surface asks the same steps.** Admin web: Settings → Engine & runtime → *Licenses the
-  gateway may use* lists each license under "Claude Code licenses" / "Codex licenses" with its
+- **Every surface asks the same steps.** Admin web: Settings → *Engine licenses* (its own
+  section since 2026-11-20) lists each license under "Claude Code licenses" / "Codex licenses" with its
   type and status, and adds, edits, verifies, signs in and removes the added ones
   (`public/admin-licenses.js`); a Codex license signs in from the browser with a device code, a
   Claude sign-in license shows the host command to run. The gateway default, a channel and a DM
@@ -82,8 +158,7 @@ unchanged.
   settings cards, `/model <harness>`, and a typed `/license` (`any`, one or several names in
   order, `default`) (`src/platforms/license-choice.js`). The run API takes `harness` +
   `licenses`.
-- Not included: Codex licenses with an API key; Bedrock beyond the built-in license; usage
-  windows for added Claude sign-in licenses; mapping a picked model alias onto an API license's
+- Not included: usage windows for added Claude sign-in licenses; mapping a picked model alias onto an API license's
   own model ids (that license is skipped for the turn); a browser sign-in for Claude sign-in
   licenses (a host terminal command); a license pool on the channel and DM templates (they
   store one license); license-aware model shortcuts and connector-catalog engine lists (still

@@ -1,6 +1,6 @@
 ---
 title: Engine licenses
-description: Give Claude Code and Codex several credentials, select them per conversation, and move to the next one when a license cannot answer.
+description: Give Claude Code and Codex several credentials — sign-ins, API keys, custom servers, Amazon Bedrock, Google Vertex AI, Microsoft Azure — select them per conversation, and move to the next one when a license cannot answer.
 ---
 
 ChannelGate runs two harnesses: **Claude Code** and **Codex**. A harness is the CLI that executes a turn. A **license** is one credential together with the server that credential talks to. Each harness has at least one license, and an administrator can add more.
@@ -27,24 +27,45 @@ Claude Extra, Codex EU, and the Qwen licenses are off until an administrator swi
 
 ## Add a license
 
-An administrator adds licenses in the admin web interface, in the engine settings under the harness they belong to. A license needs a name, a kind, and a type. There are three kinds:
+An administrator adds licenses in the admin web interface under **Settings → Engine licenses**. The section lists every license under its harness — **Claude Code licenses** and **Codex licenses** — and each list has an **Add license** button. A license needs a name, a kind, and a type.
 
-| Kind | Harness | What it is | Allowed types |
+| Kind | Harness | What it is | What you enter |
 | --- | --- | --- | --- |
-| ChatGPT sign-in | Codex | A separate ChatGPT sign-in, kept in its own directory on the gateway host | Subscription, Business, Enterprise, Education |
-| Claude sign-in | Claude Code | A separate Claude sign-in, kept in its own directory on the gateway host | Subscription, Business, Enterprise |
-| API key | Claude Code | An API key for the Anthropic API or an Anthropic-compatible endpoint, run through Claude Code | API, Business, Enterprise |
+| ChatGPT sign-in | Codex | A separate ChatGPT sign-in, kept in its own directory on the gateway host | Nothing; sign in after adding |
+| Claude sign-in | Claude Code | A separate Claude sign-in, kept in its own directory on the gateway host | Nothing; sign in after adding |
+| API key or custom server | Claude Code | The Anthropic API, or any server that speaks the Anthropic Messages API | Server address, key, how the key is sent, model IDs |
+| API key or custom server | Codex | The OpenAI API, or any server that speaks the OpenAI Responses API | Server address, key, model IDs |
+| Amazon Bedrock | Claude Code or Codex | Claude, or OpenAI models, on Amazon Bedrock | AWS region, Bedrock API key, model IDs |
+| Google Vertex AI | Claude Code or Codex | Claude, or OpenAI models, on Google Vertex AI | Project ID, location, service-account key file, model IDs |
+| Microsoft Azure | Claude Code | Claude in Microsoft Foundry | Resource endpoint, key, how the key is sent, deployment names |
+| Microsoft Azure | Codex | Azure OpenAI | Resource endpoint, key, how the key is sent, API version, deployment names |
 
-The type states what the credential is: **Subscription (personal plan)**, **Business / Team plan**, **Enterprise plan**, **Education plan**, or **API (pay per token)**. A new license starts with its kind's first type unless you choose another one.
+The type states what the credential is: **Subscription (personal plan)**, **Business / Team plan**, **Enterprise plan**, **Education plan**, or **API (pay per token)**. Sign-in kinds allow Subscription, Business, and Enterprise, and a ChatGPT sign-in also allows Education. Every other kind allows API, Business, and Enterprise. A new license starts with its kind's first type unless you choose another one.
 
-The name is required, is at most 60 characters, and must differ from every other license name, including the built-in ones. The kind cannot be changed after the license is created; the name and type can. An installation can hold up to 200 added licenses. Adding a license switches it on and registers it without a restart.
+The name is required, is at most 60 characters, and must differ from every other license name, including the built-in ones. The kind cannot be changed after the license is created; everything else can. An installation can hold up to 200 added licenses. Adding a license switches it on and registers it without a restart.
 
-An API key license also needs:
+### Use a custom server
 
-- an endpoint that starts with `https://`;
-- the key, which is write-only: afterwards the interface shows only that a key is stored and its last four characters, and a blank key field keeps the stored key when you edit the license;
-- how the key is sent, as an `x-api-key` header (the default) or as a bearer token;
-- the model IDs the endpoint serves, up to 40. The list may stay empty only for `api.anthropic.com`, which offers Claude's own catalog.
+A custom server is an address and a key. That is enough when the server speaks the protocol its harness speaks:
+
+- **Claude Code** needs the Anthropic Messages API. Send the key as an `x-api-key` header (the default) or as a bearer token.
+- **Codex** needs the OpenAI Responses API and sends the key as a bearer token. Codex does not speak the chat-completions API, so a server that offers only chat completions cannot be used with Codex.
+
+The address must start with `https://` and must be reachable on a public address. List the model IDs the server serves, up to 40. The list may stay empty only for `api.anthropic.com` and `api.openai.com`, which offer the harness's own catalog.
+
+### Use a cloud provider
+
+A cloud provider needs more than an address and a key, because each one identifies the account differently:
+
+- **Amazon Bedrock** needs the AWS region and a **Bedrock API key**. An AWS access key pair, an IAM role, and AWS single sign-on are not accepted: they sign each request, and the gateway cannot relay a signed request without handing the secret to the conversation's container. For Claude Code the model list is optional; left empty, the license offers Opus, Sonnet, and Haiku as Claude Code maps them for Bedrock. For Codex, list the Bedrock model IDs.
+- **Google Vertex AI** needs the Google Cloud project ID, the location (`global` or a region such as `europe-west1`), and a **service-account key file** in JSON format. The project ID may stay empty when the key file names the project. The gateway keeps the key file and exchanges it with Google for short-lived access tokens. The model list follows the same rule as Bedrock.
+- **Microsoft Azure** needs the resource's endpoint and its key. For Claude Code that is the Foundry resource's Anthropic endpoint, for example `https://YOUR-RESOURCE.services.ai.azure.com/anthropic`. For Codex that is the Azure OpenAI v1 endpoint, for example `https://YOUR-RESOURCE.openai.azure.com/openai/v1`, with your deployment names as the model list and an API version only when the endpoint requires one.
+
+### Keep credentials write-only
+
+A key and a service-account key file are write-only. After saving, the interface shows only that a credential is stored: the last four characters of a key, or the service account's address for a key file. There is no way to display a stored credential. A blank credential field keeps the stored one when you edit the license.
+
+A conversation's container never holds a license's key, key file, or Vertex access token. It holds a placeholder that the gateway's network proxy replaces with the real credential, only on that license's own server. A license with a key therefore runs only in a container behind the gateway's network proxy, or in an administrator's `/sudo` thread on the gateway host.
 
 ### Sign in
 
@@ -59,13 +80,14 @@ Each sign-in license keeps its login in its own directory under the gateway's ru
 A license is verified against what the provider reports, not only against what you declared.
 
 - **Sign-in licenses.** The gateway reads the plan that the sign-in itself reports and compares it with the declared type. A match is shown as verified. A mismatch makes the license not ready, and its status names both the declared type and the reported plan: sign in with the intended plan, or correct the type. When the sign-in reports no plan, or a plan the gateway cannot map to a type, the license stays ready and its status says the type could not be verified. A license that is not signed in is not ready.
-- **API key licenses.** The gateway checks the key against the endpoint when the license is added, when its key, endpoint, or key scheme changes, and when you ask for verification. It does not check on every turn. A key the endpoint rejects makes the license not ready until you correct it or verify again. Some endpoints have no model list to check a key against; such a license is saved as unverified and is confirmed by the first turn that uses it.
+- **Licenses with a key.** The gateway asks the server for its model list with the key when the license is added, when the key, the server, the region, or the way the key is sent changes, and when you select **Verify**. It does not check on every turn. A key the server rejects makes the license not ready until you correct it or verify again. Some servers have no model list to check a key against, and a Bedrock key may not be allowed to list models; such a license is saved as unverified and is confirmed by the first turn that uses it.
+- **Google Vertex AI licenses.** The gateway exchanges the service-account key file with Google for an access token. A key Google refuses makes the license not ready. Whether the project may call the listed models is confirmed by the first turn that uses the license.
 
 ### Switch off or remove
 
 Switching a license off keeps its record and its login. It disappears from every picker and is skipped as a failover candidate. A selection that still names it runs on the selection's other licenses first, then on another switched-on license of the same harness, and only then on any other switched-on license the channel admits. A switched-off conversation Codex login is refused instead of replaced. At least one license must stay switched on; the gateway refuses to switch off the last one.
 
-Removing a license deletes its record, its default model and effort, and, for a sign-in license, its login directory. The effects on existing selections are:
+Removing a license deletes its record, its stored key or key file, its default model and effort, and its directory on the gateway host. The effects on existing selections are:
 
 - A conversation or thread that selected the removed license falls back to its defaults. A thread pin that names it no longer counts, so the thread follows its conversation; a conversation follows the gateway default.
 - If it was the gateway default, the default returns to that harness's own sign-in with no further licenses.
@@ -146,13 +168,18 @@ A lock that names only a removed license approves nothing, so the channel stays 
 ## Check the limits
 
 - Claude sign-in licenses are signed in with a command on the gateway host, not from the browser.
-- Codex licenses with an API key are not offered. An added Codex license is always a ChatGPT sign-in.
-- Amazon Bedrock exists only as the built-in Claude Extra license. An added Claude sign-in license whose directory holds a Bedrock setup is not ready.
+- Codex reaches a custom server only through the OpenAI Responses API. A server that offers only chat completions cannot be added as a Codex license.
+- A Bedrock license takes a Bedrock API key. AWS access keys, IAM roles, and single sign-on are available only in the built-in Claude Extra license, which is set up in a terminal on the gateway host. An added Claude sign-in license whose directory holds a Bedrock setup is not ready.
+- A Vertex license takes a service-account key file. Workload identity and a personal `gcloud` login are not accepted.
+- A Vertex access token lasts about one hour. In a container the gateway replaces it without interrupting the turn. An administrator's `/sudo` turn on the gateway host receives one token at its start, so a single host turn that runs longer than about 50 minutes can lose access.
+- A license with a key does not run when the gateway's container network mode is the legacy bridge; the turn fails with that reason.
+- While a turn runs on a cloud license, the harness process does not receive the conversation's own `AWS_*`, Vertex, or Foundry environment secrets, so that they cannot redirect the license.
 - Usage windows for a single license are shown only where the provider reports them.
 - A picked model that a license cannot serve makes the gateway skip that license.
 - Added licenses run cold. A Claude Code turn on an added license has no warm process and no live steering.
-- A Claude sign-in license's session cannot be taken over in a container terminal, and an API key license's session cannot be taken over in any terminal. Continue such a session in chat.
-- An API key license records provider cost only when its endpoint is Anthropic's. Other endpoints record tokens without a dollar amount. `/fork` is not available on an API key license.
+- A Claude sign-in license's session cannot be taken over in a container terminal, and the session of a license with a key or key file cannot be taken over in any terminal. Continue such a session in chat.
+- A license with a key records a dollar amount only on the provider's own API: the cost Anthropic reports for `api.anthropic.com`, and the gateway's Codex estimate for `api.openai.com`. Every other server and every cloud provider records tokens without a dollar amount. `/fork` is not available on a license with a key or key file.
+- A license with a key or key file does not use the Cloud MCP connections of the gateway's default sign-in.
 - An added ChatGPT sign-in license does not use the Cloud MCP connections of the gateway's default Codex sign-in, and it discovers its own model catalog.
 
 Related: [automatic failover](/docs/features/multi-engine-failover), [engine authentication](/docs/configuration/engine-authentication), [model defaults](/docs/configuration/model-defaults), [channel settings](/docs/configuration/channel-settings), and [engine capabilities](/docs/engines).

@@ -7,11 +7,10 @@ ChannelGate selects a harness first, Claude Code or Codex, then a [license](/doc
 
 ## Configure gateway defaults
 
-Open **Settings → Agent defaults → Engine & runtime**.
+Open **Settings → Agent defaults → Engine & runtime**. Licenses themselves are listed, added, edited, verified, removed, and switched on and off under **Settings → Engine licenses**; a switched-off license disappears from selectors and failover candidates, and a harness with no switched-on license is not offered. See [engine licenses](/docs/features/engine-licenses).
 
 | Control | What it does |
 | --- | --- |
-| Licenses the gateway may use | Lists every license by harness, adds, edits, verifies and removes licenses, and switches them on and off; a switched-off license disappears from selectors and failover candidates, and a harness with no switched-on license is not offered |
 | Harness | Default harness; Claude Code is the fallback default when none is configured |
 | License | Shown when the default harness has more than one usable license: **Any license**, or one license with an optional **If it fails, also use** list |
 | Default Claude model | Sets the model used by inherited Claude runs |

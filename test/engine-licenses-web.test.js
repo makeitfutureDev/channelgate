@@ -209,6 +209,13 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   await page.goto(`${origin}/settings`);
   const manager = page.locator("#engine-enabled-box");
   await manager.locator('.lic-group[data-harness="codex"]').waitFor();
+  // The manager is its own Settings section, apart from the ChannelGate product license; the
+  // harness card points to it.
+  assert.equal(await page.locator("#set-engine-licenses #engine-enabled-box").count(), 1);
+  assert.equal(await page.locator("#set-license #engine-enabled-box").count(), 0);
+  assert.equal(await page.locator('#settings-nav a[data-sec="engine-licenses"]').textContent(), "Engine licenses");
+  await page.locator("#settings-body a.lic-jump").first().click();
+  await page.waitForURL(/#set-engine-licenses$/);
   assert.deepEqual(await manager.locator(".lic-group-title").allTextContents(), ["Claude Code licenses", "Codex licenses"]);
   const apiRow = manager.locator(`.lic-row[data-license="${apiLicense.id}"]`);
   await apiRow.waitFor();
@@ -233,7 +240,7 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   // Add a Codex sign-in license through the form: only Codex kinds are offered.
   await manager.locator('.lic-group[data-harness="codex"] .lic-add').click();
   await form.waitFor();
-  assert.deepEqual(await form.locator(".lic-kind option").evaluateAll((options) => options.map((o) => o.value)), ["codex-login"]);
+  assert.deepEqual(await form.locator(".lic-kind option").evaluateAll((options) => options.map((o) => o.value)), ["codex-login", "codex-api", "codex-aws", "codex-gcp", "codex-azure"]);
   assert.equal(await form.locator(".lic-api-fields").isVisible(), false, "a sign-in license asks for no endpoint or key");
   await form.locator(".lic-label").fill("Work ChatGPT");
   await form.locator(".lic-type-select").selectOption("business");
@@ -303,7 +310,7 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   });
   await manager.locator('.lic-group[data-harness="claude"] .lic-add').click();
   await form.waitFor();
-  assert.deepEqual(await form.locator(".lic-kind option").evaluateAll((options) => options.map((o) => o.value)), ["claude-login", "claude-api"], "only Claude Code kinds");
+  assert.deepEqual(await form.locator(".lic-kind option").evaluateAll((options) => options.map((o) => o.value)), ["claude-login", "claude-api", "claude-aws", "claude-gcp", "claude-azure"], "only Claude Code kinds");
   await form.locator(".lic-kind").selectOption("claude-api");
   assert.equal(await form.locator(".lic-api-fields").isVisible(), true);
   assert.deepEqual(await form.locator(".lic-type-select option").evaluateAll((options) => options.map((o) => o.value)), ["api", "business", "enterprise"], "the types of that kind");
@@ -317,6 +324,42 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   assert.deepEqual(apiPost, { label: "Typed API", type: "api", kind: "claude-api", baseUrl: "https://llm.example/v1/", authScheme: "bearer", models: ["m-one", "m-two", "m-three"], apiKey: typedKey });
   assert.equal(await form.locator(".lic-api-key").inputValue(), "", "the key box is emptied as soon as the key is sent");
   assert.ok(!(await page.content()).includes(typedKey), "a typed key is in no attribute or text of the page");
+
+  // The form is drawn from the catalog: each kind asks for exactly what its provider needs.
+  const asked = () => form.locator(".lic-provider-field").evaluateAll((rows) => rows.filter((row) => !row.hidden).map((row) => row.dataset.field));
+  assert.deepEqual(await asked(), ["baseUrl", "apiKey", "authScheme", "models"]);
+  await form.locator(".lic-kind").selectOption("claude-aws");
+  assert.deepEqual(await asked(), ["region", "apiKey", "models"], "Bedrock: a region and a Bedrock API key, one way to send it");
+  await form.locator(".lic-kind").selectOption("claude-gcp");
+  assert.deepEqual(await asked(), ["projectId", "region", "serviceAccount", "models"]);
+  assert.equal(await form.locator(".lic-api-key").count(), 0, "a Vertex license has no API key box");
+  const typedAccount = JSON.stringify({ type: "service_account", project_id: "typed-project-1", client_email: "bot@typed-project-1.iam.gserviceaccount.com", private_key: "-----BEGIN PRIVATE KEY-----\nTYPEDKEYMATERIAL7781\n-----END PRIVATE KEY-----\n" });
+  await form.locator(".lic-label").fill("Typed Vertex");
+  await form.locator(".lic-region").fill("europe-west1");
+  await form.locator(".lic-service-account").fill(typedAccount);
+  await form.locator(".lic-models").fill("");
+  await form.locator(".lic-save").click();
+  await form.locator(".lic-form-state").filter({ hasText: "Paste the key file again." }).waitFor();
+  assert.deepEqual(apiPost, { label: "Typed Vertex", type: "api", kind: "claude-gcp", projectId: "", region: "europe-west1", models: [], serviceAccount: typedAccount });
+  assert.equal(await form.locator(".lic-service-account").inputValue(), "", "the key file leaves its box with the request");
+  assert.ok(!(await page.content()).includes("TYPEDKEYMATERIAL7781"), "a pasted key file is in no attribute or text of the page");
+  await form.locator(".lic-cancel").click();
+
+  // Codex on Azure: the endpoint, the key and how it is sent, the API version, the deployments.
+  await manager.locator('.lic-group[data-harness="codex"] .lic-add').click();
+  await form.waitFor();
+  await form.locator(".lic-kind").selectOption("codex-azure");
+  assert.deepEqual(await asked(), ["baseUrl", "apiKey", "authScheme", "apiVersion", "models"]);
+  assert.deepEqual(await form.locator(".lic-auth-scheme option").evaluateAll((options) => options.map((o) => o.value)), ["api-key", "bearer"]);
+  await form.locator(".lic-kind").selectOption("codex-api");
+  assert.deepEqual(await asked(), ["baseUrl", "apiKey", "models"], "one way to send the key ⇒ nothing to choose");
+  await form.locator(".lic-label").fill("Typed Codex API");
+  await form.locator(".lic-base-url").fill("https://llm.example/v1");
+  await form.locator(".lic-api-key").fill(typedKey);
+  await form.locator(".lic-models").fill("m-codex");
+  await form.locator(".lic-save").click();
+  await form.locator(".lic-form-state").filter({ hasText: "Enter the API key again." }).waitFor();
+  assert.deepEqual(apiPost, { label: "Typed Codex API", type: "api", kind: "codex-api", baseUrl: "https://llm.example/v1", models: ["m-codex"], apiKey: typedKey });
   await form.locator(".lic-cancel").click();
   await page.unroute("**/api/engine-licenses");
 

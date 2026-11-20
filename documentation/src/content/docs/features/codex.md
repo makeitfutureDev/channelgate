@@ -21,7 +21,7 @@ A new Codex process does not mean a fresh conversation on every reply. ChannelGa
 
 The operator configures a working Codex login or API credential. This gateway login is the harness's built-in license and is listed as **Default sign-in**. An administrator can choose a dedicated Codex login for the conversation through Runtime → Codex authentication. That login is the license **Codex (channel account)** (`codex-channel`), selectable in that conversation independently of the gateway's `codex` license. Channels and threads can switch licenses; a missing dedicated login never falls back to a different license.
 
-Codex can hold more licenses: the built-in Codex EU license and ChatGPT sign-ins that an administrator adds. An added Codex license is always a ChatGPT sign-in; Codex licenses with an API key cannot be added. See [engine licenses](/docs/features/engine-licenses).
+Codex can hold more licenses: the built-in Codex EU license and the licenses an administrator adds under **Settings → Engine licenses** — further ChatGPT sign-ins, an API key for the OpenAI API or a server that speaks the OpenAI Responses API, Amazon Bedrock, Google Vertex AI, and Azure OpenAI. See [engine licenses](/docs/features/engine-licenses).
 
 A Codex login is distinct from a human's personal Composio connection. Consult the authentication guide before changing shared login behavior.
 

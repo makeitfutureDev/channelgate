@@ -673,7 +673,7 @@ export function codexSpawnDropsCapabilities({ target = null, cwd = "", dangerous
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [], provider = null }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   const isolated = isIsolatedTarget(runtimeTarget);
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
@@ -683,7 +683,11 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
   // No anonymous usage metrics to OpenAI from any turn (src/engines/codex-telemetry.js).
   args.push("-c", CODEX_NO_TELEMETRY);
-  if (isDedicatedCodex(runtimeTarget?.meta) || isChannelCodex(runtimeTarget?.meta)) args.push("-c", 'cli_auth_credentials_store="file"');
+  if (isDedicatedCodex(runtimeTarget?.meta) || isChannelCodex(runtimeTarget?.meta) || provider) args.push("-c", 'cli_auth_credentials_store="file"');
+  // A provider license (engines/license-adapters.js) points this CLI at its own server. The
+  // overrides ride argv because --ignore-user-config drops config.toml; they name the environment
+  // variable that holds the credential, never the credential.
+  if (provider) for (const override of provider.config || []) args.push("-c", override);
   // Slack is the only interactive surface for this daemon. In non-autonomous modes, fail closed:
   // approval-required Codex actions are rejected instead of hanging on an invisible prompt. In
   // autonomous mode, route eligible approvals through Codex auto-review so safe MCP reads (for
@@ -905,7 +909,28 @@ export const CODEX_PROXY_NODE_OPTIONS = "--disable-warning=UNDICI-EHPA";
 // See buildClaudeEnv: the channel's own secrets are re-filtered at this boundary and go in first,
 // so the gateway's TMPDIR / HOME / CODEX_HOME — and the browser namespace, which is a
 // confinement boundary, not a preference (gateway/browser-env.js) — always win.
-export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null } = {}, source = process.env) {
+// The names that authenticate or redirect this CLI at OpenAI. A provider license's run must carry
+// none of them: an inherited key would be sent to a third-party server, and an inherited base URL
+// would send the license's key somewhere else.
+const OPENAI_ROUTING_NAMES = ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
+
+// `provider` (a provider license) is gateway-owned and applied dead last, like Claude's
+// providerEnv: the OpenAI routing names go, whatever family the provider's own SDK path reads
+// (`provider.strip`, e.g. every AWS_* name for Bedrock) goes, then the license's pins come back.
+function applyCodexProviderEnv(env, provider) {
+  if (!provider) return env;
+  for (const name of OPENAI_ROUTING_NAMES) delete env[name];
+  if (provider.strip instanceof RegExp) {
+    for (const name of Object.keys(env)) if (provider.strip.test(name)) delete env[name];
+  }
+  for (const [name, value] of Object.entries(provider.env || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    env[name] = String(value);
+  }
+  return env;
+}
+
+export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null, provider = null } = {}, source = process.env) {
   // An ISOLATED runtime has the image's layout, not the host's: HOME and CODEX_HOME are the
   // container's (CODEX_HOME is the bind-mounted per-install codex home that carries auth.json),
   // TMPDIR is the container's tmpfs, and PATH is the image's — the daemon's toolchain launcher dir
@@ -917,7 +942,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...safeSpawnEnv(extraEnv),
       ...browserSpawnEnv(browserNamespace, { target }),
       NODE_USE_ENV_PROXY: "1",
-      ...(!isDedicatedCodex(target?.meta) && !isChannelCodex(target?.meta) && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
+      ...(!provider && !isDedicatedCodex(target?.meta) && !isChannelCodex(target?.meta) && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
     const env = applyEgressEnv({
@@ -942,6 +967,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     // secret can never carry (channel-env.js, re-filtered by safeSpawnEnv above) and it is not in
     // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 24
     // accepts --disable-warning in NODE_OPTIONS.
+    applyCodexProviderEnv(env, provider);
     if (env.CG_EGRESS === "proxy") env.NODE_OPTIONS = CODEX_PROXY_NODE_OPTIONS;
     return env;
   }
@@ -957,6 +983,12 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     delete hostEnv.OPENAI_BASE_URL;
     delete hostEnv.OPENAI_ORG_ID;
     delete hostEnv.OPENAI_PROJECT_ID;
+  }
+  if (provider) {
+    applyCodexProviderEnv(hostEnv, provider);
+    // The license's own directory, never the operator's CODEX_HOME: its sessions stay apart and
+    // the operator's ChatGPT sign-in is not in reach of a third-party server's run.
+    hostEnv.CODEX_HOME = provider.home;
   }
   return hostEnv;
 }
@@ -1033,6 +1065,10 @@ export async function runCodex({
   onSessionResolved = null,
   // TEST SEAM: { credential } replaces containerCodexCredential (src/gateway/egress/grants.js).
   codexRelayDeps = null,
+  // A provider license's routing (engines/license-adapters.js): `{ config, env, strip, home }`.
+  // Its credential is an environment variable the adapter resolved (a placeholder in a
+  // container), so no Codex sign-in is checked, relayed or written for such a run.
+  provider = null,
 }) {
   // Sign-in is checked BEFORE anything is spawned. A logged-out Codex is not reliably a fast
   // failure — depending on build and credential shape it can sit there refreshing or waiting,
@@ -1052,7 +1088,9 @@ export async function runCodex({
   // The container backend owns its copied login. A direct host run reads the exact CODEX_HOME the
   // CLI will use, preserving the same fail-open credential semantics as every other probe.
   let credentialFailure = null;
-  if (isolated && typeof runtime.runtime.credentialError === "function") {
+  if (provider) {
+    // Checked by the license's adapter before this call; the default account's login is not this run's.
+  } else if (isolated && typeof runtime.runtime.credentialError === "function") {
     credentialFailure = await runtime.runtime.credentialError(runtime, dedicatedCodexLogin(runtime?.meta)?.id || (runtime?.meta?.engine === "codex-channel" ? "codex-channel" : "codex"));
   } else if (!isolated) {
     const channelHome = dedicatedCodexLogin(runtime?.meta)?.home || (isChannelCodex(runtime?.meta) ? channelCodexHome(runtime.meta.channelId) : "");
@@ -1064,7 +1102,7 @@ export async function runCodex({
   // src/gateway/codex-token-relay.js), written into its HOME volume right here, before every spawn,
   // so the claims it carries follow the daemon's current token. Failing to place it is a
   // credential failure like any other: replay-safe, before any work exists to lose.
-  if (!credentialFailure && isolated && (isDedicatedCodex(runtime?.meta) || isChannelCodex(runtime?.meta) ? egressActive(runtime) : runtime.container?.credentialMode?.codex === "relay")) {
+  if (!provider && !credentialFailure && isolated && (isDedicatedCodex(runtime?.meta) || isChannelCodex(runtime?.meta) ? egressActive(runtime) : runtime.container?.credentialMode?.codex === "relay")) {
     credentialFailure = await installRelayedCodexLogin(runtime, codexRelayDeps).catch((error) => `Codex could not be signed in inside the container: ${error?.message || error}`);
   }
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.
@@ -1113,7 +1151,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers, provider });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }
@@ -1126,7 +1164,7 @@ export async function runCodex({
       cmd: "codex",
       args,
       cwd,
-      env: buildCodexEnv({ extraEnv, browserNamespace, target: runtime }),
+      env: buildCodexEnv({ extraEnv, browserNamespace, target: runtime, provider }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       runId: runId || newRunId("run"),
