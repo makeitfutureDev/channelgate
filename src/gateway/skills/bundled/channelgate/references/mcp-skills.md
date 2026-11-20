@@ -33,6 +33,17 @@ creates a pending authorization (`status: "initiated"`) instead of reporting not
 reserved for a toolkit the search tool already shows as connected there, or for a connection the
 user explicitly asked for. An inventory request never authorizes initiating connections.
 
+Running code against connections has two paths (detail: `gateway-usage` →
+`references/composio-scripts.md`). Composio's remote Workbench works with either injected identity
+and needs no key in the container. A local SDK script in the channel container needs a Composio
+**project API key** stored as a channel or personal secret (hidden, approved for
+`backend.composio.dev`); the gateway's own Personal-mode tokens and its SDK-mode organization key
+stay daemon-side and are never exposed to a container. A project key can act as any user id in
+its project, so it is admin-level: keep it personal or in an admin-only conversation, never in
+organization scope or in channels with members or guests, and have scripts use only the userId and
+connected account of the identity the request selected. Both paths execute app calls on Composio;
+the container keeps code, intermediate data and results out of the remote sandbox.
+
 The gateway may also inject a configured Make MCP connection for the conversation.
 Clean runs and reduced-tool memory reviews omit optional identities.
 

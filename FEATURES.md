@@ -7379,3 +7379,16 @@ local fixtures are not claims of a production call.
 - Upgrade migration removes retired credentials from stored users and channel metadata; stale
   writes cannot restore them. Old organization settings are ignored and removed from settings.json
   at boot or the next save. Existing environment overrides no longer select a Toolbox endpoint.
+
+## Operating guide: Composio code paths and forms (2026-11-20)
+
+- `gateway-usage` → `references/composio-scripts.md` explains the two ways to run code with
+  connections: Composio's remote Workbench (any injected identity, no key in the container) and a
+  local SDK script in the channel container (only with a Composio project API key in the run's
+  credential inventory). It states that both execute app calls on Composio, that the container
+  keeps code and intermediate data out of the remote sandbox, and that a project key can act as
+  any user in its project, so it stays personal or admin-only and never in organization scope.
+  The `channelgate` skill's MCP reference carries the same scoping rule.
+- `references/questions.md` defines "form" ("formular", survey, questionnaire, "give me questions
+  to answer") as a real `ask_questions` card, never Block Kit JSON, a code sample or a Slack List,
+  and the SKILL.md routing table points form requests there.

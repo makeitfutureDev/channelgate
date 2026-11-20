@@ -51,6 +51,39 @@ and wait for its card, following `references/messages.md`.
   provided `invoke_llm` helper before assuming the response shape. Results have top-level `data`
   and can be nested; check `error` before using them.
 
+## Code with connections: Workbench or this container
+
+There are two places to run code that calls connected apps. Choose by what credential exists, not
+by habit:
+
+- **Composio Workbench (remote):** works with whatever identity this turn has — `composio-user`
+  and `composio-agent` alike — and needs no key in this container, because the gateway relays
+  those connections and their tokens never enter the container. The code, its intermediate data
+  and saved files live in Composio's remote sandbox. Best for one-off exploration and bulk calls.
+- **This channel's container (local SDK script):** runs `@composio/core` (Node) or the Python composio
+  package here, calling `tools.execute(...)` with an explicit `userId` and connected account.
+  It needs a **Composio project API key** in the run's credential inventory (for example a hidden
+  `COMPOSIO_API_KEY_SDK` approved for `backend.composio.dev`). Without such a variable this path
+  does not exist: do not try to extract, copy or reconstruct the `composio-user`/`composio-agent`
+  tokens — they are deliberately gateway-side. Scripts, intermediate data and results stay in
+  the work folder, can be saved and re-run without spending model tokens, and use local
+  libraries, files and background jobs. Best for repeatable automation.
+
+Both paths still execute every app call on Composio's servers, so Composio sees each request and
+response either way; the container only keeps code, intermediate data and stored results out of
+the remote sandbox. Composio bills app calls either way. Neither path has a measured cost advantage
+unless you actually measured it — say so instead of claiming one.
+
+A project API key is **not** a personal credential: it can act as ANY user id in that Composio
+project, read their connected accounts and create or delete connections. Use only the `userId`
+and connected account matching the identity the request selected (the requester for "my", the
+channel's shared identity for "your/the agent's"), never another person's. Do not recommend
+sharing a project key with other channels or with organization scope; anyone who can talk in a
+channel holding it can act as every user in the project. A personal Composio connection with no
+SDK key available is used through `composio-user`'s tools or Workbench only.
+
+## Workbench limits and batch pattern
+
 Each workbench cell has a hard **180-second limit**. Pass `code_to_execute`, `session_id`, and
 concise step/metric fields. Imports, variables and functions persist between cells; do not import
 or redefine its preloaded helpers. Use bounded `ThreadPoolExecutor` concurrency for independent
