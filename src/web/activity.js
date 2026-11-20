@@ -34,6 +34,7 @@ import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation } from "../gateway/automations-view.js";
+import { PERSONAL_SKILLS_ID, channelSkillsView, personalSkillsView, saveSkillSelection, skillChannels } from "../gateway/skills-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
@@ -354,7 +355,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/automations") ? "automations" : req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
+      const view = req.path.endsWith("/automations") ? "automations" : req.path.endsWith("/skills") ? "skills" : req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
@@ -553,6 +554,46 @@ export function createActivityRouter({
   router.get("/:id/settings/connections/new", serveDashboard);
   router.get("/:id/calls", serveDashboard);
   router.get("/:id/automations", serveDashboard);
+  router.get("/:id/skills", serveDashboard);
+  // Skills: the same access rule as Automations, re-derived from the session owner on every
+  // request; a channel id from the browser only narrows what that access already allows.
+  router.get("/:id/api/skills", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const channels = await skillChannels(await accessContext(client, session.ownerId), session.ownerId);
+      await context(req);
+      return res.json({ channels });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.get("/:id/api/skills/:channelId", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const access = await accessContext(client, session.ownerId);
+      const data = req.params.channelId === PERSONAL_SKILLS_ID
+        ? await personalSkillsView(session.ownerId, access.user?.isAdmin === true)
+        : await channelSkillsView(access, session.ownerId, await checkedChannel(access, session.ownerId, req.params.channelId));
+      await context(req);
+      return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/skills/:channelId", async (req, res) => {
+    let session, client;
+    try {
+      ({ session, client } = await context(req));
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+    } catch (error) { return unavailable(res, error.status || 403); }
+    try {
+      const access = await accessContext(client, session.ownerId);
+      const result = await saveSkillSelection(access, session.ownerId, req.params.channelId, req.body?.selected, {
+        authorize: async () => { const current = await context(req); if (current.session !== session) throw Object.assign(new Error("Activity session changed"), { status: 401 }); },
+      });
+      const changed = result.added.length + result.removed.length;
+      return res.json({ added: result.added, removed: result.removed, notice: changed ? "Skills saved. They apply to the next run." : "No skill changes." });
+    } catch (error) {
+      if (error.userFacing) return res.status(error.status || 400).json({ error: error.message });
+      return unavailable(res, error.status === 401 || error.status === 403 ? error.status : 503);
+    }
+  });
   // Automations: every request re-derives access from the session owner; channel and schedule
   // ids from the browser only ever narrow what that access already allows.
   router.get("/:id/api/automations", async (req, res) => {

@@ -91,7 +91,7 @@ export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" ar
 
 export const AUTOMATIONS_CSS = `
 .automation-picker{display:flex;gap:10px;align-items:center;font-size:14px}
-.automation-picker select{flex:1;max-width:420px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit}
+.automation-picker select{flex:1;min-width:0;max-width:420px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit}
 #automations-status{color:var(--muted);font-size:13px;margin:14px 0}
 .automation-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:12px 0;overflow:hidden}
 .automation-card>summary{display:flex;flex-wrap:wrap;gap:6px 20px;cursor:pointer;padding:16px 18px;font-size:13px;list-style:revert}

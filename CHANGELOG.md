@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a **Skills** tab to the Activity dashboard: pick "Only me" (your skills in every
+  conversation), your direct messages, or any channel you can access, then search, filter and tick
+  the skills it loads and save. Organization and template skills show as always on. Settings →
+  Skills now links there. Changing a skill in a direct message that follows the organization's
+  default setup now takes effect (it used to be silently ignored) by giving the DM its own copy.
 - Keep the admin dashboard signed in across gateway restarts: sessions now persist in the
   database (only the cookie token's hash is stored). A passkey or password-plus-Slack-code
   sign-in lasts thirty days and survives seven idle days instead of thirty minutes idle / twelve

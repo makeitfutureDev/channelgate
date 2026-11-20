@@ -456,6 +456,34 @@ can still name it, resolves to the normal default instead of ending a turn or re
       recreating its container with `--pids-limit 4096` (`podman inspect --format
       '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
 
+## Activity Skills page (2026-11-20)
+
+Regression: `test/activity-skills.test.js` covers the picker order and membership: "Only me", then the viewer's own
+DM, then accessible channels. It also covers the 403 for an inaccessible channel, another person's DM or a
+malformed id; organization rows locked and never copied into the grant list; personal skills never
+offered; a refused addition writing nothing; add/remove round trips; "Only me" writes the personal
+tier; a template-managed DM detaching only on an actual change; and the Skills tab, page and the
+Settings link rendering. Browser check (2026-11-20, stubbed fetch over the real page HTML in headless
+Chromium at 1280px light/dark and 390px): search narrows rows, Off shows only unticked rows, ticking
+raises "1 to add · 1 to remove", Save posts only unlocked selected keys, a linked conversation hides
+the tools, and at 390px neither the picker nor the nav widens the page.
+
+Live `ACT-SKILLS-01` (Claude and Codex): an approved non-admin member of `#cg-qa-a` (not of a
+private `#cg-qa-private`) with one discoverable organization-library skill `qa-skill-probe` not granted
+anywhere, and one organization-wide skill. Open Activity → Skills.
+Pass when: the picker shows "Only me", "Your direct messages", `#cg-qa-a` and NOT `#cg-qa-private`
+or anyone else's DM. In `#cg-qa-a` the organization skill is ticked and locked, and searching "probe"
+finds `qa-skill-probe`. Ticking it and saving shows "Skills saved". Slack Settings → Skills in
+`#cg-qa-a` then lists it. With the channel engine set to Claude, mention the bot: "List the skills
+available to you by name." The reply names `qa-skill-probe`, and `.claude/skills/qa-skill-probe/` exists in the
+work folder. Repeat with Codex: the reply names it, and `.agents/skills/qa-skill-probe` resolves. Untick and save:
+the next Claude and Codex turns no longer name it. In "Only me", tick it, then in a different channel
+ask the same question with each engine: it is named only in runs this user starts.
+
+Live `ACT-SKILLS-02` (engine-independent, UI): with unsaved changes, switching conversation or Refresh asks
+to discard and Cancel keeps the ticks; at phone width the page does not scroll sideways. Save from a revoked
+Activity session fails with the session message and changes nothing.
+
 ## Activity Automations page (2026-11-19)
 
 Engine-independent (reads stored schedules and runs; no engine turn). Regression:

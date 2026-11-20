@@ -50,6 +50,28 @@ export async function personalSkillPicker(userId, isAdmin) {
   };
 }
 
+/**
+ * Make `selected` the person's own skill grants. Only skills `personalSkillPicker` offers can be
+ * added; anything else is refused before a write. `authorize` re-checks the caller right before
+ * the write. → `{ added, removed }`.
+ */
+export async function savePersonalSkills(userId, isAdmin, selected, { authorize = async () => {}, via = "activity_settings" } = {}) {
+  if (!Array.isArray(selected) || selected.length > 200 || !selected.every((slug) => typeof slug === "string")) fail("Choose skills from the list.");
+  const picker = await personalSkillPicker(userId, Boolean(isAdmin));
+  const allowed = new Map(picker.options.map((option) => [option.key.toLowerCase(), option.key]));
+  const picked = [...new Set(selected.map((slug) => slug.toLowerCase()))];
+  const refused = picked.find((slug) => !allowed.has(slug));
+  if (refused) fail(`${refused} is not available to you.`);
+  const current = new Set(picker.selected.map((slug) => slug.toLowerCase()));
+  const added = picked.filter((slug) => !current.has(slug)).map((slug) => allowed.get(slug));
+  const removed = picker.selected.filter((slug) => !picked.includes(slug.toLowerCase()));
+  await authorize();
+  if (added.length) await grantSkillsToUser(userId, added);
+  if (removed.length) await revokeSkillsFromUser(userId, removed);
+  await logEvent("user_skills_updated", { user: userId, added, removed, via });
+  return { added, removed };
+}
+
 /** Everything the Settings page shows for `userId`, masked. */
 export async function userSettingsSnapshot(userId) {
   const user = (await getUser(userId)) || {};
@@ -220,19 +242,7 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       return { notice: `Removed ${name}.` };
     }
     case "skills.save": {
-      if (!Array.isArray(input.selected) || input.selected.length > 200 || !input.selected.every((slug) => typeof slug === "string")) fail("Choose skills from the list.");
-      const picker = await personalSkillPicker(userId, Boolean(user.isAdmin));
-      const allowed = new Map(picker.options.map((option) => [option.key.toLowerCase(), option.key]));
-      const picked = [...new Set(input.selected.map((slug) => slug.toLowerCase()))];
-      const refused = picked.find((slug) => !allowed.has(slug));
-      if (refused) fail(`${refused} is not available to you.`);
-      const current = new Set(picker.selected.map((slug) => slug.toLowerCase()));
-      const added = picked.filter((slug) => !current.has(slug)).map((slug) => allowed.get(slug));
-      const removed = picker.selected.filter((slug) => !picked.includes(slug.toLowerCase()));
-      await authorize();
-      if (added.length) await grantSkillsToUser(userId, added);
-      if (removed.length) await revokeSkillsFromUser(userId, removed);
-      await logEvent("user_skills_updated", { user: userId, added, removed, via: "activity_settings" });
+      const { added, removed } = await savePersonalSkills(userId, Boolean(user.isAdmin), input.selected, { authorize });
       return { notice: added.length || removed.length ? "Your skills are saved. They apply to the next run you start." : "No skill changes." };
     }
     case "ssh.add": {

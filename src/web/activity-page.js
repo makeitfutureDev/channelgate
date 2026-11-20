@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { activityConnectionsBrowser } from "./activity-connections-page.js";
 import { callHistoryBrowser, CALL_HISTORY_CSS } from "./call-history-page.js";
 import { automationsBrowser, AUTOMATIONS_CSS, AUTOMATIONS_HTML } from "./automations-page.js";
+import { skillsBrowser, SKILLS_CSS, SKILLS_HTML } from "./skills-page.js";
 import { getLogoColor } from "../config/settings.js";
 import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
@@ -1119,7 +1120,7 @@ function settingsBrowser(config, browser, theme, connections) {
   const voiceCalls = config.voiceCalls === true;
   const wanted = String(location?.hash || "").replace(/^#/, "");
   let section = SECTIONS.some(([id]) => id === wanted) ? wanted : config.emailPage ? "email" : config.connectionsPage ? "connections" : "general";
-  let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null, skillQuery = "";
+  let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null;
   const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
   function node(tag, className, text) {
@@ -1380,30 +1381,12 @@ function settingsBrowser(config, browser, theme, connections) {
       return [list, add];
     },
     skills() {
-      const s = data.skills;
-      const pick = card("Your skills", "Skills added here load into every run you start, in any conversation. Channel and organization skills are managed by their owners.");
-      if (s.foreign?.length) pick.append(node("p", "settings-warning", "Not loaded: " + s.foreign.join(", ") + " — another person's personal skill. Saving here removes it."));
-      const search = input("skill-search", { type: "search", value: skillQuery, max: 120, placeholder: "Filter skills…" });
-      search.disabled = ended;
-      const list = node("div", "settings-skill-list");
-      const selected = new Set(s.selected.map((slug) => slug.toLowerCase()));
-      const boxes = [];
-      function paintSkills() {
-        const query = skillQuery.trim().toLowerCase();
-        for (const entry of boxes) entry.item.hidden = Boolean(query) && !(entry.option.label + " " + entry.option.description).toLowerCase().includes(query);
-      }
-      for (const option of s.options) {
-        const item = node("label", "settings-skill"), box = node("input");
-        box.type = "checkbox"; box.value = option.key; box.checked = selected.has(option.key.toLowerCase()); box.disabled = busy || ended;
-        const text = node("span", "settings-skill-text");
-        text.append(node("span", "settings-row-title", option.label), node("span", "settings-row-meta", option.description));
-        item.append(box, text); list.append(item); boxes.push({ item, box, option });
-      }
-      search.addEventListener("input", () => { skillQuery = search.value; paintSkills(); });
-      paintSkills();
-      if (!s.options.length) list.append(node("p", "settings-empty", "No skills are available to you yet."));
-      const error = node("p", "settings-error"); error.setAttribute("role", "alert");
-      pick.append(search, list, error, button("Save skills", () => { void send({ action: "skills.save", selected: boxes.filter((entry) => entry.box.checked).map((entry) => entry.option.key) }, error); }, "settings-button primary"));
+      // Skills live on their own page now, with a conversation picker; "Only me" is this list.
+      const pick = card("Skills", "Pick the skills that load for you in every conversation (“Only me”), or for any conversation you can access, on the Skills page.");
+      const count = (data.skills?.selected || []).length;
+      pick.append(node("p", "settings-row-meta", count ? "You have " + count + " personal skill" + (count === 1 ? "" : "s") + " on." : "You have no personal skills on yet."));
+      const open = node("a", "settings-button primary", "Open the Skills page"); open.href = base + "/skills#me";
+      pick.append(open);
       return [pick];
     },
     ssh() {
@@ -1487,7 +1470,7 @@ const tableHead = () => `<thead><tr>${ACTIVITY_COLUMNS.map((id) => `<th scope="c
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
 export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, connectionsPage = false, connectionsNew = false, emailPage = false, callTarget = null, logoColor = getLogoColor() }) {
-  const subscriptionsView = view === "subscriptions", settingsView = view === "settings", callsView = view === "calls", automationsView = view === "automations";
+  const subscriptionsView = view === "subscriptions", settingsView = view === "settings", callsView = view === "calls", automationsView = view === "automations", skillsView = view === "skills";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
@@ -1498,12 +1481,13 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"], ["hidden", "Hidden"]];
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${automationsView ? "Automations" : callsView ? "Calls" : subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor, theme)}
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${skillsView ? "Skills" : automationsView ? "Automations" : callsView ? "Calls" : subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor, theme)}
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 ${SUBSCRIPTION_CSS}
 ${CALL_HISTORY_CSS}
 ${AUTOMATIONS_CSS}
+${SKILLS_CSS}
 @font-face{font-family:Geist;font-style:normal;font-weight:100 900;font-display:swap;src:url("/fonts/geist-latin.woff2") format("woff2")}
 @font-face{font-family:"Geist Mono";font-style:normal;font-weight:100 900;font-display:swap;src:url("/fonts/geistmono-latin.woff2") format("woff2")}
 :root{${DARK}--font:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
@@ -1769,7 +1753,8 @@ select.settings-input{height:32px}
   #theme-toggle{order:2}
   .top .subscription-quick progress,.top .subscription-quick-name{display:none}
   .subscription-ring{display:block}
-  .page-nav{order:3;margin-left:auto}
+  .page-nav{order:3;margin-left:auto;max-width:100%;overflow-x:auto;scrollbar-width:none}
+  .page-nav a{flex:none;white-space:nowrap}
   .bar{flex-wrap:wrap;padding:6px 8px;gap:6px}
   .search-wrap{flex:1 1 100%;margin:0;order:-1}
   thead{display:none}
@@ -1804,13 +1789,13 @@ select.settings-input{height:32px}
   .top .page-nav{min-width:0;max-width:100%;flex-wrap:wrap}
 }
 </style></head><body>
-<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView || callsView || automationsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
-${subscriptionsView || settingsView || callsView || automationsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
-<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/calls"${callsView ? ' aria-current="page"' : ''}>Calls</a><a href="${base}/automations"${automationsView ? ' aria-current="page"' : ''}>Automations</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
+<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView || callsView || automationsView || skillsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
+${subscriptionsView || settingsView || callsView || automationsView || skillsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
+<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/calls"${callsView ? ' aria-current="page"' : ''}>Calls</a><a href="${base}/automations"${automationsView ? ' aria-current="page"' : ''}>Automations</a><a href="${base}/skills"${skillsView ? ' aria-current="page"' : ''}>Skills</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
 ${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" title="Start a voice call with the agent">📞 Call</button>' : ""}<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
-${automationsView ? AUTOMATIONS_HTML : callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
+${skillsView ? SKILLS_HTML : automationsView ? AUTOMATIONS_HTML : callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Slack main messages get ✅; Google Chat and Teams completion is saved in Activity. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
@@ -1827,7 +1812,7 @@ ${automationsView ? AUTOMATIONS_HTML : callsView ? `<section class="calls-page" 
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="columns-button" class="link-button" type="button" aria-haspopup="dialog">▤ Columns</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
 <p class="privacy">Your conversations are private. <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
-</main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${automationsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${automationsBrowser.toString()})(${config}, globalThis);` : callsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${callHistoryBrowser.toString()})(${config}, globalThis);` : settingsView
+</main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${skillsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${skillsBrowser.toString()})(${config}, globalThis);` : automationsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${automationsBrowser.toString()})(${config}, globalThis);` : callsView ? `(${themeBrowser.toString()})(${config}, globalThis);(${callHistoryBrowser.toString()})(${config}, globalThis);` : settingsView
     ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis), (${activityConnectionsBrowser.toString()})(${config}, globalThis));`
     : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})()${voiceCalls && view === "activity" ? `, (${callOverlayBrowser.toString()})(${config}, globalThis)` : ""});`}</script></body></html>` };
 }
