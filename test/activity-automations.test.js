@@ -26,7 +26,8 @@ test("cron recurrences read as words, never as the expression", () => {
 
 test("automations are listed per allowed conversation, the viewer's own DM first, with delete rights", async () => {
   getDb().exec("DELETE FROM schedules; DELETE FROM schedule_runs");
-  const ch = await upsertChannelEntry("CAUTO1", { name: "team", type: "channel" });
+  const ch = await upsertChannelEntry("CAUTO1", { name: "#team", type: "channel" });
+  await upsertChannelEntry("CAUTO3", { name: "empty", type: "channel" });
   const dm = await upsertChannelEntry("DAUTO1", { name: "dm", type: "im", isDM: true });
   const other = await upsertChannelEntry("DAUTO2", { name: "dm2", type: "im", isDM: true });
   await patchChannelMeta(dm.slug, { dmUserId: "U1" });
@@ -38,9 +39,11 @@ test("automations are listed per allowed conversation, the viewer's own DM first
   const run = createScheduleRun(listForChannel("CAUTO1")[0]);
   updateScheduleRun(run.id, { status: "succeeded", summary: "done" });
 
-  const access = { user: { isAdmin: false }, allows: async (e) => ["CAUTO1", "DAUTO1", "DAUTO2"].includes(e.channelId) };
+  const access = { user: { isAdmin: false }, allows: async (e) => ["CAUTO1", "CAUTO3", "DAUTO1", "DAUTO2"].includes(e.channelId) };
   const channels = await view.automationChannels(access, "U1");
-  assert.deepEqual(channels.map((c) => c.channelId), ["DAUTO1", "CAUTO1"]); // another person's DM is never listed
+  // Another person's DM is never listed; a conversation without automations is not listed either.
+  assert.deepEqual(channels.map((c) => c.channelId), ["DAUTO1", "CAUTO1"]);
+  assert.equal(channels[1].name, "#team"); // one #, even when the stored name carries its own
   assert.equal(channels[0].personal, true);
   await assert.rejects(view.checkedChannel(access, "U1", "DAUTO2"), { status: 403 });
   await assert.rejects(view.checkedChannel({ ...access, allows: async () => false }, "U1", "CAUTO1"), { status: 403 });

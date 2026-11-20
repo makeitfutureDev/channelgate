@@ -144,8 +144,8 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 ## Activity Automations page (2026-11-19)
 
 The Activity dashboard has an **Automations** tab (`/activity/<session>/automations`). A conversation
-picker lists every Slack conversation the viewer may open under the dashboard's own access rule
-(`accessContext().allows`), the viewer's OWN direct messages first as "Your direct messages
+picker lists only the Slack conversations that HAVE automations among those the viewer may open
+under the dashboard's own access rule (`accessContext().allows`), each with its count, the viewer's OWN direct messages first as "Your direct messages
 (personal)"; another person's DM is never listed. For the selected conversation it shows each
 scheduled task, reminder and thread loop with its title, its recurrence in plain words ("At 09:00 on
 weekdays (Europe/Bucharest)", "Every 15 minutes", "Every 3 days", "Once, on …" — never the cron

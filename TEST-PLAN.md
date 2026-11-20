@@ -273,7 +273,8 @@ Engine-independent (reads stored schedules and runs; no engine turn). Regression
 Live: as an approved non-admin with (a) one schedule they created in a shared channel, (b) one
 created by someone else there, (c) one in their own DM, open Activity → Automations.
 Pass when: the picker lists their DM first as "Your direct messages (personal)" and only
-conversations they can open; recurrences read in words with the gateway zone and no `*`; expanding
+conversations they can open that have at least one automation (a conversation with none is absent, and
+each name carries a single `#`); recurrences read in words with the gateway zone and no `*`; expanding
 shows run history; Delete appears on (a) and (c) but not (b); deleting (a) removes it from the list
 and from `list_schedules`, its runs remain; a second user's DM never appears; an admin also sees
 sudo schedules and may delete (b).

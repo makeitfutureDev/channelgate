@@ -75,8 +75,8 @@ export function automationsBrowser(config, browser) {
     const previous = select.value;
     try {
       const data = await request("/api/automations");
-      select.replaceChildren(...data.channels.map((c) => { const o = node("option", c.name + (c.count ? " (" + c.count + ")" : "")); o.value = c.channelId; return o; }));
-      if (!data.channels.length) { notice.textContent = "You don’t have access to any conversations yet."; return; }
+      select.replaceChildren(...data.channels.map((c) => { const o = node("option", c.name + " (" + c.count + ")"); o.value = c.channelId; return o; }));
+      if (!data.channels.length) { notice.textContent = "None of the conversations you can access has an automation yet."; return; }
       if (data.channels.some((c) => c.channelId === previous)) select.value = previous;
       await loadChannel();
     } catch (error) { notice.textContent = error.message; }
@@ -87,7 +87,7 @@ export function automationsBrowser(config, browser) {
   void loadChannels();
 }
 
-export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders and loops in the conversations you can access. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
+export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders and loops in the conversations you can access that have any. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
 
 export const AUTOMATIONS_CSS = `
 .automation-picker{display:flex;gap:10px;align-items:center;font-size:14px}
