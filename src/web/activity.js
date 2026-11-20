@@ -217,9 +217,10 @@ export function createActivityRouter({
   const issueSession = (res, identity, { redirect = false } = {}) => {
     const id = token(12), secret = token(); prune(now());
     sessions.capOwner(identity.ownerId, 10); sessions.capTotal(1000);
-    // A passkey sign-in proved the person on this device: it lasts 30 days. A Slack-link launch or
-    // an admin hand-off keeps the 12-hour life.
-    const ttl = identity.credentialId ? ACTIVITY_PASSKEY_SESSION_TTL_MS : ACTIVITY_SESSION_TTL_MS;
+    // A passkey sign-in, or a hand-off from an admin dashboard session (itself earned by a passkey
+    // or password plus Slack code), proved the person on this device: it lasts 30 days. A
+    // Slack-link launch keeps the 12-hour life.
+    const ttl = identity.credentialId || identity.adminAuth ? ACTIVITY_PASSKEY_SESSION_TTL_MS : ACTIVITY_SESSION_TTL_MS;
     const session = { ownerId: identity.ownerId, teamId: identity.teamId, origin: identity.origin,
       ...(identity.credentialId ? { credentialId: identity.credentialId } : {}),
       ...(identity.adminAuth ? { adminAuth: { ...identity.adminAuth } } : {}),

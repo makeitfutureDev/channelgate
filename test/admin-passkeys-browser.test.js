@@ -90,7 +90,9 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     const session = (await admin.context.cookies()).find((cookie) => cookie.name === "cg_session");
     assert.equal(session.httpOnly, true);
     assert.equal(session.sameSite, "Strict");
-    assert.ok(session.expires * 1000 - Date.now() < 12 * 60 * 60_000 + 1000);
+    // A passkey session lasts thirty days (2026-11-20; twelve hours before).
+    const left = session.expires * 1000 - Date.now();
+    assert.ok(left < 30 * 24 * 60 * 60_000 + 1000 && left > 29 * 24 * 60 * 60_000, `cookie lifetime ${left}`);
   });
 
   await t.test("legacy key links to an existing admin by private code without replacing credentials", async () => {
@@ -278,15 +280,18 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
   });
 
   await t.test("sessions enforce both idle expiry and the absolute lifetime despite keepalives", async () => {
+    // A passkey session ends after seven idle days or thirty days in total (2026-11-20).
     await signIn();
-    clockOffset += 31 * 60_000;
+    clockOffset += 7 * 24 * 60 * 60_000 + 60_000;
     assert.equal((await api(admin.page, "/api/auth/me", undefined, "GET")).status, 401);
     await signIn();
-    for (let step = 0; step < 35; step++) {
-      clockOffset += 20 * 60_000;
-      assert.equal((await api(admin.page, "/api/auth/me", undefined, "GET")).status, 200);
+    // Keepalives every six days carry it to just under thirty days, never past the absolute limit.
+    for (const days of [6, 6, 6, 6, 5.9]) {
+      clockOffset += days * 24 * 60 * 60_000;
+      const kept = await api(admin.page, "/api/auth/me", undefined, "GET");
+      assert.equal(kept.status, 200, `keepalive after ${days} days: ${JSON.stringify(kept.body)}`);
     }
-    clockOffset += 21 * 60_000;
+    clockOffset += 3 * 60 * 60_000;
     assert.equal((await api(admin.page, "/api/auth/me", undefined, "GET")).status, 401);
     await signIn();
   });

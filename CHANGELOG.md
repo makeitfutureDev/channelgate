@@ -2,6 +2,13 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep the admin dashboard signed in across gateway restarts: sessions now persist in the
+  database (only the cookie token's hash is stored). A passkey or password-plus-Slack-code
+  sign-in lasts thirty days and survives seven idle days instead of thirty minutes idle / twelve
+  hours; the password-only setup sign-in keeps the short window. Opening Activity from the admin
+  dashboard now also gives a thirty-day Activity session. Sensitive changes still ask for a fresh
+  passkey within five minutes, and revoking sessions, removing a passkey or changing the password
+  still signs those browsers out at once.
 - Every engine license except a harness's own sign-in can now be removed in Settings → Engine
   licenses, including the ones ChannelGate ships with: Qwen, Qwen EU, Codex EU, Claude Extra and
   Codex (channel account) each have a **Remove** button. Removing one switches it off, takes it

@@ -6,9 +6,9 @@
 // first request for an id after a restart. Only the sha256 of the cookie secret is stored, as
 // before, so the table never holds anything that opens a session by itself.
 //
-// Lifetime depends on how the session was earned: a passkey sign-in (the person proved who they
-// are on this device) lasts ACTIVITY_PASSKEY_SESSION_TTL_MS; a Slack-link launch or an admin
-// hand-off keeps the short ACTIVITY_SESSION_TTL_MS. Every request still re-checks the owner's
+// Lifetime depends on how the session was earned: a passkey sign-in or an admin dashboard
+// hand-off (the person proved who they are on this device) lasts ACTIVITY_PASSKEY_SESSION_TTL_MS;
+// a Slack-link launch keeps the short ACTIVITY_SESSION_TTL_MS. Every request still re-checks the owner's
 // approval, the passkey's existence and the admin account's version, so a long session is revoked
 // the moment any of those changes.
 import { getDb } from "../db/index.js";

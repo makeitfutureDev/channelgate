@@ -913,7 +913,9 @@ Activity credentials persist in SQLite and belong to one viewer, Slack workspace
 public origin. Every ceremony requires user verification, a five-minute browser-bound challenge,
 and the current user's admission and live Slack connection. Enrollment and deletion also require
 the existing Activity session and CSRF token. Passkey sign-in creates a thirty-day Activity session
-(2026-11-17; twelve hours before) and its path-scoped HttpOnly cookie, persisted across restarts. Removing a key invalidates
+(2026-11-17; twelve hours before) and its path-scoped HttpOnly cookie, persisted across restarts.
+Opening Activity from a signed-in admin dashboard session also creates a thirty-day session
+(2026-11-20; twelve hours before), still revoked when that admin account's auth version changes. Removing a key invalidates
 sessions opened with that key. Activity-only credentials retain their limited scope.
 The existing ten-minute Slack launch links retain their original reusable lifetime.
 
@@ -1570,7 +1572,11 @@ Task progress remain visible; older agent streams without optional task-type met
 - Sign-in needs only a saved passkey, with required device PIN/biometric verification. The gateway
   checks signatures, exact configured HTTPS origin/RP ID, single-use five-minute challenges,
   browser/session/ceremony binding and credential counters. Public options disclose no credential
-  directory. Sessions expire after 30 minutes idle or 12 hours total. Sensitive changes require
+  directory. A passkey or password-plus-Slack-code session lasts 30 days and ends after 7 idle
+  days; the password-only bootstrap session keeps 30 minutes idle / 12 hours total (2026-11-20;
+  before, every session had the short window). Sessions persist in SQLite (`admin_sessions`, only
+  the cookie token's sha256), so a gateway restart signs nobody out; every request still rechecks
+  the account, its auth version and the sign-in method. Sensitive changes require
   passkey authentication within five minutes; Settings → Admin access manages your own keys.
 - Existing keys remain intact during migration. Their owner selects an existing admin and proves
   control using an eight-digit private chat code, valid five minutes and bound to that browser

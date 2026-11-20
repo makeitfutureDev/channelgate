@@ -73,7 +73,11 @@ registration-only URL valid for 15 minutes. Open privately at the configured HTT
 a replacement. Treat that URL as a credential. The legacy `--username` option is reserved for
 unlinked migration/bootstrap accounts; it cannot substitute for a known linked user's role.
 
-Sessions clear on restart and expire after 30 minutes idle or 12 hours total. Sensitive mutations,
+Sessions survive a gateway restart (they are stored in the database as a hash of the cookie). A
+passkey or password-plus-Slack-code session lasts 30 days and ends after 7 days without use; the
+password-only bootstrap session expires after 30 minutes idle or 12 hours total. Revoking a user's
+sessions, removing a passkey, disabling the account or changing the admin password still ends
+them immediately. Sensitive mutations,
 new authenticators and secret reveal require passkey verification within five minutes. The run
 API bearer key remains scoped automation access and cannot enroll keys or log into the dashboard.
 
