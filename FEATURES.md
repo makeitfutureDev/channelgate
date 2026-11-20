@@ -465,6 +465,12 @@ desktop buttons (including Call) fit on one line. The order and widths are saved
 by the Pinned and main tables, and follow the viewer across sessions and devices. Phones keep the
 stacked layout, with the comment on its own line.
 
+With **Group by → Channel**, the column headers line up with the cells inside the indented
+channel cards, and every cell stays inside its card: when the saved widths add up to more than
+the window, the table scrolls sideways instead of letting cells spill past the card's edge. The
+coloured channel heading always spans the whole card, including when every flexible column has a
+fixed saved width (2026-11-20).
+
 ## Installed Activity window header (2026-11-14)
 
 Installed desktop browsers that support Window Controls Overlay can merge the native title

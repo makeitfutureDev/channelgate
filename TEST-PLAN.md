@@ -760,6 +760,14 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   the width. API rejects Actions widths below 188px and above 1600px. Phone layout must retain
   its existing wrapping without page overflow. Engine-independent: rendering and account
   preference storage do not execute or select an engine.
+- Channel-card layout regression (2026-11-20): with **Group by → Channel** and at least two
+  channels with tracked threads, check at 1440px with default widths, with Conversation saved at
+  900px, with Conversation 300 / Comment 120 / Channel 100px, and at a 760px window; repeat the
+  fixed widths with Status grouping. In every case each cell must sit inside its card (or row) and
+  directly under its header (left and right edges within 1.5px), and each group heading must
+  span the whole card. When the columns are wider than the window the table scrolls sideways;
+  the card grows with it. Automated in `test/activity-cards-layout-browser.test.js` (real
+  Chromium; fails on the pre-fix layout). Engine-independent: layout only.
 - Automated: `test/activity.test.js` (routes, ownership, privacy, validation),
   `test/activity-page.test.js` (browser script) and `test/activity-columns-browser.test.js` (real
   Chromium: comment save, edge-drag resize, header drag-reorder, reload persistence, reset, phone

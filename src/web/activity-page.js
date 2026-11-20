@@ -256,13 +256,26 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths); columnsVersion = version;
     applyColumns();
   }
+  function columnTracks() {
+    return columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.templates[id]);
+  }
+  // With every flexible column resized to a fixed width, a trailing empty track takes up the
+  // slack so a group heading still spans the whole row.
   function columnTemplate() {
-    return columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.templates[id]).join(" ");
+    const tracks = columnTracks();
+    return tracks.some((track) => /fr\b/.test(track)) ? tracks : [...tracks, "minmax(0,1fr)"];
+  }
+  function columnFloor() {
+    return "calc(" + columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.floors[id]).join(" + ") + ")";
   }
   function headerRows() { return [...(document.querySelectorAll?.("thead tr") || [])]; }
   function paintTemplate() {
-    const template = columnTemplate();
-    for (const table of [el("table"), el("pinned-table")]) table?.style?.setProperty?.("--cols", template);
+    const tracks = columnTemplate(), template = tracks.join(" "), floor = columnFloor(), gaps = String(tracks.length - 1);
+    for (const table of [el("table"), el("pinned-table")]) {
+      table?.style?.setProperty?.("--cols", template);
+      table?.style?.setProperty?.("--tracks-min", floor);
+      table?.style?.setProperty?.("--track-gaps", gaps);
+    }
   }
   function placeCells(parent, cells) {
     columnOrder.forEach((id, index) => {
@@ -583,8 +596,9 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
         hues.set(section === pinned ? "p" + row.channelId : row.channelId, hue); previous = hue;
       }
     }
-    if (currentGrouping === "channel") body.dataset.cards = ""; else delete body.dataset.cards;
-    if (groupPinned) pinnedBody.dataset.cards = ""; else delete pinnedBody.dataset.cards;
+    // The table carries the mode too, so its header lines up with the cards' indented cells.
+    for (const element of [body, el("table")]) if (currentGrouping === "channel") element.dataset.cards = ""; else delete element.dataset.cards;
+    for (const element of [pinnedBody, el("pinned-table")]) if (groupPinned) element.dataset.cards = ""; else delete element.dataset.cards;
     const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
     const groupSize = new Map();
@@ -1461,7 +1475,10 @@ const LIGHT = `color-scheme:light;
 // Column labels and the default track of each column when the viewer has not resized it.
 const COLUMN_LABELS = Object.freeze({ conversation: "Conversation", comment: "Comment", channel: "Channel", status: "Status", last: "Last", actions: "Actions" });
 const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "192px" });
-const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES,
+// The narrowest each default track can get; a row (and a channel card) never gets narrower than
+// the sum of these, so the table scrolls instead of letting cells spill out of it.
+const COLUMN_FLOORS = Object.freeze({ conversation: "0px", comment: "110px", channel: "var(--col-channel-min)", status: "124px", last: "44px", actions: "192px" });
+const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES, floors: COLUMN_FLOORS,
   min: ACTIVITY_COLUMN_MIN_WIDTHS, max: ACTIVITY_COLUMN_MAX_WIDTH, commentMax: ACTIVITY_COMMENT_MAX });
 const DEFAULT_COLUMN_TEMPLATE = ACTIVITY_COLUMNS.map((id) => COLUMN_TEMPLATES[id]).join(" ");
 // Headers are draggable to reorder; every resizable header carries a focusable edge.
@@ -1547,9 +1564,16 @@ input::placeholder{color:var(--faint)}
 .notice{margin:10px 14px 0;padding:9px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--ink);border-radius:8px;font-size:12.5px}
 table{display:block;width:100%;border-collapse:collapse}
 thead,tbody{display:block}
-:root{--col-channel:minmax(120px,190px)}
+:root{--col-channel-min:120px;--col-channel:minmax(var(--col-channel-min),190px);--col-gap:12px}
 table{overflow-x:auto}
-thead tr,tbody tr{display:grid;grid-template-columns:var(--cols,${DEFAULT_COLUMN_TEMPLATE});align-items:center;column-gap:12px;padding:0 16px}
+thead tr,tbody tr{display:grid;grid-template-columns:var(--cols,${DEFAULT_COLUMN_TEMPLATE});align-items:center;column-gap:var(--col-gap);padding:0 16px}
+/* A row is never narrower than its tracks (--tracks-min, painted with --cols): resized columns
+   scroll the table instead of spilling out of their row or card. The fixed part is the row
+   chrome: 16px padding a side, or in a channel card the body's 12px padding + 1px border + the
+   row's 44px indent on the left and 12px + 1px + 3px on the right. */
+thead,tbody{min-width:calc(var(--tracks-min,0px) + var(--track-gaps,5) * var(--col-gap) + 32px)}
+tbody[data-cards],table[data-cards] thead{min-width:calc(var(--tracks-min,0px) + var(--track-gaps,5) * var(--col-gap) + 73px)}
+table[data-cards] thead tr{padding:0 16px 0 57px}
 .pinned-section{margin:0 0 24px}
 .pinned-heading{display:flex;align-items:center;gap:10px;margin:0;padding:12px 16px;font:600 13px var(--font);color:var(--ink)}
 .pinned-channels{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 12px}
@@ -1733,8 +1757,7 @@ select.settings-input{height:32px}
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
 @media(hover:none){.actions{opacity:1}.comment-input:placeholder-shown:not(:focus){opacity:1}}
 @media(max-width:980px){
-  :root{--col-channel:minmax(90px,125px)}
-  thead tr,tbody tr{column-gap:8px}
+  :root{--col-channel-min:90px;--col-channel:minmax(var(--col-channel-min),125px);--col-gap:8px}
 }
 @media(max-width:640px){
   .settings-layout{grid-template-columns:1fr}
@@ -1750,6 +1773,7 @@ select.settings-input{height:32px}
   .bar{flex-wrap:wrap;padding:6px 8px;gap:6px}
   .search-wrap{flex:1 1 100%;margin:0;order:-1}
   thead{display:none}
+  tbody,tbody[data-cards]{min-width:0}
   tbody tr{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:5px;padding:9px 12px}
   tbody tr[data-group]::before{margin:-9px -12px 4px;padding:0 12px}
   .thread-cell{grid-column:1/3;grid-row:2;padding:0}
