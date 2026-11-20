@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix Activity's **Group by → Channel** cards so their cells stay inside the card and line up
+  with the column headers. Before, the cells sat about 40px to the right of their headers, resized
+  columns could run past the card's edge, and the coloured channel heading could stop short of
+  the card's edge or run past it. Wide saved columns now scroll the table sideways.
 - Add provider licenses and an **Engine licenses** section in Settings. An administrator can now
   add, for either harness, an API key or a custom server (the Anthropic Messages API for Claude
   Code, the OpenAI Responses API for Codex), Amazon Bedrock (region and Bedrock API key), Google
