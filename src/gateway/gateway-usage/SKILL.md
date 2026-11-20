@@ -191,7 +191,7 @@ invite the bot. See `references/messages.md`.
 | Make a tracker people edit over time           | `references/tables.md`            | `gateway` → `slack_list_create`, `…_add_item`, `…_update_item`, `…_items`, `…_info` |
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
-| Script bulk app calls or process large Composio results | `references/composio-scripts.md` | chosen identity's `COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MULTI_EXECUTE_TOOL`, `COMPOSIO_REMOTE_WORKBENCH` |
+| Script bulk app calls, process large Composio results, or run code with connections (Workbench vs a container SDK script) | `references/composio-scripts.md` | chosen identity's `COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MULTI_EXECUTE_TOOL`, `COMPOSIO_REMOTE_WORKBENCH`; container SDK only with a project API key in the inventory |
 | Send a file to Drive / an email attachment / any Composio destination | `references/sharing-files.md` | `gateway` → `stage_file_for_composio` (returns the `{name, mimetype, s3key}` those tools require) |
 | Give a file a temporary public URL (API that ingests by URL, or a person who wants a link) | `references/sharing-files.md` | `gateway` → `create_public_file_link` (ask the duration for a person; 48h max), `list_public_file_links`, `revoke_public_file_link` |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
@@ -202,7 +202,7 @@ invite the bot. See `references/messages.md`.
 | The requester asks for a code channel ("open a code channel for this"), or you are working inside one | `references/code-channels.md` | `gateway` → `open_code_channel` (approval card; Slack only), `update_code_channel` (artifact tabs, context bar, title), `archive_code_channel` |
 | Run something long (build, ASR, tests, data)   | `references/background-jobs.md`   | `gateway` → `run_in_background` |
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
-| Ask clarification questions with choices or custom text | `references/questions.md` | `gateway` → `ask_questions` when available |
+| Ask clarification questions with choices or custom text, or send a **form** ("formular", survey, questionnaire) | `references/questions.md` | `gateway` → `ask_questions` when available — a real form, never Block Kit JSON or a Slack List |
 | Split topics into separate discussion threads | `references/thread-forks.md` | `gateway` → `propose_thread_forks` (one approval card for the batch) |
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |

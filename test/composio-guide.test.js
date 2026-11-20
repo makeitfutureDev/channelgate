@@ -121,3 +121,26 @@ test("the references defer to SKILL.md and use the self-describing account names
     assert.doesNotMatch(text, /channel account|company account|shared channel Composio/i, `${rel} leaks plumbing vocabulary`);
   }
 });
+
+test("guide separates Workbench code from container SDK scripts and keeps project keys scoped", async () => {
+  const scripts = await read("references/composio-scripts.md");
+  assert.match(scripts, /## Code with connections: Workbench or this container/);
+  assert.match(scripts, /needs a \*\*Composio project API key\*\*/);
+  assert.match(scripts, /Without such a variable this path\s+does not exist/);
+  assert.match(scripts, /tokens never enter the container/);
+  assert.match(scripts, /can act as ANY user id/);
+  assert.match(scripts, /Do not recommend\s+sharing a project key with other channels or with organization scope/);
+  assert.match(scripts, /Composio sees each request and\s+response either way/);
+  const skill = await read("SKILL.md");
+  assert.match(skill, /container SDK only with a project API key in the inventory/);
+});
+
+test("a requested form is a real ask_questions card, not Block Kit JSON or a Slack List", async () => {
+  const questions = await read("references/questions.md");
+  assert.match(questions, /## "Form" means this tool/);
+  assert.match(questions, /"formular"/);
+  assert.match(questions, /Do \*\*not\*\* answer with Block Kit or modal JSON, a\s+code sample, a Slack List/);
+  assert.match(questions, /post them as\s+a form instead of a bulleted list/);
+  const skill = await read("SKILL.md");
+  assert.match(skill, /send a \*\*form\*\* \("formular", survey, questionnaire\)/);
+});

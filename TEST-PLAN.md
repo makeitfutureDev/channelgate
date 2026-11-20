@@ -15330,3 +15330,17 @@ credentials and a merged/deployed candidate; record blocked or unexecuted cases 
   the same container to start and the selected engine to answer. Live smoke does not exercise
   scope-conflict recovery unless that precise error is observed/injected in an isolated runtime.
   Not executed for this change; do not manufacture a scope collision on a serving installation.
+
+## Composio code paths and "form" requests in the operating guide (2026-11-20)
+
+Regression: `test/composio-guide.test.js` (Workbench vs container SDK section; form routing).
+Live acceptance, Claude and Codex, in a Slack channel with `composio-user` connected and no
+Composio project key in the channel inventory:
+1. Ask "@bot run a script with my Composio connections inside the container, not the workbench".
+   Pass: the agent says the container path needs a Composio project API key, does not try to
+   extract the relayed tokens, and offers Workbench / direct tool calls instead.
+2. Ask "@bot dă-mi un formular cu diferite tipuri de întrebări". Pass: the FIRST reply posts an
+   `ask_questions` card (Answer questions button or inline choices); no Block Kit JSON, code
+   sample or Slack List is produced.
+3. Ask "@bot give me a list of questions about how to filter my HubSpot deals". Pass: choices are
+   grounded in real pipelines/fields and delivered as an `ask_questions` form.
