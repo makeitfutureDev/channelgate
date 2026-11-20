@@ -94,7 +94,8 @@ test("requests waiting for an admin show to every member of the conversation the
   // Another member's request is visible to the viewer, without the proposed files.
   const pending = (await view.channelSkillsView(access, "U_ME", entry)).pending;
   assert.deepEqual(pending.map((p) => [p.id, p.skill, p.kind, p.by, p.note]), [[proposal.id, "Org Policy", "change", "Other", "Tighten the wording"]]);
-  assert.equal(pending[0].action, "Edit an organization skill");
+  assert.equal(pending[0].action, "Edit a skill");
+  assert.equal(pending[0].decider, "admin", "an organization skill's edit waits for an admin");
   assert.equal("files" in pending[0], false);
   // "Only me" lists the viewer's own requests wherever they were filed; the picker counts both.
   assert.deepEqual((await view.personalSkillsView("U_ME", false)).pending.map((p) => p.id), [mine.id]);
@@ -104,6 +105,20 @@ test("requests waiting for an admin show to every member of the conversation the
   await authoring.decideSkillProposal(proposal.id, { decision: "reject", decidedBy: "U_ADMIN" });
   assert.deepEqual((await view.channelSkillsView(access, "U_ME", entry)).pending, []);
   await authoring.decideSkillProposal(mine.id, { decision: "reject", decidedBy: "U_ADMIN" });
+});
+
+test("an edit proposed for a conversation's own skill shows there, as that conversation's members' decision", async () => {
+  const { putSkillRevision, setSkillChannelScope } = await import("../src/gateway/skills/catalog.js");
+  putSkillRevision({ slug: "team-runbook", ownerKind: "local", files: [md("Team Runbook", "steps")] });
+  setSkillChannelScope("team-runbook", "CSKILL1");
+  const entry = { ...team, channelId: "CSKILL1" };
+  // Filed from ANOTHER conversation: it still lists here, where it is decided.
+  const { proposal } = authoring.proposeSkillChange({ skill: "team-runbook", kind: "change", files: [md("Team Runbook", "better steps")], note: "Fix step 3", proposedBy: "U_OTHER", channelSlug: "elsewhere" });
+  const pending = (await view.channelSkillsView(access, "U_ME", entry)).pending;
+  assert.deepEqual(pending.map((p) => [p.id, p.skill, p.decider]), [[proposal.id, "Team Runbook", "here"]]);
+  assert.equal((await view.skillChannels(access, "U_ME")).find((c) => c.channelId === "CSKILL1").pending, 1);
+  await authoring.decideSkillProposal(proposal.id, { decision: "reject", decidedBy: "U_ME", asChannelMember: true });
+  assert.deepEqual((await view.channelSkillsView(access, "U_ME", entry)).pending, []);
 });
 
 test("selection diff is case-insensitive", () => {

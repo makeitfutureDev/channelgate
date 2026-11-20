@@ -17,7 +17,7 @@ import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry 
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine, getPublicUrl } from "../../config/settings.js";
 import { createUserAccessToken, listUserAccessTokens, revokeUserAccessToken } from "../../gateway/skills/tokens.js";
 import { isForeignPersonalSkill, resolveAccessGrants, resolveRunAccessGrants } from "../../gateway/access-grants.js";
-import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
+import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, getProposal, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport, formatSkillUsageReport } from "../../gateway/skills/usage.js";
@@ -38,6 +38,7 @@ import {
   validateSkillGovernanceChange,
   revokeSkillsFromOrg,
   proposeSkillChange,
+  proposalDecider,
   decideSkillProposal,
   describeOwner,
   canSeeSkill,
@@ -162,6 +163,13 @@ export function register(server, ctx) {
   // author against the channel's access policy; the run itself was already authorized).
   const memberHere = async () => (ctx.requireChannelAccess ? ctx.requireChannelAccess() : requireManage());
   const ANNOUNCE = "Mention this skill change in your reply so the conversation sees it.";
+  // Is this conversation the channel that owns a proposal's skill, and may the author act for it?
+  // The same test update_skill applies to a channel skill.
+  const decidesHere = async (proposal) => {
+    const decider = proposalDecider(proposal);
+    if (decider.tier !== "channel") return false;
+    return decider.channelId === ((await loadMeta())?.channelId || channelId) && (await approvedAuthor()) && (await memberHere());
+  };
 
   // The HTTP run API principal ranks as an admin (its key is an admin credential), but it is not a
   // person: it has no personal grants and cannot own a personal skill.
@@ -574,7 +582,7 @@ export function register(server, ctx) {
             return text(`🚫 Could not file the change proposal: ${err?.message || err}`);
           }
         }
-        if (tier === "channel") return text(`\`${skill.slug}\` belongs to another channel; its members (or an admin) change it. propose_skill_change sends them your edit.`);
+        if (tier === "channel") return text(`\`${skill.slug}\` belongs to another channel; its members (or an admin) change it. File your edit with propose_skill_change — that channel's members (or an admin) approve it there with decide_skill_proposal.`);
         return text(`\`${skill.slug}\` is someone else's; propose a change (propose_skill_change).`);
       }
       try {
@@ -628,7 +636,7 @@ export function register(server, ctx) {
   server.registerTool(
     "propose_skill_change",
     {
-      description: "Ask an admin for a change you cannot make yourself: kind change (the changed files + a note) for an organization skill, feedback (note only), promote (a personal or channel skill becomes an organization skill; an organization skill gets granted everywhere), delete (remove a shared skill from the whole catalog), or template (add the skill to the skill template named in `template` — templates are admin-edited skill sets such as Development or Sales). An admin reviews it with decide_skill_proposal or in the admin UI.",
+      description: "Ask for a change you cannot make yourself: kind change (the changed files + a note) for an organization skill or another channel's skill, feedback (note only), promote (a personal or channel skill becomes an organization skill; an organization skill gets granted everywhere), delete (remove a shared skill from the whole catalog), or template (add the skill to the skill template named in `template` — templates are admin-edited skill sets such as Development or Sales). A change or feedback for another channel's skill is decided by that channel's members (or an admin); everything else by an admin, with decide_skill_proposal or in the admin UI.",
       inputSchema: {
         skill: z.string(),
         note: z.string(),
@@ -641,7 +649,12 @@ export function register(server, ctx) {
       if (!(await approvedAuthor())) return text("Only approved members can file proposals.");
       try {
         const { proposal, skill } = proposeSkillChange({ skill: key, kind, files, note, proposedBy: createdBy, channelSlug: slug, template });
-        return text(`📝 Proposal #${proposal.id} filed for \`${proposal.slug}\` (${kind}${proposal.target ? ` → template ${proposal.target}` : ""}${skill ? `, ${describeOwner(skill)}` : ", new skill"}). An admin reviews it (list_skill_proposals / decide_skill_proposal, or the admin UI under Skills → Review).`);
+        const decider = proposalDecider(proposal);
+        const owner = decider.tier === "channel" ? (await getChannelEntry(decider.channelId).catch(() => null)) : null;
+        const reviewer = decider.tier === "channel"
+          ? `A member of ${owner?.name || owner?.slug ? `#${String(owner.name || owner.slug).replace(/^#+/, "")}` : "the channel that owns it"} (or an admin) reviews it there with list_skill_proposals / decide_skill_proposal.`
+          : "An admin reviews it (list_skill_proposals / decide_skill_proposal, or the admin UI under Skills → Review).";
+        return text(`📝 Proposal #${proposal.id} filed for \`${proposal.slug}\` (${kind}${proposal.target ? ` → template ${proposal.target}` : ""}${skill ? `, ${describeOwner(skill)}` : ", new skill"}). ${reviewer}`);
       } catch (err) {
         return text(`🚫 Could not file the proposal: ${err?.message || err}`);
       }
@@ -650,10 +663,16 @@ export function register(server, ctx) {
 
   server.registerTool(
     "list_skill_proposals",
-    { description: "ADMINS. List skill proposals (default: pending).", inputSchema: { status: z.enum(["pending", "approved", "rejected", "all"]).optional() } },
+    { description: "List skill proposals (default: pending). Admins see all of them; a channel's members see the edits proposed for that channel's own skills, which they decide.", inputSchema: { status: z.enum(["pending", "approved", "rejected", "all"]).optional() } },
     async ({ status = "pending" }) => {
-      if (!(await requireAdmin())) return text("Only admins can review skill proposals.");
-      const rows = listProposals({ status: status === "all" ? "" : status });
+      const admin = await requireAdmin();
+      let rows = listProposals({ status: status === "all" ? "" : status });
+      if (!admin) {
+        if (!(await approvedAuthor()) || !(await memberHere())) return text("Only admins, or members of the channel that owns a skill, can review skill proposals.");
+        const here = (await loadMeta())?.channelId || channelId;
+        rows = rows.filter((p) => proposalDecider(p).channelId === here);
+        if (!rows.length) return text(`No ${status === "all" ? "" : `${status} `}proposals for this channel's skills. Proposals for organization skills are decided by an admin.`);
+      }
       if (!rows.length) return text(`No ${status === "all" ? "" : `${status} `}proposals.`);
       return text(clipText(rows.map((p) => `• #${p.id} ${p.kind} \`${p.slug}\` by ${p.proposedBy || "?"}${p.channelSlug ? ` in ${p.channelSlug}` : ""} — ${p.status}${p.files.length ? `, ${p.files.length} file(s): ${p.files.map((f) => f.path).join(", ")}` : ""}${p.note ? `\n  ${p.note.slice(0, 300)}` : ""}`).join("\n")));
     },
@@ -662,15 +681,24 @@ export function register(server, ctx) {
   server.registerTool(
     "decide_skill_proposal",
     {
-      description: "ADMINS. Approve or reject a skill proposal. Approving a change publishes a new revision (pinned as a gateway override when the skill comes from a source); approving a promotion makes a personal skill an organization skill or grants an organization skill everywhere; approving feedback closes it.",
+      description: "Approve or reject a skill proposal. Admins decide any; a member of the channel that owns a channel skill decides the edits and feedback filed for it (run it from that channel). Approving a change publishes a new revision (pinned as a gateway override when the skill comes from a source); approving a promotion makes a personal skill an organization skill or grants an organization skill everywhere; approving feedback closes it.",
       inputSchema: { id: z.number().int(), decision: z.enum(["approve", "reject"]), note: z.string().optional() },
     },
     async ({ id, decision, note = "" }) => {
-      if (!(await requireAdmin())) return text("Only admins can decide skill proposals.");
+      const admin = await requireAdmin();
+      const proposal = getProposal(id);
+      const asChannelMember = !admin && Boolean(proposal) && (await decidesHere(proposal));
+      if (!admin && !asChannelMember) {
+        const decider = proposal ? proposalDecider(proposal) : null;
+        return text(decider?.tier === "channel"
+          ? `Proposal #${id} edits a skill of another channel; its members (or an admin) decide it there.`
+          : "Only admins can decide this skill proposal: it changes an organization skill, a template or the whole catalog.");
+      }
       try {
-        const r = await decideSkillProposal(id, { decision, decidedBy: createdBy, note });
+        const r = await decideSkillProposal(id, { decision, decidedBy: createdBy, note, asChannelMember });
+        if (r.unchanged) return text(`✅ Proposal #${id} approved — \`${r.proposal.slug}\` already had those files, so nothing changed.`);
         if (decision === "reject") return text(`Proposal #${id} rejected.`);
-        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a gateway override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}${r.templated ? ` — \`${r.proposal.slug}\` added to the ${r.proposal.target} template (every conversation following it gets it on its next message)` : ""}.${publishLine(r.published)}`);
+        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a gateway override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}${r.templated ? ` — \`${r.proposal.slug}\` added to the ${r.proposal.target} template (every conversation following it gets it on its next message)` : ""}.${publishLine(r.published)}${asChannelMember && r.revision ? `\n${ANNOUNCE}` : ""}`);
       } catch (err) {
         return text(`🚫 ${err?.message || err}`);
       }

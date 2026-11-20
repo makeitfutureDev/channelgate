@@ -85,8 +85,8 @@ applies at once.
   `update_skill_template` (`add` / `remove`).
 
 None of these show an approval card. Of the admin verbs, only `add_skill_source`, `add_org_skills`,
-`update_skill_template` when it ADDS and `decide_skill_proposal` when it APPROVES post a (durable,
-never-expiring) card; the rest are automatic for an admin (`references/administration.md`).
+`update_skill_template` when it ADDS and `decide_skill_proposal` when it APPROVES anything but a
+channel's own edit post a (durable, never-expiring) card; the rest are automatic for an admin (`references/administration.md`).
 
 ## Authoring
 
@@ -121,6 +121,15 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
   channel skill becomes an organization skill), `"delete"` (remove a shared skill from the
   catalog), `"template"` (add a skill to a template).
 
+## Deciding proposals
+
+- **A channel decides edits of its own skills.** A `change` or `feedback` proposal for a channel
+  skill this gateway can write — usually filed from another conversation — is decided by any
+  member of the channel that owns the skill, from that channel, with no card (the same power as
+  their own `update_skill`). There, `list_skill_proposals` shows them, and `decide_skill_proposal`
+  approves (the change lands as a new revision; announce it) or rejects. A member of any other
+  channel is refused. Everything else below stays an admin's.
+
 ## Admins
 
 - `list_skill_proposals` / `decide_skill_proposal` — review pending proposals in the thread
@@ -132,7 +141,8 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
   following it is affected on its next message.
 - Of the organization-wide admin tools, the four that push content into every conversation
   (`add_skill_source`, `add_org_skills`, `update_skill_template` when it ADDS,
-  `decide_skill_proposal` when it APPROVES — a proposal's text is written by someone else)
+  `decide_skill_proposal` when it APPROVES anything but a channel's own edit — a proposal's text is
+  written by someone else)
   **always** show a durable Approve/Deny card that never expires; end your turn and the gateway
   applies the call on the admin's click. Auto mode and admin mode do NOT skip it. The rest
   (removals, rejections, sources' settings and sync, governance, exclusion, `set_skill_scope`,

@@ -484,7 +484,9 @@ Waiting for approval: `test/activity-skills.test.js` covers another member's pen
 to the viewer without its files, "Only me" listing the viewer's own requests, the picker counts, and
 a decided request leaving the list. `test/activity-skills-pending-browser.test.js` (headless
 Chromium, 390px) covers the section being hidden when empty, the option suffix, the row text, the
-note rendering as text and no sideways scroll.
+note rendering as text and no sideways scroll. The same two files cover an edit proposed from another
+conversation for a conversation's own channel skill listing in that conversation with "Members of
+this conversation decide it", and the "Decided by an organization admin" line.
 
 Live `ACT-SKILLS-03` (Claude and Codex): in `#cg-qa-a`, as a non-admin member, ask the bot (once per
 engine) to "propose changing the description of the organization skill <name> to …". The reply says
@@ -13592,6 +13594,26 @@ companion skill; every change is announced in the reply.
       `delete_skill`; `set_skill_scope` refuses a member — again with zero approval requests. The
       admin's `decide_skill_proposal` still posts one admin-tier card and then tombstones the
       skill. Every write result carries "Mention this skill change in your reply".
+- [x] Automated, both engines (`test/mcp-control-plane-approval.test.js` "a channel's members decide
+      edits proposed for its own skills"): a member sees in `list_skill_proposals` only the edit and
+      feedback proposed for this channel's skills; approves the edit (revision 2, the file landed,
+      no pin, decided by the member) and rejects the feedback, with ZERO approval requests; is
+      refused another channel's skill edit ("its members (or an admin) decide it there"), an
+      organization skill edit and a `promote` of the channel's own skill (all stay pending);
+      `update_skill`/`propose_skill_change` on another channel's skill name its members as the
+      deciders. The admin then decides all of them, and only the organization edit posts a card.
+      `test/skills-platform.test.js` "proposal deciders" covers the rule: writable channel skill
+      edit/feedback → channel; `promote`/`delete`/`template`, a read-only source's edit, an
+      organization or unknown skill → admin; `asChannelMember` on an admin proposal is refused.
+- [ ] Live `SKILL-DECIDE-01` (Claude and Codex, Xavier `#cg-qa-a` and `#cg-qa-b`): an admin
+      creates a channel skill in `#cg-qa-a`. In `#cg-qa-b` a non-admin member who is NOT in
+      `#cg-qa-a` asks the bot to change one line of it: the reply files a proposal and says a member
+      of `#cg-qa-a` (or an admin) reviews it. In `#cg-qa-a` a non-admin member asks "which skill
+      proposals are waiting for this channel?", then "approve proposal #N". Pass when: no approval
+      card is posted anywhere, the reply announces the new revision, Activity → Skills → `#cg-qa-a`
+      no longer lists it, and the next turn in `#cg-qa-a` follows the changed line. Repeat with an
+      organization skill: the member in `#cg-qa-a` is refused, and an admin's approval posts one
+      admin card.
 - [x] Automated (`test/skills-platform.test.js`): `skillEditability` — local and
       publish-repository skills are editable, another repository's is not (`updateLocalSkill`
       names the companion-skill route); a publish-repository edit is pushed back to

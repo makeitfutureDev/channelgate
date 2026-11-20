@@ -102,7 +102,7 @@ export function skillsBrowser(config, browser) {
     pendingEl.replaceChildren();
     if (!list.length) return;
     pendingEl.append(node("h2", "Waiting for approval · " + list.length));
-    pendingEl.append(node("p", (data.kind === "personal" ? "Your skill requests" : "Skill requests made in this conversation") + " that an organization admin still has to approve or reject. Nothing changes until they decide.", "skills-pending-copy"));
+    pendingEl.append(node("p", (data.kind === "personal" ? "Your skill requests" : "Skill requests made in this conversation or for its own skills") + " that still need an approval or a rejection. Nothing changes until someone decides.", "skills-pending-copy"));
     const items = node("ul");
     for (const item of list) {
       const li = node("li");
@@ -110,6 +110,9 @@ export function skillsBrowser(config, browser) {
       head.append(node("strong", item.skill), node("span", item.action + (item.target ? " “" + item.target + "”" : ""), "skills-badge"));
       li.append(head);
       li.append(node("span", ["Request #" + item.id, item.by ? "by " + item.by : "", when(item.createdAt)].filter(Boolean).join(" · "), "skills-row-note"));
+      li.append(node("span", item.decider === "here" ? "Members of this conversation decide it: ask the agent here to approve or reject request #" + item.id + "."
+        : item.decider === "channel" ? "Decided by members of " + (item.deciderChannel || "the conversation that owns the skill") + " (or an admin)."
+        : "Decided by an organization admin.", "skills-row-note"));
       if (item.note) li.append(node("span", item.note, "skills-row-desc"));
       items.append(li);
     }

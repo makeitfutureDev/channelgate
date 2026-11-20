@@ -253,7 +253,7 @@ Inspect review proposals.
 | --- | --- | --- |
 | `status` | No | `pending` (default), `approved`, `rejected`, or `all`. |
 
-**Authority and scope:** Administrator.
+**Authority and scope:** Administrator (every proposal), or a member of a conversation (the edit and feedback proposals for that conversation's own channel skills).
 
 **Result:** Proposal IDs, kind, author, conversation, state, file paths and notes.
 
@@ -269,7 +269,7 @@ Approve or reject a proposal.
 | `decision` | Yes | `approve` or `reject`. |
 | `note` | No | Decision note; default empty. |
 
-**Authority and scope:** Organization administrator; the shared control-plane approval policy applies to mutations.
+**Authority and scope:** Organization administrator for any proposal; the shared control-plane approval policy applies to an approval. A member of the conversation that owns a channel skill decides `change` and `feedback` proposals for it from that conversation, with no approval card, when the gateway can write the skill. Organization skills, read-only sources, promotion, deletion and template proposals stay with administrators.
 
 **Result:** Decision and resulting revision, local pin, promotion, deletion, template assignment or publication result.
 
