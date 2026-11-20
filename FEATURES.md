@@ -1,5 +1,52 @@
 # ChannelGate — Features
 
+## Removing shipped licenses and renaming the default sign-in (2026-11-20)
+
+Every engine license except a harness's own sign-in can now be removed in Settings → Engine
+licenses, the ones ChannelGate ships with included, and the harness's own sign-in can be renamed.
+
+- **Remove on every shipped license but the two sign-ins.** *Qwen (Claude Code)*, *Qwen EU (Claude
+  Code)*, *Codex EU*, *Claude Extra* and *Codex (channel account)* each carry a **Remove** button,
+  like an added license. `claude` and `codex` — "Default sign-in", what every selection falls back
+  to — have **Rename** instead and are never removable (`isDefaultLicense` /
+  `isRemovableBuiltinLicense` in `src/engines/registry.js`).
+- **What removal does** (`removeBuiltinLicense` in `src/config/engine-licenses.js`,
+  `DELETE /api/engine-licenses/<id>`): the license is switched off for good, disappears from the
+  license list, every harness/license picker (admin UI, Slack, Teams, Google Chat), the lock's
+  options, its Settings card (the Qwen provider card, the terminal-setup card) and `/api/settings`,
+  and **its own credential is deleted** — the Qwen key and endpoint, or the dedicated sign-in
+  directory of Codex EU / Claude Extra (`ownCredential`, a new optional adapter fact, so no code
+  names an engine). *Codex (channel account)* stores nothing of its own; sign-ins channels made
+  for themselves are kept. The gateway default that named it moves to the harness's own sign-in,
+  and channels and threads that selected it fall back to their defaults exactly as for a license
+  that is switched off. The confirmation says which of these applies before anything is deleted.
+- **The id stays registered.** Sessions, usage rows, thread pins and approved-harness lists that
+  name the license keep reading; a lock that names only a removed license still approves nothing
+  else. "Removed" is stored as `removedLicenses` in `settings.json` and pushed to the registry
+  (`src/engines/license-state.js`); a removed id is disabled in `isEngineEnabled` whatever the
+  enable map says, and a settings save from a page loaded before the removal can neither switch it
+  on nor store a key for it.
+- **Restore.** Removed licenses are listed per harness under the list ("Removed: … Restore",
+  `POST /api/engine-licenses/<id>/restore`). A restored license is listed again as on a fresh
+  install: an opt-in license comes back switched off and without a credential; *Codex (channel
+  account)* follows the Codex switch again.
+- **Refusals.** A harness's own sign-in (400); a license that is already removed (409); the only
+  license that is switched on (409 — switch another one on first, otherwise the read-time rescue
+  would re-enable a default harness unasked).
+- **Rename the default sign-in** (`renameBuiltinLicense`, `PUT /api/engine-licenses/claude|codex`
+  with `{label}`; stored as `licenseNames`). The name replaces "Default sign-in" wherever a license
+  is named — the license list, every picker on every surface, the lock list, and one-control
+  engine choices, which read "Claude Code · <name>". It is at most 60 characters, unique among all
+  licenses (added ones, the other shipped ones and their engine labels), and blank — or "Default
+  sign-in" typed back — restores the default; "Default sign-in" itself cannot be taken by another
+  license. Usage rows and audit keep the engine label.
+- Rename, remove and restore are audited (`engine_license_changed`, `engine_license_removed` with
+  `kind: "builtin"`, `engine_license_restored`), by name only.
+- Not included: removing a harness's own sign-in (switch it off instead); renaming the other
+  shipped licenses; an undo that brings a deleted key or sign-in back.
+
+→ TEST-PLAN: Removing shipped licenses and renaming the default sign-in.
+
 ## Provider licenses and the Engine licenses settings section (2026-11-20)
 
 An engine license can now be an account at a model PROVIDER, for either harness, and all licenses

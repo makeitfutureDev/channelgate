@@ -128,7 +128,8 @@ export function engineDisplayName(manifests, id) {
   if (!manifest) return String(id || "");
   const harness = harnessOf(manifest);
   if (list(manifests).filter((m) => harnessOf(m) === harness).length < 2) return harnessLabelOf(manifests, harness);
-  return manifest.builtin === false ? `${harnessLabelOf(manifests, harness)} · ${licenseLabelOf(manifest)}` : String(manifest.label || id);
+  // A harness's own sign-in reads as the harness until an administrator names it.
+  return manifest.builtin === false || manifest.customName ? `${harnessLabelOf(manifests, harness)} · ${licenseLabelOf(manifest)}` : String(manifest.label || id);
 }
 
 // A one-control engine choice (a model shortcut row, a catalog view switch): one option per usable
@@ -397,6 +398,21 @@ const kindTraits = (kind, catalog = null) => {
   };
 };
 const AUTH_SCHEME_LABELS = { bearer: "Authorization: Bearer", "x-api-key": "x-api-key header", "api-key": "api-key header" };
+// What a harness's own sign-in is called until an administrator names it (license-state.js).
+export const DEFAULT_LICENSE_NAME = "Default sign-in";
+
+// What removing a license the gateway ships with does, in the words of the confirmation. The
+// manifest says what the license stores for itself (`ownCredential`); nothing is inferred from its id.
+export function builtinRemovalText(manifest) {
+  const base = "It is switched off and disappears from every picker. Channels and threads that selected it fall back to their defaults.";
+  const credential = manifest?.ownCredential === "api-key" ? " Its stored API key and endpoint are deleted and cannot be recovered."
+    : manifest?.ownCredential === "sign-in" ? " Its sign-in on the gateway host is deleted and cannot be recovered."
+    : manifest?.channelScoped ? " Sign-ins that channels made for themselves are kept, but no channel can use them while this license is removed."
+    : "";
+  const after = manifest?.ownCredential ? " You can list it again later with Restore, but it has to be set up again." : " You can list it again later with Restore.";
+  return `${base}${credential}${after}`;
+}
+
 // How each field reads for each provider. Wording only — which fields exist is the catalog's.
 const FIELD_COPY = {
   baseUrl: {
@@ -474,6 +490,7 @@ export function mountLicensesManager({
 
   let catalog = null;
   let licenses = [];
+  let removed = []; // the shipped licenses an administrator removed: [{ id, harness, label }]
   let loadError = "";
   let loads = 0;
   // Panels that outlive a repaint: a form being typed into, a sign-in waiting on its code.
@@ -503,6 +520,7 @@ export function mountLicensesManager({
       if (ticket !== loads) return;
       catalog = body.catalog || null;
       licenses = list(body.licenses);
+      removed = list(body.removed);
       loadError = "";
     } catch (error) {
       if (ticket !== loads) return;
@@ -552,6 +570,85 @@ export function mountLicensesManager({
       say(harness, `${license.label} could not be removed: ${error.message}`, true);
     }
     await afterMutation();
+  }
+
+  // A license the gateway ships with (a dedicated login, a provider) is removed rather than
+  // deleted: switched off, unlisted, and what it stored for itself deleted. Restore lists it again.
+  async function removeBuiltin(manifest, harness) {
+    if (refuseIfBlocked(harness)) return;
+    const name = licenseLabelOf(manifest);
+    const ok = await confirm({
+      title: `Remove the license "${name}"?`,
+      body: builtinRemovalText(manifest),
+      confirmLabel: "Remove license",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/api/engine-licenses/${encodeURIComponent(manifest.id)}`, { method: "DELETE" });
+      if (panel?.id === manifest.id) closePanel();
+      if (form?.id === manifest.id) closeForm();
+      say(harness, `Removed ${name}. It can be listed again with Restore.`);
+    } catch (error) {
+      say(harness, `${name} could not be removed: ${error.message}`, true);
+    }
+    await afterMutation();
+  }
+
+  async function restore(entry, harness) {
+    if (refuseIfBlocked(harness)) return;
+    try {
+      await api(`/api/engine-licenses/${encodeURIComponent(entry.id)}/restore`, { method: "POST" });
+      removed = removed.filter((other) => other.id !== entry.id);
+      say(harness, `Restored ${entry.label}. It is switched off until you set it up and switch it on.`);
+    } catch (error) {
+      say(harness, `${entry.label} could not be restored: ${error.message}`, true);
+    }
+    await afterMutation();
+  }
+
+  // The harness's own sign-in has one editable fact: what every picker calls it.
+  function openRename(manifest, harness) {
+    if (refuseIfBlocked(harness)) return;
+    closePanel();
+    const el = make("div", "lic-form lic-rename");
+    const nameInput = make("input");
+    nameInput.type = "text";
+    nameInput.maxLength = 60;
+    nameInput.autocomplete = "off";
+    nameInput.value = manifest.customName || "";
+    nameInput.placeholder = DEFAULT_LICENSE_NAME;
+    const formState = make("span", "state");
+    formState.setAttribute("role", "status");
+    const save = button("Save name", "primary lic-save", async () => {
+      save.disabled = true;
+      formState.textContent = "Saving…";
+      try {
+        const result = await api(`/api/engine-licenses/${encodeURIComponent(manifest.id)}`, { method: "PUT", body: JSON.stringify({ label: nameInput.value }) });
+        say(harness, `${harnessLabelOf(state().manifests, harness)}'s own sign-in is now called "${result.license?.label || DEFAULT_LICENSE_NAME}".`);
+        closeForm();
+        await afterMutation();
+      } catch (error) {
+        save.disabled = false;
+        formState.textContent = `✗ ${error.message}`;
+      }
+    });
+    nameInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      save.click();
+    });
+    const actions = make("div", "row-actions");
+    actions.append(save, button("Cancel", "ghost lic-cancel", () => { closeForm(); paint(); }), formState);
+    el.append(
+      make("strong", "", `Rename ${harnessLabelOf(state().manifests, harness)}'s own sign-in`),
+      field("Name", nameInput, `How this license is listed in every picker. Leave it blank for "${DEFAULT_LICENSE_NAME}".`),
+      actions,
+    );
+    form = { harness, id: manifest.id, el };
+    paint();
+    nameInput.focus();
+    nameInput.select();
   }
 
   // The device-code sign-in of a Codex license: the same controls, and the same code path, as the
@@ -838,6 +935,10 @@ export function mountLicensesManager({
     } else {
       const jump = openBuiltin(manifest);
       if (jump) actions.append(button("Settings", "clear-tok lic-settings", jump));
+      // The harness's own sign-in can be named and never removed; every other license the gateway
+      // ships with can be removed (and restored from the line under the list).
+      if (manifest.defaultLicense) actions.append(button("Rename", "clear-tok lic-rename-open", () => openRename(manifest, harness)));
+      else if (manifest.removable) actions.append(button("Remove", "clear-tok lic-remove", () => removeBuiltin(manifest, harness)));
     }
     row.append(actions);
     if (on && badge?.detail && badge.tone !== "ok") row.append(make("div", "lic-detail state", badge.detail));
@@ -862,6 +963,18 @@ export function mountLicensesManager({
       const rows = make("div", "lic-rows");
       rows.append(...manifests.filter((m) => harnessOf(m) === h.id).map((m) => licenseRow(m, recordOf(m.id), { onCount })));
       group.append(head, rows);
+      const gone = removed.filter((entry) => entry.harness === h.id);
+      if (gone.length) {
+        const line = make("div", "lic-removed state");
+        line.append(make("span", "lic-removed-title", "Removed:"));
+        for (const entry of gone) {
+          const item = make("span", "lic-removed-item");
+          item.dataset.license = entry.id;
+          item.append(make("span", "", entry.label), button("Restore", "clear-tok lic-restore", () => restore(entry, h.id)));
+          line.append(item);
+        }
+        group.append(line);
+      }
       const notice = notices.get(h.id);
       if (notice) {
         const line = make("div", `state lic-notice${notice.bad ? " bad" : ""}`, notice.text);

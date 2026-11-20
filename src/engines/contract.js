@@ -99,6 +99,19 @@ export function validateEngineAdapter(adapter) {
   if (adapter.transientKinds !== undefined && (!Array.isArray(adapter.transientKinds) || adapter.transientKinds.some((k) => typeof k !== "string" || !k))) {
     throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed transientKinds fact`);
   }
+  // OPTIONAL: `ownCredential` names what this license stores for ITSELF — settings keys, or a
+  // sign-in directory on the gateway host — so removing a shipped license (config/engine-licenses.js)
+  // deletes its credential without a per-engine branch. Declared → a kind plus at least one of the
+  // two; a malformed declaration must not load, or a removed license would quietly keep its key.
+  if (adapter.ownCredential !== undefined) {
+    const own = adapter.ownCredential;
+    const keys = own?.settingsKeys;
+    const keysOk = keys === undefined || (Array.isArray(keys) && keys.length > 0 && keys.every((key) => typeof key === "string" && key));
+    const dirOk = own?.directory === undefined || typeof own.directory === "function";
+    if (!own || !["api-key", "sign-in"].includes(own.kind) || !keysOk || !dirOk || (keys === undefined && own.directory === undefined)) {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed ownCredential fact`);
+    }
+  }
   const probe = adapter.compileConfinement({ allowNetwork: false, dangerouslySkip: false, writable: false });
   if (!probe || probe.supported !== true || probe.network?.mode !== "off") {
     throw new TypeError(`EngineAdapter ${adapter.id} confinement compiler must fail closed to network-off`);
@@ -150,8 +163,9 @@ export function createAdapterRegistry(adapters) {
       return removed;
     },
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
-    // structuredClone throws on those. The UI has no use for where a transcript lives on disk.
-    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ...manifest }) => structuredClone(manifest)),
+    // structuredClone throws on those. The UI has no use for where a transcript lives on disk —
+    // nor for where a license keeps its credential (`ownCredential`).
+    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, ...manifest }) => structuredClone(manifest)),
   });
 }
 

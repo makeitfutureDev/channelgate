@@ -1,5 +1,66 @@
 # ChannelGate — Test Plan
 
+## Removing shipped licenses and renaming the default sign-in (2026-11-20)
+
+Settings → Engine licenses: Remove on every shipped license except a harness's own sign-in,
+Restore for a removed one, Rename on the two sign-ins. What is listed, stored and deleted is
+decided by the gateway before any engine runs, so the cases are engine-independent except where a
+harness is named.
+
+- [x] `test/engine-licenses-builtin.test.js` (nine tests always run). Registry facts: `claude` and
+      `codex` are default licenses and not removable; the five other shipped licenses are
+      removable; the manifest carries only the KIND of what removal deletes. A malformed
+      `ownCredential` refuses to load. Rename: the name shows in `licenseLabel`, the manifest,
+      the server picker and the admin UI's picker; it is trimmed and control characters are
+      dropped; a name taken by an added license, another sign-in or a shipped license's engine
+      label is refused (409) and stores nothing; "Default sign-in" cannot be taken by another
+      license; blank or "Default sign-in" resets; a non-sign-in is refused (400), an unknown id
+      404. Normalization: a hand-edited `removedLicenses` naming a sign-in, an added license or
+      an unknown id removes nothing. Removing Qwen with a stored key: key, endpoint and default
+      model are cleared, the gateway default moves to `claude`, the id stays registered, it is
+      off even with a stored `true`, absent from the manifest, the provider cards and the
+      selectable licenses; a lock naming it approves nothing else; a second removal is 409;
+      Restore lists it again, off and without a key. Removing Codex EU and Claude Extra deletes
+      their sign-in directory and their terminal-setup card; removing and restoring *Codex
+      (channel account)* returns it to following the Codex switch. A sign-in is never removed
+      (400); the only license switched on is not removed (409) and nothing is deleted by the
+      refusal. API: PUT renames and ignores every other field, DELETE and POST …/restore answer
+      as documented, a stale settings save cannot re-enable the license or store its key, a
+      removed license cannot become the gateway default, no response contains the key, and the
+      four audit rows carry names only.
+- [x] `test/engine-licenses-builtin.test.js` page test (needs a browser:
+      `CG_BROWSER_MODULE=<playwright module> node --test test/engine-licenses-builtin.test.js`).
+      On the real Settings page: the two sign-ins have Rename and no Remove, the five other
+      shipped licenses have Remove and no Rename; renaming Claude Code's sign-in to "Company Max"
+      updates its row; Remove on Qwen opens a confirmation naming the deleted key and endpoint,
+      and confirming removes the row and the Qwen provider card and lists it under "Removed";
+      Restore brings the row back unticked; the stored key is nowhere in the page.
+- [ ] Live `LICENSE-15` remove a shipped license in use (run once with Qwen for Claude Code and
+      once with Codex EU for Codex, where the deployment holds them). Fixture: the license set up
+      and switched on; a disposable Worker channel `C` set to it; a thread in `C` pinned to it
+      with `/model` → "just this thread". Action: Settings → Engine licenses → Remove on that
+      license, confirm. Pass: the confirmation names what is deleted (key and endpoint / the
+      sign-in on the gateway host); the row, its Settings card and its entry in `/model` in `C`
+      are gone and it is listed under "Removed"; the next message in `C` and in the pinned thread
+      is answered by the harness's default sign-in in a fresh session with the transcript
+      replayed and no `run_error` event; `settings.json` no longer holds the key (Qwen) or
+      `~/.channelgate/engine-state/codex-eu-login` no longer exists (Codex EU); the audit feed
+      shows `engine_license_removed`.
+- [ ] Live `LICENSE-16` restore (same two licenses). Action: Restore under "Removed". Pass: the
+      row and its Settings card are back, the row is unticked, the license reports that it has
+      to be set up (no key / not signed in), and it cannot be selected anywhere until it is set
+      up and switched on.
+- [ ] Live `LICENSE-17` rename the default sign-in (run once per harness). Action: Rename on the
+      harness's "Default sign-in", enter "Company plan", Save name; add or keep a second license
+      of that harness so the License control is shown. Pass: the row, the License control in
+      Agent defaults, in the Slack channel settings modal and in `/model` all read "Company
+      plan"; `/license` in a Teams or Google Chat conversation lists it under that name; a turn
+      on it answers normally and its `usage` row still carries the engine id `claude` / `codex`;
+      renaming to blank puts "Default sign-in" back everywhere.
+- [ ] Live `LICENSE-18` the sign-in stays (engine-independent). Pass: neither "Default sign-in"
+      row offers Remove; `DELETE /api/engine-licenses/claude` with an admin session answers 400
+      and changes nothing.
+
 ## Provider licenses (2026-11-20)
 
 Engine licenses that are an account at a model provider — an API key or custom server, Amazon

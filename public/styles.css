@@ -296,6 +296,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 .lic-detail, .lic-notice { flex-basis: 100%; font-size: 11.5px; color: var(--faint); font-style: normal; line-height: 1.5; }
 .lic-notice { margin-top: 6px; color: var(--muted); }
 .lic-notice.bad { color: var(--danger); }
+.lic-removed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line-soft); font-size: 11.5px; font-style: normal; color: var(--muted); }
+.lic-removed-item { display: inline-flex; align-items: center; gap: 6px; }
 .lic-form, .lic-panel { flex-basis: 100%; box-sizing: border-box; margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .lic-form { display: flex; flex-direction: column; }
 .lic-form > strong, .lic-panel > strong { font-size: 13px; margin-bottom: 8px; }

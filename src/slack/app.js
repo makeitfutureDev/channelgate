@@ -48,7 +48,7 @@ import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
 import { personalSkillPicker } from "../gateway/user-settings.js";
 import { skillModelPreference } from "../gateway/skill-runtime.js";
-import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, harnessOf, licenseLabel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
+import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, harnessOf, isRemovedLicense, licenseLabel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { HARNESS_IDS, harnessLabel } from "../engines/license-state.js";
 import { harnessChoices, licenseChoices, namedSelection, nextLicenseSelection, samePool, selectionLabel } from "./license-controls.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
@@ -1266,7 +1266,10 @@ function channelSettingsSnapshot(meta = {}) {
       harnessOptions: [
         ...HARNESS_IDS.map((harness) => ({ value: harnessPolicyEntry(harness), label: `${harnessLabel(harness)} (any license)` })),
         // A single license is named with its harness: "Codex · Default sign-in" beside "Codex (any license)".
-        ...ENGINE_IDS.map((id) => ({ value: id, label: `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` })),
+        // A removed license is offered only while the stored lock still names it (so it can be read
+        // and unticked), never as something new to approve.
+        ...ENGINE_IDS.filter((id) => !isRemovedLicense(id) || (Array.isArray(meta.approvedEngines) && meta.approvedEngines.includes(id)))
+          .map((id) => ({ value: id, label: `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` })),
       ],
       channelLogin,
       configuredEngineId: effective.engine || "",

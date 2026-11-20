@@ -293,6 +293,42 @@ export function setLicenseRecords(value) {
 export const licenseRecords = () => [...records.values()];
 export const licenseRecord = (id) => records.get(String(id || "")) || null;
 
+// ── The licenses the gateway ships with: renamed, removed ─────────────────────────────────────
+// A harness's own sign-in (`claude`, `codex`) is the one license that cannot be removed, so it is
+// the one an administrator may NAME — "Default sign-in" says nothing once three logins sit beside
+// it. Every other shipped license (the dedicated logins, the provider table) can be REMOVED: it
+// stays a registered engine id, so sessions, usage rows, thread pins and approved-harness policies
+// that name it keep reading, but it is switched off for good, listed nowhere, and its credential is
+// deleted (src/config/engine-licenses.js). Both are stored in settings.json (`licenseNames`,
+// `removedLicenses`) and pushed in here beside the records, for the same reason they are.
+export const DEFAULT_LICENSE_NAME = "Default sign-in";
+export const MAX_LICENSE_NAME_LENGTH = 60;
+export const cleanLicenseName = (value) => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+// Only a harness's own sign-in carries a stored name; anything else in the map is dropped.
+export function normalizeLicenseNames(value) {
+  const out = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const id of HARNESS_IDS) {
+    const name = typeof value[id] === "string" ? cleanLicenseName(value[id]) : "";
+    if (name && name.length <= MAX_LICENSE_NAME_LENGTH) out[id] = name;
+  }
+  return out;
+}
+// Ids only, and never a harness's own sign-in: a hand-edited file cannot remove the last resort.
+export function normalizeRemovedLicenses(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id) => typeof id === "string" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && !HARNESS_IDS.includes(id)))].slice(0, 64);
+}
+let licenseNames = {};
+let removedLicenses = new Set();
+export function setBuiltinLicenseState({ names, removed } = {}) {
+  licenseNames = normalizeLicenseNames(names);
+  removedLicenses = new Set(normalizeRemovedLicenses(removed));
+}
+export const builtinLicenseName = (id) => licenseNames[String(id || "")] || "";
+export const isRemovedLicenseId = (id) => removedLicenses.has(String(id || ""));
+export const removedLicenseIds = () => [...removedLicenses];
+
 // ── Where a sign-in license keeps its login ───────────────────────────────────────────────────
 // On the gateway host, one 0700 directory per license; never mounted into a channel container.
 export function licenseLoginHome(id) {
