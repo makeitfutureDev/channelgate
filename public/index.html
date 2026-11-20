@@ -447,6 +447,7 @@
                 <a href="#set-connection" data-sec="connection">Connection</a>
                 <a href="#set-appearance" data-sec="appearance">Appearance</a>
                 <a href="#set-agent" data-sec="agent">Agent defaults</a>
+                <a href="#set-engine-licenses" data-sec="engine-licenses">Engine licenses</a>
                 <a href="#set-templates" data-sec="templates">Access Templates</a>
                 <a href="#set-integrations" data-sec="integrations">Integrations</a>
                 <a href="#set-license" data-sec="license">License</a>
@@ -799,11 +800,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Engine &amp; runtime</h4>
-                  <div class="lic-manager">
-                    <span class="lic-manager-title">Licenses the gateway may use</span>
-                    <div id="engine-enabled-box" class="lic-groups"></div>
-                    <p class="desc">There are two harnesses, Claude Code and Codex. A license is one way a harness signs in: a subscription, a business or enterprise plan, or an API key. Add as many as you need. Switch off a license you don't have set up: it disappears from every picker (here, per channel, and the Slack <code>/model</code> wizard), is never used as a failover target, and any channel or thread still pointing at it runs on one that is on instead. At least one must stay on. Where a harness has a single license, pickers show the harness alone.</p>
-                  </div>
+                  <p class="desc">Which sign-ins, API keys and servers the two harnesses may run on is managed under <a href="#set-engine-licenses" class="lic-jump">Engine licenses</a>. Below is which one a conversation uses when it does not choose its own.</p>
                   <label class="field">
                     <span>Harness (which CLI drives the bot)</span>
                     <select id="set-engine">
@@ -905,7 +902,7 @@
                   <div class="setcard terminal-harness-card">
                     <h4 data-role="label"></h4>
                     <p class="desc" data-role="description"></p>
-                    <p class="desc">Optional: switch this license on under <em>Licenses the gateway may use</em>, save, then configure its dedicated login in a terminal on the gateway server.</p>
+                    <p class="desc">Optional: switch this license on under <em>Engine licenses</em>, save, then configure its dedicated login in a terminal on the gateway server.</p>
                     <div class="field"><span>Terminal command</span><pre><code data-role="command"></code></pre><div class="row-actions"><button type="button" class="ghost" data-role="copy-command">Copy command</button><span class="state" data-role="copy-state" role="status" aria-live="polite"></span></div></div>
                     <label class="field"><span>Default model</span><select data-role="default-model"></select><em class="state">Blank uses the isolated login's provider default.</em></label>
                     <label class="field"><span>Default effort</span><select data-role="default-effort"></select></label>
@@ -918,7 +915,7 @@
                 <template id="qwen-provider-tpl">
                   <div class="setcard qwen-provider-card">
                     <h4 data-role="label"></h4>
-                    <p class="desc"><span data-role="description"></span> An optional license of the Claude Code harness: the same CLI pointed at this provider, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Engine &amp; runtime &rarr; Licenses the gateway may use</em>. Your Anthropic login is never sent to this provider, a turn moves to or from this license only in a conversation whose selection names it beside other Claude Code licenses (<em>Any license</em> or <em>If it fails, also use</em>) &mdash; never through the automatic failover between Claude Code and Codex &mdash; and because the provider reports no usable dollar cost its turns are recorded with tokens only.</p>
+                    <p class="desc"><span data-role="description"></span> An optional license of the Claude Code harness: the same CLI pointed at this provider, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Settings &rarr; Engine licenses</em>. Your Anthropic login is never sent to this provider, a turn moves to or from this license only in a conversation whose selection names it beside other Claude Code licenses (<em>Any license</em> or <em>If it fails, also use</em>) &mdash; never through the automatic failover between Claude Code and Codex &mdash; and because the provider reports no usable dollar cost its turns are recorded with tokens only.</p>
                     <label class="field">
                       <span>API key <em class="state" data-role="key-state"></em></span>
                       <input type="password" data-role="api-key" placeholder="leave blank to keep current" autocomplete="new-password" />
@@ -1076,6 +1073,35 @@
               </section>
 
               <!-- ── Access Templates ────────────────────────────────────── -->
+              <!-- The credentials a harness runs on (src/config/engine-licenses.js, /api/engine-licenses).
+                   NOT the ChannelGate product license, which has its own section (License). A key or a
+                   service-account file typed here is sent once and never read back. -->
+              <section class="setsec" id="set-engine-licenses" data-sec="engine-licenses" aria-labelledby="set-engine-licenses-h">
+                <header class="setsec-head">
+                  <h3 id="set-engine-licenses-h">Engine licenses</h3>
+                  <p class="setsec-desc">The sign-ins, API keys and servers Claude Code and Codex run on. Not your ChannelGate license &mdash; that is under <strong>License</strong>.</p>
+                </header>
+                <div class="setcard">
+                  <h4>Licenses the gateway may use</h4>
+                  <p class="desc">There are two harnesses, Claude Code and Codex. A license is one way a harness reaches a model: a sign-in (a subscription, business or enterprise plan), an API key, a custom server, or a cloud account on Amazon Bedrock, Google Vertex AI or Microsoft Azure. Add as many as you need with <strong>Add license</strong>; each one then shows a <strong>Sign in</strong> button or command, or is checked against its server with <strong>Verify</strong>.</p>
+                  <div class="lic-manager">
+                    <div id="engine-enabled-box" class="lic-groups"></div>
+                  </div>
+                  <p class="desc">Switch off a license you don't have set up: it disappears from every picker (here, per channel, and the Slack <code>/model</code> wizard), is never used as a failover target, and any channel or thread still pointing at it runs on one that is on instead. At least one must stay on. Where a harness has a single license, pickers show the harness alone. The switches are saved with <strong>Save</strong>; adding, editing, verifying and removing a license take effect at once.</p>
+                </div>
+                <div class="setcard">
+                  <h4>What each kind needs</h4>
+                  <ul class="lic-kinds-help">
+                    <li><strong>Sign-in</strong> &mdash; a name and a plan type. Codex signs in here with a ChatGPT device code; Claude Code gives you one command to run on the gateway host.</li>
+                    <li><strong>API key or custom server</strong> &mdash; the server address and a key, plus the model ids it serves. For Claude Code the server must speak the Anthropic Messages API; for Codex it must speak the OpenAI <em>Responses</em> API (a server that only offers chat completions will not work).</li>
+                    <li><strong>Amazon Bedrock</strong> &mdash; the region and a Bedrock API key (not an AWS access key or SSO login).</li>
+                    <li><strong>Google Vertex AI</strong> &mdash; the project, the location and a service-account key file. The gateway keeps the key and hands runs short-lived tokens.</li>
+                    <li><strong>Microsoft Azure</strong> &mdash; your resource&rsquo;s endpoint and its key, and for Codex the deployment names.</li>
+                  </ul>
+                  <p class="desc">In a container a run never holds the real key: it holds a placeholder the gateway swaps in on that license&rsquo;s own server only.</p>
+                </div>
+              </section>
+
               <!-- The two org DM access templates (baseline capabilities a person gets in their DM),
                    configured with the same capability picker as a channel. Each editor is a
                    buildConfigEditor mounted at load; both fold into the one global Save. -->
@@ -1173,6 +1199,7 @@
               </section>
 
               <!-- ── License ─────────────────────────────────────────────── -->
+              <!-- ── Engine licenses ─────────────────────────────────────── -->
               <!-- The licensing state of this deployment (src/ee/). Everything here is read from
                    GET /api/license, which returns has*/last4 for the key like every other listing —
                    the value itself comes one at a time from /api/secrets/reveal behind the eye. -->

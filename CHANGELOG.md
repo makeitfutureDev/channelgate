@@ -2,6 +2,19 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add provider licenses and an **Engine licenses** section in Settings. An administrator can now
+  add, for either harness, an API key or a custom server (the Anthropic Messages API for Claude
+  Code, the OpenAI Responses API for Codex), Amazon Bedrock (region and Bedrock API key), Google
+  Vertex AI (project, location and a service-account key file) and Microsoft Azure (Foundry for
+  Claude Code, Azure OpenAI for Codex). Every license is listed, added, signed in, verified,
+  edited and removed in the new section, and the form asks only for what the chosen kind needs.
+  Keys and key files are write-only and never enter a conversation's container: the container
+  holds a placeholder that the gateway's network proxy replaces on that license's server only,
+  and for Vertex the gateway exchanges the key file for short-lived tokens itself. Not included:
+  AWS access keys, roles or SSO for an added Bedrock license, chat-completions-only servers for
+  Codex, and dollar costs for cloud providers (tokens are recorded). The provider routes were
+  checked against local mock servers; acceptance against real Bedrock, Vertex and Azure accounts
+  is still open.
 - Add engine licenses. ChannelGate now treats Claude Code and Codex as the two harnesses and
   everything else — the dedicated Codex login, a channel's own Codex account, Qwen, Bedrock — as
   a license of one of them. Administrators can add as many licenses as the organization holds, in
@@ -18,7 +31,7 @@
   the first picker labelled *Harness*. *Approved harnesses* (Enterprise) can lock a channel to
   individual licenses or to a whole harness, which also covers licenses added later. Nothing
   needs migrating. Removing a license sends the channels and threads that used it back to their
-  defaults. Not included yet: Codex licenses with an API key, and usage windows for added Claude
+  defaults. Not included yet: usage windows for added Claude
   sign-in licenses. This is separate from the ChannelGate license key under Settings → License.
 
 - Fix turns interrupted by a restart not being resumed in Slack channels. Recovery started the

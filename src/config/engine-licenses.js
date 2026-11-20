@@ -16,17 +16,17 @@ import { rm } from "node:fs/promises";
 import { getSettings, saveSettings, isEngineEnabled } from "./settings.js";
 import { adapterFor, engineRegistry, licenseLabel } from "../engines/registry.js";
 import {
-  API_AUTH_SCHEMES, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
-  harnessLabel, licenseApiHost, licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel,
-  normalizeLicenseModels, normalizeLicenseRecord, normalizeLicenseRecords,
+  API_AUTH_SCHEMES, API_VERSION_RE, GCP_PROJECT_RE, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
+  MAX_SERVICE_ACCOUNT_BYTES, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
+  licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel, normalizeLicenseModels, normalizeLicenseRecord,
+  normalizeLicenseRecords, normalizeServiceAccount, serviceAccountFacts,
 } from "../engines/license-state.js";
-import { licenseDefaultEffortKey, licenseDefaultModelKey, verifyApiLicense } from "../engines/license-adapters.js";
+import { licenseDefaultEffortKey, licenseDefaultModelKey, verifyProviderLicense } from "../engines/license-adapters.js";
 import { publicPinnedFetch } from "../mcp/public-fetch.js";
 
 // A ceiling, not a product limit: every license is an adapter the pickers and the health probe
 // walk, and a settings file is read on every turn. Nobody holds this many; a runaway script might.
 export const MAX_ENGINE_LICENSES = 200;
-const ANTHROPIC_API_HOST = "api.anthropic.com";
 
 export class EngineLicenseError extends Error {
   constructor(message, status = 400) {
@@ -49,7 +49,12 @@ export function licenseCatalog() {
     harnesses: HARNESSES.map((harness) => ({ ...harness })),
     kinds: LICENSE_KIND_IDS.map((id) => {
       const kind = LICENSE_KINDS[id];
-      return { id, harness: kind.harness, label: kind.label, description: kind.description, types: [...kind.types] };
+      return {
+        id, harness: kind.harness, label: kind.label, description: kind.description, types: [...kind.types],
+        // What the form asks for, in order, and how: the same facts the validation below reads.
+        provider: kind.provider, credential: kind.credential, fields: [...kind.fields], authSchemes: [...kind.authSchemes],
+        defaultBaseUrl: kind.defaultBaseUrl, modelsOptional: kind.modelsOptional, hints: { ...kind.hints },
+      };
     }),
     types: LICENSE_TYPES.map((type) => ({ ...type })),
     authSchemes: [...API_AUTH_SCHEMES],
@@ -68,11 +73,21 @@ export function licenseForApi(record) {
     defaultModel: String(getSettings()[licenseDefaultModelKey(record.id)] || ""),
     defaultEffort: String(getSettings()[licenseDefaultEffortKey(record.id)] || ""),
   };
-  if (record.kind !== "claude-api") return out;
+  if (!kind.provider) return out;
+  const has = (field) => kind.fields.includes(field);
+  const account = has("serviceAccount") ? serviceAccountFacts(record.serviceAccount) : null;
   return {
     ...out,
-    baseUrl: record.baseUrl, authScheme: record.authScheme, models: record.models.map((model) => ({ ...model })),
-    hasApiKey: Boolean(record.apiKey), apiKeyLast4: record.apiKey ? record.apiKey.slice(-4) : "",
+    provider: kind.provider, endpoint: licenseEndpoint(record),
+    ...(has("baseUrl") ? { baseUrl: record.baseUrl } : {}),
+    ...(has("authScheme") ? { authScheme: record.authScheme } : {}),
+    ...(has("region") ? { region: record.region } : {}),
+    ...(has("projectId") ? { projectId: record.projectId } : {}),
+    ...(has("apiVersion") ? { apiVersion: record.apiVersion } : {}),
+    ...(has("apiKey") ? { hasApiKey: Boolean(record.apiKey), apiKeyLast4: record.apiKey ? record.apiKey.slice(-4) : "" } : {}),
+    // Of a service-account key, only who it is — the address Google shows in its own console.
+    ...(account ? { hasServiceAccount: Boolean(record.serviceAccount), serviceAccountEmail: account.email } : {}),
+    models: record.models.map((model) => ({ ...model })),
     verification: record.verification ? { ...record.verification } : null,
   };
 }
@@ -106,29 +121,68 @@ function assertLabel(label, records, selfId = "") {
   if (taken) refuse(`Another license is already called "${label}".`, 409);
 }
 
-function apiFields(input, previous = null) {
-  const baseUrl = String(input.baseUrl ?? previous?.baseUrl ?? "").trim().replace(/\/+$/, "");
-  if (!LICENSE_BASE_URL_RE.test(baseUrl)) refuse("Enter the endpoint as an https:// URL (host, optional port and path).");
-  const typedKey = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
-  if (typedKey && (/\s/.test(typedKey) || typedKey.length > 4096 || typedKey.length < 8)) refuse("That does not look like an API key.");
-  // A blank key on an edit keeps the stored one — the form never has it to send back.
-  const apiKey = typedKey || previous?.apiKey || "";
-  if (!apiKey) refuse("Enter the API key.");
-  const authScheme = input.authScheme === undefined ? previous?.authScheme || "x-api-key" : input.authScheme;
-  if (!API_AUTH_SCHEMES.includes(authScheme)) refuse("Choose how the key is sent: x-api-key or bearer.");
+// The provider fields of one license, validated against what its KIND asks for (license-state.js
+// `fields`). A blank credential on an edit keeps the stored one — the form never has it to send back.
+const PROVIDER_NAMES = Object.freeze({ custom: "server", bedrock: "Amazon Bedrock", vertex: "Google Vertex AI", azure: "Azure" });
+function providerFields(kind, input, previous = null) {
+  const has = (field) => kind.fields.includes(field);
+  const text = (name) => String(input[name] ?? previous?.[name] ?? "").trim();
+  const out = {};
+  if (has("baseUrl")) {
+    out.baseUrl = (text("baseUrl") || kind.defaultBaseUrl).replace(/\/+$/, "");
+    if (!LICENSE_BASE_URL_RE.test(out.baseUrl)) refuse("Enter the endpoint as an https:// URL (host, optional port and path).");
+  }
+  if (has("region")) {
+    out.region = text("region").toLowerCase();
+    if (!isLicenseRegion(kind.provider, out.region)) {
+      refuse(kind.provider === "vertex" ? "Enter the Vertex AI location, e.g. global or europe-west1." : "Enter the AWS region, e.g. eu-central-1.");
+    }
+  }
+  if (has("apiVersion")) {
+    out.apiVersion = text("apiVersion");
+    if (out.apiVersion && !API_VERSION_RE.test(out.apiVersion)) refuse("An API version holds letters, digits and . _ - only, e.g. 2025-04-01-preview.");
+  }
+  if (has("apiKey")) {
+    const typed = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
+    if (typed && (/\s/.test(typed) || typed.length > 4096 || typed.length < 8)) refuse("That does not look like an API key.");
+    out.apiKey = typed || previous?.apiKey || "";
+    if (!out.apiKey) refuse(kind.provider === "bedrock" ? "Enter the Bedrock API key." : "Enter the API key.");
+  }
+  if (has("serviceAccount")) {
+    const typed = typeof input.serviceAccount === "string" ? input.serviceAccount.trim() : "";
+    if (typed.length > MAX_SERVICE_ACCOUNT_BYTES) refuse("That service-account key file is too large.");
+    const parsed = typed ? normalizeServiceAccount(typed) : "";
+    if (typed && !parsed) refuse("Paste the whole service-account key file (the JSON with \"type\": \"service_account\", client_email and private_key).");
+    out.serviceAccount = parsed || previous?.serviceAccount || "";
+    if (!out.serviceAccount) refuse("Paste the service-account key file (JSON).");
+  }
+  if (has("projectId")) {
+    // Blank takes the project the key file itself names — the usual case, one project, one key.
+    out.projectId = text("projectId") || (has("serviceAccount") ? serviceAccountFacts(out.serviceAccount).projectId : "");
+    if (!GCP_PROJECT_RE.test(out.projectId)) refuse("Enter the Google Cloud project ID (6–30 lowercase letters, digits and hyphens).");
+  }
+  out.authScheme = input.authScheme === undefined || !has("authScheme") ? previous?.authScheme || kind.authSchemes[0] : input.authScheme;
+  if (!kind.authSchemes.includes(out.authScheme)) refuse(`Choose how the key is sent: ${kind.authSchemes.join(" or ")}.`);
   const rawModels = input.models === undefined ? previous?.models || [] : input.models;
   if (!Array.isArray(rawModels)) refuse("List the models as an array.");
   const models = normalizeLicenseModels(rawModels);
   if (models.length !== rawModels.filter((entry) => String(typeof entry === "string" ? entry : entry?.value ?? "").trim()).length) {
     refuse("A model id may hold letters, digits and . _ : / @ [ ] - only, and each may be listed once.");
   }
-  let host = "";
-  try { host = new URL(baseUrl).hostname.toLowerCase(); } catch { /* shape already checked */ }
-  if (!models.length && host !== ANTHROPIC_API_HOST) refuse("List at least one model id this endpoint serves.");
-  // A changed key or endpoint is an unverified one: yesterday's verdict says nothing about it.
-  const unchanged = previous && previous.baseUrl === baseUrl && previous.apiKey === apiKey && previous.authScheme === authScheme;
-  return { baseUrl, apiKey, authScheme, models: models.map((model) => ({ ...model })), verification: unchanged ? previous.verification : null };
+  // Only the harness vendor's own API — and the cloud routes Claude Code maps its aliases for —
+  // can be asked for "the default model"; any other server has to be told which ids it serves.
+  const candidate = { kind: kind.id, ...out };
+  const optional = kind.modelsOptional && (kind.provider !== "custom" || licenseIsVendorApi(candidate));
+  if (!models.length && !optional) {
+    refuse(kind.provider === "custom" ? "List at least one model id this server serves." : `List at least one model id to use on ${PROVIDER_NAMES[kind.provider]}.`);
+  }
+  // A changed credential or destination is an unverified one: yesterday's verdict says nothing about it.
+  const unchanged = previous && sameCredential(previous, out);
+  return { ...out, models: models.map((model) => ({ ...model })), verification: unchanged ? previous.verification : null };
 }
+// The members a verification verdict is ABOUT.
+const CREDENTIAL_MEMBERS = Object.freeze(["baseUrl", "apiKey", "authScheme", "region", "projectId", "serviceAccount", "apiVersion"]);
+const sameCredential = (a, b) => CREDENTIAL_MEMBERS.every((name) => (a?.[name] ?? "") === (b?.[name] ?? ""));
 
 const writeLicenses = (mutate) => {
   let result;
@@ -155,7 +209,7 @@ export function createLicense(input = {}) {
     do { id = `${kind.prefix}${randomBytes(4).toString("hex")}`; } while (records.some((record) => record.id === id));
     const record = normalizeLicenseRecord({
       id, kind: kind.id, label, type, createdAt: new Date().toISOString(),
-      ...(kind.id === "claude-api" ? apiFields(input) : {}),
+      ...(kind.provider ? providerFields(kind, input) : {}),
     });
     if (!record) refuse("The license could not be stored.");
     return {
@@ -181,7 +235,7 @@ export function updateLicense(id, input = {}) {
     if (!kind.types.includes(type)) refuse(`A ${kind.label} license is one of: ${kind.types.map(licenseTypeLabel).join(", ")}.`);
     const record = normalizeLicenseRecord({
       ...previous, label, type,
-      ...(kind.id === "claude-api" ? apiFields(input, previous) : {}),
+      ...(kind.provider ? providerFields(kind, input, previous) : {}),
     });
     if (!record) refuse("The license could not be stored.");
     const next = [...records];
@@ -211,25 +265,27 @@ export async function deleteLicense(id) {
       },
     };
   });
-  // The sign-in itself goes with the license. The path is built from a shape-checked id only.
-  if (licenseKindOfId(id) && removed.kind !== "claude-api") {
+  // The license's own directory goes with it: a sign-in's login, or a provider license's sessions
+  // from direct-host runs. The path is built from a shape-checked id only.
+  if (licenseKindOfId(id)) {
     await rm(licenseLoginHome(id), { recursive: true, force: true }).catch(() => {});
   }
+  if (removed.serviceAccount) (await import("../gateway/vertex-token.js")).forgetVertexToken(removed.serviceAccount);
   return removed;
 }
 
 // ── Verification ──────────────────────────────────────────────────────────────────────────────
 // A sign-in license is verified by reading what its own login reports (plan vs declared type), so
-// its verdict is always live. An API license is verified by asking its endpoint, on demand, and
-// the answer is stored beside the record.
+// its verdict is always live. A provider license is verified by asking its server (or, for Vertex,
+// Google's token endpoint), on demand, and the answer is stored beside the record.
 export async function verifyLicense(id, { fetchImpl = publicPinnedFetch } = {}) {
   const record = getLicenseRecord(id);
   if (!record) refuse("That license no longer exists.", 404);
-  if (record.kind !== "claude-api") {
+  if (!isProviderKind(record.kind)) {
     const status = await licenseStatusFor(id);
     return { license: licenseForApi(record), status, verification: { ok: status.ready, verified: status.plan?.matches === true, detail: status.plan?.detail || status.detail || "" } };
   }
-  const verdict = await verifyApiLicense(record, { fetchImpl });
+  const verdict = await verifyProviderLicense(record, { fetchImpl });
   const verification = { at: new Date().toISOString(), ok: verdict.ok, verified: verdict.verified, detail: verdict.detail };
   const saved = writeLicenses((records) => {
     const index = records.findIndex((entry) => entry.id === id);
@@ -237,7 +293,7 @@ export async function verifyLicense(id, { fetchImpl = publicPinnedFetch } = {}) 
     // Only stamp the credential that was actually checked: an edit that landed meanwhile keeps
     // its own (empty) verdict rather than inheriting one for a key it no longer holds.
     const current = records[index];
-    if (current.apiKey !== record.apiKey || current.baseUrl !== record.baseUrl || current.authScheme !== record.authScheme) return { result: current, settings: {} };
+    if (!sameCredential(current, record)) return { result: current, settings: {} };
     const next = [...records];
     next[index] = normalizeLicenseRecord({ ...current, verification });
     return { result: next[index], settings: { engineLicenses: next } };

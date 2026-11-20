@@ -1,5 +1,89 @@
 # ChannelGate — Test Plan
 
+## Provider licenses (2026-11-20)
+
+Engine licenses that are an account at a model provider — an API key or custom server, Amazon
+Bedrock, Google Vertex AI, Microsoft Azure — for both harnesses, and the Settings → Engine
+licenses section. No real Bedrock, Vertex or Azure account was available when this shipped: the
+automated cases prove the gateway's side (what is stored, relayed, routed and shown) and the CLI
+routes were established against loopback mock servers with fake tokens (Claude Code 2.1.318,
+Codex 0.170.0). Every live case below is UNEXECUTED until someone runs it with a real account.
+
+- [x] `test/engine-licenses-providers.test.js` (always runs). Catalog: each harness is offered a
+      key/custom-server kind, Bedrock, Vertex and Azure, each with the fields, key schemes and
+      hints its form needs. Store: every provider kind becomes a registered license with its
+      id prefix and endpoint, and no listing returns a key or a private key (`hasApiKey` + last
+      four; `hasServiceAccount` + the account address); refusals name the missing or malformed
+      field (non-https server, bad region, bad project id, a key file that is not a
+      service-account key, a key scheme the kind does not accept, a custom server with no model
+      list); a blank credential on an edit keeps the stored one and its verdict, a changed
+      credential, server, region or scheme drops the verdict. Vertex: the assertion is RS256,
+      signed with the stored key, addressed to Google's token endpoint even when the uploaded
+      file names another `token_uri`; the token is cached per key; a refusal is reported as
+      rejected and an outage as unreachable, without key material. Relay: each kind's rule lists
+      only its own hosts and headers. Credential: a host target gets the real value, a proxy
+      container a placeholder bound to that channel and license, a bridge-mode or channel-less
+      target an error. Routing: `claudeProviderEnv` per provider and the strip of inherited
+      cloud variables in `buildClaudeEnv`; `codexProviderRouting` per provider, the `-c`
+      overrides in `buildCodexArgs` and the key name in `buildCodexEnv`. Verification verdicts
+      per provider (Azure `api-key` header + `api-version` query; a missing model list and a
+      Bedrock "not authorized to list" are ready-but-unverified; 401 is not ready; Vertex is
+      decided by the token exchange alone). Runs: a Vertex turn in a proxy container spawns
+      Claude Code with a placeholder and neither the key file nor the minted token, keeps the
+      channel's lockdown file and records no dollar cost; a bridge-mode run is refused before
+      spawn; a host run holds the real key and its echo is redacted from the result; a Codex
+      Azure turn gets its routing, its own `CODEX_HOME` and a placeholder, and a key the model
+      echoed never reaches the reply. Usage: a Codex license on another provider is read in
+      Codex's token shape and gets no OpenAI-priced estimate, while `api.openai.com` keeps the
+      Codex estimate. Removal forgets the credential, the cached token and the relay rule.
+- [x] `test/engine-licenses-web.test.js` page test (needs `CG_BROWSER_MODULE`): the manager sits
+      in `#set-engine-licenses` (not in the product License section), the Settings nav has an
+      "Engine licenses" entry and the pointer in Engine & runtime jumps to it; the Codex and
+      Claude Code kind lists each offer five kinds; choosing a kind shows exactly its fields
+      (Bedrock: region, key, models; Vertex: project, location, key file, models and no API key
+      box; Codex Azure: endpoint, key, key scheme, API version, models; Codex API: no scheme
+      choice); a pasted key file and a typed key travel in the one request body, leave their
+      boxes with the request and appear nowhere in the page.
+- [ ] Live `LICENSE-09` custom server (engine-independent form; run once per harness). Fixture:
+      a key for `https://api.anthropic.com` (Claude Code) and for `https://api.openai.com/v1`
+      (Codex), or a compatible server and the model ids it serves. Action: Settings → Engine
+      licenses → Add license under the harness, kind *API key or custom server*, enter the
+      server and key, save. Expect "Ready" with "the server accepted this key". Select the
+      license in a disposable Worker channel `C` and post "@bot reply with the single word
+      ready". Pass: an ordinary answer; the `usage` row carries the license id; inside the
+      container `env | grep -c <first 8 characters of the key>` prints 0 during the turn; with a
+      deliberately wrong key the license shows "rejected" and cannot be selected.
+- [ ] Live `LICENSE-10` Amazon Bedrock. Fixture: a Bedrock API key and a region with model
+      access. Claude: add *Amazon Bedrock* under Claude Code with the region and key, models
+      blank; Codex: the same under Codex with the Bedrock model ids for OpenAI models. Action
+      and pass as `LICENSE-09`; additionally the egress audit (`events`) shows the turn's model
+      requests going to `bedrock-runtime.<region>.amazonaws.com` (Claude Code) or
+      `bedrock-mantle.<region>.api.aws` (Codex) and to no Anthropic/OpenAI host, and the usage
+      row has tokens and no dollar cost.
+- [ ] Live `LICENSE-11` Google Vertex AI. Fixture: a project with the models enabled and a
+      service-account key file with the Vertex AI User role. Add *Google Vertex AI* under each
+      harness (project blank to take it from the file, location `global` or the enabled region).
+      Expect "Verified: Google accepted the service-account key". Action and pass as
+      `LICENSE-09`; additionally the model requests go to `aiplatform.googleapis.com` /
+      `<location>-aiplatform.googleapis.com` only, the container holds neither the key file nor
+      a `ya29.` token (`grep -rc "ya29\." /proc/self/environ` prints 0; no key file under
+      `/home/agent`), and a turn that is still running 65 minutes after it started keeps
+      answering (the proxy swapped in a renewed token).
+- [ ] Live `LICENSE-12` Microsoft Azure. Claude: a Foundry resource with a Claude deployment,
+      endpoint `https://<resource>.services.ai.azure.com/anthropic`. Codex: an Azure OpenAI
+      resource, endpoint `https://<resource>.openai.azure.com/openai/v1`, the deployment name as
+      the model, key sent as `api-key`. Action and pass as `LICENSE-09`, with the model requests
+      going to the resource host only.
+- [ ] Live `LICENSE-13` failover across providers (run once per harness). In `C` select the
+      harness's default sign-in with a provider license as "If it fails, also use"; fail the
+      default as in `LICENSE-02`. Pass: the answer's note names the provider license, the
+      session is stamped with it, and no process of the other harness started.
+- [ ] Live `LICENSE-14` bridge refusal and host turn (engine-independent). With the gateway's
+      container network mode set to the legacy bridge, a turn on a provider license fails with
+      "requires the egress proxy" and no process is spawned; restore proxy mode. In an admin
+      `/sudo` thread the same license answers, and the reply never contains the key even when
+      asked to print the environment.
+
 ## Engine licenses (2026-11-19)
 
 Two harnesses, any number of licenses per harness; a selection is one license plus optional

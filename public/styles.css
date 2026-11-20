@@ -275,7 +275,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
    Settings lists every license of each harness (admin-licenses.js): one row per license — its
    on/off switch (an .engine-toggle), type, live status and actions. */
 .lic-manager { margin-bottom: 14px; }
-.lic-manager-title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
 .lic-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
 .lic-group { border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; }
 .lic-group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
@@ -304,6 +303,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 .lic-form [hidden] { display: none; }
 .lic-form .row-actions, .lic-panel .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .lic-default-fields:empty { display: none; }
+.lic-api-fields[hidden], .lic-provider-field[hidden] { display: none; }
+.lic-form textarea.lic-service-account { font: 11.5px var(--mono); }
+.lic-kinds-help { margin: 0 0 12px; padding-left: 18px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.lic-kinds-help li { margin-bottom: 4px; }
 .lic-panel pre { margin: 0 0 10px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; overflow: auto; font: 12px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .lic-panel .state { font-size: 11.5px; color: var(--faint); font-style: normal; }
 .field.pulse { animation: setpulse 1.9s ease-out; border-radius: 8px; }

@@ -69,7 +69,8 @@ not supported. Container runs use the protected egress proxy. Both licenses keep
 sessions. Neither takes part in automatic failover to the other harness; a turn moves between
 one of them and another license of the same harness only when the conversation's selection names
 both. Claude Extra sessions continue in chat; container terminal takeover is currently
-unavailable. Bedrock exists only as this built-in license: it cannot be added as a further license.
+unavailable. Further Bedrock credentials, and Google Vertex AI, Microsoft Azure and custom
+servers, are added as [engine licenses](/docs/features/engine-licenses).
 
 The engine login decides two things ChannelGate does not control: which provider contract covers the prompts, and where inference runs. Work folders, memory, files and conversation history stay on your host, but every turn sends prompt and context to the selected provider, as described in [privacy and data flow](/docs/privacy). The provider facts below come from the providers' own documentation as of October 2026. Check the current terms before relying on them, and treat this section as orientation for your own assessment rather than legal advice.
 

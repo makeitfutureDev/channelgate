@@ -21,18 +21,45 @@ carries `harness`, `harnessLabel`, `licenseLabel` and `builtin`.
 | Codex (channel account) | `codex-channel` | Codex | One conversation's own Codex login; exists only in that conversation; Enterprise |
 | ChatGPT sign-in (admin-added) | `codex-lic-<8 hex>` | Codex | Types: subscription, business, enterprise, education |
 | Claude sign-in (admin-added) | `claude-lic-<8 hex>` | Claude Code | Types: subscription, business, enterprise; signed in with a command on the gateway host |
-| API key (admin-added) | `claude-api-<8 hex>` | Claude Code | Types: api, business, enterprise; an `https://` Anthropic-compatible endpoint with its own key and model list |
+| API key or custom server (admin-added) | `claude-api-<8 hex>` | Claude Code | The Anthropic API or any `https://` server that speaks the Anthropic Messages API; key as `x-api-key` or bearer |
+| Amazon Bedrock (admin-added) | `claude-aws-<8 hex>` | Claude Code | Region + Bedrock API key (bearer); `CLAUDE_CODE_USE_BEDROCK` |
+| Google Vertex AI (admin-added) | `claude-gcp-<8 hex>` | Claude Code | Project + location + service-account key; `CLAUDE_CODE_USE_VERTEX` with gateway-minted access tokens |
+| Microsoft Azure (admin-added) | `claude-azure-<8 hex>` | Claude Code | Foundry resource endpoint + key (`x-api-key` or bearer); `CLAUDE_CODE_USE_FOUNDRY` |
+| API key or custom server (admin-added) | `codex-api-<8 hex>` | Codex | The OpenAI API or any `https://` server that speaks the OpenAI Responses API (`wire_api="responses"`; chat completions is not supported by the CLI) |
+| Amazon Bedrock (admin-added) | `codex-aws-<8 hex>` | Codex | Region + Bedrock API key; Codex's built-in `amazon-bedrock` provider |
+| Google Vertex AI (admin-added) | `codex-gcp-<8 hex>` | Codex | Project + location + service-account key; Codex's built-in `gcp` provider, whose token command reads the gateway-minted access token from the environment |
+| Microsoft Azure (admin-added) | `codex-azure-<8 hex>` | Codex | Azure OpenAI v1 endpoint + key (`api-key` header or bearer), optional `api-version`, deployment names |
+
+The eight kinds with a stored credential are **provider licenses** (types: api, business,
+enterprise). Their facts — the fields each asks for, the ways its key may be sent, the header the
+egress proxy may swap it into, and the hosts of its server — are declared once per kind in
+`src/engines/license-state.js`; the store, the admin form, the relay rule and both runners read
+them from there.
 
 Admin-added licenses (`src/config/engine-licenses.js`, `src/engines/license-adapters.js`, at most
 200) are registered live without a restart and are switched on when added. All of them are opt-in
 cold runs with their own session directories: no warm pool and no interrupt/steer on a Claude Code
 license. A sign-in license compares the plan its sign-in reports with the declared type, and a
-mismatch makes it not ready. An API key license is checked against its endpoint when added, when
-its key or endpoint changes, and on demand, never per turn. It records real cost only when the
-endpoint is Anthropic's, declares no `nativeFork`, and its sessions cannot be taken over in a
-terminal. A ChatGPT sign-in license does not receive the default Codex login's MCP configuration.
-Codex licenses with an API key are not offered, and Bedrock exists only as the built-in Claude
-Extra license.
+mismatch makes it not ready. A provider license is checked against its server (its model list;
+for Vertex, the exchange of the service-account key for a token at Google's fixed token endpoint)
+when added, when its credential, server, region or key scheme changes, and on demand, never per
+turn. It records a dollar figure only on the vendor's own API (Anthropic's reported cost, the
+Codex estimate for `api.openai.com`), declares no `nativeFork`, and its sessions cannot be taken
+over in a terminal. An added Codex license does not receive the default Codex login's MCP
+configuration.
+
+A provider license's credential never enters a container. The run receives the channel's
+placeholder for that license; the egress proxy swaps it for the stored key — or for a Vertex
+access token the daemon mints from the stored service-account key (`src/gateway/vertex-token.js`)
+— only on that license's hosts and only in the header its kind declares. Outside the egress proxy
+(the legacy bridge mode) a provider license refuses to run. A direct-host `/sudo` turn receives the
+real value, with a Vertex token that has at least 50 minutes left. Codex is routed with per-run
+`-c model_providers.*` overrides and reads the credential from one gateway-owned environment
+name; Claude Code gets the route's own switches. On a cloud route, inherited or channel-stored
+`AWS_*`, Google/Vertex and (for Claude Code) `ANTHROPIC_*`/Foundry variables are stripped from
+that process so they cannot redirect the license.
+Bedrock licenses take a Bedrock API key only: SigV4 keys sign the request, and a placeholder
+cannot be substituted after signing.
 
 A selection is a license plus an optional pool of more licenses of the same harness: none,
 `"any"`, or an ordered list. It is stored as `engine` + `enginePool` in gateway settings, `engine`

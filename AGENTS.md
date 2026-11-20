@@ -243,8 +243,13 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   approval list or session stamp naming one resolves to the normal default instead of throwing.
   **Harnesses and licenses:** there are two harnesses (an adapter's `cli`: Claude Code, Codex) and
   every engine id is a LICENSE of one — a credential plus its server. `license-state.js` holds the
-  dependency-free facts (harnesses, license kinds and types, id shapes `codex-lic-`/`claude-lic-`/
-  `claude-api-<8 hex>`, pool reader, sign-in directories, relay names); `license-adapters.js`
+  dependency-free facts (harnesses, license kinds and types, id shapes `<kind prefix><8 hex>` —
+  the sign-in kinds `codex-lic-`/`claude-lic-` and the PROVIDER kinds `claude-api-`/`-aws-`/`-gcp-`/
+  `-azure-` and `codex-api-`/`-aws-`/`-gcp-`/`-azure-`, each declaring the fields it asks for, its
+  key schemes, relay headers and hosts — pool reader, sign-in directories, relay names);
+  `src/gateway/vertex-token.js` mints a Vertex license's access tokens from its stored
+  service-account key (Google's fixed token endpoint only), so neither reaches a container;
+  `license-adapters.js`
   turns each admin-added record (`settings.engineLicenses`, CRUD + verification in
   `src/config/engine-licenses.js`, admin routes `src/web/routes/licenses.js` at
   `/api/engine-licenses`) into a live adapter, re-synced by `settings.js` on every changed read

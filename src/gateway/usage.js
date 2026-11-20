@@ -82,7 +82,9 @@ export function estimateCodexCost(u = {}, model = "", requests = [], { rates = g
 // priced with OpenAI rates.
 export function normalizeUsage(result = {}) {
   const u = result.usage || {};
-  const isCodex = result.engine === "codex" || adapterFor(result.engine)?.modelFamily === "codex";
+  // The token SHAPE is the harness CLI's, whichever license (and so whichever model family) ran.
+  const adapter = adapterFor(result.engine);
+  const isCodex = result.engine === "codex" || adapter?.modelFamily === "codex" || adapter?.cli === "codex";
   const codexUsage = isCodex ? normalizeCodexTokenUsage(u) : null;
   const inTok = isCodex
     ? codexUsage.input_tokens

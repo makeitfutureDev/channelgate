@@ -4180,7 +4180,7 @@ function paintEngineLicenses() {
     // switch reads like every other one and the admin only discovers the missing key when a run
     // fails in Slack.
     builtinNote: (m) => !m.optIn || SETTINGS_HAVE_PROVIDER_KEY[m.id] ? ""
-      : m.terminalSetup ? " · configure in terminal below" : " · needs an API key below",
+      : m.terminalSetup ? " · configure in a terminal (Settings button)" : " · needs an API key (Settings button)",
     openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => revealSettingsNode(builtinLicenseSettings(m.id)) : null,
     blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
     reload: loadSettings,
@@ -5438,6 +5438,13 @@ for (const a of document.querySelectorAll("#settings-nav a")) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     selectSettingsSection(a.dataset.sec);
+  });
+}
+// The pointer from "Engine & runtime" to the licenses section is the same kind of jump.
+for (const a of document.querySelectorAll("#settings-body a.lic-jump")) {
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    selectSettingsSection("engine-licenses");
   });
 }
 

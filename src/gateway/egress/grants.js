@@ -23,7 +23,7 @@ import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
 import { getContainerRuntime, getPerplexityResearchConfig, refreshEngineLicenses } from "../../config/settings.js";
-import { licenseLoginHome, licenseOfRelaySecret, licenseRecord, licenseRelaySecretName } from "../../engines/license-state.js";
+import { LICENSE_KINDS, isProviderKind, licenseCredentialStored, licenseLoginHome, licenseOfRelaySecret, licenseRecord, licenseRelaySecretName } from "../../engines/license-state.js";
 import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
 import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
@@ -172,7 +172,7 @@ function relayCacheFor(secretName, key, load) {
 async function licenseRelayToken(license, secretName, deps) {
   const record = (deps.licenseRecord || licenseRecord)(license.id);
   if (!record) return "";
-  if (license.kind === "claude-api") return String(record.apiKey || "");
+  if (isProviderKind(license.kind)) return (await licenseCredentialValue(record, deps)).value;
   const home = licenseLoginHome(license.id);
   if (license.kind === "claude-login") {
     const extra = await import("../../engines/bedrock.js");
@@ -474,15 +474,34 @@ export function containerExtraClaudeCredential({ target, relay, secretName = CLA
   return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholderFor({ scope: "relay", channelId, secretName })}`, placeholder: true };
 }
 
-// An API license's key (engines/license-adapters.js). A container receives only the channel's
-// placeholder for THAT license, which the proxy swaps on the license's own endpoint host; the raw
-// key is admitted only to an explicitly resolved direct-host run, which holds every credential.
-export function containerLicenseApiCredential({ target, record } = {}) {
-  if (!record?.apiKey) return { token: "", error: `${record?.label || "This license"} has no API key stored` };
-  if (target?.backend === "host") return { token: record.apiKey };
-  if (!egressActive(target)) return { token: "", error: `${record.label} requires the egress proxy to relay its API key` };
+// The LIVE credential of a provider license (engines/license-state.js): the stored key, or — for a
+// Vertex license — an access token the daemon mints from the stored service-account key
+// (gateway/vertex-token.js). → `{ value, error }`; `error` is value-free and names the remedy.
+export async function licenseCredentialValue(record, deps = {}) {
+  if (!licenseCredentialStored(record)) return { value: "", error: "no credential is stored" };
+  if (LICENSE_KINDS[record.kind].credential !== "service-account") return { value: String(record.apiKey || "") };
+  try {
+    const mintToken = deps.vertexAccessToken || (await import("../vertex-token.js")).vertexAccessToken;
+    const minted = await mintToken(record.serviceAccount, { ...(deps.vertexFetch ? { fetchImpl: deps.vertexFetch } : {}), ...(deps.minRemainingMs ? { minRemainingMs: deps.minRemainingMs } : {}) });
+    return { value: String(minted?.token || ""), expiresAt: minted?.expiresAt || 0 };
+  } catch (error) {
+    return { value: "", error: String(error?.message || "the service-account key could not be exchanged for a token"), rejected: error?.rejected === true };
+  }
+}
+
+// A provider license's credential for one run (engines/license-adapters.js). A container receives
+// only the channel's placeholder for THAT license, which the proxy swaps on the license's own
+// hosts; the live value (`hostValue`, resolved by the caller) is admitted only to an explicitly
+// resolved direct-host run, which holds every credential anyway.
+export function containerLicenseApiCredential({ target, record, hostValue = "" } = {}) {
+  if (!licenseCredentialStored(record)) return { token: "", error: `${record?.label || "This license"} has no credential stored` };
+  if (target?.backend === "host") {
+    const value = String(hostValue || record.apiKey || "");
+    return value ? { token: value } : { token: "", error: `${record.label}'s credential could not be resolved` };
+  }
+  if (!egressActive(target)) return { token: "", error: `${record.label} requires the egress proxy to relay its credential` };
   const channelId = String(target?.meta?.channelId || "");
-  if (!channelId) return { token: "", error: `the run has no channel to bind ${record.label}'s key to` };
+  if (!channelId) return { token: "", error: `the run has no channel to bind ${record.label}'s credential to` };
   return { token: placeholderFor({ scope: "relay", channelId, secretName: licenseRelaySecretName(record.id) }), placeholder: true };
 }
 

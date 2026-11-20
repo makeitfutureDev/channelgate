@@ -42,28 +42,110 @@ export const licenseTypeLabel = (id) => LICENSE_TYPES.find((type) => type.id ===
 
 // HOW a license authenticates. The id prefix names the kind — and therefore the harness — so a
 // stored reference to a license that was deleted since can still be read for what it was.
+//
+// A SIGN-IN kind keeps a login directory on the gateway host. A PROVIDER kind (`provider` set) is a
+// server plus a credential the gateway stores write-only: the harness is pointed at that server
+// and a container holds the credential only as a placeholder the egress proxy swaps on that
+// server's hosts. What a provider kind asks of the admin is declared here once (`fields`), so the
+// form, the validation, the egress rule and the adapter all read the same facts:
+//   • custom  — a base URL + key: the vendor's own API or any compatible server
+//   • bedrock — Amazon Bedrock: a region + a Bedrock API key (a bearer token; request-signing AWS
+//               keys cannot be relayed, because a placeholder cannot be substituted after signing)
+//   • vertex  — Google Vertex AI: project + location + a service-account key the DAEMON turns into
+//               short-lived access tokens; the key itself never leaves the gateway
+//   • azure   — Microsoft Azure: the resource endpoint + key (Foundry for Claude, Azure OpenAI for Codex)
+const SIGN_IN_TYPES = Object.freeze(["subscription", "business", "enterprise"]);
+const PROVIDER_TYPES = Object.freeze(["api", "business", "enterprise"]);
+const kindFacts = (facts) => Object.freeze({
+  provider: "", credential: "login", fields: Object.freeze([]), authSchemes: Object.freeze([]), relayHeaders: Object.freeze([]),
+  defaultBaseUrl: "", modelsOptional: false, hints: Object.freeze({}),
+  ...facts,
+  types: Object.freeze([...facts.types]),
+  ...(facts.fields ? { fields: Object.freeze([...facts.fields]) } : {}),
+  ...(facts.authSchemes ? { authSchemes: Object.freeze([...facts.authSchemes]) } : {}),
+  ...(facts.relayHeaders ? { relayHeaders: Object.freeze([...facts.relayHeaders]) } : {}),
+  ...(facts.hints ? { hints: Object.freeze({ ...facts.hints }) } : {}),
+});
 export const LICENSE_KINDS = Object.freeze({
-  "codex-login": Object.freeze({
-    id: "codex-login", harness: "codex", prefix: "codex-lic-", label: "ChatGPT sign-in",
+  "codex-login": kindFacts({
+    id: "codex-login", harness: "codex", prefix: "codex-lic-", relay: "CODEX_LICENSE_ACCESS_TOKEN:", label: "ChatGPT sign-in",
     description: "A separate ChatGPT sign-in for Codex, kept in its own directory on the gateway host.",
-    types: Object.freeze(["subscription", "business", "enterprise", "education"]),
+    types: [...SIGN_IN_TYPES, "education"],
   }),
-  "claude-login": Object.freeze({
-    id: "claude-login", harness: "claude", prefix: "claude-lic-", label: "Claude sign-in",
+  "codex-api": kindFacts({
+    id: "codex-api", harness: "codex", prefix: "codex-api-", relay: "CODEX_LICENSE_API_KEY:", label: "API key or custom server",
+    description: "An API key for the OpenAI API, or for any server that speaks the OpenAI Responses API. Codex is pointed at that server with this key.",
+    types: PROVIDER_TYPES, provider: "custom", credential: "key",
+    fields: ["baseUrl", "apiKey", "models"], authSchemes: ["bearer"], relayHeaders: ["authorization"],
+    defaultBaseUrl: "https://api.openai.com/v1", modelsOptional: true,
+    hints: { baseUrl: "https://api.openai.com/v1", models: "Optional for api.openai.com. Any other server: the model ids it serves." },
+  }),
+  "codex-aws": kindFacts({
+    id: "codex-aws", harness: "codex", prefix: "codex-aws-", relay: "CODEX_LICENSE_AWS_KEY:", label: "Amazon Bedrock",
+    description: "OpenAI models on Amazon Bedrock, through Codex's own Bedrock provider. Needs a Bedrock API key (not an AWS access key) and the region.",
+    types: PROVIDER_TYPES, provider: "bedrock", credential: "key",
+    fields: ["region", "apiKey", "models"], authSchemes: ["bearer"], relayHeaders: ["authorization"],
+    hints: { region: "eu-central-1", models: "The Bedrock model ids to offer, e.g. openai.gpt-5.6-sol." },
+  }),
+  "codex-gcp": kindFacts({
+    id: "codex-gcp", harness: "codex", prefix: "codex-gcp-", relay: "CODEX_LICENSE_GCP_TOKEN:", label: "Google Vertex AI",
+    description: "OpenAI models on Google Vertex AI, through Codex's own Vertex provider. Needs the project, the location and a service-account key.",
+    types: PROVIDER_TYPES, provider: "vertex", credential: "service-account",
+    fields: ["projectId", "region", "serviceAccount", "models"], authSchemes: ["bearer"], relayHeaders: ["authorization"],
+    hints: { region: "global", models: "The Vertex model ids to offer, e.g. gpt-6.2-sol." },
+  }),
+  "codex-azure": kindFacts({
+    id: "codex-azure", harness: "codex", prefix: "codex-azure-", relay: "CODEX_LICENSE_AZURE_KEY:", label: "Microsoft Azure",
+    description: "Azure OpenAI through Codex. Needs the resource's OpenAI v1 endpoint, its key and the deployment names.",
+    types: PROVIDER_TYPES, provider: "azure", credential: "key",
+    fields: ["baseUrl", "apiKey", "authScheme", "apiVersion", "models"], authSchemes: ["api-key", "bearer"], relayHeaders: ["authorization", "api-key"],
+    hints: { baseUrl: "https://YOUR-RESOURCE.openai.azure.com/openai/v1", models: "Your deployment names, one per line." },
+  }),
+  "claude-login": kindFacts({
+    id: "claude-login", harness: "claude", prefix: "claude-lic-", relay: "CLAUDE_LICENSE_OAUTH_TOKEN:", label: "Claude sign-in",
     description: "A separate Claude sign-in for Claude Code, kept in its own directory on the gateway host.",
-    types: Object.freeze(["subscription", "business", "enterprise"]),
+    types: SIGN_IN_TYPES,
   }),
-  "claude-api": Object.freeze({
-    id: "claude-api", harness: "claude", prefix: "claude-api-", label: "API key",
-    description: "An API key for the Anthropic API or an Anthropic-compatible endpoint, run through Claude Code.",
-    types: Object.freeze(["api", "business", "enterprise"]),
+  "claude-api": kindFacts({
+    id: "claude-api", harness: "claude", prefix: "claude-api-", relay: "CLAUDE_LICENSE_API_KEY:", label: "API key or custom server",
+    description: "An API key for the Anthropic API, or for any server that speaks the Anthropic Messages API. Claude Code is pointed at that server with this key.",
+    types: PROVIDER_TYPES, provider: "custom", credential: "key",
+    fields: ["baseUrl", "apiKey", "authScheme", "models"], authSchemes: ["x-api-key", "bearer"], relayHeaders: ["authorization", "x-api-key"],
+    modelsOptional: true,
+    hints: { baseUrl: "https://api.anthropic.com", models: "Optional for api.anthropic.com. Any other server: the model ids it serves." },
+  }),
+  "claude-aws": kindFacts({
+    id: "claude-aws", harness: "claude", prefix: "claude-aws-", relay: "CLAUDE_LICENSE_AWS_KEY:", label: "Amazon Bedrock",
+    description: "Claude on Amazon Bedrock. Needs a Bedrock API key (not an AWS access key) and the region.",
+    types: PROVIDER_TYPES, provider: "bedrock", credential: "key",
+    fields: ["region", "apiKey", "models"], authSchemes: ["bearer"], relayHeaders: ["authorization"], modelsOptional: true,
+    hints: { region: "eu-central-1", models: "Optional: Bedrock model or inference-profile ids. Blank offers Opus, Sonnet and Haiku as Claude Code maps them." },
+  }),
+  "claude-gcp": kindFacts({
+    id: "claude-gcp", harness: "claude", prefix: "claude-gcp-", relay: "CLAUDE_LICENSE_GCP_TOKEN:", label: "Google Vertex AI",
+    description: "Claude on Google Vertex AI. Needs the project, the location and a service-account key.",
+    types: PROVIDER_TYPES, provider: "vertex", credential: "service-account",
+    fields: ["projectId", "region", "serviceAccount", "models"], authSchemes: ["bearer"], relayHeaders: ["authorization"], modelsOptional: true,
+    hints: { region: "global", models: "Optional: Vertex model ids. Blank offers Opus, Sonnet and Haiku as Claude Code maps them." },
+  }),
+  "claude-azure": kindFacts({
+    id: "claude-azure", harness: "claude", prefix: "claude-azure-", relay: "CLAUDE_LICENSE_AZURE_KEY:", label: "Microsoft Azure",
+    description: "Claude in Microsoft Foundry on Azure. Needs the resource's Anthropic endpoint and its key.",
+    types: PROVIDER_TYPES, provider: "azure", credential: "key",
+    fields: ["baseUrl", "apiKey", "authScheme", "models"], authSchemes: ["x-api-key", "bearer"], relayHeaders: ["authorization", "x-api-key"], modelsOptional: true,
+    hints: { baseUrl: "https://YOUR-RESOURCE.services.ai.azure.com/anthropic", models: "Optional: your deployment names. Blank offers Opus, Sonnet and Haiku as Claude Code maps them." },
   }),
 });
 export const LICENSE_KIND_IDS = Object.freeze(Object.keys(LICENSE_KINDS));
-export const API_AUTH_SCHEMES = Object.freeze(["bearer", "x-api-key"]);
+// Every way a key can be sent, across kinds; each kind lists the ones ITS server accepts.
+export const API_AUTH_SCHEMES = Object.freeze(["bearer", "x-api-key", "api-key"]);
 export const MAX_LICENSE_MODELS = 40;
+export const MAX_SERVICE_ACCOUNT_BYTES = 16 * 1024;
+// A provider kind stores a credential and a server; a sign-in kind stores neither.
+export const isProviderKind = (kindId) => Boolean(LICENSE_KINDS[kindId]?.provider);
+export const isProviderLicense = (record) => isProviderKind(record?.kind);
 
-const LICENSE_ID_RE = /^(codex-lic|claude-lic|claude-api)-[a-f0-9]{8}$/;
+const LICENSE_ID_RE = new RegExp(`^(?:${Object.values(LICENSE_KINDS).map((kind) => kind.prefix.slice(0, -1)).join("|")})-[a-f0-9]{8}$`);
 export const isLicenseShapedId = (value) => typeof value === "string" && LICENSE_ID_RE.test(value);
 export function licenseKindOfId(id) {
   if (!isLicenseShapedId(id)) return null;
@@ -101,16 +183,64 @@ export function normalizeLicenseRecord(raw) {
   if (!label) return null;
   const type = kind.types.includes(raw.type) ? raw.type : kind.types[0];
   const base = { id: raw.id, kind: kind.id, harness: kind.harness, label, type, createdAt: clean(raw.createdAt, 40) };
-  if (kind.id !== "claude-api") return Object.freeze(base);
+  if (!kind.provider) return Object.freeze(base);
+  const has = (field) => kind.fields.includes(field);
   const baseUrl = clean(raw.baseUrl, 300).replace(/\/+$/, "");
+  const region = clean(raw.region, 40).toLowerCase();
   return Object.freeze({
     ...base,
-    baseUrl: LICENSE_BASE_URL_RE.test(baseUrl) ? baseUrl : "",
-    apiKey: typeof raw.apiKey === "string" && !/\s/.test(raw.apiKey.trim()) ? raw.apiKey.trim().slice(0, 4096) : "",
-    authScheme: API_AUTH_SCHEMES.includes(raw.authScheme) ? raw.authScheme : "x-api-key",
+    ...(has("baseUrl") ? { baseUrl: LICENSE_BASE_URL_RE.test(baseUrl) ? baseUrl : kind.defaultBaseUrl } : {}),
+    ...(has("apiKey") ? { apiKey: typeof raw.apiKey === "string" && !/\s/.test(raw.apiKey.trim()) ? raw.apiKey.trim().slice(0, 4096) : "" } : {}),
+    authScheme: kind.authSchemes.includes(raw.authScheme) ? raw.authScheme : kind.authSchemes[0],
+    ...(has("region") ? { region: isLicenseRegion(kind.provider, region) ? region : "" } : {}),
+    ...(has("projectId") ? { projectId: GCP_PROJECT_RE.test(clean(raw.projectId, 40)) ? clean(raw.projectId, 40) : "" } : {}),
+    ...(has("serviceAccount") ? { serviceAccount: normalizeServiceAccount(raw.serviceAccount) } : {}),
+    ...(has("apiVersion") ? { apiVersion: API_VERSION_RE.test(clean(raw.apiVersion, 40)) ? clean(raw.apiVersion, 40) : "" } : {}),
     models: normalizeLicenseModels(raw.models),
     verification: normalizeLicenseVerification(raw.verification),
   });
+}
+
+// ── Provider fields ───────────────────────────────────────────────────────────────────────────
+// Each value below ends up in a URL, an environment variable or a `-c` override of a CLI, so each
+// is held to the provider's own published shape rather than "anything without spaces".
+const AWS_REGION_RE = /^(?:af|ap|ca|eu|il|me|mx|sa|us)-(?:[a-z]+-)*[a-z]+-\d+$/;
+const GCP_LOCATION_RE = /^(?:global|[a-z]+-[a-z]+\d+)$/;
+export const GCP_PROJECT_RE = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+export const API_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+export const isLicenseRegion = (provider, value) => (provider === "bedrock" ? AWS_REGION_RE : provider === "vertex" ? GCP_LOCATION_RE : /^$/).test(String(value || ""));
+
+// A Google service-account key file → the compact JSON the gateway keeps (only the members a
+// token request needs), or "" when the text is not one. Accepts the stored compact form too.
+export function normalizeServiceAccount(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > MAX_SERVICE_ACCOUNT_BYTES) return "";
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return ""; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+  if (parsed.type !== undefined && parsed.type !== "service_account") return "";
+  const email = typeof parsed.client_email === "string" ? parsed.client_email.trim() : "";
+  const key = typeof parsed.private_key === "string" ? parsed.private_key : "";
+  if (!/^[a-z0-9._-]{1,100}@[a-z0-9.-]{1,150}$/i.test(email) || !/-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]{200,}-----END (?:RSA )?PRIVATE KEY-----/.test(key)) return "";
+  return JSON.stringify({
+    type: "service_account", client_email: email, private_key: key,
+    private_key_id: clean(parsed.private_key_id, 80), project_id: GCP_PROJECT_RE.test(String(parsed.project_id || "")) ? parsed.project_id : "",
+  });
+}
+// The non-secret facts of a stored service-account key (what a listing may show).
+export function serviceAccountFacts(stored) {
+  try {
+    const parsed = JSON.parse(String(stored || ""));
+    return { email: String(parsed.client_email || ""), projectId: String(parsed.project_id || ""), keyId: String(parsed.private_key_id || "") };
+  } catch {
+    return { email: "", projectId: "", keyId: "" };
+  }
+}
+// Does this provider license hold the credential its kind runs on?
+export function licenseCredentialStored(record) {
+  const kind = LICENSE_KINDS[record?.kind];
+  if (!kind?.provider) return false;
+  return Boolean(kind.credential === "service-account" ? record.serviceAccount : record.apiKey);
 }
 
 // The last answer the endpoint gave to this license's key (src/config/engine-licenses.js). It is
@@ -179,7 +309,7 @@ export function licenseContainerDir(id, containerHome = "/home/agent") {
 const shellQuote = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
 // The command an operator runs on the gateway host, as the service user, to sign a license in.
 export function licenseLoginCommand(record) {
-  if (!record || record.kind === "claude-api") return "";
+  if (!record || isProviderKind(record.kind)) return "";
   const home = shellQuote(licenseLoginHome(record.id));
   return record.kind === "codex-login"
     ? `install -d -m 700 ${home} && CODEX_HOME=${home} codex -c cli_auth_credentials_store='"file"' login --device-auth`
@@ -189,7 +319,7 @@ export function licenseLoginCommand(record) {
 // ── Relay names (src/gateway/egress/) ─────────────────────────────────────────────────────────
 // A proxy-mode container holds a placeholder per license, keyed by a relay name that carries the
 // license id, so two licenses of one harness can never be swapped for each other's credential.
-const RELAY_PREFIX = Object.freeze({ "codex-login": "CODEX_LICENSE_ACCESS_TOKEN:", "claude-login": "CLAUDE_LICENSE_OAUTH_TOKEN:", "claude-api": "CLAUDE_LICENSE_API_KEY:" });
+const RELAY_PREFIX = Object.freeze(Object.fromEntries(Object.values(LICENSE_KINDS).map((kind) => [kind.id, kind.relay])));
 export function licenseRelaySecretName(id) {
   const kind = licenseKindOfId(id);
   if (!kind) throw new Error("not a license id");
@@ -206,16 +336,45 @@ export function licenseOfRelaySecret(secretName) {
   return null;
 }
 
-// The host an API license's requests go to, or "" (no endpoint stored, or not a URL).
-export function licenseApiHost(record) {
+// The base URL a provider license's harness is pointed at, or "" (nothing usable stored). For
+// Bedrock and Vertex it follows from the region: the admin never types a hostname for them.
+export function licenseEndpoint(record) {
+  const kind = LICENSE_KINDS[record?.kind];
+  if (!kind?.provider) return "";
+  if (kind.provider === "bedrock") {
+    if (!record.region) return "";
+    return kind.harness === "codex" ? `https://bedrock-mantle.${record.region}.api.aws/openai/v1` : `https://bedrock-runtime.${record.region}.amazonaws.com`;
+  }
+  if (kind.provider === "vertex") {
+    if (!record.region || !record.projectId) return "";
+    const host = record.region === "global" || kind.harness === "codex" ? "aiplatform.googleapis.com" : `${record.region}-aiplatform.googleapis.com`;
+    return kind.harness === "codex"
+      ? `https://${host}/v1/projects/${record.projectId}/locations/${record.region}/publishers/openai/v1`
+      : `https://${host}/v1`;
+  }
+  return record.baseUrl || "";
+}
+// The hosts a provider license's credential is sent to: where its placeholder is swapped, and what
+// the egress proxy admits as an engine destination with the network switch off.
+export function licenseHosts(record) {
   try {
-    return record?.kind === "claude-api" && record.baseUrl ? new URL(record.baseUrl).hostname.toLowerCase() : "";
+    const endpoint = licenseEndpoint(record);
+    return endpoint ? [new URL(endpoint).hostname.toLowerCase()] : [];
   } catch {
-    return "";
+    return [];
   }
 }
-// Every API license's endpoint host: destinations the engine itself needs, with network off too.
-export const licenseApiHosts = () => [...new Set(licenseRecords().map(licenseApiHost).filter(Boolean))];
+// Is this the harness vendor's OWN API (Anthropic's for Claude Code, OpenAI's for Codex)? Only
+// there does the harness know the model catalog and the prices without being told.
+const VENDOR_API_HOSTS = Object.freeze({ claude: "api.anthropic.com", codex: "api.openai.com" });
+export function licenseIsVendorApi(record) {
+  const kind = LICENSE_KINDS[record?.kind];
+  return kind?.provider === "custom" && licenseHosts(record)[0] === VENDOR_API_HOSTS[kind.harness];
+}
+// The first of them, or "" (kept for callers that name one endpoint host).
+export const licenseApiHost = (record) => licenseHosts(record)[0] || "";
+// Every provider license's hosts: destinations the engine itself needs, with network off too.
+export const licenseApiHosts = () => [...new Set(licenseRecords().flatMap(licenseHosts))];
 
 // ── Plan → type ───────────────────────────────────────────────────────────────────────────────
 // What the provider's own sign-in says the plan is, as one of LICENSE_TYPE_IDS; "" when the plan
