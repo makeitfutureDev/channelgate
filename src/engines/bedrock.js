@@ -190,6 +190,8 @@ export function makeBedrockAdapter(claude) {
   return validateEngineAdapter({
     ...base,
     id: BEDROCK_ENGINE_ID, label: "Claude Extra", modelFamily: "claude-extra",
+    // Its own directory: a Claude subscription there reports that account's windows.
+    subscriptionUsage: { provider: "claude", login: BEDROCK_ENGINE_ID },
     defaultModelKey: "defaultBedrockModel", defaultEffortKey: "defaultBedrockEffort",
     optIn: true, terminalSetup: true,
     // The separate Claude config directory on the gateway host (its sign-in, or its Bedrock setup);

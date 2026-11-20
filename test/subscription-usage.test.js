@@ -476,20 +476,21 @@ test("enabled harnesses are resolved on each read and unsupported engines never 
     saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, true])) });
     const result = await read();
     assert.deepEqual(result.subscriptions.map((row) => row.provider), getEnabledEngines());
-    assert.deepEqual(credentialReads, ["claude", "codex", "codex-eu"]);
-    assert.equal(requests.length, 3);
+    assert.deepEqual(credentialReads, ["claude", "codex", "codex-eu", "claude-bedrock"]);
+    assert.equal(requests.length, 4);
     for (const row of result.subscriptions.filter((item) => !credentialReads.includes(item.provider))) {
       assert.equal(row.status, "unsupported");
       assert.equal(row.windows.length, 0);
       assert.match(subscriptionCard(row), /Not supported/);
     }
+    assert.match(forProvider(result, "codex-channel").message, /Each channel signs in with its own account/);
     assert.equal(forProvider(result, "codex-eu").name, "Codex EU");
     saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, id === "codex-eu"])) });
     assert.deepEqual((await read()).subscriptions.map((row) => row.provider), ["codex-eu"]);
-    assert.equal(requests.length, 3);
+    assert.equal(requests.length, 4);
     saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, id === "codex"])) });
     assert.deepEqual((await read()).subscriptions.map((row) => row.provider), ["codex"]);
-    assert.equal(requests.length, 4, "disabled harness cache was discarded");
+    assert.equal(requests.length, 5, "disabled harness cache was discarded");
   } finally { saveSettings({ engineEnabled: {} }); }
 });
 
@@ -686,4 +687,32 @@ test("profile failures leave quota usable and identity changes invalidate cached
   assert.doesNotMatch(html, /<img|<script>/);
   assert.match(html, /&lt;img/);
   assert.match(subscriptionCard({ ...changed, account: {} }), /Account unavailable/);
+});
+
+test("a dedicated Claude sign-in reports its own account, read from its own directory", async () => {
+  const { planLabel } = await import("../src/gateway/subscription-usage.js");
+  const { licenseLoginHome } = await import("../src/engines/license-state.js");
+  const asked = [], read = [];
+  let provider = { kind: "subscription", configured: true, login: { file: "/fixture/license/.credentials.json" } };
+  const credentials = createDaemonSubscriptionCredentials({
+    resolveClaude() { throw new Error("the gateway's own Claude login must not be consulted"); },
+    resolveExtraClaude(options) { asked.push(options?.configDir || "default"); return provider; },
+    readClaude(file) { read.push(file); return { token: "fixture-license-access", expiresAt: 0, subscriptionType: "max", rateLimitTier: "default_claude_max_5x" }; },
+  });
+  const id = "claude-lic-0000abcd";
+  const own = credentials(id, { provider: "claude", login: id });
+  assert.deepEqual([own.kind, own.token, own.plan, own.source, own.profile], ["subscription", "fixture-license-access", "Max 5x", id, "claude"]);
+  assert.deepEqual([asked, read], [[licenseLoginHome(id)], ["/fixture/license/.credentials.json"]]);
+  // Claude Extra reads its default directory; a Bedrock setup there is per-use billing.
+  assert.equal(credentials("claude-bedrock", { provider: "claude", login: "claude-bedrock" }).kind, "subscription");
+  assert.equal(asked[1], "default");
+  provider = { kind: "bedrock", configured: true };
+  assert.equal(credentials("claude-bedrock", { provider: "claude", login: "claude-bedrock" }).kind, "api-key");
+  assert.equal(credentials(id, { provider: "claude", login: id }).kind, "none", "a Bedrock setup is not a sign-in license's login");
+  provider = { kind: "subscription", configured: false, login: { kind: "none" } };
+  assert.equal(credentials(id, { provider: "claude", login: id }).kind, "none");
+  assert.equal(credentials("something-else", { provider: "claude", login: "something-else" }).kind, "none", "an unknown login never falls back to the gateway's");
+  assert.equal(read.length, 2);
+  // Raw provider plan ids become words; labels that already are words stay.
+  assert.deepEqual(["self_serve_business_prolite", "pro", "team", "Max 20x", "", "edu"].map(planLabel), ["Business Pro Lite", "Pro", "Team", "Max 20x", "", "Education"]);
 });

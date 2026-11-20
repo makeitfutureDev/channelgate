@@ -50,17 +50,26 @@ export function createSubscriptionUi() {
     const resets = credits && Number.isSafeInteger(credits.available) && credits.available >= 0
       ? `<div class="subscription-resets"><div><span>Usage limit resets</span><strong>${credits.available} ${banked ? "remaining" : "available"}</strong></div>${resetRows}${credits.available > 0 && creditRows.length === 0 ? "<p>Reset expiry unavailable</p>" : ""}</div>` : "";
     const subscriptionExpiry = row.expiresAt && Number.isFinite(Date.parse(row.expiresAt)) ? `<p class="subscription-expiry">Subscription expires ${esc(expiry(row.expiresAt))}</p>` : "";
-    return `<article class="subscription-card${row.stale ? " stale" : ""}"><div class="subscription-card-head"><h3>${esc(row.name)}</h3><span class="subscription-plan">${esc(row.plan || labels[status])}</span></div>${account}${row.stale || status !== "ok" ? `<p class="subscription-status ${status}">${row.stale ? "Stale data · " : ""}${labels[status]}</p>` : ""}${row.message ? `<p class="subscription-message">${esc(row.message)}</p>` : ""}${limits || '<p class="subscription-message">No subscription usage data available.</p>'}${resets}${subscriptionExpiry}<p class="subscription-updated">Updated ${esc(stamp(row.updatedAt))}${row.stale ? ` · Last check ${esc(stamp(row.checkedAt))}` : ""}</p></article>`;
+    return `<article class="subscription-card${row.stale ? " stale" : ""}"><div class="subscription-card-head"><h3>${esc(row.name)}</h3><span class="subscription-plan" title="${esc(row.plan || labels[status])}">${esc(row.plan || labels[status])}</span></div>${account}${row.stale || status !== "ok" ? `<p class="subscription-status ${status}">${row.stale ? "Stale data · " : ""}${labels[status]}</p>` : ""}${row.message ? `<p class="subscription-message">${esc(row.message)}</p>` : ""}${limits || '<p class="subscription-message">No subscription usage data available.</p>'}${resets}${subscriptionExpiry}<p class="subscription-updated">Updated ${esc(stamp(row.updatedAt))}${row.stale ? ` · Last check ${esc(stamp(row.checkedAt))}` : ""}</p></article>`;
   }
-  return { card, summary, reset, isSubscription };
+  // A license that can never have an account-wide window (a per-channel account, a pay-per-use
+  // key) gets one line under the cards instead of an empty card.
+  const hasNoQuota = (row) => row.status === "unsupported" || (row.status === "api-key" && windows(row).length === 0);
+  function notes(rows) {
+    const items = rows.filter(hasNoQuota).map((row) => `<li><strong>${esc(row.name)}</strong> — ${esc(row.message || "No subscription quota.")}</li>`).join("");
+    return items ? `<section class="subscription-notes" aria-label="Licenses without a subscription quota"><h3>No subscription quota</h3><ul>${items}</ul></section>` : "";
+  }
+  const cards = (rows) => rows.filter((row) => !hasNoQuota(row)).map(card).join("");
+  return { card, cards, notes, summary, reset, isSubscription };
 }
 
 export const SUBSCRIPTION_CSS = `
 .subscription-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;margin:20px 0;align-items:start}
 .subscription-card{min-width:0;padding:16px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
-.subscription-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.subscription-card h3{font-size:18px;line-height:1.4;margin:0;font-weight:600}
+.subscription-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.subscription-card h3{font-size:18px;line-height:1.4;margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere}
 .subscription-account{display:flex;flex-direction:column;gap:2px;margin:-5px 0 12px;color:var(--muted);font-size:14px;overflow-wrap:anywhere}.subscription-workspace{font-size:13px;opacity:1}
-.subscription-plan{color:var(--muted);font-size:13px;border:1px solid var(--line);border-radius:20px;padding:2px 8px;max-width:60%;overflow-wrap:anywhere;text-transform:capitalize}
+.subscription-plan{color:var(--muted);font-size:13px;border:1px solid var(--line);border-radius:20px;padding:2px 8px;max-width:60%;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize}
+.subscription-notes{margin:4px 0 20px;color:var(--muted);font-size:14px}.subscription-notes h3{font-size:15px;font-weight:600;margin:0 0 6px;color:var(--ink)}.subscription-notes ul{margin:0;padding-left:18px}.subscription-notes li{margin:4px 0;overflow-wrap:anywhere}.subscription-notes strong{color:var(--ink);font-weight:600}
 .subscription-status,.subscription-message{color:var(--muted);font-size:14px;margin:8px 0}.subscription-status.expired{color:var(--danger)}
 .subscription-window{margin-top:12px}.subscription-window-head{display:grid;grid-template-columns:minmax(80px,1fr) minmax(55px,1fr) auto;align-items:center;gap:10px;font-size:15px;color:var(--muted)}
 .subscription-window-head strong,.subscription-quick strong{font-size:22px;font-variant-numeric:tabular-nums;color:var(--ink);font-weight:600;white-space:nowrap}.subscription-window-foot{font-size:13px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}

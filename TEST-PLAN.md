@@ -37,8 +37,12 @@ harness is named.
       the server picker and the admin UI's picker; it is trimmed and control characters are
       dropped; a name taken by an added license, another sign-in or a shipped license's engine
       label is refused (409) and stores nothing; "Default sign-in" cannot be taken by another
-      license; blank or "Default sign-in" resets; a non-sign-in is refused (400), an unknown id
-      404. Normalization: a hand-edited `removedLicenses` naming a sign-in, an added license or
+      license; blank or "Default sign-in" resets; an unknown id is 404. Any other shipped
+      license (`codex-channel`) is renamed the same way: `licenseLabel`, `engineLabel`,
+      `engineDisplayName` and the manifest `label` carry the name, `shippedLabel` the original;
+      the name and the shipped label are both refused for other licenses (409); blank or the
+      shipped label resets; a removed license is refused (409); a stored name under a
+      non-shipped id is never read. Normalization: a hand-edited `removedLicenses` naming a sign-in, an added license or
       an unknown id removes nothing. Removing Qwen with a stored key: key, endpoint and default
       model are cleared, the gateway default moves to `claude`, the id stays registered, it is
       off even with a stored `true`, absent from the manifest, the provider cards and the
@@ -83,6 +87,22 @@ harness is named.
       plan"; `/license` in a Teams or Google Chat conversation lists it under that name; a turn
       on it answers normally and its `usage` row still carries the engine id `claude` / `codex`;
       renaming to blank puts "Default sign-in" back everywhere.
+- [ ] Live `LICENSE-19` rename a shipped license (engine-independent for the rename; run one
+      Codex turn for the picker). Setup: Codex on. Action: Settings → Codex licenses → **Rename**
+      on *Codex (channel account)*, enter "Customer ChatGPT", Save name. Pass: the row, the
+      channel-settings harness picker and `/model` list "Customer ChatGPT"; Remove is still
+      offered beside Rename; renaming to blank restores "Codex (channel account)".
+- [ ] Live `LICENSE-20` Subscriptions covers every license (run with a signed-in added Claude
+      sign-in license AND a signed-in added Codex sign-in license). Action: open Admin →
+      Subscriptions. Pass: each sign-in license has its own card titled "<Harness> · <name>"
+      with that account's email and usage bars (compare with the provider's own usage page); a
+      license that is not signed in shows *Not connected*; *Codex (channel account)* and any
+      API/provider license appear only under **No subscription quota** with a reason; no badge
+      wraps at 390 px; a raw plan id reads as words.
+- [x] `test/subscription-usage.test.js`, `test/admin-subscriptions-browser.test.js`: a dedicated
+      Claude sign-in resolves only its own directory (never the gateway login), Claude Extra with
+      Bedrock is per-use, an unknown login is not connected; plan ids are humanized; no-quota
+      rows render as notes and never as cards; badges are `nowrap`.
 - [ ] Live `LICENSE-18` the sign-in stays (engine-independent). Pass: neither "Default sign-in"
       row offers Remove; `DELETE /api/engine-licenses/claude` with an admin session answers 400
       and changes nothing.

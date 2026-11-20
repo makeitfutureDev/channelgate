@@ -204,6 +204,8 @@ function claudeLoginLicense(claude, record) {
   };
   return {
     ...base,
+    // This license's OWN account: the Subscriptions page reads its directory, not the gateway's.
+    subscriptionUsage: { provider: "claude", login: id },
     id, label: record.label, license: licenseFacts(record), optIn: true,
     defaultModelKey: licenseDefaultModelKey(id), defaultEffortKey: licenseDefaultEffortKey(id),
     supports: { ...base.supports, warmPool: false, interruptSteer: false },

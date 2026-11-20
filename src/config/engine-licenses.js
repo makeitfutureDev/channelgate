@@ -120,7 +120,7 @@ function assertLabel(label, records, selfId = "", names = null) {
   if (!label) refuse("Give the license a name.");
   if (label.length > MAX_LICENSE_NAME_LENGTH) refuse(`A license name is at most ${MAX_LICENSE_NAME_LENGTH} characters.`);
   const wanted = label.toLowerCase();
-  const pickerName = (id) => (names && isDefaultLicense(id) ? names[id] || DEFAULT_LICENSE_NAME : licenseLabel(id));
+  const pickerName = (id) => (names ? names[id] || (isDefaultLicense(id) ? DEFAULT_LICENSE_NAME : adapterFor(id)?.label) : licenseLabel(id));
   // "Default sign-in" stays reserved even while both harnesses' sign-ins carry another name:
   // clearing a name puts it back.
   const taken = wanted === DEFAULT_LICENSE_NAME.toLowerCase()
@@ -298,22 +298,27 @@ export function builtinLicenseForApi(id) {
   const harness = harnessOf(id);
   return {
     id, builtin: true, harness, harnessLabel: harnessLabel(harness), label: licenseLabel(id), engineLabel: adapter.label,
+    // What it is called with no stored name: "Default sign-in", or the label it ships with.
+    shippedLabel: isDefaultLicense(id) ? DEFAULT_LICENSE_NAME : adapter.label,
     defaultLicense: isDefaultLicense(id), removable: isRemovableBuiltinLicense(id), removed: isRemovedLicense(id),
   };
 }
 // The shipped licenses an administrator removed, for the list that offers to restore them.
 export const listRemovedBuiltinLicenses = () => removedBuiltinLicenses().map(builtinLicenseForApi).filter(Boolean);
 
-// Names a harness's own sign-in. A blank name goes back to "Default sign-in".
+// Names a shipped license. A blank name goes back to what it ships as: "Default sign-in" for a
+// harness's own sign-in, the shipped label for any other.
 export function renameBuiltinLicense(id, label) {
-  if (!isDefaultLicense(id)) refuse(engineRegistry.isBuiltin(id) ? "Only a harness's own sign-in can be renamed here." : "That license no longer exists.", engineRegistry.isBuiltin(id) ? 400 : 404);
+  if (!engineRegistry.isBuiltin(id)) refuse("That license no longer exists.", 404);
+  if (isRemovedLicense(id)) refuse("That license was removed. Restore it before renaming it.", 409);
+  const shipped = isDefaultLicense(id) ? DEFAULT_LICENSE_NAME : adapterFor(id).label;
   const name = cleanLabel(label);
   let previous = "";
   saveSettings((current) => {
     const names = normalizeLicenseNames(current.licenseNames);
     previous = names[id] || "";
-    // Typing the default back is the same as clearing the box.
-    const custom = name.toLowerCase() === DEFAULT_LICENSE_NAME.toLowerCase() ? "" : name;
+    // Typing the shipped name back is the same as clearing the box.
+    const custom = name.toLowerCase() === shipped.toLowerCase() ? "" : name;
     if (custom) {
       names[id] = custom;
       // Checked against the map being written, so the other harness's sign-in is compared under
@@ -322,7 +327,7 @@ export function renameBuiltinLicense(id, label) {
     } else delete names[id];
     return { licenseNames: names };
   });
-  return { ...builtinLicenseForApi(id), previousLabel: previous || DEFAULT_LICENSE_NAME };
+  return { ...builtinLicenseForApi(id), previousLabel: previous || shipped };
 }
 
 // Removes a shipped license: off, unlisted, and what it stored for itself deleted — its settings

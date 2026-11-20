@@ -40,6 +40,15 @@ licenses, the ones ChannelGate ships with included, and the harness's own sign-i
   licenses (added ones, the other shipped ones and their engine labels), and blank — or "Default
   sign-in" typed back — restores the default; "Default sign-in" itself cannot be taken by another
   license. Usage rows and audit keep the engine label.
+- **Rename any other shipped license** (same call, any built-in id — *Codex (channel account)*,
+  *Codex EU*, *Claude Extra*, the Qwen licenses). Every shipped row has **Rename**, beside
+  **Remove** where it is removable. The stored name replaces the shipped label in the license
+  list, every picker, the lock list, `engineLabel()` and the Subscriptions page; blank — or the
+  shipped label typed back — restores it, the shipped label stays reserved for that license, and
+  a removed license is restored before it is renamed (409). *Codex (channel account)* is the
+  license under which a channel runs Codex on the ChatGPT account that channel signed in for
+  itself (channel settings → Runtime) instead of the gateway's own Codex sign-in; its row says so
+  on hover.
 - **Copy command on the status line.** When a switched-on sign-in license is not signed in, the
   line under its row quotes the host command inside a sentence; a **Copy command** button on that
   line copies exactly the command (the same one the Sign in panel shows).
@@ -1130,10 +1139,17 @@ receives rename events are not backfilled; rename an existing indexed thread aga
 
 ## Provider subscription usage (2026-11-12)
 
-Admin → **Subscriptions** (`/subscriptions`) lists every enabled harness using the engine registry. Claude,
-Codex and Codex EU show provider-reported quotas; Codex EU reads only its dedicated ChatGPT
-login, with no fallback to the default Codex login or API key. Harnesses without a quota reader
-(including Claude Bedrock and Qwen) display an explicit Not supported status. Disabled
+Admin → **Subscriptions** (`/subscriptions`) lists every license that is switched on, using the engine
+registry. Every sign-in shows its OWN account's provider-reported quotas: Claude, Codex, Codex EU,
+each admin-added Codex or Claude sign-in license, and Claude Extra when it holds a Claude
+subscription. A dedicated sign-in is read only from its own directory, with no fallback to the
+default login or an API key; one that is not signed in gets a *Not connected* card. Cards are
+titled like every other surface names a license ("Codex EU", "Claude Code · <license name>", the
+harness alone for an unnamed default sign-in), raw provider plan ids are shown as words
+("Business Pro Lite"), and a status badge never wraps. Licenses that cannot have an account-wide
+quota — *Codex (channel account)*, where each channel uses its own account, provider/API-key
+licenses and Qwen — are one line each under **No subscription quota** with the reason, instead
+of an empty card. Disabled
 harnesses disappear on the next read. Each quota card displays the known plan, session/weekly/model
 or review limits when reported, percent used/remaining, reset countdown plus local reset time,
 and last successful/check timestamps. These are account-wide provider limits, including usage

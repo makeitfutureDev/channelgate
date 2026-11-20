@@ -111,13 +111,45 @@ test("a harness's own sign-in can be renamed, everywhere a license is named", ()
   assert.deepEqual([cleared.label, cleared.previousLabel], ["Default sign-in", "Company Max"]);
   assert.equal(manifestOf("claude").customName, "");
 
-  // Only a harness's own sign-in is renamed this way.
-  assert.throws(() => store.renameBuiltinLicense("qwen", "Mine"), (e) => e.status === 400);
   assert.throws(() => store.renameBuiltinLicense("codex-lic-00000000", "Mine"), (e) => e.status === 404);
 });
 
-test("stored names and removals are normalized: only sign-ins are named, a sign-in is never removed", () => {
-  assert.deepEqual(state.normalizeLicenseNames({ claude: " A  b ", codex: "x".repeat(61), qwen: "nope", extra: 1 }), { claude: "A b" });
+test("every other shipped license can be renamed too, and reads under that name everywhere", () => {
+  reset();
+  const shipped = registry.adapterFor("codex-channel").label;
+  const renamed = store.renameBuiltinLicense("codex-channel", " Customer  ChatGPT ");
+  assert.deepEqual([renamed.label, renamed.previousLabel, renamed.shippedLabel, renamed.defaultLicense, renamed.removable], ["Customer ChatGPT", shipped, shipped, false, true]);
+  assert.deepEqual(getSettings().licenseNames, { "codex-channel": "Customer ChatGPT" });
+  assert.equal(registry.licenseLabel("codex-channel"), "Customer ChatGPT");
+  assert.equal(registry.engineLabel("codex-channel"), "Customer ChatGPT");
+  assert.equal(registry.engineDisplayName("codex-channel"), "Customer ChatGPT");
+  assert.deepEqual([manifestOf("codex-channel").label, manifestOf("codex-channel").shippedLabel, manifestOf("codex-channel").customName], ["Customer ChatGPT", shipped, "Customer ChatGPT"]);
+  // The name is taken for everything else, and the shipped label stays reserved for this license.
+  assert.throws(() => store.renameBuiltinLicense("qwen", "customer chatgpt"), (e) => e.status === 409);
+  assert.throws(() => store.renameBuiltinLicense("qwen", shipped), (e) => e.status === 409);
+  assert.throws(() => store.createLicense({ kind: "codex-login", label: "Customer ChatGPT", type: "business" }), (e) => e.status === 409);
+  assert.throws(() => store.renameBuiltinLicense("qwen", "Default sign-in"), (e) => e.status === 409);
+  // A harness's own sign-in keeps reading as the harness where no harness is shown beside it.
+  store.renameBuiltinLicense("claude", "Company Max");
+  assert.deepEqual([registry.engineLabel("claude"), registry.engineDisplayName("claude"), registry.engineDisplayName("codex")], ["Claude", "Claude Code · Company Max", "Codex"]);
+  const added = store.createLicense({ kind: "codex-login", label: "Second seat", type: "business" });
+  assert.equal(registry.engineDisplayName(added.id), "Codex · Second seat");
+  // Blank — or the shipped label typed back — restores it.
+  assert.equal(store.renameBuiltinLicense("codex-channel", shipped.toUpperCase()).label, shipped);
+  store.renameBuiltinLicense("codex-channel", "Customer ChatGPT");
+  const cleared = store.renameBuiltinLicense("codex-channel", "");
+  assert.deepEqual([cleared.label, cleared.previousLabel, registry.engineLabel("codex-channel")], [shipped, "Customer ChatGPT", shipped]);
+  // A removed license is restored before it is renamed.
+  store.removeBuiltinLicense("qwen-eu");
+  assert.throws(() => store.renameBuiltinLicense("qwen-eu", "Mine"), (e) => e.status === 409);
+});
+
+test("stored names and removals are normalized: names are id-keyed strings, a sign-in is never removed", () => {
+  assert.deepEqual(state.normalizeLicenseNames({ claude: " A  b ", codex: "x".repeat(61), qwen: "Mine", extra: 1, "Bad Id": "x", __proto__: "x" }), { claude: "A b", qwen: "Mine" });
+  // A name stored under an id that is not a shipped license is never read.
+  state.setBuiltinLicenseState({ names: { "codex-lic-00000000": "Ghost" } });
+  assert.equal(registry.licenseLabel("codex-lic-00000000"), "codex-lic-00000000");
+  state.setBuiltinLicenseState({});
   assert.deepEqual(state.normalizeLicenseNames(["claude"]), {});
   assert.deepEqual(state.normalizeRemovedLicenses(["qwen", "qwen", "claude", "codex", 7, "Bad Id", "qwen-eu"]), ["qwen", "qwen-eu"]);
   assert.deepEqual(state.normalizeRemovedLicenses("qwen"), []);
@@ -259,7 +291,10 @@ test("the admin API renames a sign-in, removes and restores a shipped license, a
   assert.deepEqual([renamed.body.license.id, renamed.body.license.label, renamed.body.license.builtin, renamed.body.license.defaultLicense], ["codex", "Team ChatGPT", true, true]);
   assert.equal(registry.licenseLabel("codex"), "Team ChatGPT");
   assert.equal((await call("PUT", "/engine-licenses/claude", { label: "team chatgpt" })).status, 409);
-  assert.equal((await call("PUT", "/engine-licenses/qwen", { label: "Mine" })).status, 400, "only a sign-in is renamed");
+  const other = await call("PUT", "/engine-licenses/codex-channel", { label: "Customer ChatGPT" });
+  assert.deepEqual([other.status, other.body.license.label, other.body.license.defaultLicense], [200, "Customer ChatGPT", false]);
+  assert.equal((await call("GET", "/settings")).body.engines.find((m) => m.id === "codex-channel").label, "Customer ChatGPT");
+  assert.equal((await call("PUT", "/engine-licenses/codex-channel", { label: "" })).body.license.label, "Codex (channel account)");
   assert.equal((await call("GET", "/settings")).body.engines.find((m) => m.id === "codex").licenseLabel, "Team ChatGPT");
 
   assert.equal((await call("DELETE", "/engine-licenses/claude")).status, 400);
@@ -296,10 +331,10 @@ test("the admin API renames a sign-in, removes and restores a shipped license, a
   // Every change is audited, by name — never with a credential.
   const events = readEvents({ limit: 200 }).filter((event) => event.ts >= since && String(event.event || "").startsWith("engine_license_")).reverse();
   assert.deepEqual(events.map((event) => [event.event, event.license]), [
-    ["engine_license_changed", "codex"], ["engine_license_removed", "qwen-eu"], ["engine_license_restored", "qwen-eu"], ["engine_license_changed", "codex"],
+    ["engine_license_changed", "codex"], ["engine_license_changed", "codex-channel"], ["engine_license_changed", "codex-channel"], ["engine_license_removed", "qwen-eu"], ["engine_license_restored", "qwen-eu"], ["engine_license_changed", "codex"],
   ]);
   assert.deepEqual([events[0].name, events[0].previousName, events[0].changed], ["Team ChatGPT", "Default sign-in", ["label"]]);
-  assert.deepEqual([events[1].kind, events[1].name, events[1].author], ["builtin", "Qwen EU (Claude Code)", "admin-ui"]);
+  assert.deepEqual([events[3].kind, events[3].name, events[3].author], ["builtin", "Qwen EU (Claude Code)", "admin-ui"]);
   assert.ok(!JSON.stringify(events).includes(QWEN_KEY));
 });
 
@@ -348,7 +383,7 @@ test("the admin UI: Rename on a sign-in, Remove on every other shipped license, 
   }
   for (const id of REMOVABLE) {
     assert.equal(await row(id).locator(".lic-remove").count(), 1, `${id}: Remove`);
-    assert.equal(await row(id).locator(".lic-rename-open").count(), 0);
+    assert.equal(await row(id).locator(".lic-rename-open").count(), 1, `${id}: Rename`);
   }
   assert.equal(await manager.locator(".lic-removed").count(), 0, "nothing removed yet");
 

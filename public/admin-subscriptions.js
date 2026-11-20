@@ -43,9 +43,9 @@ export function setSubscriptionsActive(active) {
     const root = document.getElementById("view-subscriptions");
     const style = document.createElement("style");
     style.textContent = SUBSCRIPTION_CSS;
-    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage and resets for every enabled harness.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
+    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage and resets for every license that is switched on.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
       <p class="hint">Account-wide usage · refreshes every 10 minutes.</p>
-      <div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div>
+      <div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div><div id="subscriptions-notes"></div>
 `;
     root.append(style);
     const button = root.querySelector("#subscriptions-refresh");
@@ -55,7 +55,8 @@ export function setSubscriptionsActive(active) {
       root.querySelector("#subscriptions-notice").textContent = error || (loading ? "Checking subscription usage…" : "");
       const cards = root.querySelector("#subscriptions-cards");
       cards.setAttribute("aria-busy", String(loading));
-      cards.innerHTML = data ? data.subscriptions.map(subscriptionCard).join("") : "";
+      cards.innerHTML = data ? subscriptionUi.cards(data.subscriptions) : "";
+      root.querySelector("#subscriptions-notes").innerHTML = data ? subscriptionUi.notes(data.subscriptions) : "";
     } });
     button.addEventListener("click", () => void controller.refresh());
     document.addEventListener("visibilitychange", () => controller.visibilityChanged());
