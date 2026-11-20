@@ -275,6 +275,30 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 
 → TEST-PLAN: Container process limit (2026-11-19).
 
+## Activity Skills page (2026-11-20)
+
+The Activity dashboard has a **Skills** tab (`/activity/<session>/skills`) beside Automations. A
+conversation picker lists **Only me — every conversation** (the viewer's personal skill tier,
+`users.skills`), then the viewer's OWN direct messages, then every Slack conversation the viewer may
+open under the dashboard's access rule (`accessContext().allows`, the Automations rule; another
+person's DM is never listed). Each option carries its skill count. For the selected conversation the
+page lists the skills the viewer can see with a search box (name, slug and description; every word
+must match), All / On / Off filters, an "N on · M available" count, and a checkbox per skill. Organization-wide skills and
+skills from the conversation's skill template or repository section are shown on but locked, with
+their source. Unsaved changes raise a sticky "N to add · N to remove" bar with Discard and **Save
+skills**. Switching conversation, Refresh or leaving the page with unsaved changes asks first. A conversation linked to another's shared setup is read-only and says where to
+edit. A conversation's rows and its save are the SAME code Slack Settings → Skills uses
+(`src/gateway/skills/channel-picker.js`): personal skills are never offered to a conversation,
+an addition must be a skill the viewer can see, and removing one also turns a template copy off in
+this conversation only. "Only me" uses the Settings save (`savePersonalSkills`). A template-managed
+DM (`template: user/admin`) gets its skills FROM the template, so its first skill change detaches it
+to `custom` with the template's current values; Slack Settings → Skills now does the same instead
+of silently doing nothing. Saves are CSRF-checked, re-authorized after the access check, refreshed
+into the channel folder and logged (`skill_granted`/`skill_revoked`, `user_skills_updated`,
+`via: activity_skills`). Settings → Skills now links to this page. Code:
+`src/gateway/skills-view.js`, `src/web/skills-page.js`, routes in `src/web/activity.js`.
+→ TEST-PLAN: Activity Skills page (2026-11-20).
+
 ## Activity Automations page (2026-11-19)
 
 The Activity dashboard has an **Automations** tab (`/activity/<session>/automations`). A conversation

@@ -41,11 +41,13 @@ import { findAckByMessage, deleteAck } from "../config/acks.js";
 import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
-import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
+import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
 import { sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
+import { applyChannelSkillSelection, channelSkillRows, skillSelectionDiff } from "../gateway/skills/channel-picker.js";
+import { detachDmTemplateForSkills } from "../gateway/skills-view.js";
 import { personalSkillPicker } from "../gateway/user-settings.js";
 import { skillModelPreference } from "../gateway/skill-runtime.js";
 import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, harnessOf, isRemovedLicense, licenseLabel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
@@ -1234,14 +1236,7 @@ export async function applySettingsConfirm(key, ctx) {
 }
 
 // Picked set → added and removed, case-insensitively, against the current one.
-function pickerDiff(current = [], picked = []) {
-  const now = new Set(current.map((value) => String(value).toLowerCase()));
-  const next = new Set(picked.map((value) => String(value).toLowerCase()));
-  return {
-    added: picked.filter((value) => !now.has(String(value).toLowerCase())),
-    removed: current.filter((value) => !next.has(String(value).toLowerCase())),
-  };
-}
+const pickerDiff = skillSelectionDiff;
 
 const cloudEngineChoices = meta => ["claude", "codex", "codex-channel"].filter(id => engineAvailableForChannel(meta, id));
 
@@ -1558,41 +1553,8 @@ async function cloudManagerItems(meta, engine) {
   return [...rows.values()].sort((a, b) => Number(b.direct) - Number(a.direct) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 
-function skillManagerItems(meta, { userId = "", userIsAdmin = false } = {}) {
-  const direct = new Set((meta?.skills || []).map((value) => String(value).toLowerCase()));
-  const organization = new Set((getOrgAccessGrants().skills || []).map((value) => String(value).toLowerCase()));
-  const scoped = new Set(channelScopedSkills(meta?.channelId).map((value) => value.toLowerCase()));
-  const template = templateOfMeta(meta);
-  const templateSummary = template ? listTemplateSummaries().find((entry) => entry.slug === template.slug) : null;
-  const fromTemplate = new Set((templateSummary?.resolved || []).map((value) => String(value).toLowerCase()));
-  // A template or channel-section skill this conversation deactivated (meta.skillsOff) is off here.
-  const off = channelSkillsOff(meta);
-  const active = new Set([...direct, ...organization, ...[...scoped, ...fromTemplate].filter((key) => !off.has(key))]);
-  const rows = new Map();
-  for (const skill of listSkills({ viewer: userIsAdmin ? "*" : userId || "" })) {
-    const key = skill.slug.toLowerCase();
-    if (!canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: active.has(key) })) continue;
-    if (skill.visibility === "personal") continue;
-    rows.set(key, {
-      key: skill.slug,
-      name: skill.name || skill.slug,
-      description: skill.description || "",
-      direct: direct.has(key),
-      inherited: organization.has(key),
-      template: fromTemplate.has(key) && !off.has(key),
-      scoped: scoped.has(key) && !off.has(key),
-      active: active.has(key),
-    });
-  }
-  // A hand-written or legacy direct grant may not be in the governed catalog. Keep it visible so
-  // a manager can deactivate it instead of trapping an unrenderable grant in the channel record.
-  for (const slug of meta?.skills || []) {
-    const key = String(slug).toLowerCase();
-    if (!key || rows.has(key)) continue;
-    rows.set(key, { key: String(slug), name: String(slug), description: "Not currently in the catalog", direct: true, active: true });
-  }
-  return [...rows.values()].sort((a, b) => Number(b.direct) - Number(a.direct) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
-}
+// Rows are computed on the EFFECTIVE record: a template-managed DM loads its template's skills.
+const skillManagerItems = (meta, opts) => channelSkillRows(meta ? effectiveMeta(meta) : meta, opts);
 
 async function patchAuditedChannelSettings(entry, actor, patch) {
   let before = null;
@@ -2449,17 +2411,8 @@ async function connectAndWire(app) {
       }
       if (actionId === CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID) {
         const picked = (action?.selected_options || []).map((entry) => String(entry.value));
-        const { added, removed } = pickerDiff(meta.skills || [], picked);
-        if (added.length) {
-          const visible = new Map(listSkills({ viewer: userIsAdmin ? "*" : clicker }).map((skill) => [skill.slug.toLowerCase(), skill]));
-          const active = new Set(channelSkillGrants(meta).map((item) => item.toLowerCase()));
-          for (const slug of added) {
-            const skill = visible.get(slug.toLowerCase());
-            if (!skill || skill.visibility === "personal" || !canSeeSkill(skill, { userId: clicker, isAdmin: userIsAdmin, active: active.has(slug.toLowerCase()) })) throw new Error(`${slug} is no longer available to this channel.`);
-          }
-          await grantSkillsToChannel(entry.slug, added);
-        }
-        if (removed.length) await revokeSkillsFromChannel(entry.slug, removed, { deactivate: true });
+        meta = (await detachDmTemplateForSkills(entry, clicker, "slack-settings")) || meta;
+        const { added, removed } = await applyChannelSkillSelection(entry.slug, meta, picked, { userId: clicker, userIsAdmin });
         meta = await getChannelMeta(entry.slug);
         await ensureChannelFolder(entry.slug, effectiveMeta(meta));
         if (added.length) await logEvent("skill_granted", { channel: state.channelId, slug: entry.slug, skills: added, author: clicker });
@@ -2702,6 +2655,7 @@ async function connectAndWire(app) {
       if (actionId.startsWith(CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX)) {
         const key = String(command.k || "");
         const activate = Boolean(command.a);
+        meta = (await detachDmTemplateForSkills(entry, clicker, "slack-settings")) || meta;
         if (activate) {
           const skill = listSkills({ viewer: userIsAdmin ? "*" : clicker }).find((item) => item.slug.toLowerCase() === key.toLowerCase());
           const active = new Set(channelSkillGrants(meta).map((item) => item.toLowerCase()));
