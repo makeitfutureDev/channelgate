@@ -3,8 +3,9 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { codexEuLoginHome } from "./channel-codex-paths.js";
-import { adapterFor } from "../engines/registry.js";
-import { licenseKindOfId, licenseLoginHome } from "../engines/license-state.js";
+import { adapterFor, engineDisplayName } from "../engines/registry.js";
+import { isProviderKind, licenseKindOfId, licenseLoginHome } from "../engines/license-state.js";
+import { BEDROCK_ENGINE_ID, resolveExtraClaudeProvider } from "../engines/bedrock.js";
 import { resolveClaudeLogin } from "./claude-login.js";
 import { readDaemonClaudeAccessToken } from "./claude-token-relay.js";
 import { resolveCodexLogin, readDaemonCodexAccessToken } from "./codex-token-relay.js";
@@ -21,6 +22,14 @@ const CODEX_RESETS_ENDPOINT = "https://chatgpt.com/backend-api/wham/rate-limit-r
 const CACHE_MS = 600_000;
 const text = (value) => typeof value === "string" ? value.slice(0, 80) : "";
 const percent = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+// A provider's raw plan id ("self_serve_business_prolite") as words a badge can show.
+export function planLabel(value) {
+  const raw = text(value).trim();
+  if (!raw || /\s/.test(raw) || !/[_-]|^[a-z0-9]+$/.test(raw)) return raw;
+  const words = raw.replace(/^self_serve_/i, "").split(/[_-]+/).filter(Boolean);
+  const known = { prolite: "Pro Lite", edu: "Education", k12: "K-12" };
+  return words.map((word) => known[word.toLowerCase()] || word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+}
 const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
 
 const identityText = (value, max = 160) => typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/g, "").trim().slice(0, max) : "";
@@ -124,18 +133,30 @@ export function normalizeSubscriptionUsage(provider, data) {
     }
   }
   const resetCredits = provider === "claude" ? normalizeClaudeResets(data?.cedar_ember) : normalizeResetCredits(data?.rate_limit_reset_credits);
-  return { windows, plan: provider === "codex" ? text(data?.plan_type) : "", ...(resetCredits ? { resetCredits } : {}) };
+  return { windows, plan: provider === "codex" ? planLabel(data?.plan_type) : "", ...(resetCredits ? { resetCredits } : {}) };
 }
 
 export function createDaemonSubscriptionCredentials({ resolveClaude = resolveClaudeLogin, readClaude = readDaemonClaudeAccessToken,
   claudeToken = getContainerClaudeOauthToken, resolveCodex = resolveCodexLogin, readCodex = readDaemonCodexAccessToken,
-  euHome = codexEuLoginHome, env = process.env } = {}) {
+  euHome = codexEuLoginHome, resolveExtraClaude = resolveExtraClaudeProvider, env = process.env } = {}) {
+  const claudePlan = (current) => current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "";
   return (engine, usage) => {
+    // A dedicated Claude sign-in — Claude Extra or an admin-added Claude license — reports ITS
+    // account's windows, read from its own directory and never from the gateway's login.
+    if (usage.provider === "claude" && usage.login) {
+      const licensed = licenseKindOfId(usage.login)?.id === "claude-login";
+      if (!licensed && usage.login !== BEDROCK_ENGINE_ID) return { kind: "none" };
+      const provider = licensed ? resolveExtraClaude({ configDir: licenseLoginHome(usage.login) }) : resolveExtraClaude();
+      if (provider?.kind === "bedrock" && !licensed) return { kind: provider.configured ? "api-key" : "none" };
+      if (provider?.kind !== "subscription" || !provider.configured || !provider.login?.file) return { kind: "none" };
+      const current = readClaude(provider.login.file);
+      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: claudePlan(current), source: usage.login, profile: "claude" };
+    }
     if (usage.provider === "claude") {
       const login = resolveClaude();
       if (login.kind === "api-key" || login.kind === "none") return { kind: login.kind };
       const current = login.kind === "settings" ? { token: claudeToken() } : readClaude(login);
-      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "", source: login.kind, profile: "claude" };
+      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: claudePlan(current), source: login.kind, profile: "claude" };
     }
     // A dedicated login — Codex EU or an admin-added Codex license — reports ITS account's windows.
     const licensed = licenseKindOfId(usage.login)?.id === "codex-login";
@@ -150,16 +171,20 @@ export function createDaemonSubscriptionCredentials({ resolveClaude = resolveCla
 const daemonCredentials = createDaemonSubscriptionCredentials();
 
 // Dependency injection keeps provider fixtures entirely offline and outside real login state.
-export function createSubscriptionUsageReader({ credentials = daemonCredentials, engines = getEnabledEngines, adapter = adapterFor, fetchImpl = fetch, now = Date.now, timeoutMs = 10_000 } = {}) {
+export function createSubscriptionUsageReader({ credentials = daemonCredentials, engines = getEnabledEngines, adapter = adapterFor, displayName = (engine) => (adapterFor(engine) ? engineDisplayName(engine) : ""), fetchImpl = fetch, now = Date.now, timeoutMs = 10_000 } = {}) {
   const cache = new Map();
   async function readProvider(engine) {
     const manifest = adapter(engine);
     const usage = manifest?.subscriptionUsage;
     const provider = usage?.provider;
-    const base = { account: publicAccount(null), provider: engine, kind: "unsupported", name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+    const base = { account: publicAccount(null), provider: engine, kind: "unsupported", name: displayName(engine) || manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
     if (!Object.hasOwn(ENDPOINTS, provider || "")) {
       cache.delete(engine);
-      return { ...base, status: "unsupported", message: "Subscription quota reporting is not available for this harness. Check its provider dashboard for limits and billing." };
+      // Say WHY there is nothing to show: a per-channel account and a pay-per-use key have no
+      // gateway-wide subscription window at all.
+      if (manifest?.channelScoped) return { ...base, status: "unsupported", message: "Each channel signs in with its own account, so there is no gateway-wide quota. The account's own usage page shows its limits." };
+      if (isProviderKind(licenseKindOfId(engine)?.id)) return { ...base, kind: "api-key", status: "api-key", message: "Billed per use by its provider, so it has no subscription quota. Token usage and estimated costs are on Overview." };
+      return { ...base, status: "unsupported", message: "Subscription quota reporting is not available for this license. Check its provider dashboard for limits and billing." };
     }
     let credential;
     try { credential = credentials(engine, usage); } catch { return { ...base, status: "unavailable", message: "Could not read the gateway login. Check engine settings." }; }
@@ -170,7 +195,7 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
       cache.delete(engine);
       return { ...base, status: credential.kind === "api-key" ? "api-key" : "not-connected", message: credential.kind === "api-key" ? "API-key billing has no subscription quota. View token usage and estimated costs on Overview." : "No subscription login is available. Sign in to this engine on the gateway host." };
     }
-    base.plan = text(credential.plan);
+    base.plan = planLabel(credential.plan);
     if (credential.expiresAt && credential.expiresAt <= now()) {
       cache.delete(engine);
       return { ...base, status: "expired", message: "The access token has expired. Renew the engine login on the gateway host; this page never refreshes credentials." };

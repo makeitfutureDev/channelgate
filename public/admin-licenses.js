@@ -607,8 +607,11 @@ export function mountLicensesManager({
     await afterMutation();
   }
 
-  // The harness's own sign-in has one editable fact: what every picker calls it.
+  // A shipped license has one editable fact: what every picker calls it. Blank goes back to the
+  // name it ships with ("Default sign-in" for the harness's own sign-in).
   function openRename(manifest, harness) {
+    const shipped = manifest.defaultLicense ? DEFAULT_LICENSE_NAME : String(manifest.shippedLabel || manifest.label || manifest.id);
+    const subject = manifest.defaultLicense ? `${harnessLabelOf(state().manifests, harness)}'s own sign-in` : shipped;
     if (refuseIfBlocked(harness)) return;
     closePanel();
     const el = make("div", "lic-form lic-rename");
@@ -617,7 +620,7 @@ export function mountLicensesManager({
     nameInput.maxLength = 60;
     nameInput.autocomplete = "off";
     nameInput.value = manifest.customName || "";
-    nameInput.placeholder = DEFAULT_LICENSE_NAME;
+    nameInput.placeholder = shipped;
     const formState = make("span", "state");
     formState.setAttribute("role", "status");
     const save = button("Save name", "primary lic-save", async () => {
@@ -625,7 +628,7 @@ export function mountLicensesManager({
       formState.textContent = "Saving…";
       try {
         const result = await api(`/api/engine-licenses/${encodeURIComponent(manifest.id)}`, { method: "PUT", body: JSON.stringify({ label: nameInput.value }) });
-        say(harness, `${harnessLabelOf(state().manifests, harness)}'s own sign-in is now called "${result.license?.label || DEFAULT_LICENSE_NAME}".`);
+        say(harness, `${subject} is now called "${result.license?.label || shipped}".`);
         closeForm();
         await afterMutation();
       } catch (error) {
@@ -641,8 +644,8 @@ export function mountLicensesManager({
     const actions = make("div", "row-actions");
     actions.append(save, button("Cancel", "ghost lic-cancel", () => { closeForm(); paint(); }), formState);
     el.append(
-      make("strong", "", `Rename ${harnessLabelOf(state().manifests, harness)}'s own sign-in`),
-      field("Name", nameInput, `How this license is listed in every picker. Leave it blank for "${DEFAULT_LICENSE_NAME}".`),
+      make("strong", "", `Rename ${subject}`),
+      field("Name", nameInput, `How this license is listed in every picker. Leave it blank for "${shipped}".`),
       actions,
     );
     form = { harness, id: manifest.id, el };
@@ -900,7 +903,10 @@ export function mountLicensesManager({
     input.disabled = on && !manifest.channelScoped && onCount === 1;
     input.title = input.disabled ? "At least one license must stay switched on" : "";
     input.addEventListener("change", () => setEnabled(id, input.checked));
-    toggle.append(input, " ", make("span", "lic-name", record?.label || licenseLabelOf(manifest)));
+    const nameEl = make("span", "lic-name", record?.label || licenseLabelOf(manifest));
+    // The one shipped license with no account of its own: say whose account it runs on.
+    if (!record && manifest.channelScoped) nameEl.title = "Each channel signs in with its own ChatGPT account (the channel's settings → Runtime) and runs Codex on that account instead of the gateway's sign-in.";
+    toggle.append(input, " ", nameEl);
     const note = record ? "" : builtinNote(manifest);
     if (note) toggle.append(make("em", "state", note));
     // A provider license says where it runs as well as how it is billed: "Amazon Bedrock · API".
@@ -935,10 +941,10 @@ export function mountLicensesManager({
     } else {
       const jump = openBuiltin(manifest);
       if (jump) actions.append(button("Settings", "clear-tok lic-settings", jump));
-      // The harness's own sign-in can be named and never removed; every other license the gateway
-      // ships with can be removed (and restored from the line under the list).
-      if (manifest.defaultLicense) actions.append(button("Rename", "clear-tok lic-rename-open", () => openRename(manifest, harness)));
-      else if (manifest.removable) actions.append(button("Remove", "clear-tok lic-remove", () => removeBuiltin(manifest, harness)));
+      // Every license the gateway ships with can be named. The harness's own sign-in is never
+      // removed; every other one can be (and restored from the line under the list).
+      actions.append(button("Rename", "clear-tok lic-rename-open", () => openRename(manifest, harness)));
+      if (manifest.removable) actions.append(button("Remove", "clear-tok lic-remove", () => removeBuiltin(manifest, harness)));
     }
     row.append(actions);
     if (on && badge?.detail && badge.tone !== "ok") {

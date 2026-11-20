@@ -9,6 +9,13 @@
   dashboard now also gives a thirty-day Activity session. Sensitive changes still ask for a fresh
   passkey within five minutes, and revoking sessions, removing a passkey or changing the password
   still signs those browsers out at once.
+- Subscriptions now covers every license: each added Claude or Codex sign-in license (and Claude
+  Extra with a Claude subscription) shows its own account's usage, cards are titled with the
+  license's name, plan badges no longer wrap or show raw ids, and licenses that cannot have an
+  account-wide quota (Codex channel accounts, API/provider licenses) are listed in one short
+  "No subscription quota" section instead of empty "Not supported" cards.
+- Every license the gateway ships with can now be renamed with **Rename** — including *Codex
+  (channel account)* — not only each harness's own sign-in. A blank name restores the original.
 - Add a **Copy command** button to the "Not signed in — run …" line under a license in Settings →
   Engine licenses, so the sign-in command no longer has to be selected out of the sentence.
 - Every engine license except a harness's own sign-in can now be removed in Settings → Engine

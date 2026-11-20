@@ -294,9 +294,9 @@ export const licenseRecords = () => [...records.values()];
 export const licenseRecord = (id) => records.get(String(id || "")) || null;
 
 // ── The licenses the gateway ships with: renamed, removed ─────────────────────────────────────
-// A harness's own sign-in (`claude`, `codex`) is the one license that cannot be removed, so it is
-// the one an administrator may NAME — "Default sign-in" says nothing once three logins sit beside
-// it. Every other shipped license (the dedicated logins, the provider table) can be REMOVED: it
+// A harness's own sign-in (`claude`, `codex`) is the one license that cannot be removed. Every
+// shipped license can be NAMED by an administrator — "Default sign-in" or "Codex (channel
+// account)" says little once three logins sit beside it. Every other shipped license (the dedicated logins, the provider table) can be REMOVED: it
 // stays a registered engine id, so sessions, usage rows, thread pins and approved-harness policies
 // that name it keep reading, but it is switched off for good, listed nowhere, and its credential is
 // deleted (src/config/engine-licenses.js). Both are stored in settings.json (`licenseNames`,
@@ -304,11 +304,13 @@ export const licenseRecord = (id) => records.get(String(id || "")) || null;
 export const DEFAULT_LICENSE_NAME = "Default sign-in";
 export const MAX_LICENSE_NAME_LENGTH = 60;
 export const cleanLicenseName = (value) => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
-// Only a harness's own sign-in carries a stored name; anything else in the map is dropped.
+// Any shipped license may carry a stored name (a harness's own sign-in instead of "Default
+// sign-in", another one instead of its shipped label). This file cannot know which ids are shipped,
+// so it keeps id-shaped keys only and the registry reads a name for a built-in id alone.
 export function normalizeLicenseNames(value) {
   const out = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return out;
-  for (const id of HARNESS_IDS) {
+  for (const id of Object.keys(value).filter((key) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(key)).slice(0, 64)) {
     const name = typeof value[id] === "string" ? cleanLicenseName(value[id]) : "";
     if (name && name.length <= MAX_LICENSE_NAME_LENGTH) out[id] = name;
   }

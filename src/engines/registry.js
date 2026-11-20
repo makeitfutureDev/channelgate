@@ -15,7 +15,13 @@ export function adapterOr(engine, fallbackId = "claude") { return adapterFor(eng
 export function engineSupports(engine, capability) { return Boolean(adapterFor(engine)?.supports?.[capability]); }
 export function mintsOwnSessionId(engine) { return Boolean(adapterFor(engine)?.mintsOwnSessionId); }
 export function usesMcpConfigFile(engine) { return requireAdapter(engine).mcpTransport === "file"; }
-export function engineLabel(engine) { return adapterFor(engine)?.label ?? String(engine || ""); }
+// What an engine id is called on its own. A shipped license an administrator renamed answers to
+// that name; a harness's own sign-in stays the harness here (its name is a LICENSE name, below).
+export function engineLabel(engine) {
+  const adapter = adapterFor(engine);
+  if (!adapter) return String(engine || "");
+  return (adapter.id !== adapter.cli && engineRegistry.isBuiltin(adapter.id) && builtinLicenseName(adapter.id)) || adapter.label;
+}
 
 // ── Harness and license (license-state.js) ────────────────────────────────────────────────────
 // Every engine id is a LICENSE of one of the two harnesses; the harness is the CLI that runs it.
@@ -46,7 +52,19 @@ export function coherentLicensePool(pool, engine) {
 export function licenseLabel(engine) {
   const adapter = adapterFor(engine);
   if (!adapter) return String(engine || "");
-  return adapter.id === adapter.cli ? builtinLicenseName(adapter.id) || DEFAULT_LICENSE_NAME : adapter.label;
+  if (adapter.id === adapter.cli) return builtinLicenseName(adapter.id) || DEFAULT_LICENSE_NAME;
+  return (engineRegistry.isBuiltin(adapter.id) && builtinLicenseName(adapter.id)) || adapter.label;
+}
+// What an engine id reads as on its own where the harness is NOT already shown (a usage card, an
+// audit row): the harness for its unnamed own sign-in, "<Harness> · <name>" once that is named or
+// for a license an administrator added, and a shipped license's own (possibly renamed) label.
+export function engineDisplayName(engine) {
+  const adapter = adapterFor(engine);
+  if (!adapter) return String(engine || "");
+  if (adapter.id === adapter.cli) return builtinLicenseName(adapter.id) ? `${harnessLabel(adapter.cli)} · ${builtinLicenseName(adapter.id)}` : adapter.label;
+  if (engineRegistry.isBuiltin(adapter.id)) return engineLabel(adapter.id);
+  const harness = harnessOf(adapter.id);
+  return harness ? `${harnessLabel(harness)} · ${adapter.label}` : adapter.label;
 }
 // A harness's own sign-in: the one license of it that can be renamed and never removed.
 export const isDefaultLicense = (engine) => isHarnessId(String(engine || "")) && isEngineId(engine);
@@ -267,12 +285,15 @@ export function engineUiManifest() {
     ...manifest,
     harness: harnessOf(manifest.id),
     harnessLabel: harnessLabel(harnessOf(manifest.id)),
+    // A renamed shipped license reads under its name everywhere; `shippedLabel` is what it was.
+    label: engineLabel(manifest.id),
+    shippedLabel: manifest.label,
     licenseLabel: licenseLabel(manifest.id),
     builtin: engineRegistry.isBuiltin(manifest.id),
-    // The harness's own sign-in can be renamed (`customName` is "" until it is) and never removed;
-    // every other shipped license can be removed.
+    // Every shipped license can be renamed (`customName` is "" until it is). The harness's own
+    // sign-in is never removed; every other shipped license can be.
     defaultLicense: isDefaultLicense(manifest.id),
-    customName: isDefaultLicense(manifest.id) ? builtinLicenseName(manifest.id) : "",
+    customName: engineRegistry.isBuiltin(manifest.id) ? builtinLicenseName(manifest.id) : "",
     removable: isRemovableBuiltinLicense(manifest.id),
     // What removing it deletes, for the confirmation's wording: "api-key", "sign-in" or "".
     ownCredential: adapterFor(manifest.id)?.ownCredential?.kind || "",
