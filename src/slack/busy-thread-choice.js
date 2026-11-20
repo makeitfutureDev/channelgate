@@ -174,16 +174,15 @@ export function busyThreadChoiceBlocks(id, { queued = false, position = 1 } = {}
       elements: [
         {
           type: "button",
-          ...(!queued ? { style: "primary" } : {}),
-          action_id: BUSY_THREAD_STEER_ACTION,
-          text: { type: "plain_text", text: "Steer Conversation" },
+          style: "primary",
+          action_id: BUSY_THREAD_QUEUE_ACTION,
+          text: { type: "plain_text", text: queued ? "Added to queue" : "Add to Queue" },
           value: id,
         },
         {
           type: "button",
-          ...(queued ? { style: "primary" } : {}),
-          action_id: BUSY_THREAD_QUEUE_ACTION,
-          text: { type: "plain_text", text: queued ? "Added to queue" : "Add to Queue" },
+          action_id: BUSY_THREAD_STEER_ACTION,
+          text: { type: "plain_text", text: "Steer Conversation" },
           value: id,
         },
         // Cancel discards ONLY the message waiting on this card. The turn already running keeps

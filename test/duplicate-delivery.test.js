@@ -106,7 +106,7 @@ test("a different message in the same busy thread queues once with optional cont
     }
     assert.ok(card, `a new message must get queued controls, got ${JSON.stringify(client.posted)}`);
     assert.deepEqual(card.blocks.flatMap((b) => b.elements || []).map((b) => b.action_id),
-      [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_QUEUE_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+      [BUSY_THREAD_QUEUE_ACTION, BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION]);
     assert.equal(runQueue.isQueued(runKey, runId), true);
     assert.equal(listActiveRuns().filter((r) => r.id === runId).length, 1, "the successor is durable before any click");
     const postedBeforeRedelivery = client.posted.length;
