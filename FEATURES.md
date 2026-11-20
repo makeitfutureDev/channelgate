@@ -40,6 +40,9 @@ licenses, the ones ChannelGate ships with included, and the harness's own sign-i
   licenses (added ones, the other shipped ones and their engine labels), and blank — or "Default
   sign-in" typed back — restores the default; "Default sign-in" itself cannot be taken by another
   license. Usage rows and audit keep the engine label.
+- **Copy command on the status line.** When a switched-on sign-in license is not signed in, the
+  line under its row quotes the host command inside a sentence; a **Copy command** button on that
+  line copies exactly the command (the same one the Sign in panel shows).
 - Rename, remove and restore are audited (`engine_license_changed`, `engine_license_removed` with
   `kind: "builtin"`, `engine_license_restored`), by name only.
 - Not included: removing a harness's own sign-in (switch it off instead); renaming the other

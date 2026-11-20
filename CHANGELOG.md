@@ -9,6 +9,8 @@
   dashboard now also gives a thirty-day Activity session. Sensitive changes still ask for a fresh
   passkey within five minutes, and revoking sessions, removing a passkey or changing the password
   still signs those browsers out at once.
+- Add a **Copy command** button to the "Not signed in — run …" line under a license in Settings →
+  Engine licenses, so the sign-in command no longer has to be selected out of the sentence.
 - Every engine license except a harness's own sign-in can now be removed in Settings → Engine
   licenses, including the ones ChannelGate ships with: Qwen, Qwen EU, Codex EU, Claude Extra and
   Codex (channel account) each have a **Remove** button. Removing one switches it off, takes it

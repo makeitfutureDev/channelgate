@@ -58,6 +58,9 @@ harness is named.
       updates its row; Remove on Qwen opens a confirmation naming the deleted key and endpoint,
       and confirming removes the row and the Qwen provider card and lists it under "Removed";
       Restore brings the row back unticked; the stored key is nowhere in the page.
+- [x] `test/engine-licenses-web.test.js` page test (needs `CG_BROWSER_MODULE`): the "Not signed
+      in — run …" line of a switched-on sign-in license has a Copy command button; clicking it
+      shows "Copied" and the clipboard holds exactly the listing's `loginCommand`.
 - [ ] Live `LICENSE-15` remove a shipped license in use (run once with Qwen for Claude Code and
       once with Codex EU for Codex, where the deployment holds them). Fixture: the license set up
       and switched on; a disposable Worker channel `C` set to it; a thread in `C` pinned to it

@@ -941,7 +941,22 @@ export function mountLicensesManager({
       else if (manifest.removable) actions.append(button("Remove", "clear-tok lic-remove", () => removeBuiltin(manifest, harness)));
     }
     row.append(actions);
-    if (on && badge?.detail && badge.tone !== "ok") row.append(make("div", "lic-detail state", badge.detail));
+    if (on && badge?.detail && badge.tone !== "ok") {
+      const detail = make("div", "lic-detail state", badge.detail);
+      // The remedy quotes the sign-in command inside a sentence, where it is awkward to select:
+      // offer it as one click, right where it is read.
+      const command = String(record?.loginCommand || "");
+      if (command && badge.detail.includes(command)) {
+        const copyState = make("span", "state lic-copy-state");
+        copyState.setAttribute("role", "status");
+        copyState.setAttribute("aria-live", "polite");
+        detail.append(" ", button("Copy command", "clear-tok lic-copy-inline", async () => {
+          copyState.textContent = "Copying…";
+          copyState.textContent = (await copyText(command)) ? "Copied" : "Could not copy — select the command and copy it manually.";
+        }), " ", copyState);
+      }
+      row.append(detail);
+    }
     if (panel?.id === id) row.append(panel.el);
     if (form?.id && form.id === id) row.append(form.el);
     return row;

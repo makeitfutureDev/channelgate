@@ -256,6 +256,13 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   assert.match(await workRow.locator(".lic-status").textContent(), /Not signed in/);
   assert.equal(await workRow.locator('input[type="checkbox"]').isChecked(), true, "a new license is switched on");
   assert.equal(await workRow.locator(".lic-signin").count(), 1, "a Codex sign-in license signs in from the browser");
+  // The "Not signed in — run `…`" line under the row copies the command it quotes with one click.
+  const workCommand = (await licenses.listLicensesForApi()).find((l) => l.id === workId).loginCommand;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  assert.ok((await workRow.locator(".lic-detail").textContent()).includes(workCommand));
+  await workRow.locator(".lic-detail .lic-copy-inline").click();
+  await workRow.locator(".lic-copy-state", { hasText: "Copied" }).waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), workCommand);
 
   // Signing it in: the shared Codex device-code box, against this license's own login route.
   let loginState = { authenticated: false, phase: "idle", code: "", url: "" };
@@ -286,9 +293,9 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   const hostRow = manager.locator(`.lic-row[data-license="${hostLicense.id}"]`);
   const loginCommand = (await licenses.listLicensesForApi()).find((l) => l.id === hostLicense.id).loginCommand;
   assert.ok(loginCommand, "the listing carries the host sign-in command");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await hostRow.locator(".lic-signin").click();
   assert.equal(await panel.locator("pre code").textContent(), loginCommand);
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await panel.locator(".lic-copy-command").click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), loginCommand);
   const checked = page.waitForResponse((r) => r.url().endsWith(`/api/engine-licenses/${hostLicense.id}/verify`) && r.request().method() === "POST");
