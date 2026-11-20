@@ -564,10 +564,10 @@ for (const [engine, choice] of [["claude", "automatic"], ["claude", "cancel"], [
     const successor = processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
     const card = await waitForCard(client, thread);
     const buttons = card.blocks.flatMap((b) => b.elements || []);
-    assert.deepEqual(buttons.map((b) => b.action_id), [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_QUEUE_ACTION, BUSY_THREAD_CANCEL_ACTION]);
-    assert.equal(buttons[1].text.text, "Added to queue");
-    assert.equal(buttons[1].style, "primary");
-    assert.equal(buttons[0].style, undefined);
+    assert.deepEqual(buttons.map((b) => b.action_id), [BUSY_THREAD_QUEUE_ACTION, BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+    assert.equal(buttons[0].text.text, "Added to queue");
+    assert.equal(buttons[0].style, "primary");
+    assert.equal(buttons[1].style, undefined);
     assert.match(card.blocks[0].text.text, /no action needed/);
     assert.equal(runQueue.count(runKey), 2);
     assert.equal(active.controller.signal.aborted, false);
@@ -580,14 +580,14 @@ for (const [engine, choice] of [["claude", "automatic"], ["claude", "cancel"], [
       action, client }, { processMessage: () => assert.fail("queued controls must not dispatch another turn") });
     if (choice === "confirm") {
       const savedRun = listActiveRuns().find((r) => r.id === runId);
-      assert.equal((await click(buttons[1])).accepted, true);
+      assert.equal((await click(buttons[0])).accepted, true);
       assert.deepEqual(client.deleted, [{ channel: CHANNEL, ts: "bot.control" }]);
       assert.deepEqual(listActiveRuns().find((r) => r.id === runId), savedRun);
       assert.equal(runQueue.count(runKey), 2);
       assert.equal(runQueue.isQueued(runKey, runId), true);
       assert.equal(active.controller.signal.aborted, false);
       assert.equal(busyThreadChoices.list().some((r) => r.queuedRunId === runId), false);
-      assert.equal((await click(buttons[1])).ok, false, "repeat confirmation is harmless");
+      assert.equal((await click(buttons[0])).ok, false, "repeat confirmation is harmless");
       assert.equal((await click(buttons[2])).ok, false, "dismissed controls cannot cancel queued work");
     }
     if (choice === "cancel") {
