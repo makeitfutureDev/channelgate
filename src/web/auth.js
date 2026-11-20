@@ -9,20 +9,39 @@ import { adminAccount, adminAccountByUsername, ensureBootstrapAdmin, bootstrapAv
 export { passkeysConfigured } from "../config/admin-accounts.js";
 import { clientKey, timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
 import { looksLikeApiToken, resolveApiToken } from "../gateway/api-tokens.js";
+import { createAdminSessionStore } from "./admin-sessions.js";
 
 // Sessions expire two ways: IDLE (untouched for this long) and ABSOLUTE (this old regardless of
 // use). Previously the set only grew and a token stayed valid for the daemon's whole lifetime, so
 // a cookie exfiltrated once — via a tunnel, a shared browser — never stopped working.
-const IDLE_MS = 30 * 60 * 1000;
-const ABSOLUTE_MS = 12 * 60 * 60 * 1000;
+//
+// The lifetime depends on how the session was earned. A passkey or password-plus-Slack-code
+// sign-in proved the administrator on this device: it lasts 30 days and survives 7 idle days, like
+// an Activity passkey session. Sensitive actions still demand a sign-in from the last five minutes
+// (requireRecentAdminAuth), so a long session never means a long-lived permission to change
+// access. The password-only BOOTSTRAP session (before the first passkey) keeps the short window.
+// Sessions are stored in SQLite (admin-sessions.js), so a gateway restart signs nobody out.
+export const ADMIN_SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
+export const ADMIN_SESSION_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
+export const BOOTSTRAP_SESSION_IDLE_MS = 30 * 60 * 1000;
+export const BOOTSTRAP_SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1000;
+function lifetime(bootstrap) {
+  return bootstrap
+    ? { idleMs: BOOTSTRAP_SESSION_IDLE_MS, absoluteMs: BOOTSTRAP_SESSION_ABSOLUTE_MS }
+    : { idleMs: ADMIN_SESSION_IDLE_MS, absoluteMs: ADMIN_SESSION_ABSOLUTE_MS };
+}
 
-// token → { accountId, authVersion, bootstrap, authenticatedAt, createdAt, lastSeenAt }
-const sessions = new Map();
+// token → { accountId, authVersion, bootstrap, method, authenticatedAt, createdAt, lastSeenAt },
+// keyed by the token's sha256 in SQLite and cached in memory.
+const sessions = createAdminSessionStore();
+// Tests: simulate a restart (the cache is lost, the rows stay).
+export function _forgetSessionCacheForTests() { sessions.forgetCache(); }
 
 function sessionValid(token, now = Date.now()) {
   const s = sessions.get(token);
   if (!s) return false;
-  if (now - s.createdAt > ABSOLUTE_MS || now - s.lastSeenAt > IDLE_MS) {
+  const { idleMs, absoluteMs } = lifetime(s.bootstrap);
+  if (now - s.createdAt > absoluteMs || now - s.lastSeenAt > idleMs) {
     sessions.delete(token);
     return false;
   }
@@ -31,6 +50,7 @@ function sessionValid(token, now = Date.now()) {
     sessions.delete(token); return false;
   }
   s.lastSeenAt = now; // sliding idle window
+  sessions.touch(token);
   return true;
 }
 
@@ -264,15 +284,17 @@ export function createAdminSession(req, res, a, { bootstrap = false, method = 'p
   if (previous) sessions.delete(previous);
   const token = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
+  sessions.prune(now, lifetime);
   sessions.set(token, { createdAt: now, lastSeenAt: now, authenticatedAt: now, accountId: a.id, authVersion: a.authVersion, bootstrap, method, ...(method === 'password-slack' ? { passwordFingerprint: adminPasswordFingerprint(), passwordSlackVersion: Number(getSettings().adminPasswordSlackVersion) || 0 } : {}) });
-  // Bound memory even if an authenticated client deliberately creates sessions repeatedly.
-  while (sessions.size > 10_000) sessions.delete(sessions.keys().next().value);
-  res.setHeader('Set-Cookie', `cg_session=${token}; ${cookieAttrs(req)}; Max-Age=${Math.floor(ABSOLUTE_MS / 1000)}`);
+  // Bound storage even if an authenticated client deliberately creates sessions repeatedly.
+  sessions.capTotal(10_000);
+  res.setHeader('Set-Cookie', `cg_session=${token}; ${cookieAttrs(req)}; Max-Age=${Math.floor(lifetime(bootstrap).absoluteMs / 1000)}`);
 }
 export function refreshAdminSession(req) {
   const s = adminSession(req);
   if (!s || s.bootstrap) throw new Error('Sign in again.');
   sessions.get(s.token).authenticatedAt = Date.now();
+  sessions.touch(s.token, { force: true });
 }
 export async function handleLogin(req, res) {
   if (!authEnabled()) return res.status(403).json({ error: NO_PASSWORD_ERROR });

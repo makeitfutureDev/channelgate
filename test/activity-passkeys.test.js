@@ -202,6 +202,9 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     const handoff = new URL(page.url()).pathname;
     assert.equal((await api(handoff + '/api/threads', undefined, { method: 'GET' })).status, 200);
     assert.equal(lastOwner, 'U_ACTIVITY_ADMIN');
+    // An admin hand-off lasts thirty days like a passkey sign-in (2026-11-20; twelve hours before).
+    const handoffCookie = (await ctx.cookies()).find(c => c.name === 'cg_activity_' + handoff.split('/').pop());
+    assert.ok(handoffCookie && handoffCookie.expires * 1000 - Date.now() > 29 * 24 * 60 * 60_000, 'the admin hand-off cookie lasts thirty days');
     await page.goto(base + '/activity/from-admin?ownerId=U_ACTIVITY_OTHER');
     await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
     await api(new URL(page.url()).pathname + '/api/threads', undefined, { method: 'GET' });

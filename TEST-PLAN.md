@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Admin dashboard sessions survive restarts, thirty-day passkey sessions (2026-11-20)
+
+- Engine-independent (no engine runs; the change is the dashboard's own cookie session).
+- Automated: `node --test test/admin-sessions-persist.test.js` proves a passkey session is a row in
+  `admin_sessions` holding only the token's sha256 (never the raw token), the cookie carries
+  `Max-Age=2592000`, it survives the in-memory cache being dropped (a restart), stays valid past
+  twelve hours and after six idle days, ends at thirty days and after seven idle days, and its row is
+  removed on expiry; the password-only bootstrap session persists too but keeps `Max-Age=43200` and
+  the thirty-minute idle window; `revokeAdminSessions`, `invalidateAllSessions` (password change)
+  and logout still end a stored session after a restart; `refreshAdminSession` persists the
+  re-authentication time immediately (the five-minute recent-auth gate survives a restart) while the
+  sliding last-seen time is written at most once a minute. Real Chromium WebAuthn
+  (`CG_BROWSER_MODULE`, `CG_BROWSER_EXECUTABLE`): `test/admin-passkeys-browser.test.js` asserts the
+  thirty-day cookie, a 401 after seven idle days, keepalives to just under thirty days and a 401
+  past it; `test/activity-passkeys.test.js` asserts the admin → Activity hand-off cookie lasts
+  thirty days and is still revoked by `revokeAdminSessions`.
+- Live acceptance: sign in to the admin dashboard with a passkey, restart the gateway
+  (`systemctl --user restart channelgate` or `restart_gateway`), reload — pass when no sign-in page
+  appears and Settings loads. Open **My Activity ↗**, restart again, reload Activity — pass when it
+  stays signed in. Negative: Settings → Users → revoke your own sessions in a second browser, then
+  reload the first — pass when it returns to sign-in; a sensitive action (reveal a secret) still
+  asks for the passkey when the last sign-in is older than five minutes.
+
 ## Removing shipped licenses and renaming the default sign-in (2026-11-20)
 
 Settings → Engine licenses: Remove on every shipped license except a harness's own sign-in,
