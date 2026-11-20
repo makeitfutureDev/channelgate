@@ -52,12 +52,17 @@ const response = (data, status = 200) => ({ status, ok: status >= 200 && status 
 function row(status = "working", title = "Fixture thread", url = "/activity/session/open/C1/1.1") {
   return { channelId: "C1", threadTs: "1.1", dismissed: status === "done", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
-function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
+function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK", touch = false, responsive = false } = {}) {
   const elements = Object.fromEntries(["pinned-channels", "pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error", "columns-button", "columns-dialog", "columns-list", "columns-save", "columns-cancel", "columns-reset", "columns-error", "table", "pinned-table"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
   if (subscriptions) for (const id of ["subscriptions-cards", "subscription-quick", "subscriptions-notice", "subscriptions-refresh"]) elements[id] = new Element();
+  if (responsive) {
+    for (const id of ["columns-quick", "columns-device"]) elements[id] = new Element(id === "columns-quick" ? "button" : "p");
+    const select = elements["filter-select"] = new Element("select");
+    select.options = ["active", "working", "waiting", "error", "idle", "later", "done", "open", "hidden"].map((value) => { const option = new Element("option"); option.value = value; option.dataset.label = value[0].toUpperCase() + value.slice(1); return option; });
+  }
   const document = { documentElement: new Element("html"), getElementById: (id) => elements[id], createElement: (tag) => new Element(tag), hidden: false, listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; } };
   let stream;
   class EventSource extends Element {
@@ -73,7 +78,7 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
     document,
     fetch: (url, options) => { requests.push({ url, options }); return fetchImpl(url, options); },
     EventSource, URL, Intl, Date, location: { origin: "https://gateway.example" },
-    open: (...args) => { opened.push(args); }, matchMedia: () => ({ matches: prefersLight, addEventListener() {} }),
+    open: (...args) => { opened.push(args); }, matchMedia: (query) => ({ matches: /pointer/.test(query) ? touch : prefersLight, addEventListener() {} }),
     setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, setTimeout: (fn, delay) => { timers.push(fn); timeoutDelays.push(delay); return timers.length; }, clearTimeout() {}, addEventListener(type, handler) { browserListeners[type] = handler; },
   });
   return { elements, stream, requests, timers, timeoutDelays, page, document, browserListeners, opened };
@@ -1070,7 +1075,7 @@ test("saved column order reorders every row, and the Columns dialog saves a stag
   const posts = requests.filter((r) => r.url.endsWith("/api/columns"));
   assert.equal(posts.length, 1, "one save while saving");
   assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
-  assert.deepEqual(JSON.parse(posts[0].options.body), { order: staged, widths: { conversation: 300, actions: 999 } }, "invalid stored widths are dropped, valid ones kept");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { device: "desktop", order: staged, widths: { conversation: 300, actions: 999 }, hidden: [] }, "invalid stored widths are dropped, valid ones kept");
   assert.equal(elements["columns-save"].textContent, "Saving…");
   stream.snapshot([row()], { columns: { order: [...order], widths: {} }, columnsVersion: 9 });
   assert.deepEqual(classes()[2], "comment-cell", "a live snapshot cannot undo a layout being saved");
@@ -1079,6 +1084,54 @@ test("saved column order reorders every row, and the Columns dialog saves a stag
   assert.deepEqual(classes(), ["status-cell", "thread-cell", "comment-cell", "actions", "time-cell", "channel-cell"]);
   stream.snapshot([row()], { columns: { order: [...order], widths: {} }, columnsVersion: 9 });
   assert.deepEqual(classes()[2], "comment-cell", "older versions stay ignored after the save");
+});
+
+test("a touch screen keeps its own column layout, hides columns and saves them for touch only", async () => {
+  const save = deferred();
+  const { elements, stream, requests } = browser((url) => url.endsWith("/api/columns") ? save.promise : new Promise(() => {}), "fixture-csrf", false, { touch: true, responsive: true });
+  const desktop = { order: ["status", "conversation", "comment", "channel", "last", "actions"], widths: {}, hidden: [] };
+  const classes = () => elements.threads.children[0].children.map((cell) => cell.className);
+  const hidden = () => elements.threads.children[0].children.filter((cell) => cell.hidden).map((cell) => cell.className);
+  stream.snapshot([row()], { columns: desktop, columnsVersion: 5, columnsTouch: null, columnsTouchVersion: 0 });
+  assert.equal(classes()[0], "status-cell", "without its own layout a touch screen starts from the computer layout");
+  const touch = { order: ["conversation", "status", "last", "actions", "comment", "channel"], widths: {}, hidden: ["comment"] };
+  stream.snapshot([row()], { columns: desktop, columnsVersion: 5, columnsTouch: touch, columnsTouchVersion: 1 });
+  assert.deepEqual(classes(), ["thread-cell", "status-cell", "time-cell", "actions", "comment-cell", "channel-cell"], "its own layout wins over a newer computer layout");
+  assert.deepEqual(hidden(), ["comment-cell"]);
+  stream.snapshot([row()], { columns: desktop, columnsVersion: 6, columnsTouch: null, columnsTouchVersion: 0 });
+  assert.equal(classes()[0], "thread-cell", "a snapshot without the touch layout never brings the computer one back");
+  assert.match(elements["columns-device"].textContent, /phones and tablets/);
+  elements["columns-quick"].fire("click");
+  assert.equal(elements["columns-dialog"].open, true, "the toolbar button opens the Columns dialog");
+  const item = (label) => elements["columns-list"].children.find((li) => li.children[0].textContent === label);
+  assert.equal(item("Conversation").children.length, 2, "the conversation cannot be hidden");
+  assert.equal(item("Actions").children.length, 2, "the actions cannot be hidden");
+  assert.equal(item("Comment").children[2].textContent, "Hidden");
+  elements["columns-list"].fire("click", { target: item("Channel").children[2] });
+  assert.equal(item("Channel").children[2].attrs["aria-pressed"], "false");
+  assert.deepEqual(hidden(), ["comment-cell"], "nothing changes before Save");
+  elements["columns-save"].fire("click");
+  const posts = requests.filter((r) => r.url.endsWith("/api/columns"));
+  assert.deepEqual(JSON.parse(posts[0].options.body), { device: "touch", order: touch.order, widths: {}, hidden: ["comment", "channel"] });
+  save.resolve(response({ device: "touch", columns: { ...touch, hidden: ["comment", "channel"] }, columnsVersion: 2 })); await flush();
+  assert.deepEqual(hidden(), ["comment-cell", "channel-cell"]);
+});
+
+test("narrow screens pick the status from a menu and unfold a row's extra actions", () => {
+  const { elements, stream } = browser(() => new Promise(() => {}), "fixture-csrf", false, { responsive: true });
+  stream.snapshot([row("working", "Running"), { ...row("waiting", "Blocked"), threadTs: "2.2" }]);
+  const select = elements["filter-select"];
+  assert.equal(select.value, "active");
+  assert.equal(select.options.find((option) => option.value === "waiting").textContent, "Waiting · 1");
+  select.value = "waiting"; select.fire("change", { target: select });
+  assert.deepEqual(elements.threads.children.map((tr) => tr.children[0].children[0].textContent), ["Blocked"]);
+  assert.equal(elements.filters.children.find((button) => button.dataset.filter === "waiting").attrs["aria-pressed"], "true", "the tabs follow the menu");
+  const tr = elements.threads.children[0], more = tr.children.find((cell) => cell.className === "actions").children[2];
+  assert.equal(more.textContent, "More actions");
+  more.fire("click");
+  assert.equal(more.attrs["aria-expanded"], "true"); assert.equal(tr.dataset.more, ""); assert.equal(more.textContent, "Fewer actions");
+  more.fire("click");
+  assert.equal(Object.hasOwn(tr.dataset, "more"), false);
 });
 
 test("a failed Columns save restores the previous layout and Reset stages the defaults", async () => {

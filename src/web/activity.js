@@ -21,7 +21,7 @@ import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme, ACTIVITY_GROUPINGS, activityGrouping,
-  activityColumns, validActivityColumnOrder, validActivityColumnWidths, activityComments, normalizeActivityComment, ACTIVITY_COMMENT_LIMIT } from "./activity-order.js";
+  activityColumns, validActivityColumnOrder, validActivityColumnWidths, validActivityColumnHidden, activityColumnDevice, activityComments, normalizeActivityComment, ACTIVITY_COMMENT_LIMIT } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
 import { createActivitySessionStore, ACTIVITY_SESSION_TTL_MS, ACTIVITY_PASSKEY_SESSION_TTL_MS } from "./activity-sessions.js";
@@ -306,6 +306,9 @@ export function createActivityRouter({
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
       columns: activityColumns(user?.activityColumns), columnsVersion: activityGroupOrderVersion(user?.activityColumnsVersion),
+      // Touch screens keep their own layout; until one is saved they start from the desktop one.
+      columnsTouch: user?.activityColumnsTouch ? activityColumns(user.activityColumnsTouch) : null,
+      columnsTouchVersion: activityGroupOrderVersion(user?.activityColumnsTouchVersion),
     };
   };
   router.get("/open", (_req, res) => {
@@ -867,14 +870,17 @@ export function createActivityRouter({
     try {
       const { session } = await context(req);
       if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
-      const { order, widths } = req.body || {};
-      if (!validActivityColumnOrder(order) || !validActivityColumnWidths(widths)) return unavailable(res, 400);
+      const { order, widths, hidden = [], device: requested } = req.body || {};
+      if (!validActivityColumnOrder(order) || !validActivityColumnWidths(widths) || !validActivityColumnHidden(hidden)
+        || (requested !== undefined && activityColumnDevice(requested) !== requested)) return unavailable(res, 400);
       await context(req);
+      const device = activityColumnDevice(requested);
+      const field = device === "touch" ? "activityColumnsTouch" : "activityColumns", versionField = field + "Version";
       // The viewer's own display preference only; copied field by field, never merged from the body.
       const user = await setUser(session.ownerId, (current) => ({
-        activityColumns: { order: [...order], widths: Object.fromEntries(Object.entries(widths)) },
-        activityColumnsVersion: activityGroupOrderVersion(current?.activityColumnsVersion) + 1 }));
-      return res.json({ columns: activityColumns(user.activityColumns), columnsVersion: user.activityColumnsVersion });
+        [field]: { order: [...order], widths: Object.fromEntries(Object.entries(widths)), hidden: [...hidden] },
+        [versionField]: activityGroupOrderVersion(current?.[versionField]) + 1 }));
+      return res.json({ device, columns: activityColumns(user[field]), columnsVersion: user[versionField] });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/group-by", async (req, res) => {

@@ -1475,11 +1475,14 @@ test("Activity column layout persists per viewer and rejects malformed layouts, 
   const defaults = ["conversation", "comment", "channel", "status", "last", "actions"];
   const custom = { order: ["status", "conversation", "actions", "last", "comment", "channel"], widths: { conversation: 420, comment: 240, actions: 260 } };
   const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
-  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {} });
+  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {}, hidden: [] });
+  assert.equal((await snapshot(mine)).columnsTouch, null, "no touch layout until one is saved");
   const send = (body, headers = mine.post) => f.request(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
   for (const body of [{}, { order: defaults }, { widths: {} }, { order: defaults.slice(1), widths: {} }, { order: [...defaults.slice(1), "conversation"].concat("x"), widths: {} },
     { order: ["conversation", "conversation", "channel", "status", "last", "actions"], widths: {} }, { order: defaults, widths: [] }, { order: defaults, widths: { actions: 187 } }, { order: defaults, widths: { actions: 1601 } },
-    { order: defaults, widths: { conversation: 119 } }, { order: defaults, widths: { conversation: 1601 } }, { order: defaults, widths: { comment: 100.5 } }, { order: defaults, widths: { comment: "200" } }]) {
+    { order: defaults, widths: { conversation: 119 } }, { order: defaults, widths: { conversation: 1601 } }, { order: defaults, widths: { comment: 100.5 } }, { order: defaults, widths: { comment: "200" } },
+    { order: defaults, widths: {}, hidden: ["conversation"] }, { order: defaults, widths: {}, hidden: ["actions"] }, { order: defaults, widths: {}, hidden: ["comment", "comment"] }, { order: defaults, widths: {}, hidden: "comment" },
+    { order: defaults, widths: {}, device: "tablet" }, { order: defaults, widths: {}, device: null }]) {
     assert.equal((await send(body)).status, 400, JSON.stringify(body));
   }
   assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: '{"order":' + JSON.stringify(defaults) + ',"widths":{"__proto__":200}}' })).status, 400);
@@ -1487,13 +1490,23 @@ test("Activity column layout persists per viewer and rejects malformed layouts, 
   const original = await getUser("U_MINE");
   const saved = await send({ ...custom, ownerId: "U_OTHER", isAdmin: true });
   assert.equal(saved.status, 200);
-  assert.deepEqual(await saved.json(), { columns: custom, columnsVersion: 1 });
-  assert.deepEqual(await getUser("U_MINE"), { ...original, activityColumns: custom, activityColumnsVersion: 1 });
-  assert.deepEqual((await snapshot(await f.login())).columns, custom);
+  const stored = { ...custom, hidden: [] };
+  assert.deepEqual(await saved.json(), { device: "desktop", columns: stored, columnsVersion: 1 });
+  assert.deepEqual(await getUser("U_MINE"), { ...original, activityColumns: stored, activityColumnsVersion: 1 });
+  assert.deepEqual((await snapshot(await f.login())).columns, stored);
   assert.equal((await snapshot(mine)).columnsVersion, 1);
-  assert.deepEqual((await snapshot(other)).columns, { order: defaults, widths: {} });
-  await setUser("U_MINE", { activityColumns: { order: ["conversation", "channel"], widths: { conversation: 5 } } });
-  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {} }, "a stale stored layout falls back to the defaults");
+  assert.deepEqual((await snapshot(other)).columns, { order: defaults, widths: {}, hidden: [] });
+  // A touch-screen layout is stored beside the computer one and never replaces it.
+  const touch = { order: ["conversation", "status", "actions", "last", "comment", "channel"], widths: {}, hidden: ["comment", "channel"] };
+  const touchSaved = await send({ ...touch, device: "touch" });
+  assert.equal(touchSaved.status, 200);
+  assert.deepEqual(await touchSaved.json(), { device: "touch", columns: touch, columnsVersion: 1 });
+  const both = await snapshot(mine);
+  assert.deepEqual(both.columns, stored, "the computer layout is unchanged");
+  assert.deepEqual(both.columnsTouch, touch); assert.equal(both.columnsTouchVersion, 1);
+  assert.equal((await snapshot(other)).columnsTouch, null, "another viewer's touch layout stays theirs");
+  await setUser("U_MINE", { activityColumns: { order: ["conversation", "channel"], widths: { conversation: 5 }, hidden: ["actions"] } });
+  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {}, hidden: [] }, "a stale stored layout falls back to the defaults");
   await setUser("U_MINE", { approved: false, isAdmin: false });
   assert.equal((await send(custom)).status, 403);
 });

@@ -555,14 +555,41 @@ footer (move left/right, Reset order and widths). They can be resized by draggin
 double-click the edge (or press Home on it) to reset a column, and ←/→ resize it from the
 keyboard. Actions is also resizable, defaults to 192px and has a 188px minimum so all six
 desktop buttons (including Call) fit on one line. The order and widths are saved per viewer, shared
-by the Pinned and main tables, and follow the viewer across sessions and devices. Phones keep the
-stacked layout, with the comment on its own line.
+by the Pinned and main tables, and follow the viewer across sessions, with one layout for computers
+and one for touch screens (see Activity on phones and tablets). Phones keep the stacked layout,
+with the comment on its own line.
 
 With **Group by → Channel**, the column headers line up with the cells inside the indented
 channel cards, and every cell stays inside its card: when the saved widths add up to more than
 the window, the table scrolls sideways instead of letting cells spill past the card's edge. The
 coloured channel heading always spans the whole card, including when every flexible column has a
 fixed saved width (2026-11-20).
+
+## Activity on phones and tablets (2026-11-20)
+
+The Activity dashboard adapts to phone, tablet and desktop widths instead of squeezing the
+desktop layout:
+
+- **Header menu (900px and narrower).** The page links (Activity, Calls, Automations, Skills,
+  Subscriptions, Settings) and the theme switch fold into a ☰ menu button, so the header stays on
+  one line. Subscription meters and the Call button stay visible; on phones Call shows only its
+  icon. The menu closes on Escape, a click outside it, or the button again.
+- **Status menu (900px and narrower).** The status tabs (Active, Working, Waiting, Error, Idle,
+  Later, Completed, All open, Hidden) become one dropdown with each count, instead of a strip that
+  scrolls out of view.
+- **Row actions (1024px and narrower).** Each row shows Open and Done plus **More actions (⋯)**.
+  Tapping it unfolds a labelled strip under the row with every action (Open in Slack, Call the
+  agent, Done/Reopen, Later/Resume, Pin/Unpin, Hide/Show, Fewer actions). The Actions column
+  shrinks to 96px, so the conversation title gets the room.
+- **Columns button in the toolbar.** **Columns** opens the arrange dialog from the toolbar on every
+  screen (the footer link stays). Each optional column (Comment, Channel, Status, Last) has a
+  Shown/Hidden switch; Conversation and Actions always stay.
+- **Separate layout for touch screens.** Column order, widths and hidden columns are saved twice
+  per viewer: once for computers and once for touch screens (phones and tablets, detected by a
+  coarse pointer without hover). Rearranging on an iPad never changes the computer layout, and
+  the reverse. Until a touch layout is saved, touch screens start from the computer layout. On
+  touch screens, header drag-to-move is off because it fights scrolling; the Columns dialog
+  rearranges instead, and column edges have a larger grab area.
 
 ## Installed Activity window header (2026-11-14)
 

@@ -903,7 +903,8 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   comment visible, no horizontal scroll. Malformed layouts (duplicate or missing columns,
   out-of-range widths) are refused (400); writes without a valid session, CSRF token or Origin are refused (401/403).
 - Actions regression (2026-11-18): enable voice calls in the isolated router fixture so all six
-  buttons render. At 1440px, all six buttons must share one line inside the default 192px cell.
+  buttons render (at 1024px and narrower the column holds Open, Done and ⋯ instead; see Activity
+  on phones and tablets). At 1440px, all six buttons must share one line inside the default 192px cell.
   Drag the Actions header edge 64px wider: both tables align, the save succeeds, and the width
   survives reload. Shift+Left clamps at 188px with all buttons still on one line; Home resets
   the width. API rejects Actions widths below 188px and above 1600px. Phone layout must retain
@@ -921,6 +922,33 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   `test/activity-page.test.js` (browser script) and `test/activity-columns-browser.test.js` (real
   Chromium: comment save, edge-drag resize, header drag-reorder, reload persistence, reset, phone
   width, no CSP errors; runs with `CG_BROWSER_MODULE` and optionally `CG_BROWSER_EXECUTABLE`).
+
+## Activity on phones and tablets (2026-11-20)
+
+- Engine-independent: Activity browser UI and per-viewer preference storage; no Claude/Codex engine
+  is selected or run. Fixture: an approved viewer with tracked threads in at least two channels,
+  covering Working, Waiting, Error, Idle, Later and Done, with one pinned thread, and voice calls
+  enabled so every row action renders.
+- Phone (375×740, touch): the header is one line (logo, meters, 📞, ☰). ☰ opens Activity, Calls,
+  Automations, Skills, Subscriptions, Settings and Switch theme; Escape, a tap outside it or ☰
+  closes it. The status dropdown lists every status with its count and filters the rows. Each row
+  shows Slack, Done and ⋯ without overlapping the channel pin. ⋯ unfolds labelled actions under
+  the row; Fewer actions folds them. No horizontal page scroll.
+- iPad portrait (768–834px, touch): status dropdown, Group by, Columns and search on one toolbar
+  line; conversation titles get at least two readable lines; the Actions column holds Slack, Done
+  and ⋯. iPad landscape (1180px) and desktop (1440px) keep the full tab strip, the page links and
+  all six row buttons, unchanged.
+- Per-device layout: on the touch device, use Columns to hide Comment and Channel and move Status
+  up, then save and reload. Expect the touch layout back, with the dialog saying the layout is for
+  phones and tablets. In a desktop browser for the same viewer, expect the earlier computer
+  layout unchanged; rearrange there and confirm the touch device still shows its own. Header
+  drag does not start on the touch device. The API rejects hiding Conversation or Actions,
+  duplicate hidden ids, a non-array hidden value and an unknown device (400).
+- Automated: `test/activity.test.js` (storage, validation, isolation between viewers and between
+  the two layouts) and `test/activity-page.test.js` (touch layout precedence, hidden cells, the
+  dialog's Shown/Hidden switches, the touch-only save payload, the status menu and the row's More
+  actions toggle). Visual checks: headless Chromium at 375, 768, 834, 1180 and 1440px, with
+  `(hover: none) and (pointer: coarse)` emulated for the touch cases.
 
 ## Installed Activity window header (2026-11-14)
 

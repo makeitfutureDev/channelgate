@@ -8,7 +8,7 @@ import { getLogoColor } from "../config/settings.js";
 import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
-import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING, ACTIVITY_COLUMNS, ACTIVITY_COLUMN_MIN_WIDTHS, ACTIVITY_COLUMN_MAX_WIDTH, ACTIVITY_COMMENT_MAX } from "./activity-order.js";
+import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING, ACTIVITY_COLUMNS, ACTIVITY_COLUMN_MIN_WIDTHS, ACTIVITY_COLUMN_MAX_WIDTH, ACTIVITY_COMMENT_MAX, ACTIVITY_HIDEABLE_COLUMNS } from "./activity-order.js";
 import { activityAppHead, ACTIVITY_APP_COLORS } from "./activity-app.js";
 import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
@@ -46,6 +46,18 @@ function themeBrowser(config, browser) {
   });
   scheme?.addEventListener?.("change", paintTheme);
   paintTheme();
+  // On narrow screens the page links and the theme switch fold into one menu button.
+  const menuButton = document.getElementById("nav-toggle"), header = menuButton?.closest?.(".top");
+  function setMenu(open) {
+    if (!menuButton || !header) return;
+    menuButton.setAttribute("aria-expanded", String(open));
+    if (open) header.dataset.menu = "open"; else delete header.dataset.menu;
+  }
+  menuButton?.addEventListener("click", () => { setMenu(menuButton.getAttribute("aria-expanded") !== "true"); });
+  if (menuButton) {
+    document.addEventListener?.("click", (event) => { if (header?.dataset.menu && !event.target?.closest?.("#page-menu, #nav-toggle")) setMenu(false); });
+    document.addEventListener?.("keydown", (event) => { if (event.key === "Escape" && header?.dataset.menu) { setMenu(false); menuButton.focus?.(); } });
+  }
   return { saveTheme, current: () => root?.dataset.theme || "system" };
 }
 
@@ -63,6 +75,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const pendingChannels = new Set(), channelNodes = new Map();
   let pinnedChannels = [];
   const isPinned = (row) => filter !== "done" && !row.hidden && !(row.status === "done" && row.dismissed) && (row.pinned || row.channelPinned);
+  const filterLabels = { active: 1, working: 1, waiting: 1, error: 1, idle: 1, later: 1, done: 1, open: 1, hidden: 1 };
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map(), optimistic = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
@@ -83,8 +96,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const columnIds = columnMeta.ids;
   const columnsDialog = el("columns-dialog"), columnsList = el("columns-list"), columnsButton = el("columns-button");
   const columnsNodes = new Map(), commentPending = new Set();
-  let columnOrder = [...columnIds], columnWidths = {}, columnsVersion = -1, columnsSaving = 0, columnsSeq = 0, columnsTimer = null;
-  let resizing = null, dragging = null, draftColumns = [], draftWidths = {}, columnsDialogSaving = false;
+  let columnOrder = [...columnIds], columnWidths = {}, columnHidden = new Set(), columnsVersion = -1, columnsSource = "", columnsSaving = 0, columnsSeq = 0, columnsTimer = null;
+  let resizing = null, dragging = null, draftColumns = [], draftWidths = {}, draftHidden = new Set(), columnsDialogSaving = false;
+  // Touch screens (phones, tablets) keep a layout of their own, separate from the computer one.
+  const columnsDevice = browser.matchMedia?.("(hover: none) and (pointer: coarse)")?.matches === true ? "touch" : "desktop";
+  const cleanHidden = (value) => new Set(Array.isArray(value) ? value.filter((id) => columnMeta.hideable.includes(id)) : []);
   const subscriptionRoot = el("subscriptions-cards"), quickRoot = el("subscription-quick"), subscriptionNotice = el("subscriptions-notice"), subscriptionButton = el("subscriptions-refresh");
   let subscriptionData = null, subscriptionPending = false, subscriptionGeneration = 0, subscriptionTimer = null, subscriptionPaused = false;
   function clearSubscriptions() {
@@ -252,13 +268,20 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   function acceptColumns(data) {
     // A drag, a resize or an unsaved change in flight owns the layout until it settles.
     if (resizing || dragging || columnsSaving || columnsTimer !== null || !data?.columns) return;
-    const version = Number.isSafeInteger(data.columnsVersion) && data.columnsVersion >= 0 ? data.columnsVersion : 0;
-    if (!validColumnOrder(data.columns.order) || version < columnsVersion) return;
-    columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths); columnsVersion = version;
+    // A touch screen without a saved layout of its own starts from the computer layout; its own
+    // layout (once saved) always wins over that fallback, whatever the two version counters say.
+    const own = columnsDevice === "touch" && data.columnsTouch && validColumnOrder(data.columnsTouch.order);
+    const layout = own ? data.columnsTouch : data.columns, source = own ? "touch" : "desktop";
+    const raw = own ? data.columnsTouchVersion : data.columnsVersion;
+    const version = Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
+    if (!validColumnOrder(layout.order) || (source === columnsSource && version < columnsVersion) || (columnsSource === "touch" && source !== "touch")) return;
+    columnOrder = [...layout.order]; columnWidths = cleanWidths(layout.widths); columnHidden = cleanHidden(layout.hidden);
+    columnsVersion = version; columnsSource = source;
     applyColumns();
   }
+  const shownColumns = () => columnOrder.filter((id) => !columnHidden.has(id));
   function columnTracks() {
-    return columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.templates[id]);
+    return shownColumns().map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.templates[id]);
   }
   // With every flexible column resized to a fixed width, a trailing empty track takes up the
   // slack so a group heading still spans the whole row.
@@ -267,7 +290,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     return tracks.some((track) => /fr\b/.test(track)) ? tracks : [...tracks, "minmax(0,1fr)"];
   }
   function columnFloor() {
-    return "calc(" + columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.floors[id]).join(" + ") + ")";
+    return "calc(" + shownColumns().map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.floors[id]).join(" + ") + ")";
   }
   function headerRows() { return [...(document.querySelectorAll?.("thead tr") || [])]; }
   function paintTemplate() {
@@ -281,7 +304,9 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   function placeCells(parent, cells) {
     columnOrder.forEach((id, index) => {
       const cell = cells[id];
-      if (cell && parent.children[index] !== cell) parent.insertBefore(cell, parent.children[index] || null);
+      if (!cell) return;
+      if (cell.hidden !== columnHidden.has(id)) cell.hidden = columnHidden.has(id);
+      if (parent.children[index] !== cell) parent.insertBefore(cell, parent.children[index] || null);
     });
   }
   function applyColumns() {
@@ -293,7 +318,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     }
     for (const entry of nodes.values()) placeCells(entry.tr, entry.cells);
   }
-  async function saveColumns(order = columnOrder, widths = columnWidths) {
+  async function saveColumns(order = columnOrder, widths = columnWidths, hidden = columnHidden) {
     if (ended) return false;
     const seq = ++columnsSeq;
     columnsSaving++;
@@ -301,7 +326,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const response = await fetch(base + "/api/columns", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
-        body: JSON.stringify({ order, widths }),
+        body: JSON.stringify({ device: columnsDevice, order, widths, hidden: [...hidden] }),
       });
       if (response.status === 401 || response.status === 403) { endAccess(); return false; }
       if (!response.ok) throw new Error("unavailable");
@@ -310,8 +335,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       if (!validColumnOrder(data.columns?.order)) throw new Error("invalid columns");
       revision++; // An older in-flight snapshot must not overwrite the saved layout.
       if (seq === columnsSeq && !resizing && !dragging) {
-        columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths);
-        columnsVersion = Number.isSafeInteger(data.columnsVersion) ? data.columnsVersion : columnsVersion;
+        columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths); columnHidden = cleanHidden(data.columns.hidden);
+        columnsVersion = Number.isSafeInteger(data.columnsVersion) ? data.columnsVersion : columnsVersion; columnsSource = columnsDevice;
         applyColumns();
       }
       return true;
@@ -347,10 +372,24 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
           return button;
         });
         controls.append(...buttons); item.append(label, controls);
-        entry = { item, buttons }; columnsNodes.set(id, entry);
+        // Optional columns get a Show switch; the conversation and its actions always stay.
+        let show = null;
+        if (columnMeta.hideable.includes(id)) {
+          show = node("button", "order-show"); show.type = "button"; show.dataset.showColumn = id;
+          item.append(show);
+        }
+        entry = { item, buttons, show }; columnsNodes.set(id, entry);
       }
       entry.buttons[0].disabled = columnsDialogSaving || index === 0;
       entry.buttons[1].disabled = columnsDialogSaving || index === draftColumns.length - 1;
+      if (entry.show) {
+        const visible = !draftHidden.has(id);
+        entry.show.textContent = visible ? "Shown" : "Hidden";
+        entry.show.setAttribute("aria-pressed", String(visible));
+        entry.show.setAttribute("aria-label", (visible ? "Hide the " : "Show the ") + columnMeta.labels[id] + " column");
+        entry.show.disabled = columnsDialogSaving;
+        entry.item.dataset.hidden = visible ? "" : "1";
+      }
       if (columnsList.children[index] !== entry.item) columnsList.insertBefore(entry.item, columnsList.children[index] || null);
     });
     for (const id of ["columns-save", "columns-cancel", "columns-reset"]) { const item = el(id); if (item) item.disabled = columnsDialogSaving; }
@@ -429,6 +468,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     allDoneDialog.close();
     columnsDialog?.close();
     if (columnsButton) columnsButton.disabled = true;
+    if (el("columns-quick")) el("columns-quick").disabled = true;
     el("all-done-error").textContent = "";
     actionMessage = "";
     message = "";
@@ -495,7 +535,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const hide = node("button", "toggle");
     hide.type = "button"; hide.dataset.key = rowKey; hide.dataset.operation = "hide";
     state.append(toggle, delay, pin, hide);
-    actions.append(links, state);
+    // Narrow screens show Open and Done; "More" unfolds the rest of the row's actions, labelled.
+    const more = node("button", "more-toggle", "More actions");
+    more.type = "button"; more.setAttribute("aria-expanded", "false"); more.title = "More actions";
+    more.addEventListener("click", () => {
+      const open = tr.dataset.more === undefined;
+      more.setAttribute("aria-expanded", String(open)); more.title = more.textContent = open ? "Fewer actions" : "More actions";
+      if (open) tr.dataset.more = ""; else delete tr.dataset.more;
+    });
+    actions.append(links, state, more);
     const cells = { conversation: titleCell, comment: commentCell, channel: channelCell, status: statusCell, last: timeCell, actions };
     placeCells(tr, cells);
     const entry = { tr, cells, title, comment, saved: "", channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, hide, pin, since: 0, stamp: 0 };
@@ -557,6 +605,12 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const selected = button.dataset.filter === filter;
       button.setAttribute("aria-pressed", String(selected));
       button.querySelector("span").textContent = String(counts[button.dataset.filter]);
+    }
+    // Narrow screens pick the status from a menu instead of the tab strip.
+    const filterSelect = el("filter-select");
+    if (filterSelect) {
+      for (const option of filterSelect.options || []) option.textContent = option.dataset.label + " · " + counts[option.value];
+      filterSelect.value = filter; filterSelect.disabled = ended;
     }
     el("summary").textContent = counts.active + " visible · " + counts.done + " done · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
     const rank = (status) => status === "done" ? groupOrder.length + 1 : status === "later" ? groupOrder.length : groupOrder.indexOf(status);
@@ -894,6 +948,10 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       render();
     }
   }
+  el("filter-select")?.addEventListener("change", (event) => {
+    if (ended || !Object.hasOwn(filterLabels, event.target.value)) return;
+    filter = event.target.value; render();
+  });
   tabs.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-filter]");
     if (!button || ended) return;
@@ -955,7 +1013,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       if (!resizing) return;
       const { handle, moved } = resizing;
       delete handle.dataset.active;
-      const th = handle.closest?.("th"); if (th) th.draggable = true;
+      const th = handle.closest?.("th"); if (th) th.draggable = columnsDevice === "desktop";
       document.documentElement.classList?.remove("col-resizing");
       resizing = null;
       if (moved) void saveColumns();
@@ -978,7 +1036,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     });
     head.addEventListener("dragstart", (event) => {
       const th = event.target.closest?.("th");
-      if (resizing || ended || !th?.dataset.col) { event.preventDefault(); return; }
+      if (resizing || ended || !th?.dataset.col || columnsDevice !== "desktop") { event.preventDefault(); return; }
       dragging = th.dataset.col; th.dataset.dragging = "";
       event.dataTransfer?.setData("text/plain", dragging);
       if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
@@ -1010,13 +1068,27 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     });
   }
   for (const head of document.querySelectorAll?.("thead") || []) headerHandlers(head);
-  columnsButton?.addEventListener("click", () => {
+  // Dragging a header fights scrolling on a touch screen: there the Columns menu rearranges.
+  if (columnsDevice === "touch") for (const th of document.querySelectorAll?.("th[data-col]") || []) { th.draggable = false; th.title = "Use Columns to move or hide columns"; }
+  if (el("columns-device")) el("columns-device").textContent = columnsDevice === "touch"
+    ? "This layout is for phones and tablets. Your computer keeps its own." : "This layout is for computers. Phones and tablets keep their own.";
+  function openColumns() {
     if (ended) return;
-    draftColumns = [...columnOrder]; draftWidths = { ...columnWidths };
+    draftColumns = [...columnOrder]; draftWidths = { ...columnWidths }; draftHidden = new Set(columnHidden);
     el("columns-error").textContent = "";
     renderColumnsDialog(); columnsDialog.showModal();
-  });
+  }
+  columnsButton?.addEventListener("click", openColumns);
+  el("columns-quick")?.addEventListener("click", openColumns);
   columnsList?.addEventListener("click", (event) => {
+    const show = event.target.closest("button[data-show-column]");
+    if (show?.dataset.showColumn) {
+      if (show.disabled || columnsDialogSaving || ended) return;
+      const id = show.dataset.showColumn;
+      if (draftHidden.has(id)) draftHidden.delete(id); else draftHidden.add(id);
+      renderColumnsDialog(); show.focus?.();
+      return;
+    }
     const button = event.target.closest("button[data-column]");
     if (!button || button.disabled || columnsDialogSaving || ended) return;
     const index = draftColumns.indexOf(button.dataset.column), next = index + Number(button.dataset.direction);
@@ -1028,19 +1100,19 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   });
   el("columns-reset")?.addEventListener("click", () => {
     if (columnsDialogSaving || ended) return;
-    draftColumns = [...columnIds]; draftWidths = {}; renderColumnsDialog();
+    draftColumns = [...columnIds]; draftWidths = {}; draftHidden = new Set(); renderColumnsDialog();
   });
   el("columns-cancel")?.addEventListener("click", () => { if (!columnsDialogSaving) columnsDialog.close(); });
   el("columns-save")?.addEventListener("click", async () => {
     if (columnsDialogSaving || ended) return;
     columnsDialogSaving = true; el("columns-error").textContent = ""; renderColumnsDialog();
-    const previous = { order: [...columnOrder], widths: { ...columnWidths } };
-    columnOrder = [...draftColumns]; columnWidths = { ...draftWidths }; applyColumns();
+    const previous = { order: [...columnOrder], widths: { ...columnWidths }, hidden: new Set(columnHidden) };
+    columnOrder = [...draftColumns]; columnWidths = { ...draftWidths }; columnHidden = new Set(draftHidden); applyColumns();
     const saved = await saveColumns();
     columnsDialogSaving = false;
     if (saved) columnsDialog.close();
     else if (!ended) {
-      columnOrder = previous.order; columnWidths = previous.widths; applyColumns();
+      columnOrder = previous.order; columnWidths = previous.widths; columnHidden = previous.hidden; applyColumns();
       actionMessage = ""; notice();
       el("columns-error").textContent = "That column layout couldn’t be saved. Please try again.";
     }
@@ -1440,6 +1512,10 @@ const ICONS = {
   later: icon("<path d='M7 4h3.5v16H7zM13.5 4H17v16h-3.5z'/>"),
   resume: icon("<path d='M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z'/>"),
   busy: icon("<circle cx='5' cy='12' r='2'/><circle cx='12' cy='12' r='2'/><circle cx='19' cy='12' r='2'/>"),
+  more: icon("<circle cx='5' cy='12' r='2'/><circle cx='12' cy='12' r='2'/><circle cx='19' cy='12' r='2'/>"),
+  less: icon("<path d='M5 13h14v-2H5z'/>"),
+  menu: icon("<path d='M3 5.5h18v2H3zM3 11h18v2H3zM3 16.5h18v2H3z'/>"),
+  close: icon("<path d='m5.6 4.2 14.2 14.2-1.4 1.4L4.2 5.6zM18.4 4.2l1.4 1.4L5.6 19.8l-1.4-1.4z'/>"),
   moon: icon("<path d='M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z'/>"),
   sun: icon("<circle cx='12' cy='12' r='4.5'/><path d='M11 1.5h2V5h-2zM11 19h2v3.5h-2zM1.5 11H5v2H1.5zM19 11h3.5v2H19zM4.2 5.6l1.4-1.4 2.5 2.5-1.4 1.4zM15.9 17.3l1.4-1.4 2.5 2.5-1.4 1.4zM4.2 18.4l2.5-2.5 1.4 1.4-2.5 2.5zM15.9 6.7l2.5-2.5 1.4 1.4-2.5 2.5z'/>"),
 };
@@ -1457,11 +1533,11 @@ const LIGHT = `color-scheme:light;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
 // Column labels and the default track of each column when the viewer has not resized it.
 const COLUMN_LABELS = Object.freeze({ conversation: "Conversation", comment: "Comment", channel: "Channel", status: "Status", last: "Last", actions: "Actions" });
-const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "192px" });
+const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(var(--col-comment-min),1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "var(--col-actions)" });
 // The narrowest each default track can get; a row (and a channel card) never gets narrower than
 // the sum of these, so the table scrolls instead of letting cells spill out of it.
-const COLUMN_FLOORS = Object.freeze({ conversation: "0px", comment: "110px", channel: "var(--col-channel-min)", status: "124px", last: "44px", actions: "192px" });
-const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES, floors: COLUMN_FLOORS,
+const COLUMN_FLOORS = Object.freeze({ conversation: "0px", comment: "var(--col-comment-min)", channel: "var(--col-channel-min)", status: "124px", last: "44px", actions: "var(--col-actions)" });
+const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, hideable: ACTIVITY_HIDEABLE_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES, floors: COLUMN_FLOORS,
   min: ACTIVITY_COLUMN_MIN_WIDTHS, max: ACTIVITY_COLUMN_MAX_WIDTH, commentMax: ACTIVITY_COMMENT_MAX });
 const DEFAULT_COLUMN_TEMPLATE = ACTIVITY_COLUMNS.map((id) => COLUMN_TEMPLATES[id]).join(" ");
 // Headers are draggable to reorder; every resizable header carries a focusable edge.
@@ -1528,10 +1604,26 @@ a:hover{text-decoration:none}
 .page-nav a:hover{color:var(--ink)}
 .page-nav a[aria-current=page]{background:var(--panel-2);color:var(--ink);font-weight:600;box-shadow:none}
 .icon-button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--line-2);border-radius:7px;background:transparent;color:var(--muted)}
-.icon-button,.open-link,.call-link,.toggle{position:relative}
-.icon-button::before,.open-link::before,.call-link::before,.toggle::before{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
+.icon-button,.icon-button,.open-link,.call-link,.toggle,.more-toggle{position:relative}
+.icon-button::before,.open-link::before,.call-link::before,.toggle::before,.more-toggle::before{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
 #theme-toggle{--icon:${ICONS.moon}}#theme-toggle[data-theme=light]{--icon:${ICONS.sun}}
 .icon-button:hover{color:var(--ink);border-color:var(--muted)}
+/* Header: wide screens show every page link; narrow ones fold them and the theme switch into a menu. */
+.page-menu{display:contents}
+.page-nav{order:1}#call-agent{order:2}#theme-toggle{order:3}.nav-toggle{order:4}
+.menu-text{display:none}
+.nav-toggle{display:none;--icon:${ICONS.menu}}.nav-toggle[aria-expanded=true]{--icon:${ICONS.close};color:var(--ink);border-color:var(--muted)}
+.filter-pick{display:none;flex:0 1 auto;min-width:0}
+.filter-pick select,.bar-button{height:30px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font:inherit;font-size:12px}
+.filter-pick select{max-width:100%;padding:0 6px;font-weight:600}
+.bar-button{flex:none;padding:0 10px;color:var(--ink-2);white-space:nowrap}
+.bar-button:hover{color:var(--ink);border-color:var(--muted)}
+.more-toggle{display:none;--icon:${ICONS.more}}.more-toggle[aria-expanded=true]{--icon:${ICONS.less}}
+.columns-device{font-size:12px!important;margin:-4px 0 0}
+.order-dialog .order-show{order:1;margin-left:auto;margin-right:10px;min-width:72px;min-height:36px}
+.order-dialog .order-show[aria-pressed=true]{color:var(--ok)}
+.order-list li .order-moves{order:2}
+.order-list li[data-hidden="1"] .order-label{color:var(--faint);text-decoration:line-through}
 .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--line)}
 .filters{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0;border:0}
 .filters button{display:flex;align-items:center;gap:6px;flex-shrink:0;height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font-size:12px;white-space:nowrap}
@@ -1548,7 +1640,7 @@ input::placeholder{color:var(--faint)}
 .notice{margin:10px 14px 0;padding:9px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--ink);border-radius:8px;font-size:12.5px}
 table{display:block;width:100%;border-collapse:collapse}
 thead,tbody{display:block}
-:root{--col-channel-min:120px;--col-channel:minmax(var(--col-channel-min),190px);--col-gap:12px}
+:root{--col-channel-min:120px;--col-channel:minmax(var(--col-channel-min),190px);--col-gap:12px;--col-comment-min:110px;--col-actions:192px}
 table{overflow-x:auto}
 thead tr,tbody tr{display:grid;grid-template-columns:var(--cols,${DEFAULT_COLUMN_TEMPLATE});align-items:center;column-gap:var(--col-gap);padding:0 16px}
 /* A row is never narrower than its tracks (--tracks-min, painted with --cols): resized columns
@@ -1633,9 +1725,10 @@ tbody tr.s-done{background-color:color-mix(in srgb,var(--s-done) 10%,var(--panel
 .actions{display:flex;flex-wrap:wrap;min-width:0;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
 tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-error .actions{opacity:1}
 .action-links,.action-state{display:flex;flex-wrap:wrap;min-width:0;max-width:100%;justify-content:flex-end;gap:4px;margin:0}
-.open-link,.call-link,.toggle{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
-.open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
+.open-link,.call-link,.toggle,.more-toggle{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
+.open-link:hover,.call-link:hover,.toggle:hover,.more-toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
+.actions .more-toggle{display:none}
 .open-link[data-platform=googlechat],.open-link[data-platform=msteams]{--icon:${ICONS.external}}
 .call-link{--icon:${ICONS.call}}
 ${voiceCalls ? CALL_OVERLAY_CSS : ""}
@@ -1743,6 +1836,38 @@ select.settings-input{height:32px}
 @media(max-width:980px){
   :root{--col-channel-min:90px;--col-channel:minmax(var(--col-channel-min),125px);--col-gap:8px}
 }
+/* Tablets and phones: a row shows Open and Done plus a More button that unfolds a labelled strip
+   of every action under the row, so seven 28px buttons never crowd out the conversation. */
+@media(max-width:1024px){
+  :root{--col-actions:96px;--col-comment-min:90px}
+  .actions .more-toggle{display:inline-grid}
+  tbody tr:not([data-more]) .actions .call-link,tbody tr:not([data-more]) .actions .toggle[data-operation]{display:none}
+  .actions{opacity:1}
+  tbody tr[data-more] .actions{grid-column:1/-1;grid-row:2;justify-content:flex-start;gap:6px;padding:2px 0 10px}
+  tbody tr[data-group][data-more] .actions{grid-row:3}
+  tbody tr[data-more] .action-links,tbody tr[data-more] .action-state{display:contents}
+  tbody tr[data-more] .actions :is(.open-link,.call-link,.toggle,.more-toggle){width:auto;height:34px;padding:0 12px 0 32px;font-size:12.5px;line-height:32px;text-indent:0;white-space:nowrap}
+  tbody tr[data-more] .actions :is(.open-link,.call-link,.toggle,.more-toggle)::before{inset:0 auto 0 11px;margin:auto 0}
+}
+/* Narrow windows: status tabs become one menu, and the header folds into a menu button. */
+@media(max-width:900px){
+  .filters{display:none}
+  .filter-pick{display:block}
+  .nav-toggle{display:grid}
+  .page-menu{display:none;position:absolute;top:calc(100% + 4px);right:12px;z-index:20;flex-direction:column;min-width:220px;max-width:calc(100vw - 24px);padding:6px;background:var(--panel);border:1px solid var(--line-2);border-radius:12px;box-shadow:0 18px 40px -16px var(--shadow)}
+  .top[data-menu=open] .page-menu{display:flex}
+  .top .page-menu .page-nav{flex-direction:column;gap:2px;padding:0;margin:0;border:0;max-width:none;overflow:visible}
+  .page-menu .page-nav a{padding:10px 12px;border-radius:8px;font-size:14px}
+  .page-menu .page-nav a:hover{background:var(--hover)}
+  .page-menu #theme-toggle{display:flex;align-items:center;width:100%;height:42px;margin-top:4px;padding:0 12px 0 40px;border:0;border-top:1px solid var(--line-soft);border-radius:0 0 8px 8px;color:var(--ink-2);font:inherit;font-size:14px}
+  .page-menu #theme-toggle::before{inset:0 auto 0 13px;margin:auto 0;width:16px;height:16px}
+  .page-menu .menu-text{display:inline}
+}
+@media(pointer:coarse){
+  th{cursor:default}
+  .col-resize{width:24px;right:-15px}
+  .col-resize::after{left:11px}
+}
 @media(max-width:640px){
   .settings-layout{grid-template-columns:1fr}
   .settings-nav{position:static;flex-direction:row;overflow-x:auto}
@@ -1750,11 +1875,10 @@ select.settings-input{height:32px}
   .top{padding:8px 12px;gap:8px 10px}
   .agent-name{max-width:150px}
   .top .subscription-quick-list{order:1;gap:10px}
-  #theme-toggle{order:2}
   .top .subscription-quick progress,.top .subscription-quick-name{display:none}
   .subscription-ring{display:block}
-  .page-nav{order:3;margin-left:auto;max-width:100%;overflow-x:auto;scrollbar-width:none}
-  .page-nav a{flex:none;white-space:nowrap}
+  .call-text{display:none}
+  #call-agent{padding:0 9px}
   .bar{flex-wrap:wrap;padding:6px 8px;gap:6px}
   .search-wrap{flex:1 1 100%;margin:0;order:-1}
   thead{display:none}
@@ -1780,6 +1904,13 @@ select.settings-input{height:32px}
   tbody[data-cards] tr[data-group]::after{top:calc(var(--head) + 9px)}
   tbody[data-cards] tr[data-group-end]{background-size:100% 19px}
   tbody[data-cards] tr[data-group][data-group-end]{background-size:100% calc(var(--head) + 14px)}
+  .bar .filter-pick{flex:1 1 auto}
+  .bar .filter-pick select{width:100%}
+  .grouping label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  tbody tr[data-more] .actions{grid-column:1/-1;grid-row:3;padding:4px 0 2px}
+  tbody tr[data-group][data-more] .actions{grid-row:4}
+  tbody tr[data-more] .comment-cell{grid-row:4}
+  tbody tr[data-group][data-more] .comment-cell{grid-row:5}
 }
 /* Only installed apps with the overlay enabled occupy the native title-bar area. The
    browser supplies both side insets, including macOS traffic lights and its app menu. */
@@ -1791,16 +1922,18 @@ select.settings-input{height:32px}
 </style></head><body>
 <header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView || callsView || automationsView || skillsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
 ${subscriptionsView || settingsView || callsView || automationsView || skillsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
-<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/calls"${callsView ? ' aria-current="page"' : ''}>Calls</a><a href="${base}/automations"${automationsView ? ' aria-current="page"' : ''}>Automations</a><a href="${base}/skills"${skillsView ? ' aria-current="page"' : ''}>Skills</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
-${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" title="Start a voice call with the agent">📞 Call</button>' : ""}<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
+<div id="page-menu" class="page-menu"><nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/calls"${callsView ? ' aria-current="page"' : ''}>Calls</a><a href="${base}/automations"${automationsView ? ' aria-current="page"' : ''}>Automations</a><a href="${base}/skills"${skillsView ? ' aria-current="page"' : ''}>Skills</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
+<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"><span class="menu-text" aria-hidden="true">Switch theme</span></button></div>
+${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" title="Start a voice call with the agent" aria-label="Call the agent">📞<span class="call-text"> Call</span></button>' : ""}<button id="nav-toggle" class="icon-button nav-toggle" type="button" aria-expanded="false" aria-controls="page-menu" aria-label="Menu" title="Menu"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
 ${skillsView ? SKILLS_HTML : automationsView ? AUTOMATIONS_HTML : callsView ? `<section class="calls-page" aria-label="Call history"><div class="calls-head"><h1>Calls</h1><button id="calls-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Your completed calls · estimated voice cost in USD. Agent tasks dispatched during a call are billed separately. Expand a call for its summary and thread posts.</p><p class="calls-copy">History starts with calls completed after this update.</p><p id="calls-status" role="status" aria-live="polite">Loading calls…</p><div id="call-history"></div><button id="calls-more" class="order-button" type="button" hidden>Load older calls</button><noscript><p>Enable JavaScript to view call history.</p></noscript></section>` : settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
-<dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
+<dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns up or down, or hide the ones you don’t need. On a computer you can also drag a column header to move it and drag its edge to resize it.</p><p id="columns-device" class="columns-device"></p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all threads you started done?</h2><p id="all-done-description">This marks tracked agent threads you started done and removes them from your Active view across all channels, including threads outside the current filter, search, or page. Hidden threads and conversations started by someone else stay unchanged. Slack main messages get ✅; Google Chat and Teams completion is saved in Activity. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
-<section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
+<section aria-label="Conversations"><div class="bar"><div class="filter-pick"><label class="search-label" for="filter-select">Show conversations</label><select id="filter-select">${filters.map(([value, label]) => `<option value="${value}" data-label="${label}"${value === "active" ? " selected" : ""}>${label}</option>`).join("")}</select></div><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option id="group-none" value="none" hidden disabled>None</option><option value="channel">Channel</option><option value="status">Status</option></select></div>
+<button id="columns-quick" class="bar-button" type="button" aria-haspopup="dialog" title="Move, hide or resize columns">Columns</button>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>

@@ -46,11 +46,27 @@ export function validActivityColumnWidths(value) {
     && Number.isSafeInteger(width) && width >= ACTIVITY_COLUMN_MIN_WIDTHS[id] && width <= ACTIVITY_COLUMN_MAX_WIDTH);
 }
 
+// Columns a viewer may switch off. The conversation and its actions always stay.
+export const ACTIVITY_HIDEABLE_COLUMNS = Object.freeze(["comment", "channel", "status", "last"]);
+
+export function validActivityColumnHidden(value) {
+  return Array.isArray(value) && new Set(value).size === value.length && value.every((id) => ACTIVITY_HIDEABLE_COLUMNS.includes(id));
+}
+
 // A stored layout from an older column set (or a damaged record) falls back field by field.
 export function activityColumns(value) {
   const order = validActivityColumnOrder(value?.order) ? [...value.order] : [...ACTIVITY_COLUMNS];
   const widths = validActivityColumnWidths(value?.widths) ? { ...value.widths } : {};
-  return { order, widths };
+  const hidden = validActivityColumnHidden(value?.hidden) ? [...value.hidden] : [];
+  return { order, widths, hidden };
+}
+
+// Each viewer keeps one column layout for computers and one for touch screens (phones and
+// tablets), so arranging the table on an iPad never rearranges it on the desktop.
+export const ACTIVITY_COLUMN_DEVICES = Object.freeze(["desktop", "touch"]);
+
+export function activityColumnDevice(value) {
+  return ACTIVITY_COLUMN_DEVICES.includes(value) ? value : "desktop";
 }
 
 // Private per-viewer comments on their own conversations, keyed like pins.
