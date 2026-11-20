@@ -297,6 +297,16 @@ of silently doing nothing. Saves are CSRF-checked, re-authorized after the acces
 into the channel folder and logged (`skill_granted`/`skill_revoked`, `user_skills_updated`,
 `via: activity_skills`). Settings → Skills now links to this page. Code:
 `src/gateway/skills-view.js`, `src/web/skills-page.js`, routes in `src/web/activity.js`.
+
+**Waiting for approval.** Above the skill list the page shows the skill requests still waiting for
+an organization admin: for a conversation, every pending proposal filed FROM it (`skill_proposals.
+channel_slug`), visible to everyone who may open that conversation, whoever filed it; for "Only me",
+the viewer's own pending requests wherever they filed them. Each row names the skill, what was asked
+(edit an organization skill, share with the whole organization, delete from the catalog, add to a
+skill template), the request number, who asked and when, and the note. It is read-only — only an
+admin decides (`decide_skill_proposal`, admin UI Skills → Review) — and never carries the proposed
+files. The picker option adds "· N waiting for approval". A decided request disappears on the next
+load. Channel-skill edits need no approval, so they never appear here.
 → TEST-PLAN: Activity Skills page (2026-11-20).
 
 ## Activity Automations page (2026-11-19)

@@ -16,6 +16,7 @@ export function skillsBrowser(config, browser) {
   const save = document.getElementById("skills-save");
   const discard = document.getElementById("skills-discard");
   const tools = document.getElementById("skills-tools");
+  const pendingEl = document.getElementById("skills-pending");
   const node = (tag, text, cls) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (cls) el.className = cls; return el; };
   const SOURCE = { channel: "Added here", organization: "Organization", template: "Template", repository: "Repository", personal: "Only me" };
   let data = null, current = "", filter = "all", picked = new Set(), original = new Set(), rows = [];
@@ -91,8 +92,32 @@ export function skillsBrowser(config, browser) {
     if (data.notLoaded && data.notLoaded.length) lines.push("Not loaded: " + data.notLoaded.join(", ") + " — another person’s personal skill. Saving here removes it.");
     for (const line of lines) info.append(node("p", line));
   }
+  function when(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  }
+  function paintPending() {
+    const list = (data && data.pending) || [];
+    pendingEl.hidden = !list.length;
+    pendingEl.replaceChildren();
+    if (!list.length) return;
+    pendingEl.append(node("h2", "Waiting for approval · " + list.length));
+    pendingEl.append(node("p", (data.kind === "personal" ? "Your skill requests" : "Skill requests made in this conversation") + " that an organization admin still has to approve or reject. Nothing changes until they decide.", "skills-pending-copy"));
+    const items = node("ul");
+    for (const item of list) {
+      const li = node("li");
+      const head = node("span", undefined, "skills-row-head");
+      head.append(node("strong", item.skill), node("span", item.action + (item.target ? " “" + item.target + "”" : ""), "skills-badge"));
+      li.append(head);
+      li.append(node("span", ["Request #" + item.id, item.by ? "by " + item.by : "", when(item.createdAt)].filter(Boolean).join(" · "), "skills-row-note"));
+      if (item.note) li.append(node("span", item.note, "skills-row-desc"));
+      items.append(li);
+    }
+    pendingEl.append(items);
+  }
   function render() {
     paintInfo();
+    paintPending();
     tools.hidden = !data.editable;
     original = new Set(data.skills.filter((skill) => skill.selected && !skill.locked).map((skill) => skill.key.toLowerCase()));
     picked = new Set(original);
@@ -103,14 +128,14 @@ export function skillsBrowser(config, browser) {
   async function loadChannel() {
     if (!select.value) return;
     current = select.value;
-    notice.textContent = "Loading skills…"; listEl.replaceChildren(); info.replaceChildren(); bar.hidden = true;
+    notice.textContent = "Loading skills…"; listEl.replaceChildren(); info.replaceChildren(); bar.hidden = true; pendingEl.hidden = true;
     try {
       data = await request("/api/skills/" + encodeURIComponent(current));
       notice.textContent = "";
       render();
     } catch (error) { data = null; rows = []; notice.textContent = error.message; tools.hidden = true; }
   }
-  function optionLabel(c) { return c.name + (c.linked ? " · shared setup" : " · " + c.count + " skill" + (c.count === 1 ? "" : "s")); }
+  function optionLabel(c) { return c.name + (c.linked ? " · shared setup" : " · " + c.count + " skill" + (c.count === 1 ? "" : "s")) + (c.pending ? " · " + c.pending + " waiting for approval" : ""); }
   async function loadChannels() {
     refresh.disabled = true; notice.textContent = "Loading conversations…";
     const previous = select.value || String(browser.location?.hash || "").replace(/^#/, "");
@@ -157,10 +182,16 @@ export function skillsBrowser(config, browser) {
   void loadChannels();
 }
 
-export const SKILLS_HTML = `<section class="calls-page skills-page" aria-label="Skills"><div class="calls-head"><h1>Skills</h1><button id="skills-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Choose a conversation, then pick the skills its runs load. Only conversations you can access are listed; “Only me” follows you into every conversation.</p><label class="automation-picker">Conversation <select id="skills-channel"></select></label><div id="skills-info" class="skills-info"></div><div id="skills-tools" class="skills-tools" hidden><input id="skills-search" type="search" placeholder="Search skills by name or description…" maxlength="120" aria-label="Search skills"><div id="skills-filters" class="skills-filters" role="group" aria-label="Show"><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="on" aria-pressed="false">On</button><button type="button" data-filter="off" aria-pressed="false">Off</button></div><span id="skills-count" class="skills-count"></span></div><p id="skills-status" role="status" aria-live="polite">Loading…</p><div id="skills-list" class="skills-list"></div><div id="skills-savebar" class="skills-savebar" hidden><span id="skills-savebar-text"></span><button id="skills-discard" class="order-button" type="button">Discard</button><button id="skills-save" class="order-button primary" type="button">Save skills</button></div><noscript><p>Enable JavaScript to manage skills.</p></noscript></section>`;
+export const SKILLS_HTML = `<section class="calls-page skills-page" aria-label="Skills"><div class="calls-head"><h1>Skills</h1><button id="skills-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Choose a conversation, then pick the skills its runs load. Only conversations you can access are listed; “Only me” follows you into every conversation.</p><label class="automation-picker">Conversation <select id="skills-channel"></select></label><div id="skills-info" class="skills-info"></div><div id="skills-pending" class="skills-pending" aria-label="Waiting for approval" hidden></div><div id="skills-tools" class="skills-tools" hidden><input id="skills-search" type="search" placeholder="Search skills by name or description…" maxlength="120" aria-label="Search skills"><div id="skills-filters" class="skills-filters" role="group" aria-label="Show"><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="on" aria-pressed="false">On</button><button type="button" data-filter="off" aria-pressed="false">Off</button></div><span id="skills-count" class="skills-count"></span></div><p id="skills-status" role="status" aria-live="polite">Loading…</p><div id="skills-list" class="skills-list"></div><div id="skills-savebar" class="skills-savebar" hidden><span id="skills-savebar-text"></span><button id="skills-discard" class="order-button" type="button">Discard</button><button id="skills-save" class="order-button primary" type="button">Save skills</button></div><noscript><p>Enable JavaScript to manage skills.</p></noscript></section>`;
 
 export const SKILLS_CSS = `
 .skills-info p{color:var(--muted);font-size:13px;margin:10px 0 0;line-height:1.5}
+.skills-pending{margin:16px 0 0;padding:12px 16px;border:1px solid var(--orange);border-radius:10px;background:var(--panel)}
+.skills-pending[hidden]{display:none}
+.skills-pending h2{font-size:14px;margin:0}
+.skills-pending-copy{color:var(--muted);font-size:13px;margin:4px 0 0;line-height:1.5}
+.skills-pending ul{list-style:none;margin:10px 0 0;padding:0}
+.skills-pending li{display:flex;flex-direction:column;gap:3px;padding:10px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
 .skills-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 4px}
 .skills-tools[hidden]{display:none}
 #skills-search{flex:1 1 260px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit;font:inherit}

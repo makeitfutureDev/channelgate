@@ -856,7 +856,7 @@ export function getProposal(id) {
   return rowToProposal(getDb().prepare("SELECT * FROM skill_proposals WHERE id = ?").get(Number(id)));
 }
 
-export function listProposals({ status = "", slug = "", limit = 200 } = {}) {
+export function listProposals({ status = "", slug = "", channelSlug = "", proposedBy = "", limit = 200 } = {}) {
   const where = [];
   const args = [];
   if (status) {
@@ -866,6 +866,14 @@ export function listProposals({ status = "", slug = "", limit = 200 } = {}) {
   if (slug) {
     where.push("slug = ? COLLATE NOCASE");
     args.push(slug);
+  }
+  if (channelSlug) {
+    where.push("channel_slug = ?");
+    args.push(channelSlug);
+  }
+  if (proposedBy) {
+    where.push("proposed_by = ?");
+    args.push(proposedBy);
   }
   return getDb()
     .prepare(`SELECT * FROM skill_proposals${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT ${Number(limit) || 200}`)
