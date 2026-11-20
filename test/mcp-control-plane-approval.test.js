@@ -891,6 +891,74 @@ test("both engines: a member owns channel and personal skills without approval; 
   }
 });
 
+test("both engines: a channel's members decide edits proposed for its own skills, with no card; nothing else", async () => {
+  const { getSkill, getProposal, putSkillRevision, setSkillChannelScope } = await import("../src/gateway/skills/catalog.js");
+  const { proposeSkillChange, currentFilesOf } = await import("../src/gateway/skills/authoring.js");
+  const fileOf = (slug, path) => (currentFilesOf(getSkill(slug)) || []).find((f) => f.path === path)?.content?.toString();
+  for (const engine of ["claude", "codex"]) {
+    const own = `owned-here-${engine}`;
+    const foreign = `owned-elsewhere-${engine}`;
+    const org = `owned-org-${engine}`;
+    await withGateway({ engine }, async client => {
+      await client.callTool({ name: "create_skill", arguments: { slug: own, files: creationFiles(own) } });
+      await client.callTool({ name: "create_skill", arguments: { slug: org, files: creationFiles(org), scope: "organization" } });
+    });
+    putSkillRevision({ slug: foreign, ownerKind: "local", files: creationFiles(foreign) });
+    setSkillChannelScope(foreign, "C_MCP_OTHER");
+    const file = (content) => [{ path: "references/fix.md", content }];
+    const ownChange = proposeSkillChange({ skill: own, files: file("own fix"), note: "own fix", proposedBy: "U_OUTSIDER", channelSlug: "elsewhere" }).proposal.id;
+    const ownFeedback = proposeSkillChange({ skill: own, kind: "feedback", note: "nice", proposedBy: "U_OUTSIDER", channelSlug: "elsewhere" }).proposal.id;
+    const foreignChange = proposeSkillChange({ skill: foreign, files: file("foreign fix"), note: "foreign fix", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    const orgChange = proposeSkillChange({ skill: org, files: file("org fix"), note: "org fix", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    const ownPromote = proposeSkillChange({ skill: own, kind: "promote", note: "share it", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    approvalRequests.length = 0;
+    approvalResponse = { allow: false, reason: "no card may be posted" };
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+      const call = async (name, args) => resultText(await client.callTool({ name, arguments: args }));
+      const listed = await call("list_skill_proposals", {});
+      for (const id of [ownChange, ownFeedback]) assert.match(listed, new RegExp(`#${id} `), "the owning channel sees edits of its skills");
+      for (const id of [foreignChange, orgChange, ownPromote]) assert.doesNotMatch(listed, new RegExp(`#${id} `), "but not proposals it does not decide");
+
+      let out = await call("decide_skill_proposal", { id: ownChange, decision: "approve" });
+      assert.match(out, new RegExp(`Proposal #${ownChange} approved — \`${own}\` is now revision 2`));
+      assert.doesNotMatch(out, /pinned/, "a member's approval lands like their own edit, never as a pinned override");
+      assert.equal(fileOf(own, "references/fix.md"), "own fix");
+      assert.equal(getSkill(own).pinnedRevisionId, null);
+      assert.equal(getProposal(ownChange).decidedBy, "U_CTRL_MEMBER");
+      assert.match(await call("decide_skill_proposal", { id: ownFeedback, decision: "reject" }), /rejected/);
+
+      out = await call("decide_skill_proposal", { id: foreignChange, decision: "approve" });
+      assert.match(out, /skill of another channel; its members \(or an admin\) decide it there/);
+      assert.equal(getProposal(foreignChange).status, "pending");
+      out = await call("decide_skill_proposal", { id: orgChange, decision: "approve" });
+      assert.match(out, /Only admins/);
+      assert.equal(getProposal(orgChange).status, "pending");
+      out = await call("decide_skill_proposal", { id: ownPromote, decision: "approve" });
+      assert.match(out, /Only admins/, "sharing a channel skill with the organization stays with admins");
+      assert.equal(getProposal(ownPromote).status, "pending");
+
+      out = await call("update_skill", { skill: foreign, files: file("direct") });
+      assert.match(out, /belongs to another channel/);
+      assert.match(out, /decide_skill_proposal/);
+      out = await call("propose_skill_change", { skill: foreign, files: file("asked"), note: "please" });
+      assert.match(out, /A member of the channel that owns it \(or an admin\) reviews it there/);
+      assert.doesNotMatch(out, /An admin reviews it/);
+    });
+    assert.equal(approvalRequests.length, 0, `${engine}: a member's decisions and refusals posted no card`);
+
+    // An admin still decides everything; the organization edit keeps its card.
+    approvalResponse = { allow: false, pending: true, approvalId: `org-edit-${engine}` };
+    await withGateway({ engine }, async client => {
+      const parked = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: orgChange, decision: "approve" } }));
+      assert.match(parked, awaitingCard);
+      const foreignOut = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: foreignChange, decision: "reject" } }));
+      assert.match(foreignOut, /rejected/);
+      await client.callTool({ name: "decide_skill_proposal", arguments: { id: ownPromote, decision: "reject" } });
+    });
+    assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"]]);
+  }
+});
+
 test("both engines: a member asks for a template change; only an admin edits a template, with its card", async () => {
   const { getTemplate, upsertTemplate } = await import("../src/gateway/skills/catalog.js");
   for (const engine of ["claude", "codex"]) {

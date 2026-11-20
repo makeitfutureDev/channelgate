@@ -299,14 +299,18 @@ into the channel folder and logged (`skill_granted`/`skill_revoked`, `user_skill
 `src/gateway/skills-view.js`, `src/web/skills-page.js`, routes in `src/web/activity.js`.
 
 **Waiting for approval.** Above the skill list the page shows the skill requests still waiting for
-an organization admin: for a conversation, every pending proposal filed FROM it (`skill_proposals.
-channel_slug`), visible to everyone who may open that conversation, whoever filed it; for "Only me",
+a decision: for a conversation, every pending proposal filed FROM it (`skill_proposals.
+channel_slug`) plus every pending edit or feedback proposed for ITS OWN channel skills (wherever it
+was filed), visible to everyone who may open that conversation, whoever filed it; for "Only me",
 the viewer's own pending requests wherever they filed them. Each row names the skill, what was asked
-(edit an organization skill, share with the whole organization, delete from the catalog, add to a
-skill template), the request number, who asked and when, and the note. It is read-only — only an
-admin decides (`decide_skill_proposal`, admin UI Skills → Review) — and never carries the proposed
-files. The picker option adds "· N waiting for approval". A decided request disappears on the next
-load. Channel-skill edits need no approval, so they never appear here.
+(edit a skill, share with the whole organization, delete from the catalog, add to a skill
+template), the request number, who asked and when, who decides it ("Members of this conversation
+decide it: ask the agent here…", "Decided by members of #owner (or an admin)", or "Decided by an
+organization admin" — see *Channel members decide edits of their own skills*), and the note. The
+page itself is read-only — decisions are made in chat with `decide_skill_proposal` or by an admin
+in the admin UI Skills → Review — and never carries the proposed files. The picker option adds
+"· N waiting for approval". A decided request disappears on the next load. A member's direct edit
+of their own channel's skill needs no approval, so it never appears here.
 → TEST-PLAN: Activity Skills page (2026-11-20).
 
 ## Activity Automations page (2026-11-19)
@@ -6797,8 +6801,22 @@ are retired, bullet by bullet; everything else stands.
   (`meta.skillsOff`, honored by `channelSkillGrants` and the Slack skills manager) and
   `add_channel_skills` turns it back on; a catalog delete is an admin's (or a personal skill's
   author's), and anyone else's `delete_skill` deactivates here and files a `delete` proposal.
-  `set_skill_scope` is admin-only. The organization-wide admin verbs (`decide_skill_proposal`,
-  org grants, sources, governance, exclusion, `publish_skill`, `set_skill_scope`) keep their card.
+  `set_skill_scope` is admin-only. The organization-wide admin verbs (`decide_skill_proposal` for
+  anything but a channel's own edit, org grants, sources, governance, exclusion, `publish_skill`,
+  `set_skill_scope`) keep their card.
+  **Channel members decide edits of their own skills** (2026-11-20). A `change` or `feedback`
+  proposal for a channel skill this gateway can write (`skillEditability`) — typically filed from
+  ANOTHER conversation, whose members may not edit it directly — is decided by the members of the
+  channel that owns the skill, from that channel, as well as by any admin
+  (`proposalDecider` in `src/gateway/skills/authoring.js`). It is the same power those members
+  already hold through `update_skill`, so it posts no card (the gate's tier is computed per proposal
+  in `src/mcp/gateway-server.js`); an approved change lands exactly like their own `update_skill`
+  (published, never a pinned override) and is audited as `skill_proposal_decided` with
+  `by: "channel"`. `list_skill_proposals` shows a non-admin the proposals their channel decides.
+  Everything else stays an admin's, with the card where it had one: an organization skill's edit,
+  a channel skill from a source the gateway cannot write (approving would pin an override),
+  `promote`, `delete` and `template`, and a member of any OTHER channel is refused. The
+  `update_skill` / `propose_skill_change` replies name who decides.
   Accepted residual risk: injected content in an authorized turn can write a channel or personal
   skill, never an organization one. → TEST-PLAN: Skills platform (skill ownership without approvals).
 - **Template requests and admin template edits from chat.** There is no "team" scope: a team's skill

@@ -10,6 +10,12 @@
 - Show skill requests **waiting for approval** on the Activity Skills page: each conversation lists
   the requests made in it that an organization admin has not decided yet, to every member of that
   conversation; "Only me" lists your own. The conversation picker shows how many are waiting.
+- Let a channel's members approve or reject edits proposed for **their own channel skills** (for
+  example an edit filed from another channel), by asking the agent in that channel — no admin and
+  no approval card needed, just as when they edit the skill themselves. Organization skills,
+  sharing a skill with the organization, deleting from the catalog, templates and skills from
+  read-only sources still need an admin. The Skills page lists these requests in the owning
+  conversation and says who decides each one.
 - Keep the admin dashboard signed in across gateway restarts: sessions now persist in the
   database (only the cookie token's hash is stored). A passkey or password-plus-Slack-code
   sign-in lasts thirty days and survives seven idle days instead of thirty minutes idle / twelve

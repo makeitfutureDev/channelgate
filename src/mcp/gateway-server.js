@@ -37,6 +37,8 @@ import { register as registerLicense } from "./tools/license.js";
 import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
+import { getProposal } from "../gateway/skills/catalog.js";
+import { proposalDecider } from "../gateway/skills/authoring.js";
 import { register as registerAgentDirectory } from "./tools/agent-directory.js";
 import { register as registerAgentMail } from "./tools/agent-mail.js";
 import { register as registerQuestions } from "./tools/questions.js";
@@ -321,6 +323,16 @@ export function gateCardTier(gate, args = {}) {
 // A surviving card is DURABLE: the exact call is saved and applied on the click, with no deadline.
 const AUTOMATIC = () => null;
 
+// A pending proposal its skill's owning channel decides (gateway/skills/authoring.js proposalDecider).
+function channelDecided(id) {
+  try {
+    const proposal = getProposal(Number(id));
+    return proposal?.status === "pending" && proposalDecider(proposal).tier === "channel";
+  } catch {
+    return false;
+  }
+}
+
 export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId, threadKey, apiPrincipal, agentPrincipal }) {
   const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
   const sudoEdit = (args = {}) => args.sudo === true || (args.sudo !== false && listForChannel(channelId).some((s) => s.id === args.id && s.sudo === true));
@@ -363,7 +375,13 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => add.length
       ? `Add to the "${summarize(template)}" skill template — every conversation following it gets ${summarize(add.join(", "))}.${remove.length ? ` Also remove: ${summarize(remove.join(", "))}.` : ""}`
       : null }],
-    ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => decision === "approve" ? `APPROVE skill proposal #${Number(id) || "?"} — its change becomes part of the shared catalog.` : null }],
+    // An edit of a channel skill is decided by that channel's members with no card, like their own
+    // update_skill (the handler checks they are members of the OWNING channel); every other proposal
+    // reaches past one channel and keeps the admin tier and its card.
+    ["decide_skill_proposal", {
+      authz: ({ id }) => channelDecided(id) ? "any" : "admin",
+      details: ({ id, decision }) => decision === "approve" && !channelDecided(id) ? `APPROVE skill proposal #${Number(id) || "?"} — its change becomes part of the shared catalog.` : null,
+    }],
     ["sync_skill_sources", { authz: "admin", details: AUTOMATIC }],
     ["publish_skill", { authz: "manage", details: AUTOMATIC }],
     ["set_skill_scope", { authz: "admin", details: AUTOMATIC }],

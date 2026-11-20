@@ -11,7 +11,7 @@ Open **Admin → Skills → Review**. Inspect the package files and requirements
 
 ## Handle a proposal
 
-Members use `propose_skill_change` for changed files, feedback, promotion, deletion, or a template addition. External library clients with the `propose` scope can submit changed files or feedback. Administrators inspect pending proposals in the Review tab or with `list_skill_proposals`, then use `decide_skill_proposal`.
+Members use `propose_skill_change` for changed files, feedback, promotion, deletion, or a template addition. External library clients with the `propose` scope can submit changed files or feedback. Administrators inspect pending proposals in the Review tab or with `list_skill_proposals`, then use `decide_skill_proposal`. An edit or feedback for a channel skill is the owning conversation's decision: its members ask the agent there to list and approve or reject it, with no approval card, as long as the gateway can write that skill.
 
 ```text
 Show pending skill proposals. Summarize what each would change and who would receive it before I decide.

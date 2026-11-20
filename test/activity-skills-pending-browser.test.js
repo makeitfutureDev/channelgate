@@ -8,10 +8,13 @@ const { activityPage } = await import("../src/web/activity-page.js");
 test("the Skills page lists a conversation's requests waiting for approval", { skip: !process.env.CG_BROWSER_MODULE, timeout: 45_000 }, async (t) => {
   const app = express();
   const skills = [{ key: "deploy-helper", name: "Deploy Helper", description: "ships", selected: false, locked: false, source: "" }];
-  const pending = [{ id: 7, kind: "change", action: "Edit an organization skill", skill: "Org Policy", key: "org-policy", target: "", note: "<b>Tighten</b> the wording", by: "Other", createdAt: "2026-11-19T10:00:00.000Z" }];
+  const pending = [
+    { id: 7, kind: "change", action: "Edit a skill", skill: "Org Policy", key: "org-policy", target: "", note: "<b>Tighten</b> the wording", by: "Other", createdAt: "2026-11-19T10:00:00.000Z", decider: "admin", deciderChannel: "" },
+    { id: 8, kind: "change", action: "Edit a skill", skill: "Team Runbook", key: "team-runbook", target: "", note: "Fix step 3", by: "Other", createdAt: "2026-11-19T11:00:00.000Z", decider: "here", deciderChannel: "#team" },
+  ];
   app.get("/activity/fixture/api/skills", (_req, res) => res.json({ channels: [
     { channelId: "me", name: "Only me — every conversation", personal: true, count: 0, linked: false, pending: 0 },
-    { channelId: "C1", name: "#team", personal: false, count: 1, linked: false, pending: 1 },
+    { channelId: "C1", name: "#team", personal: false, count: 1, linked: false, pending: 2 },
   ] }));
   app.get("/activity/fixture/api/skills/me", (_req, res) => res.json({ kind: "personal", editable: true, linked: null, notLoaded: [], pending: [], skills }));
   app.get("/activity/fixture/api/skills/C1", (_req, res) => res.json({ kind: "channel", editable: true, linked: null, notLoaded: [], pending, skills }));
@@ -26,17 +29,19 @@ test("the Skills page lists a conversation's requests waiting for approval", { s
   await page.locator(".skills-row").first().waitFor();
   const box = page.locator("#skills-pending");
   assert.equal(await box.isVisible(), false, "nothing waiting under Only me");
-  assert.match(await page.locator("#skills-channel option").nth(1).textContent(), /#team · 1 skill · 1 waiting for approval/);
+  assert.match(await page.locator("#skills-channel option").nth(1).textContent(), /#team · 1 skill · 2 waiting for approval/);
   await page.selectOption("#skills-channel", "C1");
-  await box.locator("li").waitFor();
+  await box.locator("li").first().waitFor();
   const text = await box.innerText();
-  assert.match(text, /Waiting for approval · 1/);
+  assert.match(text, /Waiting for approval · 2/);
   assert.match(text, /Org Policy/);
-  assert.match(text, /Edit an organization skill/);
+  assert.match(text, /Edit a skill/);
+  assert.match(text, /Decided by an organization admin\./);
+  assert.match(text, /Members of this conversation decide it: ask the agent here to approve or reject request #8\./);
   assert.match(text, /Request #7 · by Other · /);
   assert.match(text, /<b>Tighten<\/b> the wording/, "the note is text, never markup");
   assert.equal(await box.locator("b").count(), 0);
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no sideways scroll at phone width");
+  assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, "no sideways scroll at phone width");
   await page.selectOption("#skills-channel", "me");
   await page.locator(".skills-row").first().waitFor();
   assert.equal(await box.isVisible(), false);

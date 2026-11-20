@@ -241,8 +241,8 @@ decision 2026-09-27); the tool result tells the model to announce the change in 
 every write is audited (`skill_created`, `skill_updated`, `skill_revoked`, `skill_removed`).
 Admins moderate only the organization tier. Since 2026-10-07 (minimum second-approval cards)
 only the verbs that push content into every conversation post a card — `add_skill_source`,
-`add_org_skills`, `update_skill_template` when it adds, `decide_skill_proposal` when it approves —
-and that card is durable: saved as the exact call, never expiring, applied on the admin's click
+`add_org_skills`, `update_skill_template` when it adds, `decide_skill_proposal` when it approves
+(except a channel's members deciding an edit of their own channel skill) — and that card is durable: saved as the exact call, never expiring, applied on the admin's click
 even after a restart. The rest (`remove_org_skills`, template removals, proposal rejections,
 sources' set/sync/remove, governance, exclusion, `set_skill_scope`, `publish_skill`) are
 automatic for the admin (or manager) who asked, audited and announced. Auto mode never decides a
@@ -269,9 +269,14 @@ it can never reach the organization tier.
   it with a companion skill.
 - `delete_skill` — a catalog tombstone: an admin, or the author of a personal skill. Anyone else
   deactivates the skill in their conversation and files a `delete` proposal.
-- `propose_skill_change` — ask an admin: the changed files and a note (`kind: change`), a
+- `propose_skill_change` — ask for a change you cannot make (an admin, or for another channel's
+  skill that channel's members): the changed files and a note (`kind: change`), a
   promotion (`kind: promote` — a personal or channel skill becomes an organization skill; an
   organization skill gets granted everywhere), a catalog delete (`kind: delete`), or feedback.
+- A `change` or `feedback` proposal for a channel skill the gateway can write is decided by the
+  members of the channel that owns it, from that channel, with no card — the same power as their own
+  `update_skill`; the approved change lands as their edit would (published, not pinned). Everything
+  else — organization skills, read-only sources, promotions, deletes, templates — is an admin's.
 - Admins review with `list_skill_proposals` / `decide_skill_proposal` in chat, or in the admin UI
   (Skills → Review). An approved change becomes one revision; when the skill is source-owned the
   revision is **pinned** as a gateway override, so the source keeps flowing into later revisions

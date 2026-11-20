@@ -66,7 +66,8 @@ that will run with sudo requires an admin approval (`references/reminders.md`).
 These still post a card, because one unasked call would silently reach OTHER channels or
 leak a secret and no later message could undo it: `set_channel_admin_mode`,
 `update_gateway_guide`, `add_skill_source`, `add_org_skills`, `update_skill_template` when it
-ADDS skills, `decide_skill_proposal` when it APPROVES, `allow_secret_host`, `set_secret_mode` to
+ADDS skills, `decide_skill_proposal` when it APPROVES (except a channel deciding an edit of its own
+skill), `allow_secret_host`, `set_secret_mode` to
 READABLE, appending to the channel instructions, and creating or editing a schedule that remains
 sudo. Every such card is **durable**: the tool
 returns *pending* at once with the exact saved call, the card never expires, it survives gateway

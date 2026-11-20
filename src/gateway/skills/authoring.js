@@ -371,17 +371,42 @@ export function proposeSkillChange({ skill = "", kind = "change", files = [], no
   return { proposal, skill: existing };
 }
 
+// Who decides a proposal. A change or feedback on a channel skill that this gateway can write is
+// that channel's business: its members could make the same edit themselves with update_skill, so
+// they decide it (an admin still can). Everything else reaches past one channel — the shared
+// library, a template, the whole catalog, or a source the gateway cannot write to, where approval
+// pins an override — and stays with admins. `channelId` is the conversation whose members decide.
+export function proposalDecider(proposal) {
+  const admin = { tier: "admin", channelId: "" };
+  if (!proposal || !["change", "feedback"].includes(proposal.kind)) return admin;
+  const skill = getSkill(proposal.slug);
+  if (!skill || skill.deleted || skillTier(skill) !== "channel") return admin;
+  if (proposal.kind === "change" && !skillEditability(skill).editable) return admin;
+  return { tier: "channel", channelId: skill.channelScope };
+}
+
 // Approve or reject. Approval of a change writes one revision (pinned as an override when the
 // skill is source-owned) and publishes it; approval of a promotion makes a personal skill an
 // organization skill (and publishes it) or, for an organization skill, grants it everywhere;
-// approving feedback just closes it.
-export async function decideSkillProposal(id, { decision, decidedBy = "", note = "" } = {}) {
+// approving feedback just closes it. `asChannelMember` is a decision by the owning channel's
+// member (proposalDecider): it is re-checked here, and a change lands exactly as that member's own
+// update_skill would — never as an admin-only pinned override.
+export async function decideSkillProposal(id, { decision, decidedBy = "", note = "", asChannelMember = false } = {}) {
   const proposal = getProposal(id);
   if (!proposal) throw new SkillCatalogError("proposal not found", { status: 404 });
   if (proposal.status !== "pending") throw new SkillCatalogError(`proposal #${id} is already ${proposal.status}`, { status: 409 });
+  if (asChannelMember && proposalDecider(proposal).tier !== "channel") {
+    throw new SkillCatalogError(`proposal #${id} needs an admin: it is not an edit of a channel skill`, { status: 403 });
+  }
+  if (asChannelMember && decision === "approve" && proposal.kind === "change") {
+    const r = await updateLocalSkill({ skill: getSkill(proposal.slug), files: proposal.files, note: note || proposal.note || `proposal #${proposal.id} by ${proposal.proposedBy}`, createdBy: decidedBy });
+    const p = decideProposal(id, { status: "approved", decidedBy, note, revisionId: r.revision?.id ?? null });
+    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "approved", revision: r.revision?.revisionNo, by: "channel" });
+    return { proposal: p, revision: r.changed ? r.revision : null, unchanged: !r.changed, pinned: false, promoted: false, published: r.published, deleted: false, templated: false };
+  }
   if (decision === "reject") {
     const p = decideProposal(id, { status: "rejected", decidedBy, note });
-    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected" });
+    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected", ...(asChannelMember ? { by: "channel" } : {}) });
     return { proposal: p, revision: null, pinned: false, promoted: false, published: null, deleted: false, templated: false };
   }
   if (decision !== "approve") throw new SkillCatalogError("decision must be approve or reject");
