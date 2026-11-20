@@ -14,12 +14,12 @@
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { getSettings, saveSettings, isEngineEnabled } from "./settings.js";
-import { adapterFor, engineRegistry, licenseLabel } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, engineRegistry, harnessOf, isDefaultLicense, isRemovableBuiltinLicense, isRemovedLicense, licenseLabel, removedBuiltinLicenses } from "../engines/registry.js";
 import {
-  API_AUTH_SCHEMES, API_VERSION_RE, GCP_PROJECT_RE, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
-  MAX_SERVICE_ACCOUNT_BYTES, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
+  API_AUTH_SCHEMES, API_VERSION_RE, DEFAULT_LICENSE_NAME, GCP_PROJECT_RE, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
+  MAX_LICENSE_NAME_LENGTH, MAX_SERVICE_ACCOUNT_BYTES, cleanLicenseName, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
   licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel, normalizeLicenseModels, normalizeLicenseRecord,
-  normalizeLicenseRecords, normalizeServiceAccount, serviceAccountFacts,
+  normalizeLicenseNames, normalizeLicenseRecords, normalizeRemovedLicenses, normalizeServiceAccount, serviceAccountFacts,
 } from "../engines/license-state.js";
 import { licenseDefaultEffortKey, licenseDefaultModelKey, verifyProviderLicense } from "../engines/license-adapters.js";
 import { publicPinnedFetch } from "../mcp/public-fetch.js";
@@ -110,14 +110,22 @@ export async function listLicensesForApi() {
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────────────────────
-const cleanLabel = (value) => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+const cleanLabel = cleanLicenseName;
 
-function assertLabel(label, records, selfId = "") {
+// A name is unique across the added licenses AND everything the gateway ships with — under both
+// names a shipped license answers to (its engine label, and what a picker calls it, which for a
+// harness's own sign-in is "Default sign-in" or the name an administrator gave it). `names` is the
+// `licenseNames` map as it will be stored, so a rename is checked against the state it writes.
+function assertLabel(label, records, selfId = "", names = null) {
   if (!label) refuse("Give the license a name.");
-  if (label.length > 60) refuse("A license name is at most 60 characters.");
+  if (label.length > MAX_LICENSE_NAME_LENGTH) refuse(`A license name is at most ${MAX_LICENSE_NAME_LENGTH} characters.`);
   const wanted = label.toLowerCase();
-  const taken = records.some((record) => record.id !== selfId && record.label.toLowerCase() === wanted)
-    || engineRegistry.builtinIds.some((id) => [adapterFor(id)?.label, licenseLabel(id)].some((name) => String(name || "").toLowerCase() === wanted));
+  const pickerName = (id) => (names && isDefaultLicense(id) ? names[id] || DEFAULT_LICENSE_NAME : licenseLabel(id));
+  // "Default sign-in" stays reserved even while both harnesses' sign-ins carry another name:
+  // clearing a name puts it back.
+  const taken = wanted === DEFAULT_LICENSE_NAME.toLowerCase()
+    || records.some((record) => record.id !== selfId && record.label.toLowerCase() === wanted)
+    || engineRegistry.builtinIds.some((id) => id !== selfId && [adapterFor(id)?.label, pickerName(id)].some((name) => String(name || "").toLowerCase() === wanted));
   if (taken) refuse(`Another license is already called "${label}".`, 409);
 }
 
@@ -272,6 +280,100 @@ export async function deleteLicense(id) {
   }
   if (removed.serviceAccount) (await import("../gateway/vertex-token.js")).forgetVertexToken(removed.serviceAccount);
   return removed;
+}
+
+// ── The licenses the gateway ships with ───────────────────────────────────────────────────────
+// They are not records, so they are not edited or deleted like one. Two things can be done to
+// them, and which one depends on what the license is (engines/registry.js):
+//   • a harness's own sign-in (`claude`, `codex`) can be RENAMED — and never removed, because it
+//     is what every selection falls back to;
+//   • every other shipped license (the dedicated logins, the provider table) can be REMOVED, and
+//     RESTORED later. Removed means switched off for good, listed nowhere and its own credential
+//     deleted; the id stays registered so stored sessions, usage rows and locks keep reading.
+const enabledMap = (current) => ({ ...(current.engineEnabled && typeof current.engineEnabled === "object" ? current.engineEnabled : {}) });
+
+export function builtinLicenseForApi(id) {
+  const adapter = adapterFor(id);
+  if (!adapter || !engineRegistry.isBuiltin(id)) return null;
+  const harness = harnessOf(id);
+  return {
+    id, builtin: true, harness, harnessLabel: harnessLabel(harness), label: licenseLabel(id), engineLabel: adapter.label,
+    defaultLicense: isDefaultLicense(id), removable: isRemovableBuiltinLicense(id), removed: isRemovedLicense(id),
+  };
+}
+// The shipped licenses an administrator removed, for the list that offers to restore them.
+export const listRemovedBuiltinLicenses = () => removedBuiltinLicenses().map(builtinLicenseForApi).filter(Boolean);
+
+// Names a harness's own sign-in. A blank name goes back to "Default sign-in".
+export function renameBuiltinLicense(id, label) {
+  if (!isDefaultLicense(id)) refuse(engineRegistry.isBuiltin(id) ? "Only a harness's own sign-in can be renamed here." : "That license no longer exists.", engineRegistry.isBuiltin(id) ? 400 : 404);
+  const name = cleanLabel(label);
+  let previous = "";
+  saveSettings((current) => {
+    const names = normalizeLicenseNames(current.licenseNames);
+    previous = names[id] || "";
+    // Typing the default back is the same as clearing the box.
+    const custom = name.toLowerCase() === DEFAULT_LICENSE_NAME.toLowerCase() ? "" : name;
+    if (custom) {
+      names[id] = custom;
+      // Checked against the map being written, so the other harness's sign-in is compared under
+      // the name it will have.
+      assertLabel(custom, stored(current), id, names);
+    } else delete names[id];
+    return { licenseNames: names };
+  });
+  return { ...builtinLicenseForApi(id), previousLabel: previous || DEFAULT_LICENSE_NAME };
+}
+
+// Removes a shipped license: off, unlisted, and what it stored for itself deleted — its settings
+// keys in the same write, its sign-in directory right after. Like deleteLicense, everything that
+// named it as a DEFAULT moves on; a channel or thread that still names it falls through to its
+// next level, exactly as it does for a license that is switched off.
+export async function removeBuiltinLicense(id) {
+  const adapter = adapterFor(id);
+  if (!adapter || !engineRegistry.isBuiltin(id)) refuse("That license no longer exists.", 404);
+  if (isDefaultLicense(id)) refuse(`${harnessLabel(harnessOf(id))}'s own sign-in cannot be removed. Rename it, or switch it off.`, 400);
+  const own = adapter.ownCredential || null;
+  saveSettings((current) => {
+    const removed = normalizeRemovedLicenses(current.removedLicenses);
+    if (removed.includes(id)) refuse("That license is already removed.", 409);
+    // The gateway must be left with something to run. A removed license cannot count, and the
+    // read-time rescue (settings.js isEngineEnabled) would otherwise switch a default harness
+    // back on behind the administrator's back.
+    const survivors = ENGINE_IDS.filter((other) => other !== id && !adapterFor(other)?.channelScoped && isEngineEnabled(other));
+    if (!adapter.channelScoped && isEngineEnabled(id) && !survivors.length) {
+      refuse(`${adapter.label} is the only license switched on. Switch another one on (and save) before removing it.`, 409);
+    }
+    const enabled = enabledMap(current);
+    enabled[id] = false;
+    const pool = Array.isArray(current.enginePool) ? current.enginePool.filter((entry) => entry !== id) : current.enginePool;
+    return {
+      removedLicenses: [...removed, id],
+      engineEnabled: enabled,
+      [adapter.defaultModelKey]: "",
+      [adapter.defaultEffortKey]: "",
+      ...Object.fromEntries((own?.settingsKeys || []).map((key) => [key, ""])),
+      ...(current.engine === id ? { engine: harnessOf(id), enginePool: "" } : pool !== current.enginePool ? { enginePool: pool } : {}),
+    };
+  });
+  // The dedicated sign-in goes with it. The path comes from the adapter's own fact, never from
+  // the request.
+  if (typeof own?.directory === "function") await rm(own.directory(), { recursive: true, force: true }).catch(() => {});
+  return { ...builtinLicenseForApi(id), ownCredential: own?.kind || "" };
+}
+
+// Lists a removed shipped license again, in the state a fresh install has it: an opt-in license
+// comes back switched OFF and without a credential — restoring one never starts routing turns.
+export function restoreBuiltinLicense(id) {
+  if (!adapterFor(id) || !isRemovableBuiltinLicense(id)) refuse("That license no longer exists.", 404);
+  saveSettings((current) => {
+    const removed = normalizeRemovedLicenses(current.removedLicenses);
+    if (!removed.includes(id)) refuse("That license is not removed.", 409);
+    const enabled = enabledMap(current);
+    delete enabled[id];
+    return { removedLicenses: removed.filter((entry) => entry !== id), engineEnabled: enabled };
+  });
+  return builtinLicenseForApi(id);
 }
 
 // ── Verification ──────────────────────────────────────────────────────────────────────────────

@@ -228,6 +228,8 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   modelCatalogSource: "fallback",
   mintsOwnSessionId: false,
   optIn: true,
+  // The key and endpoint this provider is configured with; removing the license deletes both.
+  ownCredential: Object.freeze({ kind: "api-key", settingsKeys: Object.freeze([entry.settings.apiKey, entry.settings.baseUrl]) }),
   transientKinds: Object.freeze(["availability", "connection"]),
   supports: { warmPool: false, interruptSteer: false, permissionPrompt: true, compact: true, realCost: false, usageLimitFallback: false, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => isQwenTextModel(m),

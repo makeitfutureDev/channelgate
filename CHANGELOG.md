@@ -2,6 +2,14 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Every engine license except a harness's own sign-in can now be removed in Settings → Engine
+  licenses, including the ones ChannelGate ships with: Qwen, Qwen EU, Codex EU, Claude Extra and
+  Codex (channel account) each have a **Remove** button. Removing one switches it off, takes it
+  out of every picker and its Settings card, and deletes its own stored key or sign-in;
+  conversations that used it fall back to their defaults. Removed licenses are listed under the
+  list with **Restore**, which brings one back switched off and to be set up again. The harness's
+  own sign-in ("Default sign-in") cannot be removed but can now be renamed with **Rename**; the
+  name shows wherever a license is chosen.
 - Fix Activity's **Group by → Channel** cards so their cells stay inside the card and line up
   with the column headers. Before, the cells sat about 40px to the right of their headers, resized
   columns could run past the card's edge, and the coloured channel heading could stop short of

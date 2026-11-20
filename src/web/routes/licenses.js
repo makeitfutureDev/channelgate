@@ -7,11 +7,17 @@
 // Nothing here returns a credential. A license's key or service-account key is written and never
 // read back: the listing carries `hasApiKey` + `apiKeyLast4` (or `hasServiceAccount` + the account's
 // address), and there is no reveal route.
+//
+// The licenses the gateway SHIPS with are not records, but the same three verbs reach them: PUT
+// renames a harness's own sign-in, DELETE removes any other shipped license (off, unlisted, its own
+// credential deleted) and POST …/restore lists it again.
 import express from "express";
 import {
   EngineLicenseError, createLicense, deleteLicense, getLicenseRecord, licenseCatalog, licenseForApi,
-  licenseStatusFor, listLicensesForApi, updateLicense, verifyLicense,
+  licenseStatusFor, listLicensesForApi, listRemovedBuiltinLicenses, removeBuiltinLicense, renameBuiltinLicense,
+  restoreBuiltinLicense, updateLicense, verifyLicense,
 } from "../../config/engine-licenses.js";
+import { engineRegistry } from "../../engines/registry.js";
 import { isProviderKind } from "../../engines/license-state.js";
 import { cancelLicenseCodexLogin, licenseCodexLoginStatus, startLicenseCodexLogin } from "../../gateway/channel-codex-login.js";
 import { logEvent } from "../../util/logger.js";
@@ -35,10 +41,11 @@ export function createLicensesRouter({ verify = verifyLicense } = {}) {
     return next(error);
   };
   const withStatus = async (record) => ({ ...licenseForApi(record), status: await licenseStatusFor(record.id) });
+  const isBuiltin = (id) => engineRegistry.isBuiltin(id);
 
   router.get("/engine-licenses", async (_req, res, next) => {
     res.set("Cache-Control", "no-store");
-    try { res.json({ ok: true, catalog: licenseCatalog(), licenses: await listLicensesForApi() }); } catch (error) { fail(res, next, error); }
+    try { res.json({ ok: true, catalog: licenseCatalog(), licenses: await listLicensesForApi(), removed: listRemovedBuiltinLicenses() }); } catch (error) { fail(res, next, error); }
   });
 
   router.post("/engine-licenses", async (req, res, next) => {
@@ -54,6 +61,14 @@ export function createLicensesRouter({ verify = verifyLicense } = {}) {
 
   router.put("/engine-licenses/:id", async (req, res, next) => {
     try {
+      // A shipped license has one editable fact: the name of a harness's own sign-in.
+      if (isBuiltin(req.params.id)) {
+        const license = renameBuiltinLicense(req.params.id, req.body?.label);
+        if (license.label !== license.previousLabel) {
+          await logEvent("engine_license_changed", { license: license.id, harness: license.harness, name: license.label, previousName: license.previousLabel, changed: ["label"], author: ADMIN_UI });
+        }
+        return res.json({ ok: true, license });
+      }
       const before = getLicenseRecord(req.params.id);
       const { kind: _kind, ...fields } = formFields(req.body);
       const record = updateLicense(req.params.id, fields);
@@ -69,10 +84,25 @@ export function createLicensesRouter({ verify = verifyLicense } = {}) {
 
   router.delete("/engine-licenses/:id", async (req, res, next) => {
     try {
+      if (isBuiltin(req.params.id)) {
+        const license = await removeBuiltinLicense(req.params.id);
+        await logEvent("engine_license_removed", { license: license.id, harness: license.harness, kind: "builtin", name: license.engineLabel, author: ADMIN_UI });
+        return res.json({ ok: true, removed: license.id, restorable: true });
+      }
       cancelLicenseCodexLoginSafe(req.params.id);
       const record = await deleteLicense(req.params.id);
       await logEvent("engine_license_removed", { license: record.id, harness: record.harness, kind: record.kind, name: record.label, author: ADMIN_UI });
       res.json({ ok: true, removed: record.id });
+    } catch (error) { fail(res, next, error); }
+  });
+
+  // Lists a removed shipped license again — switched off and without a credential, as a fresh
+  // install has it.
+  router.post("/engine-licenses/:id/restore", async (req, res, next) => {
+    try {
+      const license = restoreBuiltinLicense(req.params.id);
+      await logEvent("engine_license_restored", { license: license.id, harness: license.harness, kind: "builtin", name: license.engineLabel, author: ADMIN_UI });
+      res.json({ ok: true, license });
     } catch (error) { fail(res, next, error); }
   });
 

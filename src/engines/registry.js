@@ -1,6 +1,9 @@
 import { BUILTIN_ENGINE_ADAPTERS, licenseAdaptersFor } from "./adapters.js";
 import { createAdapterRegistry } from "./contract.js";
-import { LICENSE_POOL_ANY, harnessLabel, harnessOfLicenseId, isHarnessId, normalizeLicenseRecords, readLicensePool, setLicenseRecords } from "./license-state.js";
+import {
+  DEFAULT_LICENSE_NAME, LICENSE_POOL_ANY, builtinLicenseName, harnessLabel, harnessOfLicenseId, isHarnessId, isRemovedLicenseId,
+  normalizeLicenseRecords, readLicensePool, removedLicenseIds, setLicenseRecords,
+} from "./license-state.js";
 
 export const engineRegistry = createAdapterRegistry(BUILTIN_ENGINE_ADAPTERS);
 export const ENGINE_IDS = engineRegistry.ids;
@@ -39,12 +42,23 @@ export function coherentLicensePool(pool, engine) {
   return rest.length ? rest : "";
 }
 // What a picker calls this license once the harness is already chosen: the harness's own id is the
-// sign-in the gateway always had.
+// sign-in the gateway always had — "Default sign-in", or the name an administrator gave it.
 export function licenseLabel(engine) {
   const adapter = adapterFor(engine);
   if (!adapter) return String(engine || "");
-  return adapter.id === adapter.cli ? "Default sign-in" : adapter.label;
+  return adapter.id === adapter.cli ? builtinLicenseName(adapter.id) || DEFAULT_LICENSE_NAME : adapter.label;
 }
+// A harness's own sign-in: the one license of it that can be renamed and never removed.
+export const isDefaultLicense = (engine) => isHarnessId(String(engine || "")) && isEngineId(engine);
+// A license the gateway ships with that an administrator may remove: every built-in one except a
+// harness's own sign-in.
+export const isRemovableBuiltinLicense = (engine) => engineRegistry.isBuiltin(String(engine || "")) && !isDefaultLicense(engine);
+// Removed by an administrator (license-state.js). The id stays registered — stored sessions, usage
+// rows and policies still name it — but it is off everywhere and listed nowhere.
+export const isRemovedLicense = (engine) => isRemovableBuiltinLicense(engine) && isRemovedLicenseId(engine);
+export const removedBuiltinLicenses = () => removedLicenseIds().filter(isRemovableBuiltinLicense);
+// The licenses a surface may LIST: everything registered that has not been removed.
+export const listedEngineIds = () => ENGINE_IDS.filter((id) => !isRemovedLicense(id));
 // The provider-failure kinds this engine's runner reports as "the provider did not answer" — the
 // only kinds the orchestrator replays in place (src/gateway/run.js withTransientRetry). An engine
 // that declares none is simply never retried that way.
@@ -246,13 +260,22 @@ export function effortBelongsToModel(effort, engine, model = "") {
   const value = String(effort || "").trim().toLowerCase();
   return !value || effortsForModel(engine, model).includes(value);
 }
+// What the admin UI draws every engine control from. A removed built-in license is not in it, so
+// no picker, lock list or settings card can offer it.
 export function engineUiManifest() {
-  return modelCatalog.manifests().map((manifest) => ({
+  return modelCatalog.manifests().filter((manifest) => !isRemovedLicense(manifest.id)).map((manifest) => ({
     ...manifest,
     harness: harnessOf(manifest.id),
     harnessLabel: harnessLabel(harnessOf(manifest.id)),
     licenseLabel: licenseLabel(manifest.id),
     builtin: engineRegistry.isBuiltin(manifest.id),
+    // The harness's own sign-in can be renamed (`customName` is "" until it is) and never removed;
+    // every other shipped license can be removed.
+    defaultLicense: isDefaultLicense(manifest.id),
+    customName: isDefaultLicense(manifest.id) ? builtinLicenseName(manifest.id) : "",
+    removable: isRemovableBuiltinLicense(manifest.id),
+    // What removing it deletes, for the confirmation's wording: "api-key", "sign-in" or "".
+    ownCredential: adapterFor(manifest.id)?.ownCredential?.kind || "",
   }));
 }
 

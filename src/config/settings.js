@@ -8,7 +8,8 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
-import { ENGINE_IDS, adapterOr, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
+import { setBuiltinLicenseState } from "../engines/license-state.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -45,7 +46,7 @@ export function getSettings() {
   } catch {
     return {};
   }
-  syncEngineLicenses(settings.engineLicenses);
+  syncEngineLicenses(settings);
   return settings;
 }
 
@@ -57,7 +58,16 @@ export function getSettings() {
 // must never unregister a license mid-turn. The key is recorded BEFORE the sync because building
 // an adapter may itself read a setting.
 let syncedLicenseKey = "null";
-function syncEngineLicenses(stored) {
+let syncedBuiltinKey = "";
+function syncEngineLicenses(settings) {
+  // What an administrator did to the licenses the gateway SHIPS with — the name of a harness's own
+  // sign-in, and the shipped licenses they removed — follows the same read, for the same reason.
+  const builtinKey = JSON.stringify([settings?.licenseNames ?? null, settings?.removedLicenses ?? null]);
+  if (builtinKey !== syncedBuiltinKey) {
+    syncedBuiltinKey = builtinKey;
+    setBuiltinLicenseState({ names: settings?.licenseNames, removed: settings?.removedLicenses });
+  }
+  const stored = settings?.engineLicenses;
   const key = JSON.stringify(stored ?? null);
   if (key === syncedLicenseKey) return;
   syncedLicenseKey = key;
@@ -173,7 +183,7 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     db.exec("COMMIT");
     // The writer sees its own license change at once: the caller that just added a license asks
     // the registry about it on the next line, before anything has read the file again.
-    syncEngineLicenses(next.engineLicenses);
+    syncEngineLicenses(next);
     return stripDeadSettings(next);
   } catch (e) {
     try {
@@ -404,13 +414,17 @@ export const ENGINES = ENGINE_IDS;
 // admin explicitly switched it on. Qwen is the first — it needs a QwenCloud key nobody has by
 // default, so inheriting "missing key means enabled" would put a harness in every picker whose
 // every turn fails, and would make `git pull` change which provider a deployment can reach.
+// A shipped license an administrator REMOVED (engine-licenses.js) is off whatever the map says,
+// and no fallback below can switch it back on.
 const engineIsOptIn = (id) => Boolean(adapterOr(id).optIn);
 export function isEngineEnabled(engine) {
   const id = String(engine || "");
   if (!ENGINES.includes(id)) return false;
+  if (isRemovedLicense(id)) return false;
   const map = getSettings().engineEnabled;
   if (!map || typeof map !== "object") return !engineIsOptIn(id);
   const on = (e) => {
+    if (isRemovedLicense(e)) return false;
     if (engineIsOptIn(e)) return map[e] === true;
     const inherited = adapterOr(e).enabledWith;
     return map[e] === undefined && inherited ? map[inherited] !== false : map[e] !== false;
@@ -677,7 +691,8 @@ export function voiceCallsAvailable() {
 // What the admin UI renders one card from, per provider. Presence and endpoint only — the key
 // itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
 export function qwenProviderSettings() {
-  return QWEN_PROVIDERS.map((entry) => {
+  // A removed provider has no card: there is nothing left to configure until it is restored.
+  return QWEN_PROVIDERS.filter((entry) => !isRemovedLicense(entry.id)).map((entry) => {
     const config = getQwenConfig(entry.id);
     return {
       id: entry.id,
@@ -1361,7 +1376,7 @@ export function settingsForApi() {
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
-    terminalHarnesses: terminalHarnessSetup(),
+    terminalHarnesses: terminalHarnessSetup().filter((card) => !isRemovedLicense(card.id)),
     perplexityResearch: {
       enabled: perplexity.enabled,
       hasSessionToken: Boolean(perplexity.sessionToken),

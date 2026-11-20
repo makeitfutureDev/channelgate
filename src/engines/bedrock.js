@@ -192,6 +192,9 @@ export function makeBedrockAdapter(claude) {
     id: BEDROCK_ENGINE_ID, label: "Claude Extra", modelFamily: "claude-extra",
     defaultModelKey: "defaultBedrockModel", defaultEffortKey: "defaultBedrockEffort",
     optIn: true, terminalSetup: true,
+    // The separate Claude config directory on the gateway host (its sign-in, or its Bedrock setup);
+    // removing the license deletes it.
+    ownCredential: Object.freeze({ kind: "sign-in", directory: bedrockLoginHome }),
     models: [
       { value: "opus", label: "Opus", description: "Opus for this login, or the model pinned by your Bedrock setup." },
       { value: "sonnet", label: "Sonnet", description: "Sonnet for this login, or the model pinned by your Bedrock setup." },

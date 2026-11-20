@@ -82,7 +82,7 @@ import { readSecret } from "../secrets.js";
 // The shared admin principal — one password, no personal identity behind an admin-UI action.
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
-import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
+import { engineUiManifest, isRemovedLicense, refreshEngineModels } from "../../engines/registry.js";
 // The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 import { gatewayCodexLoginStatus, startGatewayCodexLogin, cancelGatewayCodexLogin } from "../../gateway/channel-codex-login.js";
@@ -455,9 +455,11 @@ export function createSettingsRouter({
       // run — that state has no valid interpretation, so it fails loudly here rather than silently
       // failing open at read time.
       if (body.engineEnabled && typeof body.engineEnabled === "object" && !Array.isArray(body.engineEnabled)) {
+        // A license an administrator removed stays off: only Restore (routes/licenses.js) brings it
+        // back, never a switch in a stale or hand-written save.
         const next = Object.fromEntries(ENGINES.map((id) => [
           id,
-          typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
+          isRemovedLicense(id) ? false : typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
         ]));
         if (!ENGINES.some((id) => !requireAdapter(id).channelScoped && next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
         patch.engineEnabled = next;
@@ -623,6 +625,9 @@ export function createSettingsRouter({
       // not a literal pair — a provider added there would otherwise get a settings card in the UI
       // whose key and endpoint silently never saved.
       for (const entry of QWEN_PROVIDERS) {
+        // A removed provider stores nothing: a page loaded before the removal must not put a key
+        // back under a license nobody can see or switch on.
+        if (isRemovedLicense(entry.id)) continue;
         const { apiKey: keyField, baseUrl: urlField } = entry.settings;
         if (typeof body[keyField] === "string") patch[keyField] = body[keyField].trim();
         if (body[`clear${keyField[0].toUpperCase()}${keyField.slice(1)}`] === true) patch[keyField] = "";

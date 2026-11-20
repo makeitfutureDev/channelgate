@@ -37,6 +37,8 @@ export function makeCodexEuAdapter(base) {
     ...base,
     subscriptionUsage: { provider: "codex", login: "codex-eu" },
     id: "codex-eu", label: "Codex EU", terminalSetup: true, optIn: true, modelFamily: "codex", defaultModelKey: "defaultCodexEuModel",
+    // The dedicated ChatGPT sign-in on the gateway host; removing the license deletes it.
+    ownCredential: Object.freeze({ kind: "sign-in", directory: codexEuLoginHome }),
     defaultEffortKey: "defaultCodexEuEffort", mcpMetaKey: "allowedCodexEuMcps",
     supports: { ...base.supports, usageLimitFallback: false },
     resumeCommand(id, { target = null } = {}) {
