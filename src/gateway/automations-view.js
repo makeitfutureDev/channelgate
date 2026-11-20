@@ -73,12 +73,15 @@ export async function automationChannels(access, userId) {
   const out = [];
   for (const entry of await listChannels()) {
     if (platformOfConversation(entry.channelId) !== "slack") continue;
-    if (!await access.allows(entry)) continue;
+    // Count first: a conversation without automations is never listed, and skipping it here
+    // also spares its (possibly Slack-backed) membership check.
+    const count = listForChannel(entry.channelId).filter((s) => visible(s, access)).length;
+    if (!count || !await access.allows(entry)) continue;
     const dm = isDM(entry);
     const meta = dm ? await getChannelMeta(entry.slug) : null;
     if (dm && meta?.dmUserId && meta.dmUserId !== userId) continue; // only the viewer's OWN DM
-    const count = listForChannel(entry.channelId).filter((s) => visible(s, access)).length;
-    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${await activityChannelName(entry)}`, personal: dm, count });
+    const name = String(await activityChannelName(entry)).replace(/^#+/, "");
+    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${name}`, personal: dm, count });
   }
   return out.sort((a, b) => Number(b.personal) - Number(a.personal) || b.count - a.count || a.name.localeCompare(b.name));
 }
