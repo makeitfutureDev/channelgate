@@ -1,5 +1,34 @@
 # ChannelGate — Features
 
+## The login watch covers added sign-in licenses (2026-11-22)
+
+The hourly login watch (`src/gateway/login-watch.js`) reported only the gateway's own Claude
+login. A sign-in license an administrator added — another Claude account, another ChatGPT seat,
+each signed in on the host in its own directory — lapses the same way and nothing said so: a
+selection quietly moved on to its next license, and a conversation whose only license it was
+failed turn after turn until somebody opened Settings → Licenses.
+
+- Every tick now also reads each added sign-in license that is switched on
+  (`licenseLoginWatchTick`): `licenseStatusFor` for whether it is signed in, plus — new on a
+  Claude sign-in license's status — `expiresAt`, when that sign-in lapses. A license is **missing**
+  (not signed in, or lapsed) or **expiring** (a Claude sign-in inside the same three-day window as
+  the gateway's own login).
+- Every admin gets one direct message listing all licenses in trouble, the newly reported ones
+  first, each with its `Harness · name`, its state and the host command that signs it in again
+  (`licenseLoginCommand`). Names, dates and commands only — never token material.
+- Told **once per license per problem**, not once a day: the `_meta` row `license_login_alerts`
+  holds `{ license id: class }`. Expiring → missing is a new problem; a license that recovers, is
+  switched off or is deleted leaves the row, so its next lapse is reported again. A message nobody
+  received (Slack down, no admins) stays due; a license whose check itself failed keeps what was
+  already said. The log line `[license-login] WARNING: …` is written on every tick.
+- A license added within the last hour is not reported as missing: its administrator is about to
+  sign it in.
+- Limits, by design: a ChatGPT sign-in file carries no expiry, so a Codex license is only ever
+  reported once its file no longer holds a sign-in — a seat revoked on OpenAI's side is found by
+  the turn that hits it. Licenses with a key (API, cloud, custom server) have no sign-in and are
+  not watched. The shipped extra sign-ins (Codex's own, Codex EU, Claude Extra) are unchanged:
+  their state is on the admin health page.
+
 ## The run API refuses a model its license cannot serve (2026-11-22)
 
 `POST /api/runs` takes a `model` beside `harness`. A model the license could not serve — a GPT
