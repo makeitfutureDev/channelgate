@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## The run API refuses a model its license cannot serve (2026-11-22)
+
+Both engines are reachable: each harness refuses the other's models, so the live case runs once
+per harness. The automated cases start no engine.
+
+- [x] `test/api-runs-harness.test.js` "a named model the license cannot serve is refused before a
+      job starts" (always runs): a GPT model with `harness: "claude"`, a Claude model with
+      `harness: "codex"`, a GPT model with no harness on a Claude channel, and the same with
+      `licenses: "any"` → 400 naming the harness and the `harness` field, and the driver never
+      runs; each harness's own model, and no model, start a job that carries the model as its pin.
+- [x] `test/api-runs-harness.test.js` "a license with its own model list names what it serves when
+      it refuses a model" (always runs): a custom-server Claude license listing two models refuses
+      a Claude model with `It serves: glm-4.6, llama3.1:70b.` and starts on a listed one.
+- [x] `test/api-runs-harness.test.js` "a reused conversation's job fails by name when its license
+      cannot serve the model" (always runs): an `api_foreground` run with a GPT model on a Claude
+      thread rejects with the sentence and spawns no engine.
+- [ ] Live `LICENSE-35` run API model check (Claude and Codex). Fixture: `cg-testing-claude-auto`
+      and `cg-testing-codex-auto`, a channel token for each. Action, per channel: `POST /api/runs`
+      with `{"harness":"claude","model":"gpt-5.4","message":"Reply OK"}` on the Claude channel and
+      `{"harness":"codex","model":"claude-opus-4-8","message":"Reply OK"}` on the Codex channel;
+      then the same request with a model of that harness. Pass: the first answers HTTP 400 with
+      `Model "…" cannot run on Claude Code.` / `… on Codex.`, no kickoff message appears in the
+      channel and `GET /api/runs` lists no new job; the second answers 202 and its completed job's
+      footer names the requested model.
+
 ## A health check starts each CLI once (2026-11-22)
 
 Engine-independent: the check runs `--version`, never a turn, and no model is involved.

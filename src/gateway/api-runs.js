@@ -38,6 +38,7 @@ import {
 import { assertChannelEngineApproved } from "./channel-engines.js";
 import { normalizeLicensePool } from "./license-pool.js";
 import { assertEngineSelectable } from "../engines/selection.js";
+import { unservedModelReason } from "../engines/registry.js";
 import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
 import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
@@ -666,6 +667,12 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
       const selectedEngine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
       assertChannelEngineApproved(meta, selectedEngine);
       await assertEngineSelectable(selectedEngine, { channelId: entry.channelId, meta });
+      // A named `model` the license cannot serve used to be dropped at spawn, so the caller got
+      // an answer from a different model and nothing said so. Refuse it while there is still a
+      // caller to tell. (A reused conversation without a harness is checked when its live
+      // selection resolves — run.js — and fails that job with the same sentence.)
+      const unserved = unservedModelReason(overrides?.model, selectedEngine);
+      if (unserved) return { ok: false, code: 400, error: `${unserved} Name the license that serves it in \`harness\`, or omit \`model\` to use the license's default.` };
     }
   } catch (error) { return { ok: false, code: error.statusCode || error.status || 400, error: error.message }; }
   await ensureChannelFolder(slug, meta); // idempotent — writes the lockdown + uploads root exists

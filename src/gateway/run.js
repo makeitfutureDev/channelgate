@@ -54,7 +54,7 @@ import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
+import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
 import { codexHarnessFor } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
 import { licensePoolCandidates, readLicensePool } from "./license-pool.js";
@@ -1434,6 +1434,15 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // precedence order that actually belongs to this engine wins; none → "" (the CLI's own default).
   const gatewayDefaultModel = getDefaultModel(engine);
   let model = [threadModel, threadSkillModel, meta.model, gatewayDefaultModel].find((m) => m && modelBelongsToEngine(m, engine)) || "";
+  // The compatibility gate above DROPS a model of the other harness, which is right for a stored
+  // value nobody is waiting on. A run API caller named this model for this one run: answering it
+  // with a different model would look like success, so the job fails with the reason instead. The
+  // API refuses the same thing at admission whenever the license is already known there; this is
+  // the reused conversation, whose license is only known now.
+  if (origin === "api_foreground") {
+    const unserved = unservedModelReason(overrides?.model, engine);
+    if (unserved) throw new Error(`${unserved} Name the license that serves it in \`harness\`, or omit \`model\`.`);
+  }
   const gatewayDefaultEffort = getDefaultEffort(engine);
   const effortForModel = (selectedModel) => [threadEffort, meta.effort, gatewayDefaultEffort]
     .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
