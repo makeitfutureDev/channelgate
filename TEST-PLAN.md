@@ -3330,6 +3330,24 @@ Engine-independent: none of this is reachable from an engine turn.
   terminal left cooked mode; raw mode is now set first (regression test in
   `test/web-auth-posture.test.js`).
 
+## Low-severity hardening, security audit batch 5 (2026-11-21)
+
+### Run API CSRF by credential, not path
+
+- [x] Automated: `node --test test/run-api.test.js` — "a session-cookie POST to /api/runs needs the
+  CSRF header; a run-API key does not": a cookie-only `POST /api/runs` and `POST
+  /api/runs/<id>/stop` answer 403 naming `X-CG-Request`; with `X-CG-Request: 1` the request reaches
+  the route (400 missing message); cookie + valid `X-API-Key` or `Authorization: Bearer` reaches the
+  route without the header; cookie + a wrong key answers 403; `GET /api/runs` with the cookie alone
+  answers 200. The existing key-only cases in the same file still pass unchanged.
+- [ ] UNEXECUTED — Live, engine-independent (browser + shell): sign in to the admin UI, copy the
+  `cg_session` cookie from the browser's developer tools, then run
+  `curl -i -X POST https://<host>/api/runs -H 'content-type: application/json' -H 'cookie: cg_session=<value>' -d '{"message":"hi"}'`.
+  Expected: `403` with `{"error":"missing X-CG-Request header"}` and no job created (Admin UI → API
+  shows no new run). Repeat with `-H 'x-cg-request: 1'` and `-d '{}'`: `400` naming `message`.
+  Then `curl -i -X POST https://<host>/api/runs -H 'x-api-key: <channel cgk_ token>' -H 'content-type: application/json' -d '{}'`:
+  `400` naming `message` (the machine path is unchanged). PASS when all three hold.
+
 ## Web and Slack surface hardening, batch 1 (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Security hardening (audit batch 5): a `POST /api/runs` authenticated by the admin session cookie
+  now needs the same `X-CG-Request` header as every other cookie-authenticated change (run-API
+  keys and channel tokens are unchanged).
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

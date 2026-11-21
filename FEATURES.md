@@ -1815,6 +1815,17 @@ Task progress remain visible; older agent streams without optional task-type met
   a session. These exact public paths prevent authentication redirects from replacing JavaScript
   and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.
 
+## Low-severity hardening (security audit batch 5)
+
+- **A cookie-authenticated run needs the CSRF header.** `POST /api/runs` (and `/api/runs/:id/stop`)
+  authenticated by the admin SESSION COOKIE must carry `X-CG-Request: 1` like every other
+  cookie-authenticated state change; without it the request is refused with 403 before the route.
+  The exemption is now tied to the credential, not the path: a request that carries a valid
+  run-API credential (the organization key or a channel `cgk_` token, as `X-API-Key` or
+  `Authorization: Bearer`) is authenticated by that credential with or without a cookie, because a
+  cross-site page cannot send either header without a CORS preflight the gateway never answers.
+  Reads (`GET /api/runs…`) stay exempt. The admin UI's `api()` helper already sends the header.
+
 ## Work-folder boundary and protected export names (security audit batch 2)
 
 - **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's

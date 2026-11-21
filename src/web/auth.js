@@ -179,12 +179,16 @@ function isApiRunPath(p) {
 // already covers modern browsers; this is the belt to that suspenders, and it's what the
 // file-editor routes already do with their own token.
 //
-// Reads are exempt (no state change), and so is the run API — that's machine-to-machine traffic
-// authenticated by an API key, not a cookie, so it isn't a confused-deputy target.
+// Reads are exempt (no state change). The run API is NOT exempt by path: a POST to /api/runs that
+// authenticates with the session COOKIE starts an admin run, so it is exactly the confused-deputy
+// target this guards and carries the same header as every other cookie mutation. Machine callers
+// stay unaffected because they never reach this check — a request that carries a valid run-API
+// credential (the organization key or a channel `cgk_` token, as X-API-Key or a bearer header) is
+// authenticated by that credential (authMiddleware), and a cross-site page cannot set either header
+// without a CORS preflight we never answer.
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export function csrfOk(req) {
   if (SAFE_METHODS.has(req.method)) return true;
-  if (isApiRunPath(req.path)) return true;
   return String(req.headers["x-cg-request"] || "") === "1";
 }
 
@@ -210,8 +214,11 @@ export function authMiddleware(req, res, next) {
   const s = adminSession(req);
   if (s) {
     if (isApiPath(req.path) && adminLinkRequired(s.account)) return res.status(403).json({ code: 'identity_link_required', error: 'Verify and link your existing administrator user before managing the gateway.' });
-    if (!csrfOk(req)) return res.status(403).json({ error: "missing X-CG-Request header" });
-    return next();
+    if (csrfOk(req)) return next();
+    // A machine caller that also happens to send a cookie: its run-API credential, a header no
+    // cross-site page can set, authenticates the run instead (and scopes it like any key call).
+    if (isApiRunPath(req.path) && apiRunKeyOk(req)) return next();
+    return res.status(403).json({ error: "missing X-CG-Request header" });
   }
 
   // A valid run-API key stands in for the session cookie on the /api/runs routes.
