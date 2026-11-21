@@ -37,6 +37,9 @@
 - Show skill requests **waiting for approval** on the Activity Skills page: each conversation lists
   the requests made in it that an organization admin has not decided yet, to every member of that
   conversation; "Only me" lists your own. The conversation picker shows how many are waiting.
+- Agents working in a git repository now clean up completely after landing a task: the worktree,
+  the local branch, and the branch on GitHub (or another remote) if it was pushed, then prune stale
+  remote references. Unmerged branches are still never deleted.
 - Let a channel's members approve or reject edits proposed for **their own channel skills** (for
   example an edit filed from another channel), by asking the agent in that channel — no admin and
   no approval card needed, just as when they edit the skill themselves. Organization skills,

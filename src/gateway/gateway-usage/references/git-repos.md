@@ -81,14 +81,21 @@ git push origin main                    # when a remote is configured
 
 ## Step 4 — clean up (only after landing)
 
+Every landed task leaves nothing behind: not its worktree, not its local branch, and not its
+branch on the remote (GitHub).
+
 ```sh
 git merge-base --is-ancestor <type>/<slug> main   # exit 0 = safely merged
 git worktree remove .worktrees/<slug>
 git branch -d <type>/<slug>
+git push origin --delete <type>/<slug>            # only if the branch was ever pushed
+git fetch --prune origin                          # drop stale origin/* refs
 ```
 
-**Never delete an unmerged branch or a worktree with uncommitted changes.** If the check fails,
-leave both in place and report it.
+**Never delete an unmerged branch or a worktree with uncommitted changes**, locally or on the
+remote. If the check fails, leave them in place and report it. Delete only the task's own branch —
+never the default or integration branch (`main`, `beta`, …) or anything another task owns. A
+pull request merged on the host may already have deleted its head branch; that is fine.
 
 **Remove a worktree with `git worktree remove`, never `rm -rf .worktrees/<slug>`.** A plain
 directory delete leaves git's bookkeeping behind: `git worktree list` keeps listing the entry as
@@ -120,9 +127,11 @@ Any session can inspect and tidy the shared state:
 ```sh
 git worktree list      # open task worktrees
 git branch -a --no-merged main    # branches with unlanded work
+git branch -r --merged origin/main   # remote branches already landed (cleanup leftovers)
 ```
 
-- A branch already merged into `main` whose worktree is still around → safe to clean up (step 4).
+- A branch already merged into `main` whose worktree, local branch or remote branch is still
+  around → safe to clean up (step 4).
 - An entry marked `prunable` — its directory is already gone, only the metadata is left. Run
   `git worktree prune` once, then judge the branch by the two rules above.
 - An unmerged branch → another thread's work in progress, or an abandoned task. Don't merge or
