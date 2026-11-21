@@ -1,5 +1,36 @@
 # ChannelGate — Features
 
+## Everyone in a channel may change its runtime; only admins set the allow list (2026-11-21)
+
+Two rules, and nothing else decides who may change a conversation's harness, license, model or
+effort:
+
+- **Everyone who may talk in a conversation may change its runtime.** Administrators, approved
+  members and guests holding the channel's grant alike may use `/model`, `/license`, `/effort`,
+  the `claude` / `codex` word, a typed license id, model shortcuts, `/fork :shortcut`, the `/model`
+  wizard (for one thread or as the channel's default) and the runtime pickers, thread pins and
+  thread reset on the Settings Agent page — in Slack, Microsoft Teams and Google Chat. Someone who
+  may not talk in the conversation is still refused before any of these is read.
+- **Only organization administrators define what may be picked.** A channel's *Approved harnesses*
+  (all, whole harnesses or single licenses; an Enterprise control) is changed in the admin UI or by
+  an administrator on the Slack Settings Agent page; a member sees neither the control nor a way to
+  submit it. Every pick is checked against that list where it is written, so a pick outside it is
+  answered ("Codex is not an approved harness for this channel. …") and changes nothing — a
+  button left on an older wizard card included, which used to answer "check the gateway logs".
+- **The gateway setting "Who can change the model/runtime in channels" is removed**
+  (`modelChangeAccess`, its Settings card "Runtime changes", `canChangeChannelRuntime`). It
+  defaulted to "Org admins only", which refused members `/model`, the shortcuts and the Settings
+  pickers in every channel while the harness word and a license id stayed open to them. A value
+  an earlier release stored is ignored; an installation that kept "Org admins only" and wants a
+  channel's runtime fixed narrows that channel's Approved harnesses instead. There is no
+  per-channel model list: the models a person can pick are the chosen license's.
+- Not changed: the allow list's own rules (`src/gateway/channel-engines.js`), the switched-on
+  check for harnesses, a pinned thread never being answered by another harness, and
+  `--dangerously-skip-permissions` being an administrator's in an Admin-mode channel only —
+  changing the model grants no tool permission.
+
+→ TEST-PLAN: Everyone in a channel may change its runtime; only admins set the allow list.
+
 ## A license or model pick outside the channel's allow list is answered (2026-11-21)
 
 The rule: anyone who may talk in a conversation may pick the license and model for a thread, and
@@ -24,12 +55,10 @@ pick names something outside the list.
 - A pick the stored list refuses at the write itself (the list changed between the check and the
   pin) is answered too, after re-checking that the author may talk in the conversation.
 - Teams and Google Chat already answered a refused `/model` / `/license` pick; unchanged.
-- Not changed: who may use `/model`, `/license`, `/effort`, model shortcuts and the Settings
-  runtime controls in a channel is still the gateway setting "Who can change the model/runtime in
-  channels" (`modelChangeAccess`, "Org admins only" unless the operator chooses "All authorized
-  users"; direct messages are exempt). The `claude` / `codex` word and a typed license id are
-  open to every participant under either value. There is no per-channel model list: the models a
-  person can pick are the chosen license's.
+- Who may use `/model`, `/license`, `/effort`, model shortcuts and the Settings runtime controls
+  was a separate gateway setting when this shipped; it has since been removed (section above), so
+  the allow list is the only bound for every participant. There is no per-channel model list: the
+  models a person can pick are the chosen license's.
 
 → TEST-PLAN: A license or model pick outside the channel's allow list is answered.
 
@@ -1834,12 +1863,12 @@ Task progress remain visible; older agent streams without optional task-type met
   (`channel_access_members_evicted`) records the count only, and widening the policy back does not
   re-admit anyone by itself (seeding resumes on the next message). The org-wide access reset still
   clears the whole list.
-- **Settings runtime controls follow the model-change policy.** The channel engine / model / effort
-  pickers, thread pins and the thread reset in Slack Settings apply the gateway's model-change
-  access exactly like `/model`, the wizard, the shortcuts and the platform controls: a DM owner may
-  always set them; elsewhere a non-admin may only under the "users" policy. Someone who may not
-  change them sees the current values and the 🔒 policy line instead of pickers, and a crafted
-  payload is refused with the same message and writes nothing.
+- **Settings runtime controls are open to everyone who may open Settings.** The channel engine /
+  model / effort pickers, thread pins and the thread reset in Slack Settings are editable by every
+  participant, like `/model`, the wizard, the shortcuts and the platform controls (the gateway's
+  model-change policy that used to turn them read-only for non-admins was removed on 2026-11-21).
+  A pick is checked against the channel's Approved harnesses before it is written, and only an
+  organization administrator sees or may submit the Approved harnesses control.
 ## Login backoff behind a reverse proxy (security audit batch 3)
 
 - The admin login backoff and the approval-link token backoff key each client on the header of
@@ -3534,8 +3563,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Portable text controls provide `/help`, `/status`, `/stop` (`/cancel`), `/clear`,
   `/model [engine] [model|default]`, and `/effort [level|default]`. Quote the original message or
   bot reply and include the bot mention to control an existing flat group session. Unquoted
-  group commands refer to their own new session. Runtime changes use the existing channel admin
-  policy (approved personal chats retain their own runtime choices); stop/clear cannot cancel
+  group commands refer to their own new session. Runtime changes are open to everyone who may talk
+  in the conversation, within its Approved harnesses; stop/clear cannot cancel
   another person's active or queued work unless the requester is an administrator.
 - Work in one session queues with a visible position; unrelated sessions remain independent.
   Clear aborts active/queued work, waits for completion, and fences late session saves. Google Chat progress
@@ -4663,8 +4692,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   forked session. The source session keeps its ID and history; the new Slack `thread_ts` maps to
   the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
   `@agent /fork :model-shortcut <new message>` selects a configured model for the child and
-  clears its inherited effort pin, leaving the source unchanged. It uses the same model-change
-  access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
+  clears its inherited effort pin, leaving the source unchanged. Like an ordinary shortcut it is
+  open to everyone who may talk in the conversation. A shortcut for a different engine starts a fresh session
   in the linked child thread and replays the source's Slack messages through the existing bounded
   context handoff. It does not transfer the old engine's native transcript/tool state. The fork
   command and later source requests are excluded; queued cross-engine forks include bot replies completed while waiting; unavailable Slack history is refused before

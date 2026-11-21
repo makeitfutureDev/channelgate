@@ -35,6 +35,14 @@
     answers HTTP 403 for its model list is shown as unverified, not as a rejected key.
   - Pressing Verify on a license no longer makes the next Save on the same Settings page fail
     as out of date.
+- Everyone who may talk in a channel can now change its harness, license, model and effort —
+  `/model`, `/license`, `/effort`, model shortcuts, `/fork :shortcut` and the runtime pickers in
+  Settings, in Slack, Microsoft Teams and Google Chat. What they may pick is bounded by the
+  channel's *Approved harnesses* (all, or specific harnesses and licenses), which only
+  administrators can change. **The setting "Who can change the model/runtime in channels" is
+  removed.** It defaulted to "Org admins only", so on most installations members could not use
+  `/model` or the shortcuts in a channel; after this update they can. To keep a channel on one
+  harness or license, set its Approved harnesses.
 - Answer a license or model pick that the channel's Approved harnesses list does not allow. In
   Slack, typing `codex …`, a license id or a model shortcut for a harness or license the channel
   has not approved — or pressing "switch" on the harness-switch card — used to do nothing at all:

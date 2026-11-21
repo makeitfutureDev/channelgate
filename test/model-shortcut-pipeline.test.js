@@ -180,18 +180,21 @@ test("shortcut tasks start and resume the mapped model, switch engines, and stri
   assert.doesNotMatch(retryPrompt, /:opus/, "the shortcut prefix is stripped from a card retry");
 });
 
-test("runtime permission, disabled engine and dedicated Codex login refuse a shortcut before changing pins", async () => {
+test("a member's shortcut needs no admin; a disabled engine refuses it before changing pins; a dedicated Codex login still switches", async () => {
   const channel = "CSHORTCUT";
   const entry = await upsertChannelEntry(channel, { name: "shortcut-channel", type: "channel", isDM: false });
   const meta = { channelId: channel, name: entry.name, type: "channel", isDM: false, template: "custom", allowedUsers: [USER], engine: "claude" };
   await saveChannelMeta(entry.slug, meta);
   const shortcuts = { astra: { engine: "codex", model: "gpt-6-astra" }, opus: { engine: "claude", model: "claude-opus-5-5" } };
   const send = (name, ts) => processMessageEvent({ type: "message", channel, channel_type: "channel", user: USER, text: `<@${BOT}> :${name}`, ts }, client, { botUserId: BOT });
-  saveSettings({ modelShortcuts: shortcuts, modelChangeAccess: "admins" });
+  // The sender is an approved member, not an administrator. A value an earlier release stored
+  // for the retired "who can change the runtime" setting restricts nothing.
+  saveSettings({ modelShortcuts: shortcuts, modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
   await send("astra", "125.001");
-  assert.match(messages.at(-1).text, /Only admins/);
-  assert.equal(await getThreadEngine(entry.slug, "125.001"), "");
-  saveSettings({ modelChangeAccess: "users", engineEnabled: { claude: true, codex: false } });
+  assert.doesNotMatch(messages.at(-1).text, /Only admins/);
+  assert.equal(await getThreadEngine(entry.slug, "125.001"), "codex");
+  assert.equal(await getThreadModel(entry.slug, "125.001"), "gpt-6-astra");
+  saveSettings({ engineEnabled: { claude: true, codex: false } });
   await send("astra", "125.002");
   assert.match(messages.at(-1).text, /enabled engine/);
   assert.equal(await getThreadModel(entry.slug, "125.002"), "");

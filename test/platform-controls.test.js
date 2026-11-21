@@ -51,11 +51,15 @@ test('clear waits for aborted work and fences late session saves', async () => {
   assert.equal(await getSession('controls', 'root'), ''); assert.match(notices.at(-1), /Session cleared/);
 });
 
-test('runtime policy is enforced and reactions never execute quoted slash commands', async () => {
+test('a member changes the runtime in a group and reactions never execute quoted slash commands', async () => {
   const controls = createConversationControls(); const replies = [];
   const reply = async (v) => replies.push(v);
+  // No gateway setting reserves runtime changes for administrators: a participant's pick is saved.
   await args(controls, '/model sonnet', { authorIsAdmin: false, reply });
-  assert.match(replies.at(-1), /restricted/);
+  assert.doesNotMatch(replies.at(-1), /restricted/);
+  assert.equal(await getThreadModel('controls', 'root'), 'sonnet');
+  await args(controls, '/model default', { authorIsAdmin: false, reply });
+  assert.equal(await getThreadModel('controls', 'root'), '');
   assert.equal(await args(controls, '/clear', { message: { ...message('/clear'), trigger: 'reaction' }, reply }), false);
   await args(controls, '/model sonnet', { message: { ...message('/model sonnet'), isDM: true }, authorIsAdmin: false, reply });
   assert.equal(await getThreadModel('controls', 'root'), 'sonnet');

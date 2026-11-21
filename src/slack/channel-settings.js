@@ -708,19 +708,14 @@ const masked = (value = {}) => (value.configured ? (value.last4 ? inlineCode(`�
 // than one license usable here — adds the License dropdown to the row and, for a specific license,
 // the "also use" multi-select under it. `data.selection` is the stored selection in words.
 const RUNTIME_PLACEHOLDERS = Object.freeze({ engine: "harness", model: "model", effort: "effort" });
-function runtimeRow(scope, data = {}, state, { editable = true, reset = false } = {}) {
+function runtimeRow(scope, data = {}, state, { reset = false } = {}) {
   const ids = RUNTIME_SELECT_ACTION_IDS[scope];
   const values = data.values || {};
   const inherited = data.inherited || {};
   const lists = { engine: data.options?.engines || [], model: data.options?.models || [], effort: data.options?.efforts || [] };
-  const fields = RUNTIME_FIELDS;
   // The harness the stored license belongs to. An id no adapter answers to any more stays as it is,
   // so the row still shows what is stored instead of silently reading as the default.
   const shown = { ...values, engine: values.engine ? harnessOf(values.engine) || values.engine : "" };
-  if (!editable) {
-    const text = { ...shown, engine: values.engine ? data.selection || harnessLabel(shown.engine) || values.engine : "" };
-    return [context(fields.map((field) => text[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
-  }
   const select = (field) => {
     const options = [{ label: inherited[field] ? `${inherited[field]} (default)` : "Default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]];
     const known = options.some((entry) => entry.value === shown[field]);
@@ -843,19 +838,17 @@ function agentPage(snapshot, state, opts) {
   const runtime = snapshot.runtime || {};
   const scopes = runtime.scopes || {};
   const thread = scopes.thread || null;
-  const editable = opts.canEditRuntime !== false;
   const locked = Boolean(runtime.channelLogin);
   const vpn = snapshot.vpn;
   return [
     ...(locked ? [context(`*Codex* · this channel's own login · ${escapeMrkdwn(runtime.channelLoginStatus || "checking…")}`)] : []),
     ...(thread ? [
       context(`*This thread*${thread.pinned ? " · 📌 pinned" : ""}`),
-      ...runtimeRow("thread", thread, state, { editable, reset: editable && thread.pinned }),
+      ...runtimeRow("thread", thread, state, { reset: thread.pinned }),
       ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin a harness._`)] : []),
     ] : []),
     context("*Channel default*"),
-    ...runtimeRow("channel", scopes.channel, state, { editable }),
-    ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
+    ...runtimeRow("channel", scopes.channel, state),
     ...harnessRows(runtime, opts),
     { type: "divider" },
     ...(snapshot.workspaceLink ? [context("Mode, Auto, Lean and network follow the source conversation.")] : modeRows(snapshot, state, opts)),
@@ -1215,7 +1208,6 @@ const MAX_VIEW_BLOCKS = 100;
 
 export function buildChannelSettingsView(snapshot = {}, state = {}, {
   tab = state.tab,
-  canEditRuntime = true,
   canApproveHarnesses = false,
   canEnableAdmin = false,
   canEditSecrets = false,
@@ -1231,7 +1223,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   const pages = settingsPages({ isDM: snapshot.isDM });
   const wanted = normalizeTab(tab);
   const active = pages.includes(wanted) ? wanted : pages[0];
-  const opts = { canApproveHarnesses, canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
+  const opts = { canApproveHarnesses, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
   const content = snapshot.workspaceLink && ["access", "mcp", "skills"].includes(active)
     ? [context("These shared settings are managed in the source conversation. Your personal settings remain under You.")]
     : {

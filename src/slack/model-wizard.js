@@ -27,7 +27,7 @@ import { getChannelEntry, getChannelMeta, patchChannelMeta, isAdmin, isApproved 
 // they live in the thread override store, never in the channel's meta.
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { assertChannelEngineApproved } from "../gateway/channel-engines.js";
-import { getEngine, getEnginePool, canChangeChannelRuntime } from "../config/settings.js";
+import { getEngine, getEnginePool } from "../config/settings.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { setThreadEngine, getThreadEngine, getThreadLicensePool, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
@@ -400,10 +400,6 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       await ephemeral("You're not approved to change runtime settings here.");
       return;
     }
-    if (!isDM && !canChangeChannelRuntime(userIsAdmin)) {
-      await ephemeral("Only admins can change the harness, model, or effort in a channel.");
-      return;
-    }
 
     const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: modelWizardText(meta), blocks });
     // Persist a channel-scope pick AND record who changed what. The replaced record is captured
@@ -677,6 +673,6 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     }
   } catch (e) {
     console.error("[slack] model wizard error:", e.message);
-    if (channel) await ephemeral(e.code === "engine_selection_unavailable" || e.code === "invalid_license_pool" ? e.message : "Couldn't update runtime settings — check the gateway logs.");
+    if (channel) await ephemeral(["engine_selection_unavailable", "invalid_license_pool", "channel_engine_not_approved"].includes(e.code) ? e.message : "Couldn't update runtime settings — check the gateway logs.");
   }
 }

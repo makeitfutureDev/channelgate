@@ -44,7 +44,7 @@ const signIn = (id) => {
   mkdirSync(licenseLoginHome(id), { recursive: true, mode: 0o700 });
   writeFileSync(path.join(licenseLoginHome(id), "auth.json"), JSON.stringify({ tokens: { access_token: jwt(), refresh_token: "fixture-refresh", account_id: "lic-test" } }), { mode: 0o600 });
 };
-const reset = () => saveSettings({ engineLicenses: [], engine: "claude", enginePool: "", engineEnabled: { claude: true, codex: true }, engineFallback: true, modelChangeAccess: "admins" });
+const reset = () => saveSettings({ engineLicenses: [], engine: "claude", enginePool: "", engineEnabled: { claude: true, codex: true }, engineFallback: true });
 // Two more Codex licenses beside the default sign-in.
 function twoLicenses() {
   reset();
@@ -409,7 +409,7 @@ test("a pick outside the channel's allow list is answered, pins nothing and star
   assert.deepEqual(await pin("1905.001"), [work, "", ""]);
 
   // A model shortcut naming a license outside the list (members may use shortcuts here).
-  saveSettings({ modelChangeAccess: "users", modelShortcuts: { seat: { engine: second, model: "gpt-6.1-sol" } } });
+  saveSettings({ modelShortcuts: { seat: { engine: second, model: "gpt-6.1-sol" } } });
   await say(":seat summarize the README", "1905.004");
   assert.match(messages.at(-1).text, refused);
   assert.deepEqual(await pin("1905.004"), ["", "", ""], "neither the license nor the shortcut's model is pinned");

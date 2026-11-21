@@ -38,7 +38,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, canChangeChannelRuntime, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
@@ -1317,9 +1317,6 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
   return {
     canEnableAdmin: Boolean(userIsAdmin),
     canApproveHarnesses: Boolean(userIsAdmin && getLicenseStatus().features.channelHarnessPolicy),
-    // The same policy `/model` applies: a DM is always its owner's to set; elsewhere a non-admin
-    // edits the runtime only when the gateway's model-change access is "users".
-    canEditRuntime: Boolean(meta.isDM) || canChangeChannelRuntime(userIsAdmin),
     canEditSecrets: true,
     // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
     canEditOrgSecrets: Boolean(userIsAdmin),
@@ -1615,13 +1612,6 @@ export async function saveAccessSettings(client, state, userId, form) {
     if (dropped) await logEvent("channel_access_members_evicted", { channel: state.channelId, slug: entry.slug, access: saved.access, count: dropped, author: userId });
     return { entry, saved, userIsAdmin, dropped };
   });
-}
-
-// The Settings runtime controls (channel engine / model / effort, thread pins and their reset)
-// follow the gateway's model-change policy exactly as `/model`, the wizard, the shortcuts and the
-// platform controls do: a DM is always its owner's; elsewhere a non-admin needs the "users" policy.
-export function assertRuntimeChangeAllowed(meta, userIsAdmin) {
-  if (!meta?.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only admins can change the harness, model, or effort in a channel.");
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
@@ -2523,7 +2513,6 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
-        assertRuntimeChangeAllowed(meta, userIsAdmin);
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         // "If it fails, also use" is a multi-select: every dispatch carries the whole list.
         const also = (action?.selected_options || []).map((entry) => String(entry?.value || "")).filter(Boolean);
@@ -2556,7 +2545,6 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
-        assertRuntimeChangeAllowed(meta, userIsAdmin);
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {
@@ -3272,10 +3260,6 @@ async function connectAndWire(app) {
       const userIsApproved = await isApproved(command.user_id);
       if (!isAuthorized(meta, command.user_id, Boolean(meta.isDM), { isAdminUser: userIsAdmin, isApprovedUser: userIsApproved })) {
         await respond({ response_type: "ephemeral", text: "You're not approved to change runtime settings here." });
-        return;
-      }
-      if (!meta.isDM && !canChangeChannelRuntime(userIsAdmin)) {
-        await respond({ response_type: "ephemeral", text: "Only admins can change the harness, model, or effort in a channel." });
         return;
       }
       const threadTs = command.thread_ts || "";

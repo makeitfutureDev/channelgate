@@ -52,7 +52,7 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
 import { parseModelShortcut } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
@@ -916,9 +916,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (!forkTarget) {
               await reply(`Unknown model shortcut \`:${forkShortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.`); return;
             }
-            if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
-              await reply("Only admins can change the model in this channel."); return;
-            }
             if (!isEngineEnabled(forkTarget.engine) || !modelBelongsToEngine(forkTarget.model, forkTarget.engine)) {
               await reply(`Model shortcut \`:${forkShortcut.name}\` needs an enabled engine and valid model. Update it in Settings.`); return;
             }
@@ -1119,10 +1116,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // threads the AI is waiting on them for (same formatting, permalinks included).
         await reply(await buildPendingReportForUser(client, event.user, botUserId));
       } else if (sc.cmd === "model") {
-        if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
-          await reply("Only admins can change the harness, model, or effort in a channel.");
-          return;
-        }
         await postModelWizard(client, { channel: event.channel, threadTs: threadKey, meta });
       } else if (sc.cmd === "effort" || sc.cmd === "engine") {
         // Retired — kept in SLASH_COMMANDS so the text answers with a pointer instead of being
@@ -1239,10 +1232,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
       if (!target) {
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `Unknown model shortcut \`:${shortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.` });
-        return;
-      }
-      if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
-        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "Only admins can change the model in this channel." });
         return;
       }
       if (!isEngineEnabled(target.engine) || !modelBelongsToEngine(target.model, target.engine)) {

@@ -1,5 +1,54 @@
 # ChannelGate — Test Plan
 
+## Everyone in a channel may change its runtime; only admins set the allow list (2026-11-21)
+
+Who may change a runtime and what the allow list admits are decided by the gateway before any
+engine starts, so the automated cases are engine-independent. The live case is run once in a
+Claude-default channel switching to Codex and once in a Codex-default channel switching to Claude
+Code, because the proof that a member's pick took effect is the engine that answers.
+
+- [x] `test/settings-runtime-policy.test.js` (always runs): a member's Settings Agent page has
+      the runtime pickers and no Approved harnesses control, an administrator's has both; a
+      stored `modelChangeAccess: "admins"` is neither reported by `settingsForApi()` nor honored;
+      the Approved harnesses handler refuses a non-admin before writing, the runtime handler
+      checks the allow list before writing, and no source file reads the retired gate.
+- [x] `test/model-wizard-channel-scope-thread.test.js` "a member who is not an administrator
+      changes the runtime, inside the channel's allow list" (always runs): with the retired
+      setting stored as "admins", an approved non-admin sets the channel default (harness, model,
+      effort) and pins another harness for one thread through the `/model` wizard with no
+      refusal; after the list is narrowed to Claude Code the wizard no longer offers Codex, a
+      Codex button from an older card is answered "Codex is not an approved harness for this
+      channel. …" for both scopes and writes nothing, the allow list is unchanged; a person who
+      is not approved gets "You're not approved to change runtime settings here.".
+- [x] `test/model-shortcut-pipeline.test.js` "a member's shortcut needs no admin; …",
+      `test/engine-licenses-platforms.test.js` "/license is open to a member who is not an
+      administrator, …" and `test/teams-model-command.test.js` "a member who is not an
+      administrator opens the card and applies a runtime; personal chats too" (always run): the
+      Slack shortcut, the Teams / Google Chat text commands and the Teams card for a member.
+      `test/platform-controls.test.js` "a member changes the runtime in a group …": `/model
+      sonnet` by a non-admin in a group conversation is saved and `/model default` clears it.
+- [x] `test/channel-settings-modal.test.js` and `test/slack-fork.test.js` (always run): the
+      default Agent page carries the pickers with no policy line; a member's `/fork :shortcut`
+      is accepted.
+- [ ] Live `LICENSE-30` a member changes the runtime inside the allow list (run once from a
+      Claude-default channel to Codex and once from a Codex-default channel to Claude Code).
+      Fixture: an Enterprise license; both harnesses switched on; channel `C` with Approved
+      harnesses "all"; `M`, an approved member who is not an administrator; one model shortcut
+      `:other` on the other harness. Action, all as `M` in `C`: (1) in a new thread type
+      `/model`, choose "This thread", the other harness, a model and an effort, then send
+      `@bot which harness and model are you? say ready`; (2) in a second new thread send
+      `@bot :other say ready`; (3) open ⚙️ Settings → Agent and change the channel's harness to
+      the other one, then send `@bot say ready` in a third new thread; (4) as an administrator
+      set Approved harnesses to the channel's original harness only, then as `M` send
+      `@bot :other say ready` in a fourth new thread and open ⚙️ Settings → Agent again. Pass:
+      no step answers "Only admins …"; the footers of (1), (2) and (3) name the other harness
+      and (1) the chosen model and effort; `SELECT engine FROM thread_overrides WHERE slug =
+      '<C's slug>' AND thread_key IN ('<thread 1 ts>', '<thread 2 ts>')` returns the other
+      harness twice; `M`'s Settings Agent page shows pickers and NO "Approved harnesses" control
+      in (3) and (4); (4) gets one reply "… is not approved for this conversation. Approved here:
+      …" with no progress card, and `M`'s harness picker in Settings offers the approved harness
+      only. Restore: Approved harnesses "all" and the channel's original harness.
+
 ## A license or model pick outside the channel's allow list is answered (2026-11-21)
 
 The refusal is decided by the gateway before any engine starts, so the automated cases are
@@ -3196,12 +3245,12 @@ Running label acceptance (Claude and Codex; updated 2026-11-12): in a Slack agen
   member's row is now unticked, and a message by that member is refused with the
   "restricted to admins" reason. Switch back to "Approved members": the member's next message is
   admitted again (re-seeded). PASS when all three hold.
-- [ ] Live, Slack, Claude AND Codex: with Settings → model-change access at "admins", open ⚙️
-  Settings as an approved non-admin member. Expected: the Agent page shows the channel default as
-  text with the 🔒 policy line and no engine/model/effort pickers, and `/model` in the channel is
-  refused. As an admin, switch the channel default to the other engine from the same page; the
-  member's next turn in a fresh thread reports the new engine. Repeat with the policy at "users":
-  the member's pickers appear and a member's switch takes effect. PASS when both engines show the
+- [ ] Live, Slack, Claude AND Codex (the "model-change access" setting this case used to toggle
+  was removed on 2026-11-21; see `LICENSE-30`): open ⚙️ Settings as an approved non-admin member.
+  Expected: the Agent page shows the engine/model/effort pickers with no 🔒 policy line and no
+  Approved harnesses control, and `/model` in the channel opens the wizard. Switch the channel
+  default to the other engine from that page; the member's next turn in a fresh thread reports
+  the new engine. PASS when both engines show the
   expected spawn evidence.
 ## Login backoff behind a reverse proxy (2026-10-25)
 
@@ -11142,8 +11191,8 @@ none` for its cases and live gates. Kept as history.
       child session ID and the selected model in usage/footer. Confirm the source model/effort
       pins are unchanged and follow-ups in the child retain its model. Reject an unknown name,
       and a shortcut without a message before posting a root;
-      with model changes limited to admins, repeat as an approved non-admin in a channel and
-      confirm denial, while its DM permits a valid shortcut. No live pass claimed by fixtures.
+      repeat as an approved non-admin in a channel and in its DM and confirm a valid shortcut
+      is accepted in both (no gateway setting limits model changes to admins any more). No live pass claimed by fixtures.
 - [x] Unit/fixture (`test/slack-fork.test.js`): Claude → Codex and Codex → Claude shortcuts
       create fresh child sessions with the source Slack context/link and selected model, using
       neither native fork nor resume flags. The command/later messages are excluded, follow-ups

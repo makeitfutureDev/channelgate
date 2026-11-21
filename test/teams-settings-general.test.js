@@ -236,7 +236,7 @@ test('thread triple storage rolls back all fields on failure and checks its expe
 });
 
 test('authorized user can edit Settings runtime independently of text model command policy', async () => {
-  saveSettings({ modelChangeAccess: 'admins', engineEnabled: {} });
+  saveSettings({ engineEnabled: {} });
   const ctx = context({ engine: 'claude', model: 'opus', effort: 'high', cleanMode: true });
   await handleGeneral('settings.runtime', { scope: 'channel', field: 'engine', channel_engine: 'codex', channel_model: 'FORGED-NEIGHBOUR' }, ctx, ui);
   assert.equal(ctx.meta.engine, 'codex');
