@@ -11,15 +11,14 @@ Connected apps give an agent access to services such as email, calendars, drives
 | --- | --- | --- |
 | Personal | A user's account controls; admin **Users** drawer also manages their token | `composio-user`, only on that person's runs |
 | Conversation | **Conversations → MCP Connections** | `composio-agent` for that conversation |
-| Organization default | **Settings → Integrations** | Shared identity when a conversation has no overriding token |
 
-In Personal connection mode, the agent's Composio token resolves **conversation → organization default**. The requester's personal token remains separate. Shared Composio is suppressed in one-to-one DMs, where the requesting person's connection is the relevant identity.
+In Personal connection mode, the agent's Composio identity is the **conversation's own token** only; there is no organization-wide default, so a conversation without a token has no `composio-agent`. The requester's personal token remains separate. Shared Composio is suppressed in one-to-one DMs, where the requesting person's connection is the relevant identity.
 
 
 ## Configure a shared app identity
 
 1. Open **Settings → Integrations → Composio connection mode** and check which mode the deployment uses.
-2. For Personal mode, configure the intended shared Composio token either for this conversation or as the organization default.
+2. For Personal mode, configure the intended shared Composio token on this conversation.
 3. Keep endpoint settings pointed at the intended integration service; changing a URL does not migrate accounts.
 4. Save the configuration, then ask the agent to inspect the connection status and account metadata for the relevant service.
 5. Test a read before asking for a write. Name the intended account in the write request.

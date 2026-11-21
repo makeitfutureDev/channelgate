@@ -4,7 +4,7 @@ import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Card state carries identifiers only; stored credentials never become input defaults.
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
-import { getDefaultComposioToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
+import { getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
 import { getChannelMeta, getUser, setUser } from '../../config/store.js';
 import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
@@ -148,7 +148,7 @@ export async function renderCatalogPage(page, ctx, ui) {
   const meta = ctx.meta;
   const connectionSummary = ctx.isShared
     ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
-    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}`;
+    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}`;
   body.push(ui.heading('MCP connections'), ui.text(connectionSummary));
   if (ctx.publicCredentials) {
     body.push(ui.text('Add and rotate connection credentials in your private browser settings.'),
@@ -158,8 +158,6 @@ export async function renderCatalogPage(page, ctx, ui) {
     ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''),
     ui.input('makeToolboxUrl', 'Make MCP server URL', meta.makeToolboxUrl || ''), ui.input('makeToolboxKey', 'New Make MCP token', ''),
     ui.buttons([ui.execute('Save connections', 'settings.connections.save')]));
-  body.push(ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
-    ui.buttons([ui.execute(meta.noDefaultTokens ? 'Enable inherited credentials' : 'Disable inherited credentials', 'settings.connections.fallback', { enabled: Boolean(meta.noDefaultTokens) }, 'none')]));
   const disconnect = [];
   if (meta.composioToken) disconnect.push(ui.execute('Disconnect Composio', 'settings.connections.remove', { connection: 'composio' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
@@ -245,7 +243,7 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     }
     return true;
   }
-  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
+  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
   if (!known.includes(action)) return false;
   const current = await fresh(ctx);
   if (ctx.publicCredentials && ['settings.variable.save', 'settings.connections.save', 'settings.personal.save', 'settings.email.save'].includes(action)) {
@@ -336,12 +334,6 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     await current.patch(() => patch);
     await record(current, 'channel_connection_removed', { connection: data.connection });
     ctx.state.tab = 'mcp'; ctx.state.notice = 'Connection removed.';
-    return true;
-  }
-  if (action === 'settings.connections.fallback') {
-    if (typeof data.enabled !== 'boolean') throw new Error('Invalid inherited credential setting.');
-    await current.patch(() => ({ noDefaultTokens: !data.enabled }));
-    ctx.state.tab = 'mcp'; ctx.state.notice = 'Inherited credential setting saved.';
     return true;
   }
   if (action === 'settings.cloud.toggle') {

@@ -12,14 +12,15 @@ routing rules. Routine replies need no credential details; when asked about isol
 the supported scopes without assuming the current source or connected service owner. The admin
 chooses one global Composio mode in Settings:
 
-- **Personal:** a saved user token backs `composio-user`; a channel token, else the organization
-  default, backs `composio-agent`.
+- **Personal:** a saved user token backs `composio-user`; the channel's own token backs
+  `composio-agent`. There is no organization-wide Composio token: a channel without its own token
+  (and every DM) has no `composio-agent`.
 - **SDK:** one organization SDK key dynamically provisions stable identities for each Slack user
   and channel, with a separate Composio session per Slack thread. Every user can manage the
   connections on their personal identity. Managing `composio-agent`'s connections follows this
   channel's managing rights; other authorized members can use its existing connections.
 
-Switching modes never deletes existing personal, channel, or organization Composio tokens.
+Switching modes never deletes existing personal or channel Composio tokens.
 `set_my_composio_token` / `clear_my_composio_token` still update the saved Personal-mode credential
 while SDK mode is active, but that credential remains inactive until Personal mode is selected
 again. The SAFEST way for someone to set their personal Composio key is the bot's **App Home tab**

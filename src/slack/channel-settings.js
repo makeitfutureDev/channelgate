@@ -34,7 +34,6 @@ export const CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID = "cg_channel_settings_thr
 export const CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID = "cg_channel_settings_thread_reset";
 export const CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID = "cg_channel_settings_connections_edit";
 export const CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID = "cg_channel_settings_connections_form";
-export const CHANNEL_SETTINGS_FALLBACK_ACTION_ID = "cg_channel_settings_connections_fallback";
 export const CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID = "cg_channel_settings_clear_composio";
 export const CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID = "cg_channel_settings_clear_make";
 export const CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID = "cg_channel_settings_cloud_manage";
@@ -86,7 +85,6 @@ export const CHANNEL_SETTINGS_MEMBER_ACTION_ID = "cg_channel_settings_member";
 export const ACCESS_MEMBER_BLOCK_PREFIX = "cg_member_";
 export const CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID = "cg_channel_settings_member_clear";
 export const CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID = "cg_channel_settings_member_find";
-export const CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID = "cg_channel_settings_fallback_toggle";
 export const CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX = "cg_channel_settings_cloud_select_";
 export const CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_skills_select";
 export const CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_my_skills_select";
@@ -976,7 +974,7 @@ function connectionRows(snapshot, state, scope, opts) {
   } else {
     const saved = scope === "c" ? c.composioChannel : my.composio;
     const labelText = scope === "c" ? c.composioTokenLabel : my.composioLabel;
-    const status = saved?.configured ? `${masked(saved)}${labelText ? ` · ${escapeMrkdwn(labelText)}` : ""}` : scope === "c" && !c.noDefaultTokens && c.composioOrg?.configured ? "_uses the organization account_" : "_not connected_";
+    const status = saved?.configured ? `${masked(saved)}${labelText ? ` · ${escapeMrkdwn(labelText)}` : ""}` : "_not connected_";
     const form = `composio:${scope}`;
     blocks.push(...withForm(editableRow(`*${scope === "c" ? "Shared account" : "Your account"}* ${inlineCode(scope === "c" ? "composio-agent" : "composio-user")}\n${status}`, form, state, { connected: Boolean(saved?.configured) }), form, snapshot, state));
   }
@@ -989,12 +987,6 @@ function connectionRows(snapshot, state, scope, opts) {
     blocks.push(header("Make toolbox"));
     const status = c.makeToolboxUrl ? `${escapeMrkdwn(String(c.makeToolboxUrl).replace(/^https:\/\//, ""))} ${masked(c.makeToolboxKey)}` : "_not connected_";
     blocks.push(...withForm(editableRow(`${inlineCode("make-toolbox")}\n${status}`, "make:c", state, { connected: Boolean(c.makeToolboxUrl) }), "make:c", snapshot, state));
-  }
-  if (scope === "c") {
-    const fallback = option("Fall back to organization tokens", "fallback");
-    blocks.push({ type: "actions", block_id: "cg_connections_fallback", elements: [{
-      type: "checkboxes", action_id: CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, options: [fallback], ...(c.noDefaultTokens ? {} : { initial_options: [fallback] }),
-    }] });
   }
   // Custom MCP
   blocks.push(header("Custom MCP"));

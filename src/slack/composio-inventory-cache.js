@@ -2,11 +2,11 @@
 // digest, never a cache value/key in cleartext. Every caller still authorizes its viewer live.
 import { createHash } from "node:crypto";
 import { loadComposioInventory } from "../gateway/composio-inventory.js";
-import { getComposioMode, getComposioSdkApiKey, getDefaultComposioToken } from "../config/settings.js";
+import { getComposioMode, getComposioSdkApiKey } from "../config/settings.js";
 import { composioUrl } from "../gateway/mcp-catalog.js";
 
 const currentConfig = () => ({ mode: getComposioMode(), sdkApiKey: getComposioSdkApiKey(),
-  defaultToken: getDefaultComposioToken(), url: composioUrl(), workspaceId: process.env.CG_SLACK_TEAM_ID || "" });
+  url: composioUrl(), workspaceId: process.env.CG_SLACK_TEAM_ID || "" });
 
 export function createSettingsComposioCache({ load = loadComposioInventory, config = currentConfig,
   now = Date.now, ttlMs = 60_000, maxEntries = 32 } = {}) {
@@ -15,7 +15,7 @@ export function createSettingsComposioCache({ load = loadComposioInventory, conf
     const resolved = config();
     const record = request.record || {};
     const key = createHash("sha256").update(JSON.stringify([request.kind, request.id,
-      record.composioToken || "", Boolean(record.noDefaultTokens), Boolean(record.isDM || record.type === "im"), resolved])).digest("hex");
+      record.composioToken || "", Boolean(record.isDM || record.type === "im"), resolved])).digest("hex");
     return { key, resolved };
   };
   const fresh = (key) => {

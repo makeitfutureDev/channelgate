@@ -13,7 +13,7 @@ test("Composio mode defaults to personal", () => {
   assert.equal(settings.getComposioMode(), "personal");
 });
 
-test("switching Composio modes preserves organization credentials", () => {
+test("switching Composio modes preserves the SDK key; the retired organization token is purged", () => {
   settings.saveSettings({
     defaultComposioToken: "legacy-org-token",
     composioSdkApiKey: "sdk-secret",
@@ -21,7 +21,7 @@ test("switching Composio modes preserves organization credentials", () => {
   });
   settings.saveSettings({ composioMode: "personal" });
 
-  assert.equal(settings.getDefaultComposioToken(), "legacy-org-token");
+  assert.equal(settings.getSettings().defaultComposioToken, undefined);
   assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
   assert.equal(settings.getComposioMode(), "personal");
 });
@@ -50,7 +50,6 @@ after(() => server.close());
 
 test("saving only Composio mode through the admin route preserves every credential scope", async () => {
   settings.saveSettings({
-    defaultComposioToken: "legacy-org-token",
     composioSdkApiKey: "sdk-secret",
     composioMode: "personal",
   });
@@ -65,7 +64,6 @@ test("saving only Composio mode through the admin route preserves every credenti
 
   assert.equal(response.status, 200);
   assert.equal(settings.getComposioMode(), "sdk");
-  assert.equal(settings.getDefaultComposioToken(), "legacy-org-token");
   assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
   assert.equal((await getUser("U_TEST")).composioToken, "legacy-user-token");
   assert.equal((await getChannelMeta("sdk-test")).composioToken, "legacy-channel-token");

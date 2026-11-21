@@ -49,7 +49,7 @@ Gateway daemon
   │     host: daemon OS account and native HOME/toolchain)
   │  resolve session: thread key → engine session id (resume) | fresh (memory catalog prepended)
   │  build MCP config: gateway control (socket bridge) + composio-user (author) + composio-agent
-  │    (channel → org token) + selected catalog/plugin servers → a 0600 file in the artifact dir
+  │    (channel token) + selected catalog/plugin servers → a 0600 file in the artifact dir
   ▼
 exec in the resolved runtime (Claude, cold):
   claude -p <text> --output-format stream-json --verbose --include-partial-messages
@@ -114,8 +114,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 - `src/gateway/mcp.js` + `run-engine-mcp.js` + `mcp-catalog.js` + `mcp-discovery.js` +
   `mcp-capability.js` — the per-run MCP payload: the `gateway` control server (always; over the
   read-only socket bridge in containers, carrying only a signed HMAC run capability with a toolset
-  and TTL), `composio-user` (the author's personal token only), `composio-agent` (channel token →
-  organization default; suppressed in DMs), the Make toolbox server when a token resolves, then
+  and TTL), `composio-user` (the author's personal token only), `composio-agent` (the channel's
+  own token only — no organization default; suppressed in DMs), the Make toolbox server when a token resolves, then
   — through the engine adapter — the channel/organization-selected catalog servers ("Cloud MCP")
   and plugin-package servers mapped onto explicitly selected connections, plus the custom MCP
   connections people add by URL + Bearer token (`custom-mcps.js` rules, `custom-mcp-store.js`
@@ -510,8 +510,9 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   harness's OWN error plus the manual-switch hint instead of being quietly answered by the other
   engine. Channel and gateway defaults are not pins.
 - **Composio identities stay distinct.** Inject the active author's personal token as
-  `composio-user` and, independently, the channel token as `composio-agent`, falling back to the
-  organization token (never the other way round; a DM gets only `composio-user`). A channel folder
+  `composio-user` and, independently, the channel's own token as `composio-agent`. There is no
+  organization-wide Composio token and no fallback between the two (a channel without a token has
+  no `composio-agent`; a DM gets only `composio-user`). A channel folder
   never stores either token in plain settings. "My account" means `composio-user`; "your/channel
   account" means `composio-agent`. Reads/searches may use either or both unless the user restricts
   the account or scope. Writes/sends/state changes require the intended identity and connected

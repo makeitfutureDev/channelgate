@@ -106,9 +106,9 @@ test("the identity line names only servers and roles — never a token, an addre
 
 // ── The run boundary: the line reaches the engine ─────────────────────────────────────────────
 test("a run with BOTH identities prepends the read/write account policy to the prompt", async () => {
-  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_9999" });
+  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await setUser("U_IDENT", { name: "Identity User", approved: true, isAdmin: false, composioToken: "ak_user_1111" });
-  await channel("C_IDENT_BOTH", "identity-both");
+  await channel("C_IDENT_BOTH", "identity-both", { composioToken: "ak_channel_9999" });
 
   const r = await runMessage({ channelId: "C_IDENT_BOTH", authorId: "U_IDENT", text: "check the calendar", threadKey: "9100.001", origin: "slack_foreground", preferCold: true });
   assert.match(r.content, /^\[Composio identities in THIS run: `composio-user`.*`composio-agent`/);
@@ -122,14 +122,14 @@ test("a run with BOTH identities prepends the read/write account policy to the p
 });
 
 test("a run with only the shared identity says so; a run with none adds nothing", async () => {
-  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_9999" });
+  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await setUser("U_IDENT_NOPERSONAL", { name: "No Personal", approved: true, isAdmin: false });
-  await channel("C_IDENT_SHARED", "identity-shared");
+  await channel("C_IDENT_SHARED", "identity-shared", { composioToken: "ak_channel_9999" });
   const shared = await runMessage({ channelId: "C_IDENT_SHARED", authorId: "U_IDENT_NOPERSONAL", text: "check my calendar", threadKey: "9100.002", origin: "slack_foreground", preferCold: true });
   assert.match(shared.content, /^\[Composio identities in THIS run: `composio-agent` only/);
   assert.match(shared.content, /\]\n\ncheck my calendar$/);
 
-  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "" });
+  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await channel("C_IDENT_NONE", "identity-none");
   const none = await runMessage({ channelId: "C_IDENT_NONE", authorId: "U_IDENT_NOPERSONAL", text: "just a question", threadKey: "9100.003", origin: "slack_foreground", preferCold: true });
   assert.doesNotMatch(none.content, /Composio identities/, "a channel with no Composio pays nothing for the identity rule");
@@ -137,9 +137,9 @@ test("a run with only the shared identity says so; a run with none adds nothing"
 });
 
 test("Codex receives the same line through its own prompt path", async () => {
-  saveSettings({ engine: "codex", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_9999" });
+  saveSettings({ engine: "codex", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await setUser("U_IDENT_CODEX", { name: "Codex Identity", approved: true, isAdmin: false, composioToken: "ak_user_2222" });
-  await channel("C_IDENT_CODEX", "identity-codex", { engine: "codex" });
+  await channel("C_IDENT_CODEX", "identity-codex", { engine: "codex", composioToken: "ak_channel_9999" });
 
   const r = await runMessage({ channelId: "C_IDENT_CODEX", authorId: "U_IDENT_CODEX", text: "check the calendar", threadKey: "9100.004", origin: "slack_foreground", preferCold: true });
   // Codex also prepends the current personal catalog (empty here, clearing older grants).
@@ -154,11 +154,11 @@ test("both engines preserve identity routing without inventing account ownership
   for (const engine of ["claude", "codex"]) {
     // Both configured credentials can legitimately address the same service owner. Identity
     // routing must stay distinct; neither the resolver nor the prompt can infer a different human.
-    saveSettings({ engine, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_same_owner_3333" });
+    saveSettings({ engine, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
     const authorId = `U_OWNER_${engine}`;
     await setUser(authorId, { name: "Ownership Fixture", approved: true, isAdmin: false, composioToken: "ak_same_owner_3333" });
     const channelId = `C_OWNER_${engine}`;
-    await channel(channelId, `ownership-${engine}`, { engine });
+    await channel(channelId, `ownership-${engine}`, { engine, composioToken: "ak_same_owner_3333" });
     const threadKey = engine === "claude" ? "9101.001" : "9101.002";
     for (const personal of [true, false]) {
       if (!personal) await setUser(authorId, { composioToken: "" });

@@ -38,7 +38,6 @@ export const POLICY_KEYS = Object.freeze([
   "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy
   "cleanMode", // run bare (no MCP servers, no skills)
   "skillRuntimeSwap", // a skill's preferred model may switch the turn's engine/model
-  "noDefaultTokens", // refuse the org-default token fallback here
   "approvedEngines", // Enterprise channel harness approval policy
   "monthlySpendingLimitUSD", // Enterprise monthly recorded-cost admission limit
   "engine", // per-channel license (a harness + the credential it runs on)

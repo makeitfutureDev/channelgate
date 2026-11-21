@@ -518,14 +518,14 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 - **Reason:** a shared bot token would collapse the org's entire permission model into one
   super-user; per-author injection preserves existing boundaries through the AI layer.
 
-#### Token chain channel → user → org-default, with per-channel opt-out
-- **What:** token resolution falls back from channel-specific to the user's own to an org-wide
-  default; sensitive channels can set `noDefaultTokens` to refuse the org fallback.
-- **Value:** frictionless onboarding (org default works day one) with per-channel tightening
-  where data is sensitive.
-- **Reason:** pure per-user tokens stalled adoption (nobody had set one up); pure org tokens
-  destroyed attribution. The chain gives both, and the opt-out keeps high-sensitivity channels
-  clean.
+#### Composio: channel identity + personal identity, no organization default
+- **What:** `composio-agent` is backed only by the conversation's own token and `composio-user`
+  only by the author's own token. The earlier organization-wide default token (and the per-channel
+  `noDefaultTokens` opt-out from it) is retired.
+- **Value:** every shared Composio account is a deliberate per-conversation choice, so no channel
+  silently acts as an organization-wide account it never chose.
+- **Reason:** the org default was an onboarding shortcut that blurred whose account a channel was
+  using; per-channel tokens and personal tokens now cover every real case.
 
 #### Gateway control MCP (always injected, channel/author-scoped)
 - **What:** a purpose-built MCP server giving the agent gateway powers — schedules, background

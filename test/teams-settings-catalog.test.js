@@ -122,8 +122,10 @@ test('connection rotation preserves blank tokens and validates Make URLs atomica
   const card = await renderCatalogPage('mcp', ctx, ui);
   assert.ok(!JSON.stringify(card).includes('existing-composio-fixture'));
   for (const id of ['composioToken', 'makeToolboxKey']) assert.equal(card.body.find(item => item.id === id).value, '');
-  await invoke(ctx, 'settings.connections.fallback', { enabled: false });
-  assert.equal((await getChannelMeta(ctx.entry.slug)).noDefaultTokens, true);
+  // The organization-default Composio token is retired, so its per-channel opt-out is gone too.
+  assert.doesNotMatch(JSON.stringify(card), /inherited credentials|settings\.connections\.fallback/i);
+  assert.equal(await invoke(ctx, 'settings.connections.fallback', { enabled: false }), false);
+  assert.equal((await getChannelMeta(ctx.entry.slug)).noDefaultTokens, undefined);
   await assert.rejects(invoke(ctx, 'settings.connections.remove', { connection: 'toString' }), /Unknown connection/);
   await invoke(ctx, 'settings.connections.remove', { connection: 'make' });
   stored = await getChannelMeta(ctx.entry.slug);

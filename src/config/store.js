@@ -247,7 +247,6 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     autoMode: false, // autonomous: auto-approve permission prompts (no Slack buttons); still sandboxed
     cleanMode: false, // run bare: no MCP servers (gateway/composio/skills), no skills, no favorites block
     skillRuntimeSwap: false, // let a skill's declared preferred model switch the turn's engine/model (src/gateway/skill-runtime.js)
-    noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
     engine: "", // per-channel license: "" = use the global default, or an engine id (a harness's license)
     licensePool: "", // more licenses of that harness to move to when it fails: "" | "any" | [ids]

@@ -6,11 +6,9 @@ export const COMPOSIO_INVENTORY_PAGE_SIZE = 6;
 const SOURCE_LABELS = Object.freeze({
   user: "Personal connections",
   channel: "Channel connections",
-  org: "Organization connections",
   "sdk-user": "Personal connections · organization Composio SDK",
   "sdk-channel": "Channel connections · organization Composio SDK",
   "none-dm": "Direct message · personal connections only",
-  "none-no-org-default": "Organization fallback disabled",
   none: "No connection configured",
 });
 

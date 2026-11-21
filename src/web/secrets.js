@@ -19,7 +19,6 @@ const READERS = {
     slackAppToken: (s) => s.slackAppToken,
     slackSigningSecret: (s) => s.slackSigningSecret,
     slackAdminUserToken: (s) => s.slackAdminUserToken,
-    defaultComposioToken: (s) => s.defaultComposioToken,
     // Legacy shared Skills GitHub token (kept revealable for rollback/export only).
     skillsGithubToken: (s) => s.skillsGithubToken,
     skillsPublishGithubToken: (s) => s.skillsPublishGithubToken,
