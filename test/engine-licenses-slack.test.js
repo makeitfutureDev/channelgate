@@ -20,6 +20,7 @@ process.env.PROGRESS_VIEW = "shimmer";
 const { saveSettings } = await import("../src/config/settings.js");
 const { createLicense } = await import("../src/config/engine-licenses.js");
 const { licenseLoginHome } = await import("../src/engines/license-state.js");
+const { codexEuLoginHome } = await import("../src/engines/codex-eu.js");
 const { setUser, upsertChannelEntry, saveChannelMeta, getChannelMeta } = await import("../src/config/store.js");
 const { saveSession } = await import("../src/gateway/sessions.js");
 const { getThreadEngine, getThreadLicensePool, getThreadModel, setThreadEngine } = await import("../src/gateway/thread-engine.js");
@@ -208,6 +209,10 @@ test("a license pick resolves to the engine and pool every level stores", () => 
   // is exactly that license.
   assert.deepEqual(namedSelection("codex", { engine: work, licensePool: [second] }), { engine: work, licensePool: [second] });
   assert.deepEqual(namedSelection("codex", { engine: "claude" }), { engine: "codex", licensePool: "" });
+  // …and where nothing asks which license next (a typed word), the harness's other sign-ins.
+  assert.deepEqual(namedSelection("codex", { engine: "claude" }, { noLicenseStep: true }), { engine: "codex", licensePool: [work, second] });
+  assert.deepEqual(namedSelection("codex", { engine: work, licensePool: "" }, { noLicenseStep: true }), { engine: work, licensePool: "" });
+  assert.deepEqual(namedSelection(second, { engine: "claude" }, { noLicenseStep: true }), { engine: second, licensePool: "" });
   assert.deepEqual(namedSelection(second, { engine: work, licensePool: [second] }), { engine: second, licensePool: "" });
 });
 
@@ -367,6 +372,117 @@ test("a harness word in a message pins the channel's selection; a license id pin
   assert.deepEqual(await pin("1903.002"), [second, ""]);
   assert.match(messages.at(-1).text, /This thread now uses \*Codex · Second seat\*/);
   assert.equal(runtime.calls.spawn.length, spawned, "a directive on its own starts no engine");
+});
+
+test("a harness picked by name where nothing asks which license brings its other sign-ins", async () => {
+  const { work, second } = twoLicenses();
+  const USER = "U_LIC_IMPLIED", BOT = "BLICIMPLIED", CHANNEL = "D_LIC_IMPLIED";
+  const messages = [];
+  const client = {
+    chat: { postMessage: async (message) => { messages.push(message); return { ok: true, ts: "bot.1" }; }, update: async () => ({ ok: true }) },
+    apiCall: async () => ({ ok: true }),
+    users: { info: async ({ user }) => ({ user: { id: user, real_name: "Implied User" } }), list: async () => ({ members: [] }) },
+    chatStream: ({ channel: streamChannel, thread_ts }) => {
+      let text = "";
+      return { ts: "stream.1", append: async ({ markdown_text = "" }) => { text += markdown_text; },
+        stop: async ({ markdown_text = "" } = {}) => { messages.push({ channel: streamChannel, thread_ts, text: text + markdown_text }); return { ok: true }; } };
+    },
+    conversations: { info: async () => ({ channel: { id: CHANNEL, is_im: true } }), replies: async () => ({ messages: [] }), history: async () => ({ messages: [] }) },
+  };
+  await setUser(USER, { name: "Implied User", approved: true, isAdmin: false });
+  // The conversation runs on Claude Code, so it says nothing about which Codex license to use.
+  const entry = await upsertChannelEntry(CHANNEL, { name: "lic-implied-dm", type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude", cleanMode: true, allowNetwork: false });
+  const say = (text, ts, extra = {}) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `<@${BOT}> ${text}`, ts }, client, { botUserId: BOT, ...extra });
+  const pin = async (ts) => [await getThreadEngine(entry.slug, ts), await getThreadLicensePool(entry.slug, ts)];
+  const codexHomes = (from) => runtime.calls.spawn.slice(from).map((call) => call.env?.CODEX_HOME || "").filter(Boolean);
+  const said = (from) => messages.slice(from).map((message) => message.text || "").join("\n");
+  const spawned = runtime.calls.spawn.length;
+
+  // The typed word: the harness's own sign-in first, then its other sign-ins in order.
+  await say("codex", "1906.001");
+  assert.deepEqual(await pin("1906.001"), ["codex", [work, second]]);
+  assert.match(messages.at(-1).text, /This thread now uses \*Codex · Default sign-in, then Work ChatGPT, Second seat\*/);
+  // A model shortcut on the harness's own sign-in asks for the model, not for that one account.
+  saveSettings({ modelShortcuts: { astra: { engine: "codex", model: "gpt-6-astra" }, seat: { engine: second, model: "gpt-6-astra" } } });
+  await say(":astra", "1906.002");
+  assert.deepEqual(await pin("1906.002"), ["codex", [work, second]]);
+  // A shortcut on, or the id of, any other license is that license alone.
+  await say(":seat", "1906.003");
+  assert.deepEqual(await pin("1906.003"), [second, ""]);
+  await say(work, "1906.004");
+  assert.deepEqual(await pin("1906.004"), [work, ""]);
+  assert.equal(runtime.calls.spawn.length, spawned, "a pick on its own starts no engine");
+
+  // The point of it: the default sign-in is out of usage, and the turn is answered by the next
+  // sign-in of the same harness instead of ending there. The answer says which one.
+  let from = runtime.calls.spawn.length, seen = messages.length;
+  await say("codex CODEX_STUB_LIMIT_DEFAULT_LICENSE", "1906.005");
+  assert.deepEqual(await pin("1906.005"), ["codex", [work, second]]);
+  assert.ok(codexHomes(from).some((home) => home.endsWith(`.cg-licenses/${work}`)), `moved to the next sign-in (${codexHomes(from).join(", ")})`);
+  assert.match(said(seen), /using Work ChatGPT/);
+  assert.match(said(seen), /Codex stub reply/);
+  // The same through a shortcut, whose selection travels with the task.
+  from = runtime.calls.spawn.length; seen = messages.length;
+  await say(":astra CODEX_STUB_LIMIT_DEFAULT_LICENSE", "1906.006");
+  assert.ok(codexHomes(from).some((home) => home.endsWith(`.cg-licenses/${work}`)), `a shortcut moved too (${codexHomes(from).join(", ")})`);
+  assert.match(said(seen), /using Work ChatGPT/);
+  // The harness-switch card's "switch" pins the harness the same way.
+  await say("CODEX_STUB_LIMIT_DEFAULT_LICENSE", "1906.007", { engineChoice: "codex", engineChoiceSwitch: true });
+  assert.deepEqual(await pin("1906.007"), ["codex", [work, second]]);
+
+  // A conversation that chose ONE Codex license keeps exactly that when its harness is named.
+  await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), engine: "codex", licensePool: "" });
+  await say("codex", "1906.008");
+  assert.deepEqual(await pin("1906.008"), ["codex", ""]);
+  await say(":astra", "1906.009");
+  assert.deepEqual(await pin("1906.009"), ["codex", ""]);
+  saveSettings({ modelShortcuts: {} });
+});
+
+test("a shipped license is also picked by its name written with a space, while it is switched on", async () => {
+  reset();
+  const USER = "U_LIC_SPOKEN", BOT = "BLICSPOKEN", CHANNEL = "D_LIC_SPOKEN";
+  const messages = [];
+  const client = {
+    chat: { postMessage: async (message) => { messages.push(message); return { ok: true, ts: "bot.1" }; }, update: async () => ({ ok: true }) },
+    apiCall: async () => ({ ok: true }),
+    users: { info: async ({ user }) => ({ user: { id: user, real_name: "Spoken User" } }), list: async () => ({ members: [] }) },
+    conversations: { info: async () => ({ channel: { id: CHANNEL, is_im: true } }), replies: async () => ({ messages: [] }), history: async () => ({ messages: [] }) },
+  };
+  await setUser(USER, { name: "Spoken User", approved: true, isAdmin: false });
+  const entry = await upsertChannelEntry(CHANNEL, { name: "lic-spoken-dm", type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude" });
+  const say = (text, ts) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `<@${BOT}> ${text}`, ts }, client, { botUserId: BOT });
+  const pin = async (ts) => [await getThreadEngine(entry.slug, ts), await getThreadLicensePool(entry.slug, ts)];
+
+  // Switched off, "codex eu …" is the harness word and a task that starts with "eu": no license.
+  await say("codex eu", "1907.000").catch(() => {});
+  assert.notEqual((await pin("1907.000"))[0], "codex-eu");
+  const before = runtime.calls.spawn.length;
+
+  saveSettings({ engineEnabled: { claude: true, codex: true, "codex-eu": true } });
+  // Switched on but not signed in: the words are read as the license, which says what it needs.
+  await say("codex eu", "1907.001");
+  assert.match(messages.at(-1).text, /^Codex EU is not configured/);
+  assert.deepEqual(await pin("1907.001"), ["", ""]);
+  mkdirSync(codexEuLoginHome(), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(codexEuLoginHome(), "auth.json"), JSON.stringify({ tokens: { access_token: jwt(), refresh_token: "fixture-refresh", account_id: "lic-test" } }), { mode: 0o600 });
+  // "codex eu" is the license, exactly as `codex-eu` is — and a named license stays on its own.
+  for (const [text, ts] of [["codex eu", "1907.001"], ["Codex  EU", "1907.002"], ["codex-eu", "1907.003"]]) {
+    await say(text, ts);
+    assert.deepEqual(await pin(ts), ["codex-eu", ""], text);
+    assert.match(messages.at(-1).text, /This thread now uses \*Codex · Codex EU\*/, text);
+  }
+  // The harness word alone is still the harness: its own sign-in, then the EU sign-in.
+  await say("codex", "1907.004");
+  assert.deepEqual(await pin("1907.004"), ["codex", ["codex-eu"]]);
+  // An id that is not its name read aloud is never matched across a space.
+  assert.equal(runtime.calls.spawn.length, before, "a pick on its own starts no engine");
+  // An id that is not its name read aloud is never matched across a space: this is the harness
+  // word followed by a task.
+  await say("codex channel", "1907.005").catch(() => {});
+  assert.equal((await pin("1907.005"))[0], "codex");
 });
 
 test("a pick outside the channel's allow list is answered, pins nothing and starts no engine", async () => {

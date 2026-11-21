@@ -160,10 +160,11 @@ test('/model <harness> takes the conversation\'s own licenses for that harness',
   assert.deepEqual(await pin(anySlug), { engine: work.id, licensePool: 'any' });
   assert.equal(await getThreadModel(anySlug, 'root'), 'gpt-6-sol');
 
-  // A channel on the other harness says nothing about Codex licenses: its own sign-in, no pool.
+  // A channel on the other harness says nothing about Codex licenses: its own sign-in, then its
+  // other sign-ins — a typed word is never asked which license, and the person named the harness.
   const otherSlug = nextSlug();
-  assert.equal(await command(otherSlug, '/model codex', { engine: 'claude' }), 'Session harness: Codex · Default sign-in; model: inherited default.');
-  assert.deepEqual(await pin(otherSlug), { engine: 'codex', licensePool: '' });
+  assert.equal(await command(otherSlug, '/model codex', { engine: 'claude' }), 'Session harness: Codex · Default sign-in, then Work, Spare; model: inherited default.');
+  assert.deepEqual(await pin(otherSlug), { engine: 'codex', licensePool: [work.id, spare.id] });
 
   // A license id still pins that one license, and a model-only change keeps the session's licenses.
   const idSlug = nextSlug();
