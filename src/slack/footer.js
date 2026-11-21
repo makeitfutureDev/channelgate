@@ -3,7 +3,7 @@
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
-import { adapterFor, resumeCommandFor, requireAdapter } from "../engines/registry.js";
+import { adapterFor, engineDisplayName, resumeCommandFor, requireAdapter } from "../engines/registry.js";
 import { footerText } from "../gateway/reply-stats.js";
 import { referencedWorkspaceFiles } from "../gateway/reply-files.js";
 export { referencedWorkspaceFiles } from "../gateway/reply-files.js";
@@ -32,6 +32,19 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   const wrapped = target ? resumeCommandFor(engine, sessionId, { target }) : base;
   if (wrapped && wrapped !== base) return wrapped;
   return `cd ${JSON.stringify(cwd)} && ${base}`;
+}
+
+// What `/resume` with no argument answers. A license whose credential stays with the gateway has no
+// terminal form: its command only prints why, and names no session. The thread's id is then given
+// by itself, because `/resume <id>` in another thread of the channel is the one way left to carry
+// that conversation somewhere else.
+export function resumeCommandReply(cmd, sessionId, engine) {
+  if (!cmd) return "No session in this thread yet — send a message first. To continue an existing session here, use `/resume <command or session id>`.";
+  if (!String(cmd).includes(String(sessionId))) {
+    return `🔒 This thread's session runs on ${engineDisplayName(engine)}, whose credential stays with the gateway, so it cannot be opened in a terminal. ` +
+      `Its id is \`${sessionId}\` — to continue it in another thread of this channel, send \`/clear\` here and \`/resume ${sessionId}\` there.`;
+  }
+  return `💻 Open this thread's session in a terminal on the gateway machine:\n\`\`\`${cmd}\`\`\`\n_Paste that line back as \`/resume <command>\` in this channel to continue the session from a thread._`;
 }
 
 // The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard — rides the end of EVERY answer the AI

@@ -293,3 +293,161 @@ test("the refusal says where it looked, so 'not here' is actionable", async () =
   const hostOnly = await plan(`claude --resume ${unknown}`);
   assert.match(hostOnly.message, /the gateway's own history/);
 });
+
+// ── Added licenses ────────────────────────────────────────────────────────────────────────────
+// A harness's own sign-in keeps its transcripts in the harness's state dir. An added license keeps
+// its own, in its own directory — `<home>/.cg-licenses/<id>` in the channel's volume, the license's
+// sign-in directory on the host — so a lookup that reads only the harness's directory never sees a
+// session started under one. That is how `/resume` came to refuse every such session.
+const { createLicense, deleteLicense } = await import("../src/config/engine-licenses.js");
+const { saveSettings } = await import("../src/config/settings.js");
+const { licenseLoginHome } = await import("../src/engines/license-state.js");
+
+function addedLicense(kind, label, { on = true } = {}) {
+  const license = createLicense({ kind, label, type: "subscription" });
+  if (on) saveSettings({ engineEnabled: { [license.id]: true } });
+  return license;
+}
+
+function writeLicenseCodexSession(root, sessionId, cwd) {
+  const dir = path.join(root, "sessions", "2026", "11", "22");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, `rollout-2026-11-22T10-00-00-${sessionId}.jsonl`), `${JSON.stringify({ type: "session_meta", payload: { id: sessionId, cwd } })}\n`);
+}
+
+function writeLicenseClaudeSession(root, sessionId, cwd) {
+  const dir = path.join(root, "projects", adopt.claudeProjectDirName(cwd));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, `${sessionId}.jsonl`), `${JSON.stringify({ type: "user", sessionId, cwd, message: { role: "user", content: "hi" } })}\n`);
+}
+
+test("a session started under an added license is found in that license's own directory", async () => {
+  const license = addedLicense("codex-login", "Team seat");
+  try {
+    const id = "0a0a0a0a-aaaa-4bbb-8ccc-111111111111";
+    const volume = tempDir("cg-adopt-license-");
+    writeLicenseCodexSession(path.join(volume, ".cg-licenses", license.id), id, CHANNEL_DIR);
+    const target = containerTarget(volume);
+
+    // The line `/resume` prints for a thread on that license, pasted back.
+    const pasted = `cd "${CHANNEL_DIR}" && env CODEX_HOME='${CONTAINER_HOME}/.cg-licenses/${license.id}' codex exec resume '${id}'`;
+    const result = await plan(pasted, { target, threadEngine: license.id });
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.engine, license.id, "the thread continues on the license that holds the session");
+    assert.match(result.message, /continues Codex · Team seat session/);
+    assert.equal(target.asked[0], `${CONTAINER_HOME}/.cg-licenses/${license.id}/sessions/*/*/*/*${id}*.jsonl`, "the thread's own license is asked first");
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("a bare id from a thread on the default sign-in is adopted as the license that holds it", async () => {
+  const license = addedLicense("claude-login", "Second seat");
+  try {
+    const id = "0b0b0b0b-aaaa-4bbb-8ccc-222222222222";
+    const volume = tempDir("cg-adopt-license-claude-");
+    writeLicenseClaudeSession(path.join(volume, ".cg-licenses", license.id), id, CHANNEL_DIR);
+    const target = containerTarget(volume);
+
+    const result = await plan(id, { target, threadEngine: "claude" });
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.engine, license.id);
+    assert.match(result.message, /continues Claude Code · Second seat session/);
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("a license's session on the host is found in its sign-in directory", async () => {
+  const license = addedLicense("codex-login", "Host seat");
+  try {
+    const id = "0c0c0c0c-aaaa-4bbb-8ccc-333333333333";
+    writeLicenseCodexSession(licenseLoginHome(license.id), id, CHANNEL_DIR);
+    const result = await plan(`codex exec resume ${id}`, { threadEngine: "claude" });
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.engine, license.id);
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("the same-channel rule holds for a license's sessions", async () => {
+  const license = addedLicense("codex-login", "Foreign seat");
+  try {
+    const id = "0d0d0d0d-aaaa-4bbb-8ccc-444444444444";
+    const volume = tempDir("cg-adopt-license-foreign-");
+    writeLicenseCodexSession(path.join(volume, ".cg-licenses", license.id), id, OTHER_DIR);
+    const result = await plan(id, { target: containerTarget(volume), threadEngine: license.id });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /only be resumed in the channel that owns its folder/);
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("a license this conversation may not run on is never searched", async () => {
+  const off = addedLicense("codex-login", "Switched off", { on: false });
+  const barred = addedLicense("codex-login", "Not approved here");
+  try {
+    const volume = tempDir("cg-adopt-license-barred-");
+    const offId = "0e0e0e0e-aaaa-4bbb-8ccc-555555555555";
+    const barredId = "0f0f0f0f-aaaa-4bbb-8ccc-666666666666";
+    writeLicenseCodexSession(path.join(volume, ".cg-licenses", off.id), offId, CHANNEL_DIR);
+    writeLicenseCodexSession(path.join(volume, ".cg-licenses", barred.id), barredId, CHANNEL_DIR);
+
+    // The channel admits the Codex default sign-in only; one license is off for everybody.
+    const target = containerTarget(volume);
+    const meta = { approvedEngines: ["claude", "codex"] };
+    for (const id of [offId, barredId]) {
+      const result = await plan(`codex exec resume ${id}`, { target, meta });
+      assert.equal(result.ok, false, "adopting it would pin the thread to a license it may not use");
+      assert.match(result.message, /can't find Codex session/);
+    }
+    assert.ok(!target.asked.some((glob) => glob.includes(off.id) || glob.includes(barred.id)), "neither directory was read");
+
+    // Without the channel's restriction the switched-on license is one of this conversation's.
+    const open = await plan(`codex exec resume ${barredId}`, { target: containerTarget(volume) });
+    assert.equal(open.ok, true, open.message);
+    assert.equal(open.engine, barred.id);
+  } finally {
+    await deleteLicense(off.id);
+    await deleteLicense(barred.id);
+  }
+});
+
+test("a session that is nowhere says every license was searched", async () => {
+  const license = addedLicense("codex-login", "Empty seat");
+  try {
+    const result = await plan("codex exec resume 1a1a1a1a-aaaa-4bbb-8ccc-777777777777", { target: containerTarget(tempDir("cg-adopt-license-empty-")) });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /under every license this conversation can use/);
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("a thread on a license with no terminal form is told its session id instead of a command", async () => {
+  const { buildResumeCommand, resumeCommandReply } = await import("../src/slack/footer.js");
+  const id = "1b1b1b1b-aaaa-4bbb-8ccc-888888888888";
+  const claude = addedLicense("claude-login", "Held seat");
+  const codex = addedLicense("codex-login", "Open seat");
+  try {
+    // The container backend's own facts: an isolated runtime whose resume form is an exec.
+    const target = { backend: "container", cwd: CHANNEL_DIR, ...containerTarget(tempDir("cg-adopt-reply-")) };
+    target.runtime.capabilities = { isolated: true };
+    target.runtime.resumeCommand = (t, { baseCommand }) => `podman exec -it -w '${t.cwd}' ${t.container.name} ${baseCommand}`;
+    // A Claude sign-in license in a container: its command only prints why it cannot be taken over.
+    const held = resumeCommandReply(buildResumeCommand(CHANNEL_DIR, id, claude.id, target), id, claude.id);
+    assert.match(held, /runs on Claude Code · Held seat/);
+    assert.match(held, new RegExp(`/resume ${id}`), "the id is what the next thread needs");
+    assert.ok(!held.includes("printf"), "the refusing shell line is not offered as something to run");
+    // A ChatGPT sign-in license does have one, and it parses back to the same session.
+    const open = resumeCommandReply(buildResumeCommand(CHANNEL_DIR, id, codex.id, target), id, codex.id);
+    assert.match(open, /Open this thread's session in a terminal/);
+    assert.equal(adopt.parseResumeRequest(open.split("```")[1]).sessionId, id);
+    assert.match(resumeCommandReply("", "", "claude"), /No session in this thread yet/);
+  } finally {
+    await deleteLicense(claude.id);
+    await deleteLicense(codex.id);
+  }
+});

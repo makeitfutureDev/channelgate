@@ -1,5 +1,39 @@
 # ChannelGate — Features
 
+## `/resume` finds a session started under an added license (2026-11-22)
+
+`/resume <command or id>` re-attaches an existing session to a thread
+(`src/gateway/session-adopt.js`). It read two directories only: Claude Code's and Codex's own
+state dirs. An added license keeps its transcripts in a directory of its own — its sign-in
+directory on the host, `~/.cg-licenses/<license id>` in the channel's HOME volume — so a session
+started under one was always "I can't find that session", including when the pasted line was the
+very command `/resume` had printed for that thread.
+
+- The lookup is now per **license**. For the harness the pasted text names (or, for a bare id,
+  the thread's harness and then the other one) it asks, in order: the thread's own license, every
+  license of that harness this conversation may run on (`selectableLicenses`: switched on,
+  admitted by the channel's approved list, available here), and the harness's own sign-in.
+  Licenses that share one directory are asked once.
+- The thread is pinned to the license **whose directory held the session**, and the confirmation
+  names it (`Codex · <license name>`). A thread already on that license keeps the further licenses
+  it may move to.
+- A license the conversation may not run on is never read, so `/resume` cannot pin a thread to a
+  license the channel's approved list excludes or an administrator switched off.
+- Unchanged: the same-channel rule (the transcript's own recorded folder must be this channel's
+  work folder), one thread per session, the refusal in a `/clean` thread, and where a lookup reads
+  (the gateway's own directories for an admin lane, the HOME volume when the host can read it,
+  otherwise the container through the read-only `inspectState`). A session that is nowhere now
+  also says the search covered every license the conversation can use.
+- `/resume` with no argument (`resumeCommandReply`, `src/slack/footer.js`): a thread on a license
+  whose credential stays with the gateway — a Claude sign-in license in a container, any keyed
+  license — has no terminal form, and the answer used to offer the shell line that only prints
+  that refusal as "open this in a terminal", with no session id anywhere. It now says the session
+  cannot be opened in a terminal, names the license and gives the id with the way to carry it:
+  `/clear` here, `/resume <id>` in another thread of this channel.
+- Limits: a container lookup costs one read-only exec per license that has to be asked, so a miss
+  in a channel with many licenses takes a little longer. Channel Settings → Resume Session still
+  shows the refusing line for such a license.
+
 ## The login watch covers added sign-in licenses (2026-11-22)
 
 The hourly login watch (`src/gateway/login-watch.js`) reported only the gateway's own Claude
