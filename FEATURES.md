@@ -1,5 +1,28 @@
 # ChannelGate — Features
 
+## The run API refuses a model its license cannot serve (2026-11-22)
+
+`POST /api/runs` takes a `model` beside `harness`. A model the license could not serve — a GPT
+model with `harness: "claude"`, a Claude model on a custom server that lists two of its own, any
+model of the other harness with no `harness` at all — was dropped at spawn by the same gate that
+drops a stale stored value, and the run answered on the license's default model. The caller got a
+successful job from a model it had not asked for, with nothing saying so.
+
+- Admission (`startClaimedRun`, `src/gateway/api-runs.js`) now answers 400 before a job, a kickoff
+  message or an in-flight slot exists, whenever the license is known there: a named `harness`, or
+  an unkeyed run on the conversation's own license. The sentence is one shared fact
+  (`unservedModelReason`, `src/engines/registry.js`): it names the license and, for a license whose
+  list is its whole catalog (a custom server's listed models), what it serves; then which field
+  picks the license.
+- A reused conversation (`conversationKey` without `harness`) only learns its license once the
+  thread queue is held, so that case is checked where the run resolves its model
+  (`src/gateway/run.js`, origin `api_foreground` only): the job fails with the same sentence, in
+  the job, the webhook and the thread, and no engine starts.
+- Unchanged: a model the license serves; an omitted `model`; `licenses` (a pool license that cannot
+  serve the model is still skipped, and the pool is never searched for one that can serve a model
+  the named license cannot); every stored value — a thread, channel or gateway model of the other
+  harness is still dropped silently, because nobody is waiting on that request to be told.
+
 ## A health check starts each CLI once (2026-11-22)
 
 Every engine id is a license of one of two harnesses, and every license's health check began with

@@ -154,6 +154,23 @@ export function modelBelongsToEngine(model, engine) {
   const value = String(model || "").trim().toLowerCase();
   return !value || Boolean(requireAdapter(engine).modelBelongs(value));
 }
+// Why a license cannot run a model somebody asked for BY NAME — "" when it can. Surfaces that have
+// a caller to tell (the run API) refuse with this instead of dropping the model and answering with
+// a different one: it names the license and, where the license's list is the whole catalog (an
+// admin-listed custom server), what it does serve.
+export function unservedModelReason(model, engine) {
+  const value = String(model || "").trim();
+  if (!value || modelBelongsToEngine(value, engine)) return "";
+  const adapter = requireAdapter(engine);
+  const listed = adapter.modelListClosed === true ? (adapter.models || []).map((entry) => String(entry?.value || "")).filter(Boolean) : [];
+  const serves = listed.length
+    ? ` It serves: ${listed.slice(0, 12).join(", ")}${listed.length > 12 ? `, and ${listed.length - 12} more` : ""}.`
+    : adapter.modelListClosed === true ? " No model is listed on that license yet." : ` Send a ${harnessLabel(harnessOf(engine)) || adapter.label} model.`;
+  // A harness's own unnamed sign-in reads as the harness ("Claude Code"), like its models do.
+  const shown = engineDisplayName(engine);
+  const name = adapter.id === adapter.cli && shown === adapter.label ? harnessLabel(adapter.cli) || shown : shown;
+  return `Model "${value}" cannot run on ${name}.${serves}`;
+}
 // A model id an admin LISTED on a license. A custom server speaks its own vocabulary ("glm-4.6",
 // "llama3.1:70b", "accounts/acme/models/large"), which the family-shape gate of the built-in
 // harnesses (isValidModel in src/slack/util.js) knows nothing about. The license's own list —

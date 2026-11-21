@@ -61,6 +61,24 @@ and approved for the target conversation. An explicit `harness` or `engine` is a
 provider failure does not silently switch it to the other harness. Omit both fields to use normal
 thread/channel/gateway selection.
 
+### A model for one run: `model`
+
+`model` pins this run to a model of the license that runs it. A model that license cannot serve is
+refused with 400 before a job starts — a model of the other harness, or one a custom-server
+license does not list:
+
+```json
+{ "ok": false, "error": "Model \"gpt-5.4\" cannot run on Claude Code. Send a Claude Code model. Name the license that serves it in `harness`, or omit `model` to use the license's default." }
+```
+
+- With `harness` (or `engine`), the model is checked against that license. Without it, against the
+  conversation's own license.
+- A license with its own model list (a custom server) names the models it serves in the error.
+- A reused conversation (`conversationKey` without `harness`) resolves its license when its turn
+  starts, after the 202. A model that license cannot serve fails that job with the same message
+  in `error`; no model answers in its place.
+- Omit `model` to use the license's default.
+
 ### More licenses for one run: `licenses`
 
 `licenses` names the further licenses of the same harness this run may move to when the license

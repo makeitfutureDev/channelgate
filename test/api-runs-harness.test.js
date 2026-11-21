@@ -98,6 +98,60 @@ test("disabled and unlicensed channel-account API requests start no job", async 
   } finally { ensureTestEnv(); }
 });
 
+test("a named model the license cannot serve is refused before a job starts", async () => {
+  const f = await fixture();
+  let started = 0;
+  const run = (fields) => startApiRun({ message: "Review changes", channel: f.channelId, ...fields, driver: (job) => { started++; job.status = "completed"; } });
+  // A model of the other harness, with the harness named and with the channel's default (Claude).
+  for (const fields of [{ harness: "claude", model: "gpt-5.4" }, { harness: "codex", model: "claude-opus-4-8" }, { model: "gpt-5.4" }, { harness: "claude", licenses: "any", model: "gpt-5.4" }]) {
+    const refused = await run(fields);
+    assert.equal(refused.ok, false, JSON.stringify(fields));
+    assert.equal(refused.code, 400);
+    assert.match(refused.error, /^Model "[^"]+" cannot run on (Claude Code|Codex)\b/);
+    assert.match(refused.error, /`harness`/, "the caller is told which field picks the license");
+  }
+  assert.equal(started, 0, "no job, kickoff or in-flight slot for a refused model");
+  // The license's own models still start, and the model reaches the per-run pin.
+  for (const fields of [{ harness: "claude", model: "claude-opus-4-8" }, { harness: "codex", model: "gpt-5.4" }, { model: "claude-opus-4-8" }, { harness: "codex" }]) {
+    const accepted = await run(fields);
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(getApiJob(accepted.jobId).overrides.model, fields.model);
+  }
+  assert.equal(started, 4);
+});
+
+test("a license with its own model list names what it serves when it refuses a model", async () => {
+  const f = await fixture();
+  const { createLicense, deleteLicense } = await import("../src/config/engine-licenses.js");
+  const license = createLicense({ kind: "claude-api", label: "Team server", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: "test-run-api-model-key", authScheme: "bearer", models: ["glm-4.6", "llama3.1:70b"] });
+  saveSettings({ engineEnabled: { [license.id]: true } });
+  try {
+    let started = 0;
+    const run = (model) => startApiRun({ message: "Review changes", channel: f.channelId, harness: license.id, model, driver: (job) => { started++; job.status = "completed"; } });
+    const refused = await run("claude-opus-4-8");
+    assert.equal(refused.code, 400, "a Claude model is not this server's model");
+    assert.match(refused.error, /cannot run on Claude Code · Team server\. It serves: glm-4\.6, llama3\.1:70b\./);
+    assert.equal(started, 0);
+    const accepted = await run("glm-4.6");
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(started, 1);
+  } finally {
+    await deleteLicense(license.id);
+  }
+});
+
+test("a reused conversation's job fails by name when its license cannot serve the model", async () => {
+  const f = await fixture();
+  const backend = createFakeRuntimeBackend();
+  setRuntimeResolver((slug, meta, options) => fakeTarget(backend, slug, meta, options));
+  const { runMessage } = await import("../src/gateway/run.js");
+  await assert.rejects(
+    runMessage({ channelId: f.channelId, authorId: "api", text: "Review changes", threadKey: "1700000000.000100", overrides: { model: "gpt-5.4" }, untrustedPrincipal: true, origin: "api_foreground" }),
+    /Model "gpt-5\.4" cannot run on Claude Code\..*`harness`/,
+  );
+  assert.equal(backend.calls.spawn.filter((call) => call.cmd === "claude" || call.cmd === "codex").length, 0, "no engine was started with a different model");
+});
+
 test("a running API job reports the resolved default-failover harness before completion", async () => {
   const f = await fixture();
   saveSettings({ engineFallback: true });

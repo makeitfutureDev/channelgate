@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The run API now refuses a `model` its license cannot serve. A model of the other harness, or one
+  a custom-server license does not list, was dropped when the run started and answered on the
+  license's default model — a successful job from a model the caller had not asked for. `POST
+  /api/runs` answers 400 before a job starts, naming the license and (for a license with its own
+  list) the models it serves; a reused conversation, whose license is only known once its turn
+  starts, fails that job with the same sentence. Callers that relied on a mismatched `model` being
+  ignored must send a model of the license, or omit it.
 - A health check now starts each engine CLI once. Every license's check began with its harness's
   `--version`, so the admin page's health poll started one process per license, all at once — a
   gateway with many added licenses ran dozens of `codex --version` processes per poll. One check
