@@ -6245,7 +6245,9 @@ are retired, bullet by bullet; everything else stands.
   injected from NO scope in that thread (no personal or organization value stands in). A stored
   variables or connections row that can no longer be read fails closed: turns and background
   jobs in that thread are refused with the remedy (Follow channel resets it) instead of running
-  with the conversation's values.
+  with the conversation's values. Residual, shared with personal placeholders: a process another
+  thread's work left running untracked in the same container (`nohup … &`) is not live work, so it
+  could read and use the placeholder while this thread is the only registered work.
   The proxy re-reads the thread's store on every swap, so a removal (or a deleted row) revokes the
   placeholder at once; values are redacted from replies, streams and job output and never appear in
   a card, listing, log or grant row. **MCP connections:** the thread may replace or disconnect the
