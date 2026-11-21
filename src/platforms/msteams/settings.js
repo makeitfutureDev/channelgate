@@ -1,6 +1,11 @@
 // Teams' conversation settings console. The opaque card state owns conversation/session authority;
 // submitted fields are values only. Runtime previews retain validated drafts, never authority
 // fields or credentials, until the owner applies a complete scope.
+//
+// `batch` (Teams' private settings window) collects every editable section's changes as pending
+// drafts with ONE Save area per section — Apply to channel / Apply to thread / Discard — in a
+// compact full-width layout (settings-layout.js). Without it (Google Chat's public cards) every
+// control saves as it always did.
 import { randomUUID } from 'node:crypto';
 import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from '../../config/store.js';
 import { isAuthorized } from '../../gateway/modes.js';
@@ -13,8 +18,11 @@ import { zonedStamp, daemonTimeZone } from '../../util/timezone.js';
 import { resolveResumeSession } from '../../slack/resume-session.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { describeSelectionText } from '../../gateway/license-pool.js';
-import { renderGeneral, handleGeneral } from './settings-general.js';
+import { renderGeneral, handleGeneral, captureGeneralDraft, generalPending } from './settings-general.js';
 import { renderCatalogPage, handleCatalogAction } from './settings-catalog.js';
+import { renderDraftPage, handleDraftAction, pendingCount } from './settings-drafts.js';
+import { renderAutomations, handleAutomations, automationPending } from './settings-automations.js';
+import { teamsSettingsCard } from './settings-layout.js';
 
 export const TEAMS_SETTINGS_PAGES = Object.freeze([
   ['general', 'General'], ['secrets', 'Variables'], ['mcp', 'MCPs'],
@@ -53,8 +61,8 @@ export function teamsSettingsUi(stateId) {
   };
 }
 
-export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false, pages = null, renderPage = null }) {
-  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, pages, renderPage, ownerId: state.message.userId,
+export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false, pages = null, renderPage = null, batch = false }) {
+  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, pages, renderPage, batch: batch === true && state.sharedSettings !== true, ownerId: state.message.userId,
     channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta,
     isShared: state.sharedSettings === true };
   context.authorize = async () => {
@@ -150,8 +158,31 @@ async function resumeCommands(ctx, ui) {
   return { body, actions: [] };
 }
 
+const pendingBySection = ctx => ({ general: generalPending(ctx), secrets: pendingCount(ctx, 'secrets'), mcp: pendingCount(ctx, 'mcp'),
+  skills: pendingCount(ctx, 'skills'), automations: automationPending(ctx), resume: 0 });
+
+async function buildBatchSettings(ctx, stateId, ui) {
+  const page = (TEAMS_SETTINGS_PAGES.find(([id]) => id === ctx.state.tab) || TEAMS_SETTINGS_PAGES[0])[0];
+  ctx.state.tab = page; ctx.state.shownPage = page;
+  const content = page === 'general' ? await renderGeneral(ctx, ui, { batch: true })
+    : page === 'automations' ? renderAutomations(ctx, ui)
+      : page === 'resume' ? await resume(ctx, ui)
+        : await renderDraftPage(page, ctx, ui);
+  const pending = pendingBySection(ctx);
+  // Leaving General carries its inputs along, so its unsaved choices stay pending; the other pages
+  // stage explicitly and their navigation submits nothing.
+  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(`${id === page ? '✓ ' : ''}${title}${id !== page && pending[id] ? ` (${pending[id]})` : ''}`,
+    'settings.page', { page: id }, page === 'general' ? 'auto' : 'none'));
+  return teamsSettingsCard({ ui, tabs, content,
+    title: 'Channel settings',
+    subtitle: `${ctx.entry.name || 'This conversation'}${ctx.sessionKey ? ' · opened from a thread' : ''} · changes apply to the next turn`,
+    notice: ctx.state.notice,
+    pendingElsewhere: TEAMS_SETTINGS_PAGES.filter(([id]) => id !== page && pending[id]).map(([id, title]) => `${title} (${pending[id]})`) });
+}
+
 export async function buildTeamsSettings(ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
+  if (ctx.batch) return buildBatchSettings(ctx, stateId, ui);
   const entry = currentPage(ctx), page = entry[0], shared = sourceOf(entry), part = entry[3];
   ctx.state.tab = page; ctx.state.shownPage = page;
   const content = await ctx.renderPage?.(shared, ctx, ui)
@@ -171,8 +202,10 @@ export async function buildTeamsSettings(ctx, stateId) {
       ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
 }
 
-const destructive = (action, data) => action.endsWith('.remove') || action.endsWith('.delete') || action === 'settings.thread.reset'
-  || (['settings.cloud.toggle', 'settings.skills.toggle'].includes(action) && data.activate === false);
+// Staging a change writes nothing, so only immediate writes ask for a confirmation.
+const destructive = (action, data, ctx) => !action.startsWith('settings.draft.') && !(ctx.batch && action.startsWith('settings.automation.'))
+  && (action.endsWith('.remove') || action.endsWith('.delete') || action === 'settings.thread.reset'
+  || (['settings.cloud.toggle', 'settings.skills.toggle'].includes(action) && data.activate === false));
 const confirmationFields = new Set(['scope', 'variableScope', 'emailScope', 'name', 'id', 'key', 'engine', 'activate', 'connection', 'field']);
 function confirmationDetails(action, data, ctx) {
   const name = String(data.name || data.key || '').slice(0, 100);
@@ -197,6 +230,7 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
   }
   if (action === 'settings.page') {
     if (!validPage(ctx, data.page)) throw new Error('Unknown settings page.');
+    if (ctx.batch && ctx.state.tab === 'general' && data.page !== 'general') await captureGeneralDraft(data, ctx);
     ctx.state.tab = data.page; ctx.state.notice = ''; ctx.state.confirmation = null;
     return buildTeamsSettings(ctx, stateId);
   }
@@ -209,7 +243,7 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
     if (!pending || pending.token !== data.token) throw new Error('This confirmation is no longer available.');
     ctx.state.confirmation = null; // Consume before applying; replay can never apply twice.
     action = pending.action; data = pending.data; ctx.confirmed = true;
-  } else if (destructive(action, data)) {
+  } else if (destructive(action, data, ctx)) {
     const details = confirmationDetails(action, data, ctx);
     const token = randomUUID();
     ctx.state.confirmation = { token, action, data: Object.fromEntries(Object.entries(data).filter(([key]) => confirmationFields.has(key))) };
@@ -217,7 +251,9 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
       ui.text(details)], actions: [
       ui.execute('Confirm', 'settings.confirm', { token }, 'none'), ui.execute('Cancel', 'settings.confirm.cancel', {}, 'none')] };
   }
-  if (action.startsWith('settings.automation.')) {
+  if (ctx.batch && (await handleDraftAction(action, data, ctx) || await handleAutomations(action, data, ctx))) {
+    // Pending drafts and their scoped Apply/Discard own every editable control of these pages.
+  } else if (action.startsWith('settings.automation.')) {
     if (action === 'settings.automation.page') {
       if (!Number.isSafeInteger(data.page) || data.page < 0) throw new Error('Unknown automations page.');
       ctx.state.automationPage = data.page; ctx.state.tab = 'automations';

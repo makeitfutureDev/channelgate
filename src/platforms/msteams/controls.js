@@ -41,7 +41,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   async function settings(state, stateId) {
-    const ctx = createTeamsSettingsContext(state, { connector, authorize });
+    const ctx = createTeamsSettingsContext(state, { connector, authorize, batch: true });
     await ctx.authorize();
     return buildTeamsSettings(ctx, stateId);
   }
@@ -331,7 +331,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       try {
         prune();
         if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
-        const ctx = createTeamsSettingsContext(state, { connector, authorize });
+        const ctx = createTeamsSettingsContext(state, { connector, authorize, batch: true });
         const updated = await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId);
         if (state.settingsDialog) return settingsDialogResponse(updated);
         // Updating the bot's stored card works for both Execute and Submit clients and avoids

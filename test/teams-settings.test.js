@@ -36,7 +36,10 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
   return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId, menu, launcherId };
 }
 const value = result => result.body.task?.type === 'continue' ? result.body.task.value.card.content : result.body.task?.value || result.body.value;
-const input = (card, id) => card.body.find(item => item.id === id);
+const nodes = item => !item || typeof item !== 'object' ? [] : [item, ...Object.values(item).flatMap(nodes)];
+const input = (card, id) => nodes(card.body).find(item => item.id === id);
+const allActions = card => nodes(card.body).filter(item => typeof item.type === 'string' && item.type.startsWith('Action.'));
+const texts = card => nodes(card.body).filter(item => item.type === 'TextBlock').map(item => item.text);
 const navigation = card => card.body.filter(item => item.type === 'ColumnSet').flatMap(row => row.columns.flatMap(column => column.items[0].actions));
 test('six settings pages navigate inside a private popup without updating the launcher', async () => {
   const f = await fixture();
@@ -47,13 +50,14 @@ test('six settings pages navigate inside a private popup without updating the la
   const menu = f.menu;
   assert.ok(input(menu, 'channel_engine'));
   assert.deepEqual(menu.actions, []);
+  assert.deepEqual(menu.msteams, { width: 'Full' });
+  assert.equal(menu.version, '1.4');
   const tabs = navigation(menu);
-  assert.deepEqual(tabs.map(action => action.title), ['• General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
+  assert.deepEqual(tabs.map(action => action.title), ['✓ General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
+  // Two-column navigation: three rows of two, one action per cell.
   const rows = menu.body.filter(item => item.type === 'ColumnSet');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].horizontalAlignment, 'Center');
-  assert.equal(rows[0].columns.length, 6);
-  assert.ok(rows[0].columns.every(column => column.items[0].actions.length === 1));
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every(row => row.columns.length === 2 && row.columns.every(column => column.items[0].actions.length === 1)));
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
     const card = value(await f.invoke(action.data, action.data.cgAction));
@@ -62,8 +66,10 @@ test('six settings pages navigate inside a private popup without updating the la
     assert.equal(navigation(card).length, 6);
     assert.equal(f.sent.length, 1);
     assert.equal(f.sent[0].card.actions[0].title, 'Open settings');
-    assert.ok(navigation(card).some(item => item.title === `• ${action.title.replace(/^• /, '')}`));
-    assert.equal(navigation(card).filter(item => item.title.startsWith('• ')).length, 1);
+    assert.ok(navigation(card).some(item => item.title === `✓ ${action.title.replace(/^✓ /, '')}`));
+    assert.equal(navigation(card).filter(item => item.title.startsWith('✓ ')).length, 1);
+    // Teams renders at most six actions per action set.
+    assert.ok(nodes(card).filter(item => item.type === 'ActionSet').every(set => set.actions.length <= 6));
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
@@ -77,19 +83,19 @@ test('/secrets opens Variables directly while /settings starts on General', asyn
   await f.controls.onCommand(f.args('/secrets'));
   const secrets = value(await f.invoke(f.sent.at(-1).card.actions[0].data, 'settings.open'));
   assert.ok(input(secrets, 'variableValue'));
-  assert.ok(navigation(secrets).some(item => item.title === '• Variables'));
+  assert.ok(navigation(secrets).some(item => item.title === '✓ Variables'));
 });
 test('dialog runtime Apply actions save only the chosen scope', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.data.cgAction === 'settings.runtime.apply');
+  const applies = allActions(general).filter(item => item.data?.cgAction === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   const channel = applies[0];
   const saved = value(await f.invoke({ ...channel.data, channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value,
     channel_effort: 'high', thread_engine: 'claude' }, channel.data.cgAction));
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
-  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.data.cgAction === 'settings.runtime.apply');
+  const thread = allActions(saved).find(item => item.data?.scope === 'thread' && item.data.cgAction === 'settings.runtime.apply');
   const before = f.sent.length;
   const result = await f.invoke({ ...thread.data, thread_engine: 'claude', thread_model: modelsForEngine('claude')[0].value, thread_effort: 'high', channel_engine: 'claude' }, thread.data.cgAction);
   assert.equal(result.body.task.type, 'continue');
@@ -100,7 +106,7 @@ test('dialog runtime Apply actions save only the chosen scope', async () => {
 test('Load models refreshes the popup without saving or updating the chat', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const load = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data.cgAction === 'settings.runtime.models' && item.data.scope === 'channel');
+  const load = allActions(general).find(item => item.data?.cgAction === 'settings.runtime.models' && item.data.scope === 'channel');
   assert.equal(load.title, 'Load models');
   assert.equal(load.associatedInputs, 'auto');
   assert.equal(load.type, 'Action.Submit');
@@ -169,14 +175,16 @@ test('personal connection setup and removal stay inside the thread-launched sett
 test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();
   const skills = navigation(f.menu).find(action => action.data.page === 'skills');
-  assert.equal(skills.associatedInputs, 'none');
+  // Leaving General carries its inputs so its unsaved edits stay pending; other pages submit none.
+  assert.equal(skills.associatedInputs, 'auto');
   const before = f.sent.length;
   const result = await f.controls.onInvoke({ type: 'invoke', name: 'task/submit', from: { id: f.owner },
     conversation: { id: `${f.channelId.slice(6)};messageid=1760000000000` }, recipient: { id: '28:bot' },
     replyToId: 'forged-message', serviceUrl: 'https://smba.trafficmanager.net/teams/', value: { data: skills.data } });
   assert.equal(result.body.task.type, 'continue');
   assert.equal(f.sent.length, before);
-  assert.ok(value(result).body.some(item => item.text === 'Skills'));
+  assert.ok(texts(value(result)).includes('Skills'));
+  assert.ok(navigation(value(result)).filter(action => action.data.page !== 'general').every(action => action.associatedInputs === 'none'));
 });
 test('private dialog Resume permits an admin command but never publishes it to the channel', async () => {
   const f = await fixture();
@@ -209,20 +217,27 @@ test('card ownership, delivery conversation and revoked roles are checked for ev
   assert.match(rejected, /^Action could not be completed/);
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'claude');
 });
-test('confirmations are one-use and cannot delete an automation from another conversation', async () => {
+test('automation removals are staged, applied only in this conversation, and confirmations stay one-use', async () => {
   const f = await fixture();
   const own = addSchedule({ channelId: f.channelId, slug: f.entry.slug, prompt: 'Own reminder', runAt: '2030-01-01T00:00:00Z', once: true });
   const foreign = addSchedule({ channelId: 'teams:19:foreign@thread.v2', slug: 'foreign', prompt: 'Foreign reminder', cron: '0 * * * *' });
-  const prompt = value(await f.invoke({ stateId: f.stateId, id: own.id }, 'settings.automation.delete'));
-  assert.equal(listForChannel(f.channelId).length, 1);
-  const token = prompt.actions[0].data.token;
-  await f.invoke({ stateId: f.stateId, token, id: foreign.id }, 'settings.confirm');
+  const staged = value(await f.invoke({ stateId: f.stateId, id: own.id }, 'settings.automation.delete'));
+  assert.equal(staged.body[0].text, 'Channel settings');
+  assert.equal(listForChannel(f.channelId).length, 1, 'staging writes nothing');
+  for (const action of ['settings.automation.delete', 'settings.automation.toggle']) {
+    assert.match(value(await f.invoke({ stateId: f.stateId, id: foreign.id, enabled: false }, action)), /^Action could not be completed/);
+  }
+  value(await f.invoke({ stateId: f.stateId, scope: 'channel' }, 'settings.automation.apply'));
   assert.equal(listForChannel(f.channelId).length, 0);
   assert.equal(listForChannel('teams:19:foreign@thread.v2').length, 1);
+  // Immediate destructive actions still need a one-use confirmation.
+  await setThreadEngine(f.entry.slug, 'original-session', 'codex');
+  const prompt = value(await f.invoke({ stateId: f.stateId }, 'settings.thread.reset'));
+  const token = prompt.actions[0].data.token;
+  await f.invoke({ stateId: f.stateId, token }, 'settings.confirm');
+  assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
   const replay = value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
   assert.match(replay, /^Action could not be completed/);
-  const other = value(await f.invoke({ stateId: f.stateId, id: foreign.id }, 'settings.automation.toggle'));
-  assert.match(other, /^Action could not be completed/);
 });
 test('role revocation while membership is in flight prevents an access mutation', async () => {
   const f = await fixture();
@@ -276,10 +291,10 @@ test('automation pages keep later schedules reachable and native cards within bo
     prompt: `Schedule ${index}`, description: `Schedule ${index}`, cron: '0 * * * *', createdBy: f.owner });
   const first = value(await f.invoke({ stateId: f.stateId, page: 'automations' }, 'settings.page'));
   adaptiveCardAttachment(first);
-  assert.ok(first.actions.some(action => action.title === 'Next'));
-  const last = value(await f.invoke(first.actions.find(action => action.title === 'Next').data, 'settings.automation.page'));
+  assert.ok(allActions(first).some(action => action.title === 'Next'));
+  const last = value(await f.invoke(allActions(first).find(action => action.title === 'Next').data, 'settings.automation.page'));
   adaptiveCardAttachment(last);
-  assert.ok(last.body.some(item => item.text === 'Schedule 14'));
+  assert.ok(texts(last).includes('Schedule 14'));
 });
 test('named member grants reject bots and targets removed during write authorization', async () => {
   const f = await fixture();
