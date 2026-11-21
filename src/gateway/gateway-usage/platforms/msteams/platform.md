@@ -64,7 +64,10 @@ complete oversized edits use the authenticated browser settings.
 browse, download, edit eligible text, or upload with write access in a Teams window. `/sendfile
 <path>` posts **Open file** for the selected workspace file. No personal bot chat is required;
 file listings and one-time browser grants appear only inside the authorized user's window.
-Downloads, editing and uploads require the gateway Public URL. Back to files returns to browsing.
+Downloads, editing and uploads require the gateway Public URL. The window has **Root**, **Parent
+folder**, **Refresh** and page buttons. To upload, open the destination folder and select **Upload
+files**: the card names that folder, and **Open uploader** saves there; select **Refresh** after
+uploading. Back to files returns to the folder and page the user came from.
 File launchers expire after 15 minutes but survive gateway restarts and Teams reconnects.
 Already open private file windows lose their state on restart; reopen using an unexpired launcher.
 Buttons created before durable launcher support need a fresh `/files` once. Missing, unknown,

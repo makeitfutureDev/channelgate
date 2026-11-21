@@ -15300,6 +15300,54 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
       file over 3,000 characters as a Worker/Auto (or Admin-in-Admin-mode) author and require
       Edit file to open the browser editor; save a change and confirm it in the workspace.
 
+## Teams Files window navigation and upload destination (2026-11-21)
+
+Ported from the stale PR #157 onto beta's durable-launcher design. Engine-independent: `/files`
+and its dialog callbacks never invoke an engine, so one run covers Claude and Codex.
+Validation: 320 focused Teams/file regressions (`test/teams-*.test.js`,
+`test/platform-teams-*.test.js`, file upload/download/editor) passed with no failures or skips;
+`npm run test:coverage` 5,547 tests, 5,469 passed, 0 failed, 78 skipped (browser-only cases
+without Chromium); static checks and secret scanning passed. No live Teams client was used.
+
+```sh
+node --test test/teams-files-navigation.test.js test/teams-controls.test.js \
+  test/teams-file-dialog-callback.test.js test/teams-file-launchers.test.js test/teams-reply-menu.test.js
+```
+
+- [x] `test/teams-files-navigation.test.js` (scratch SQLite, real `teamsWorkspaceContext`, real
+      workspace folders and the real browser uploader; every case fails on the prior code):
+      Parent folder walks `docs/nested` → `docs` → root and is absent at the root; Refresh
+      rereads the folder (a file written after opening appears) and keeps the page; an empty
+      folder shows "No visible files or folders on this page."; the busiest card (subfolder,
+      middle page, writer) has exactly six actions. With 26 files and a folder in `docs` (three
+      pages), opening a file from page 2 and the upload card from page 2 both return to page 2; a
+      `/sendfile` launcher returns to page 1. Forged page values are clamped to a non-negative integer and non-scalar values
+      are refused. Upload from `docs/nested` shows `Destination: /docs/nested`; the real uploader
+      grant saves `window-upload.txt` there under the original owner, slug and session, and
+      Refresh then lists it. A file, a missing folder, `../outside` or `/etc` as a destination is
+      refused. Read-only members keep Root/Parent/Refresh without Upload, a forged upload is
+      refused, and write access is reread live on the next click.
+- [ ] UNEXECUTED live Teams gate, desktop, web and mobile separately. Fixture: a disposable
+      registered Teams channel thread, group chat and personal chat with the bot; an approved
+      writer (Worker/Auto) and an approved member in a read-only conversation; gateway Public URL
+      set; workspace with `docs/hello.txt`, an empty folder `docs/nested` and 25 extra files
+      `docs/paged-00.txt` … `docs/paged-24.txt`.
+      1. Send `@<bot> /files docs` (no mention in the personal chat) and select **Open files**.
+         Require `Folder: /docs — page 1/3` and the buttons Root, Parent folder, Refresh, Next,
+         Upload files, all visible (none hidden in an overflow menu on mobile).
+      2. Select Next → page 2/3 (Previous and Next both shown: six buttons). Open a file on that
+         page, select **Back to files**: require page 2/3 again. Select Refresh: still page 2/3.
+      3. Open `nested`: require "No visible files or folders on this page." Select **Upload
+         files**: require `Destination: /docs/nested`. Select **Open uploader**; the browser page
+         must also say `Destination: /docs/nested`. Upload a harmless `window-upload.txt`, return
+         to the Teams window, select **Back to files** then **Refresh**: require the file listed
+         in `docs/nested`, and on the host require it at `<workspace>/docs/nested/window-upload.txt`.
+      4. Select **Parent folder** twice: `/docs`, then `/` with no Parent folder button.
+      5. As the read-only member, repeat step 1: Root, Parent folder and Refresh present, no
+         Upload files. Nothing from any step is posted to the chat beyond the launcher.
+      Pass only on observed client rendering and host file evidence; record client, conversation
+      kind and observations.
+
 ## Teams reply menu (2026-10-13)
 
 - [x] `test/teams-reply-menu.test.js` (engine-independent, no engine is invoked): the reply card

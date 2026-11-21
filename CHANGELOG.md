@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
+  and an empty folder says so instead of showing a bare heading. **Upload files** now names the
+  destination folder you are browsing (and refuses one that is not a real workspace folder), and
+  tells you to Refresh after uploading. **Back to files** from a file or the upload card returns
+  to the page you were on, not the first page of the folder.
 - Remove the organization-wide Composio token. Composio now has exactly two identities: a
   conversation's own token (`composio-agent`) and each person's own token (`composio-user`). A
   channel without its own token no longer borrows a gateway-wide account; it simply has no

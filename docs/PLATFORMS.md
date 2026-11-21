@@ -441,10 +441,12 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
   a complete download, or eligible browser text editing (up to 250,000 characters); a `.docx`
   shows a read-only plain-text preview of its body, and PDF and other binary files show download
-  guidance. Preview works without a Public URL. Users with file-write
-  access can open the uploader. Short-lived browser grants recheck current Teams membership and
-  gateway policy. Listings and links stay inside the owner's window. Back to files returns to
-  browsing. No personal chat installation or proactive DM is required. Read-only file callbacks
+  guidance. Preview works without a Public URL. **Root**, **Parent folder**, **Refresh** and
+  page buttons navigate; a folder with nothing visible says so. Users with file-write access open
+  the destination folder and select **Upload files**: the card names that folder and **Open
+  uploader** saves there (Refresh shows the result). Short-lived browser grants recheck current
+  Teams membership and gateway policy. Listings and links stay inside the owner's window. Back to
+  files returns to the folder and page the user came from. No personal chat installation or proactive DM is required. Read-only file callbacks
   have a 3.5-second response budget, cancel stalled roster requests and reuse a single current
   membership check per callback. File launchers persist across restarts and reconnects within
   their original 15-minute lifetime; private dialog state remains ephemeral. Missing/expired/unknown
