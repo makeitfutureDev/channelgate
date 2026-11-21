@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A health check now starts each engine CLI once. Every license's check began with its harness's
+  `--version`, so the admin page's health poll started one process per license, all at once — a
+  gateway with many added licenses ran dozens of `codex --version` processes per poll. One check
+  now asks each CLI once and every license reuses the answer; each license still reports its own
+  sign-in state, and nothing is remembered between checks.
 - Fix `codex` in an SSH session running on a different ChatGPT account than the channel. A
   container's `CODEX_HOME` is set when the container is created and is not rewritten when the
   channel's license changes, so the terminal's `codex` read one directory while the selected

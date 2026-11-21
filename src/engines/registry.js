@@ -357,6 +357,10 @@ export async function engineCredentialState(engine) {
   return { known: Boolean(state?.known), authenticated: Boolean(state?.authenticated), fingerprint: String(state?.fingerprint || "") };
 }
 
-export async function engineHealth(options) {
-  return Promise.all(ENGINE_IDS.map(async (id) => ({ id, ...(await requireAdapter(id).health(options)) })));
+// Every registered license is checked, and each CLI is started once per check however many
+// licenses run on it (`cliProbes`, contract.js commandHealth): the sign-in half of a license's
+// health is a file read, the `--version` half is a process.
+export async function engineHealth(options = {}) {
+  const shared = { ...options, cliProbes: options?.cliProbes instanceof Map ? options.cliProbes : new Map() };
+  return Promise.all(ENGINE_IDS.map(async (id) => ({ id, ...(await requireAdapter(id).health(shared)) })));
 }

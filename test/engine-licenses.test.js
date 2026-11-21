@@ -436,3 +436,37 @@ test("the gateway default takes a license pool, validated beside the default lic
   assert.equal(res.status, 200);
   assert.equal(getEnginePool(), "", "a new default license does not inherit the old one's pool");
 });
+
+test("a health check starts each CLI once, however many licenses run on it", async () => {
+  reset();
+  const { EventEmitter } = await import("node:events");
+  const { PassThrough } = await import("node:stream");
+  for (let i = 0; i < 4; i++) store.createLicense({ kind: "codex-login", label: `Health seat ${i}`, type: "business" });
+  store.createLicense({ kind: "claude-login", label: "Health Claude seat", type: "subscription" });
+  store.createLicense(apiInput({ label: "Health API" }));
+  const started = [];
+  const spawnImpl = (cli) => {
+    started.push(cli);
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    queueMicrotask(() => { child.stdout.write(`${cli} 9.9.9\n`); child.emit("close", 0, null); });
+    return child;
+  };
+  const checks = await registry.engineHealth({ spawnImpl });
+  // Every license still gets its own verdict, with the CLI version its harness reported …
+  assert.deepEqual(checks.map((check) => check.id), [...registry.ENGINE_IDS]);
+  for (const check of checks) assert.equal(check.version, `${check.cli} 9.9.9`, check.id);
+  const codexSeats = checks.filter((check) => registry.adapterFor(check.id)?.license?.kind === "codex-login");
+  assert.equal(codexSeats.length, 4);
+  for (const seat of codexSeats) assert.equal(seat.auth.authenticated, false, "an unsigned license still reports its own sign-in state");
+  // … from ONE process per CLI, not one per license.
+  const perCli = started.reduce((count, cli) => ({ ...count, [cli]: (count[cli] || 0) + 1 }), {});
+  for (const [cli, count] of Object.entries(perCli)) assert.equal(count, 1, `${cli} was started ${count} times`);
+  assert.ok(perCli.claude === 1 && perCli.codex === 1);
+  // The probe is shared within one check only: the next check asks the CLI again.
+  await registry.engineHealth({ spawnImpl });
+  assert.equal(started.filter((cli) => cli === "codex").length, 2);
+  reset();
+});

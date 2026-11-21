@@ -182,7 +182,18 @@ export function argvSafePrompt(prompt) {
   return text.startsWith("-") ? ` ${text}` : text;
 }
 
-export function commandHealth(cli, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+// `cliProbes` (a Map the caller owns) makes one check ask each CLI once: every license of a harness
+// runs the same binary, so a health check over N licenses used to start N `--version` processes
+// at once. The map lives for ONE check — nothing here caches a version across checks, because an
+// update replaces the binary under a running daemon.
+export function commandHealth(cli, options = {}) {
+  const shared = options?.cliProbes instanceof Map ? options.cliProbes : null;
+  if (!shared) return probeCommand(cli, options);
+  if (!shared.has(cli)) shared.set(cli, probeCommand(cli, options));
+  return shared.get(cli);
+}
+
+function probeCommand(cli, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
   return new Promise((resolve) => {
     let output = "";
     let settled = false;
