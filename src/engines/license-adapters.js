@@ -165,7 +165,9 @@ const claudeRunArgs = (ctx, target, id, label) => {
 // The target a Claude license runs on: its own transcript directory, never the shared one, without
 // mutating the target other engines of the same turn receive.
 function claudeLicenseTarget(ctx, id) {
-  const resolved = runtimeTargetOr(ctx.target, ctx.cwd);
+  return claudeLicenseTargetFor(runtimeTargetOr(ctx.target, ctx.cwd), id);
+}
+function claudeLicenseTargetFor(resolved, id) {
   const isolated = isIsolatedTarget(resolved);
   const configDir = isolated ? licenseContainerDir(id, resolved.container?.home) : licenseLoginHome(id);
   return {
@@ -202,6 +204,21 @@ function claudeLoginLicense(claude, record) {
     const plan = describeLicensePlan({ harness: "claude", declared: record.type, plan: provider.login.plan });
     return { ready: plan.matches !== false, signedIn: true, method: "claude-subscription", plan, detail: plan.detail, fingerprint: provider.login.fingerprint || "" };
   };
+  // What ANY Claude Code process needs to run as this license on `resolved`: the target carrying
+  // the license's own transcript directory, and the environment holding its sign-in (the
+  // channel's relay placeholder behind the egress proxy, the live token on a host run). The one
+  // place that resolves it — a turn above, and the gateway's own reduced-tool runs (the memory
+  // reviewer) when this license is the Claude sign-in a conversation may use.
+  async function claudeRunAccess(resolved) {
+    const { target, configDir: runDir } = claudeLicenseTargetFor(resolved, id);
+    const current = status();
+    if (!current.ready) throw notReady(id, target, `${record.label} cannot run: ${current.detail}`);
+    const { containerExtraClaudeCredential } = await import("../gateway/egress/grants.js");
+    const relay = await resolveExtraClaudeToken({ configDir: configDir() });
+    const credential = containerExtraClaudeCredential({ target, relay, secretName: licenseRelaySecretName(id), label: record.label });
+    if (!credential.token) throw notReady(id, target, `${record.label} cannot run: ${credential.error || "its Claude sign-in is unavailable"}.`);
+    return { target, providerEnv: { CLAUDE_CODE_OAUTH_TOKEN: credential.token, CLAUDE_CONFIG_DIR: runDir }, secrets: [relay.token].filter(Boolean) };
+  }
   return {
     ...base,
     // This license's OWN account: the Subscriptions page reads its directory, not the gateway's.
@@ -221,18 +238,13 @@ function claudeLoginLicense(claude, record) {
     },
     async run(ctx) {
       requirePluginRuntime(ctx.runtime.pluginRuntime, id);
-      const { target, configDir: runDir } = claudeLicenseTarget(ctx, id);
-      const current = status();
-      if (!current.ready) throw notReady(id, target, `${record.label} cannot run: ${current.detail}`);
-      const { containerExtraClaudeCredential } = await import("../gateway/egress/grants.js");
-      const relay = await resolveExtraClaudeToken({ configDir: configDir() });
-      const credential = containerExtraClaudeCredential({ target, relay, secretName: licenseRelaySecretName(id), label: record.label });
-      if (!credential.token) throw notReady(id, target, `${record.label} cannot run: ${credential.error || "its Claude sign-in is unavailable"}.`);
+      const access = await claudeRunAccess(runtimeTargetOr(ctx.target, ctx.cwd));
       return runClaudeRedacted({
-        ...claudeRunArgs(ctx, target, id, record.label),
-        providerEnv: { CLAUDE_CODE_OAUTH_TOKEN: credential.token, CLAUDE_CONFIG_DIR: runDir },
-      }, [relay.token], ctx.runtime);
+        ...claudeRunArgs(ctx, access.target, id, record.label),
+        providerEnv: access.providerEnv,
+      }, access.secrets, ctx.runtime);
     },
+    claudeRunAccess,
     interrupt: () => false,
     credentialState: () => {
       const auth = extraClaudeCredentialState({ configDir: configDir() });
@@ -345,7 +357,24 @@ async function providerRunCredential(record, target, id) {
 // ── Claude Code · provider ────────────────────────────────────────────────────────────────────
 // What Claude Code 2.1.318 reads for each route (checked against the CLI: the header and path each
 // combination produces). The token is the placeholder or the live value — never both.
-export function claudeProviderEnv(record, token, configDir) {
+// Claude Code names models of its own beside the one a turn asks for: the small model behind its
+// background calls, and the opus/sonnet/haiku aliases a subagent or skill may request. A server
+// that is not Anthropic's serves only the ids its license lists, so each alias is pinned to a
+// listed model — the one that carries the alias in its id when there is one, else the turn's own
+// model — instead of leaving the CLI to send a Claude id the server has never heard of.
+const CLAUDE_ALIAS_ENV = Object.freeze({ opus: "ANTHROPIC_DEFAULT_OPUS_MODEL", sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL", haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL" });
+function claudeAliasPins(record, model) {
+  const listed = (record.models || []).map((entry) => String(entry.value || "")).filter(Boolean);
+  const fallback = String(model || "") || listed[0] || "";
+  const pins = {};
+  for (const [alias, name] of Object.entries(CLAUDE_ALIAS_ENV)) {
+    const value = listed.find((id) => id.toLowerCase().includes(alias)) || fallback;
+    if (value) pins[name] = value;
+  }
+  return pins;
+}
+
+export function claudeProviderEnv(record, token, configDir, model = "") {
   const kind = LICENSE_KINDS[record.kind];
   const bearer = record.authScheme === "bearer";
   const env = { CLAUDE_CONFIG_DIR: configDir };
@@ -362,7 +391,10 @@ export function claudeProviderEnv(record, token, configDir) {
   if (kind.provider === "azure") {
     return { ...env, CLAUDE_CODE_USE_FOUNDRY: "1", ANTHROPIC_FOUNDRY_BASE_URL: record.baseUrl, [bearer ? "ANTHROPIC_FOUNDRY_AUTH_TOKEN" : "ANTHROPIC_FOUNDRY_API_KEY"]: token };
   }
-  return { ...env, ANTHROPIC_BASE_URL: record.baseUrl, [bearer ? "ANTHROPIC_AUTH_TOKEN" : "ANTHROPIC_API_KEY"]: token };
+  return {
+    ...env, ANTHROPIC_BASE_URL: record.baseUrl, [bearer ? "ANTHROPIC_AUTH_TOKEN" : "ANTHROPIC_API_KEY"]: token,
+    ...(licenseIsVendorApi(record) ? {} : claudeAliasPins(record, model)),
+  };
 }
 
 const CLOUD_CLAUDE_MODELS = Object.freeze(["opus", "sonnet", "haiku"].map((value) => Object.freeze({
@@ -390,6 +422,9 @@ function claudeProviderLicense(claude, record) {
     // the server IS Anthropic's.
     supports: { ...base.supports, warmPool: false, interruptSteer: false, nativeFork: false, realCost: vendor, ...(kind.provider === "custom" ? {} : { usageLimitFallback: false }) },
     modelBelongs: (model) => own.length || !vendor ? ids.has(String(model || "").toLowerCase()) : claude.modelBelongs(model),
+    // The list above is the WHOLE catalog (no family of ids beyond it), which is what tells a
+    // picker to drop a saved model this license no longer lists instead of offering it again.
+    modelListClosed: Boolean(own.length) || !vendor,
     sessionState: sessionDirs(base, id),
     ...providerAdapterFacts(record, status, "claude"),
     async run(ctx) {
@@ -398,10 +433,14 @@ function claudeProviderLicense(claude, record) {
       const current = status();
       if (!current.ready) throw notReady(id, target, `${record.label} cannot run: ${current.detail}`);
       const credential = await providerRunCredential(record, target, id);
+      const model = ctx.runtime.model || own[0]?.value || "";
       const result = await runClaudeRedacted({
         ...claudeRunArgs(ctx, target, id, record.label),
-        model: ctx.runtime.model || models[0].value,
-        providerEnv: claudeProviderEnv(record, credential.token, configDir),
+        // With no list (Anthropic's own API, or a cloud route's aliases) an unset model stays
+        // unset — the CLI's own default for that route, as on the Codex side — rather than the
+        // first catalog entry, which is the most expensive model the vendor sells.
+        model,
+        providerEnv: claudeProviderEnv(record, credential.token, configDir, model),
       }, credential.secrets, ctx.runtime);
       return vendor ? result : { ...result, costUSD: null };
     },
@@ -479,6 +518,7 @@ function codexProviderLicense(codex, record) {
     costRateKey: vendor ? codex.costRateKey : "",
     supports: { ...base.supports, nativeFork: false },
     modelBelongs: (model) => own.length || !vendor ? ids.has(String(model || "").toLowerCase()) : codex.modelBelongs(model),
+    modelListClosed: Boolean(own.length) || !vendor,
     sessionState: sessionDirs(codex, id),
     discoverMcps: async () => [],
     resolveOptionalMcpConfig: async () => ({ servers: {}, rejected: [] }),
@@ -602,9 +642,21 @@ export async function verifyProviderLicense(record, { fetchImpl, timeoutMs = 15_
         return { ok: true, verified: false, detail: "Amazon recognized this key but its policy does not allow listing models, so it is verified by the first turn that uses it." };
       }
     }
+    // A compatible server that is not the vendor's own answers 403 for a route it does not
+    // serve as readily as for a key it does not accept, so only its 401 is a verdict on the key.
+    // Treating that 403 as a rejection left a working license permanently "not ready".
+    if (kind.provider === "custom" && response.status === 403 && !licenseIsVendorApi(record)) {
+      return { ok: true, verified: false, detail: `The server refused its model list (HTTP 403), which does not say whether the key works for turns; it is verified by the first turn that uses it.` };
+    }
     return { ok: false, verified: true, detail: `The server rejected this key (HTTP ${response.status}).` };
   }
   // Compatible servers commonly serve only the generation route; that proves nothing either way.
-  return { ok: true, verified: false, detail: `The server has no model list to check the key against (HTTP ${response.status}); it is verified by the first turn that uses it.` };
+  // A 404 is also what a mistyped address answers, and the two harnesses expect different ones.
+  const addressHint = kind.provider === "custom" && response.status === 404
+    ? kind.harness === "claude"
+      ? " If turns fail, check the address: Claude Code adds /v1/messages itself, so it is entered without a trailing /v1."
+      : " If turns fail, check the address: Codex calls <address>/responses, so an OpenAI-compatible server is usually entered with its /v1."
+    : "";
+  return { ok: true, verified: false, detail: `The server has no model list to check the key against (HTTP ${response.status}); it is verified by the first turn that uses it.${addressHint}` };
 }
 export const verifyApiLicense = verifyProviderLicense;

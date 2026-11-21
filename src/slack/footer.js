@@ -3,7 +3,7 @@
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
-import { resumeCommandFor, requireAdapter } from "../engines/registry.js";
+import { adapterFor, resumeCommandFor, requireAdapter } from "../engines/registry.js";
 import { footerText } from "../gateway/reply-stats.js";
 import { referencedWorkspaceFiles } from "../gateway/reply-files.js";
 export { referencedWorkspaceFiles } from "../gateway/reply-files.js";
@@ -25,6 +25,8 @@ import { voiceCallsAvailable } from "../config/settings.js";
 // stays today's `cd "<folder>" && <cmd>` line, byte for byte.
 export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   if (!sessionId || !cwd) return "";
+  // A license deleted since this session ran has no command to offer; a footer never throws for it.
+  if (!adapterFor(engine)) return "";
   if (requireAdapter(engine).channelScoped && !target?.meta?.channelId) return "";
   const base = requireAdapter(engine).resumeCommand(sessionId, { target });
   const wrapped = target ? resumeCommandFor(engine, sessionId, { target }) : base;

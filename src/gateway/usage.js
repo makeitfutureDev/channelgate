@@ -125,11 +125,22 @@ function rowToRecord(r) {
   };
 }
 
-export function componentRow(accounting, { sourceKind = "root", parentSourceId = "", fallbackModel = "", durationMs = null } = {}) {
+// The two harness buckets of a cost split, as SQL over the ledger's `engine` column. Every license
+// id is its harness's own id or carries it as a prefix (engines/license-state.js), so a license's
+// spend lands in its harness's bucket instead of in the total only.
+const HARNESS_SQL = Object.freeze({
+  claude: "(engine = 'claude' OR engine LIKE 'claude-%')",
+  codex: "(engine = 'codex' OR engine LIKE 'codex-%')",
+});
+
+// `priced: false` records the tokens and no dollar figure: a license whose server is not OpenAI's
+// has no rate table of its own (its adapter declares no costRateKey), and a model id that happens
+// to match one of OpenAI's — or a flat fallback rate — must not put OpenAI's price on its bill.
+export function componentRow(accounting, { sourceKind = "root", parentSourceId = "", fallbackModel = "", durationMs = null, priced = true } = {}) {
   const usage = normalizeCodexTokenUsage(accounting?.usage || {});
   const model = String(accounting?.model || fallbackModel || "");
   const requests = Array.isArray(accounting?.requests) ? accounting.requests : [];
-  const estimate = estimateCodexCost(usage, model, requests);
+  const estimate = priced ? estimateCodexCost(usage, model, requests) : { costUSD: null, estimated: false };
   return {
     sourceKey: String(accounting?.sourceId || ""),
     sourceKind,
@@ -254,7 +265,11 @@ export async function recordUsage({ channelId, slug, authorId, engine, model, ta
       // subagents. Difference against this session's last recorded cumulative so the row carries
       // only THIS run — and the whole tree of it, with one priced component per model. Read under
       // the write lock: the baseline is the last row this very transaction can see.
-      const claudeCumulative = resolvedEngine === "claude" ? claudeCumulativeSnapshot(result.raw) : null;
+      // Every license of the Claude harness whose reported cost IS its bill (the default sign-in,
+      // an added sign-in, a key on Anthropic's own API) reports this way — the CLI does, not the
+      // login. A license whose adapter drops the cost keeps its plain token row.
+      const claudeReportsCost = adapterFor(resolvedEngine)?.cli === "claude" && engineSupports(resolvedEngine, "realCost");
+      const claudeCumulative = claudeReportsCost ? claudeCumulativeSnapshot(result.raw) : null;
       const claudeDelta = claudeCumulative ? claudeSessionDelta(claudeCumulative, latestClaudeSnapshot(db, sessionId)) : null;
       if (claudeDelta) settledFigures = normalizeUsage({ ...normalizedResult, costUSD: claudeDelta.costUSD });
       const { inTok, outTok, costUSD, estimated } = settledFigures;
@@ -303,10 +318,12 @@ export async function recordUsage({ channelId, slug, authorId, engine, model, ta
         }
       }
       if (normalizedResult.usageAccounting?.root) {
-        const root = componentRow(normalizedResult.usageAccounting.root, { fallbackModel: currentModel, durationMs: result.durationMs ?? null });
+        const priced = Boolean(engineCostRateKey(resolvedEngine));
+        const root = componentRow(normalizedResult.usageAccounting.root, { fallbackModel: currentModel, durationMs: result.durationMs ?? null, priced });
         insertComponent(db, usageId, root);
         for (const child of normalizedResult.usageAccounting.children || []) {
           insertComponent(db, usageId, componentRow(child, {
+            priced,
             sourceKind: "subagent",
             parentSourceId: root.providerSessionId,
             fallbackModel: currentModel,
@@ -626,8 +643,8 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
               COALESCE(SUM(canonical_tokens_in), 0) AS tokens_in,
               COALESCE(SUM(canonical_tokens_out), 0) AS tokens_out,
               COALESCE(SUM(canonical_cost_usd), 0) AS cost,
-              COALESCE(SUM(CASE WHEN engine = 'claude' THEN canonical_cost_usd ELSE 0 END), 0) AS claude_cost,
-              COALESCE(SUM(CASE WHEN engine = 'codex' THEN canonical_cost_usd ELSE 0 END), 0) AS codex_cost,
+              COALESCE(SUM(CASE WHEN ${HARNESS_SQL.claude} THEN canonical_cost_usd ELSE 0 END), 0) AS claude_cost,
+              COALESCE(SUM(CASE WHEN ${HARNESS_SQL.codex} THEN canonical_cost_usd ELSE 0 END), 0) AS codex_cost,
               SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_runs,
               COUNT(DISTINCT author_id) AS users,
               COUNT(DISTINCT channel_id) AS channels

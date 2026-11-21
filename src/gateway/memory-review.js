@@ -21,6 +21,9 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { getChannelMeta } from "../config/store.js";
 import { isChannelEngineApproved } from "./channel-engines.js";
+import { selectableLicenses } from "./license-pool.js";
+import { adapterFor } from "../engines/registry.js";
+import { redactSecretValues } from "../util/redact.js";
 import { runClaude } from "../engines/claude.js";
 import { buildMcpConfig } from "./mcp.js";
 import { effectiveWorkDir } from "./folders.js";
@@ -139,6 +142,51 @@ export function summarizeReview(content) {
   return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS - 1)}…` : line;
 }
 
+// The Claude sign-ins a review may run on in this conversation, in order: the gateway's own login
+// first, then every Claude SIGN-IN license it may use. A deployment that runs Claude Code only
+// through an added subscription license used to get no review at all, because the reviewer asked
+// for the built-in login alone. A custom-server or cloud license is deliberately never a
+// candidate: the review model is an Anthropic model id the gateway chooses, which such a server
+// need not serve, and a review nobody asked for must not be billed to a metered key.
+export function reviewLicenseCandidates(meta = {}) {
+  const out = isChannelEngineApproved(meta, "claude") ? ["claude"] : [];
+  for (const id of selectableLicenses("claude", meta)) {
+    if (id !== "claude" && typeof adapterFor(id)?.claudeRunAccess === "function") out.push(id);
+  }
+  return out;
+}
+
+// The first candidate that can actually sign in on `target`, or the reason none can.
+// → { engine, target, claudeOauthToken, providerEnv, secrets } | { skipped }
+async function resolveReviewLogin({ candidates, target, channelId, slug }) {
+  let reason = "";
+  for (const engine of candidates) {
+    if (engine !== "claude") {
+      try {
+        const access = await adapterFor(engine).claudeRunAccess(target);
+        return { engine, target: access.target, claudeOauthToken: "", providerEnv: access.providerEnv, secrets: access.secrets || [] };
+      } catch (error) {
+        reason ||= String(error?.message || error);
+        continue;
+      }
+    }
+    // The gateway's own login authenticates exactly like any other Claude run in the channel's
+    // container: a relay of the login the gateway resolved (src/gateway/claude-login.js).
+    if (typeof target.runtime.credentialError === "function") {
+      const blocked = await target.runtime.credentialError(target, "claude");
+      if (blocked) { reason ||= String(blocked?.message || blocked); continue; }
+    }
+    const relay = await resolveContainerClaudeToken();
+    // In a container there is no other way in, so skip with the reason rather than let every
+    // review end in "Not logged in" (seen live on a Codex container channel, 2026-09-02).
+    if (!relay.token && relay.source !== "api-key") { reason ||= String(relay.error || "no Claude login"); continue; }
+    // Through the egress proxy, the channel's relay PLACEHOLDER rather than the access token itself.
+    return { engine, target, claudeOauthToken: containerClaudeCredential({ target, relay, channelId })?.token || "", providerEnv: null, secrets: [] };
+  }
+  console.warn(`[memory] review skipped in ${slug}: ${reason || "no Claude sign-in is available here"}`);
+  return { skipped: "no-container-claude-credential" };
+}
+
 export async function runMemoryReview({
   client = null, channelId, slug, threadKey, authorId, meta = {}, fetchTranscript = null, reason = "",
   // The reviewer outlives the turn that queued it, so it resolves WHERE it runs at its OWN spawn
@@ -154,7 +202,8 @@ export async function runMemoryReview({
     if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
     throw error;
   }
-  if (!isChannelEngineApproved(meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
+  const candidates = reviewLicenseCandidates(meta);
+  if (!candidates.length) return { skipped: "harness-not-approved", saved: 0 };
   const cwd = effectiveWorkDir(slug, meta);
   const snapshot = await readMemorySnapshot(cwd, meta);
   const transcript = String((await fetchTranscript?.()) || "").trim();
@@ -164,32 +213,17 @@ export async function runMemoryReview({
     + buildMemoryReviewPrompt({ snapshot, transcript, channelName: meta.name || slug });
   const model = getMemoryReviewModel();
 
-  const target = resolveTarget(slug, meta);
-  // A review is a Claude run in the channel's container, and it authenticates exactly like any
-  // other one: a relay of the login the gateway resolved (src/gateway/claude-login.js).
-  if (typeof target.runtime.credentialError === "function") {
-    const blocked = await target.runtime.credentialError(target, "claude");
-    if (blocked) {
-      console.warn(`[memory] review skipped in ${slug}: ${String(blocked?.message || blocked)}`);
-      return { skipped: "no-container-claude-credential", saved: 0 };
-    }
-  }
-  const relay = await resolveContainerClaudeToken();
-  // In a container there is no other way in, so skip with the reason rather than let every review
-  // end in "Not logged in" (seen live on a Codex container channel, 2026-09-02).
-  if (!relay.token && relay.source !== "api-key") {
-    console.warn(`[memory] review skipped in ${slug}: ${relay.error}`);
-    return { skipped: "no-container-claude-credential", saved: 0 };
-  }
-  // Through the egress proxy, the channel's relay PLACEHOLDER rather than the access token itself.
-  const claudeOauthToken = containerClaudeCredential({ target, relay, channelId })?.token || "";
+  const login = await resolveReviewLogin({ candidates, target: resolveTarget(slug, meta), channelId, slug });
+  if (login.skipped) return { skipped: login.skipped, saved: 0 };
+  // A license's target carries its OWN transcript directory; the gateway's login keeps the shared one.
+  const { engine, target, claudeOauthToken } = login;
 
   // The reviewer's MCP config: the gateway control server ONLY, narrowed to the save tool. No
   // Composio identities — it has no business acting as anyone. A 0600 file under
   // the channel's bind-mounted artifact dir, because the gateway root is not mounted into a
   // container and the engine there could not open it.
   const mcpConfigJson = await buildMcpConfig({
-    channelId, slug, authorId, threadKey, origin: REVIEW_ORIGIN, engine: "claude", principalTrusted: true,
+    channelId, slug, authorId, threadKey, origin: REVIEW_ORIGIN, engine, principalTrusted: true,
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(), toolset: REVIEW_TOOLSET, target,
   });
   const mcpConfigFile = path.join(target.artifactDir, `cg-mcp-review-${randomUUID()}.json`);
@@ -215,7 +249,7 @@ export async function runMemoryReview({
   let saves = 0;
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });
-    if (!isChannelEngineApproved((await getChannelMeta(slug)) ?? meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
+    if (!reviewLicenseCandidates((await getChannelMeta(slug)) ?? meta).includes(engine)) return { skipped: "harness-not-approved", saved: 0 };
     try { await assertChannelBudget(channelId, slug); }
     catch (error) {
       if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
@@ -236,6 +270,8 @@ export async function runMemoryReview({
       configDir: claudeConfigDir,
       target,
       claudeOauthToken,
+      // A license signs in through its own environment, applied last (see applyProviderEnv).
+      ...(login.providerEnv ? { providerEnv: login.providerEnv, engineId: engine, harnessLabel: adapterFor(engine)?.label || "" } : {}),
       artifactDir: target.artifactDir,
       runId: reviewRunId,
       disallowedTools: REVIEW_DISALLOWED_TOOLS,
@@ -243,8 +279,8 @@ export async function runMemoryReview({
         if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) saves += 1;
       },
     });
-    await recordUsage({ channelId, slug, authorId, engine: "claude", model, taskKind: "memory_review", result });
-    const summary = summarizeReview(result.content);
+    await recordUsage({ channelId, slug, authorId, engine, model, taskKind: "memory_review", result });
+    const summary = redactSecretValues(summarizeReview(result.content), login.secrets);
     await logEvent("memory_review", { channel: channelId, author: authorId, slug, reason, saved: saves, durationMs: result.durationMs, costUSD: result.costUSD, summary });
     if (saves > 0 && client && getMemoryReviewNotify()) {
       await postNotice(client, { conversationId: channelId, threadKey, text: `🧠 Memory updated${summary ? ` — ${summary}` : ""}` }).catch((err) => {

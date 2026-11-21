@@ -68,7 +68,7 @@ import {
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
 import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
+import { engineLabel, modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
 import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
@@ -100,6 +100,18 @@ const WEB_ADMIN_ACTOR = "admin UI";
 // retired integration's token must not survive as a listing field nobody thought to mask.
 // The flat email-account form fields a PUT body may carry (gateway/email-accounts.js validates).
 export const EMAIL_ACCOUNT_BODY_FIELDS = Object.freeze(["address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "imapSecurity", "smtpHost", "smtpPort", "smtpUser", "smtpPassword", "smtpSecurity"]);
+// A model rides beside the license it was picked for. A NEW model the conversation's resulting
+// license cannot serve is refused; a stored one left behind by a license change in the same
+// request is dropped — a run would ignore it, and every picker would keep showing a stale value.
+function reconcileModelWithEngine(next, current, body) {
+  const runs = effectiveMeta(next).engine || getEngine();
+  if (!next.model || !ENGINES.includes(runs) || modelBelongsToEngine(next.model, runs)) return;
+  if (typeof body.model === "string" && body.model.trim() !== (current.model || "")) {
+    throw Object.assign(new Error(`model "${next.model}" is not a ${engineLabel(runs)} model`), { status: 400, statusCode: 400 });
+  }
+  if ((next.engine || "") !== (current.engine || "")) next.model = "";
+}
+
 export function emailAccountBody(req) {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const out = { name: req.params.name };
@@ -360,6 +372,7 @@ export function createChannelsRouter({
       // sent → the old license's pool does not carry over.
       if (Object.hasOwn(body, "licensePool")) next_.licensePool = normalizeLicensePool(body.licensePool, next_.engine);
       else if ((next_.engine || "") !== (current.engine || "")) next_.licensePool = "";
+      reconcileModelWithEngine(next_, current, body);
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
@@ -582,6 +595,7 @@ export function createChannelsRouter({
           // A pool is chosen WITH its license (see the DM route above).
           if (Object.hasOwn(body, "licensePool")) out.licensePool = normalizeLicensePool(body.licensePool, out.engine);
           else if ((out.engine || "") !== (current.engine || "")) out.licensePool = "";
+          reconcileModelWithEngine(out, current, body);
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
           // written only when sent, so an unrelated save records no change to them.

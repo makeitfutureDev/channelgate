@@ -361,6 +361,11 @@ test("a harness word in a message pins the channel's selection; a license id pin
   await setThreadEngine(entry.slug, "1903.004", "claude");
   await say("codex", "1903.004");
   assert.deepEqual(await pin("1903.004"), [work, [second]]);
+  // A thread already pinned to a license of the harness named keeps that license: the word names
+  // the harness the thread is on, it does not hand the thread back to the channel's selection.
+  await say("codex", "1903.002");
+  assert.deepEqual(await pin("1903.002"), [second, ""]);
+  assert.match(messages.at(-1).text, /This thread now uses \*Codex · Second seat\*/);
   assert.equal(runtime.calls.spawn.length, spawned, "a directive on its own starts no engine");
 });
 

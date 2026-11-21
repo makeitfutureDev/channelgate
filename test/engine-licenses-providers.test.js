@@ -225,7 +225,21 @@ test("Claude Code is started on each provider with that provider's own switches,
   assert.equal(az.ANTHROPIC_FOUNDRY_API_KEY, "TOKEN");
   assert.equal(az.ANTHROPIC_FOUNDRY_AUTH_TOKEN, undefined);
   assert.equal(env("claude-azure", { label: "Azure bearer", authScheme: "bearer" }).ANTHROPIC_FOUNDRY_AUTH_TOKEN, "TOKEN");
-  assert.deepEqual(env("claude-api"), { CLAUDE_CONFIG_DIR: "/cfg", ANTHROPIC_BASE_URL: "https://llm.example.com", ANTHROPIC_AUTH_TOKEN: "TOKEN" });
+  // A server that is not Anthropic's serves only the ids its license lists, so every alias Claude
+  // Code resolves on its own (the small model, a subagent's "sonnet") is pinned to a listed model:
+  // the one carrying the alias in its id, else the turn's own model, else the first listed.
+  const pin = (models) => ({ ANTHROPIC_DEFAULT_OPUS_MODEL: models[0], ANTHROPIC_DEFAULT_SONNET_MODEL: models[1], ANTHROPIC_DEFAULT_HAIKU_MODEL: models[2] });
+  assert.deepEqual(env("claude-api"), {
+    CLAUDE_CONFIG_DIR: "/cfg", ANTHROPIC_BASE_URL: "https://llm.example.com", ANTHROPIC_AUTH_TOKEN: "TOKEN", ...pin(["team-large", "team-large", "team-large"]),
+  });
+  const mixed = store.getLicenseRecord(add("claude-api", { label: "Claude mixed", models: ["team-large", "team-haiku-fast", "team-small"] }).id);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(adapters.claudeProviderEnv(mixed, "TOKEN", "/cfg", "team-small")).filter(([name]) => name.startsWith("ANTHROPIC_DEFAULT_"))),
+    pin(["team-small", "team-small", "team-haiku-fast"]),
+  );
+  // Anthropic's own API knows its own aliases: nothing is pinned there.
+  const vendorEnv = adapters.claudeProviderEnv(store.getLicenseRecord(add("claude-api", { label: "Anthropic API", baseUrl: "https://api.anthropic.com", models: [] }).id), "TOKEN", "/cfg");
+  assert.deepEqual(Object.keys(vendorEnv).filter((name) => name.startsWith("ANTHROPIC_DEFAULT_")), []);
   // The daemon's own cloud settings, or a channel's, cannot redirect a cloud route.
   const inherited = {
     PATH: "/usr/bin", HOME: "/home/x", ANTHROPIC_API_KEY: "inherited", ANTHROPIC_BASE_URL: "https://elsewhere.example", AWS_PROFILE: "ops",
@@ -374,7 +388,7 @@ test("a Vertex turn in a container holds a placeholder: not the key file, not th
   const text = JSON.stringify({ args: spec.args, env: spec.env });
   assert.ok(!text.includes("ya29.") && !text.includes("PRIVATE KEY"));
   assert.equal(spec.args[spec.args.indexOf("--settings") + 1], "/lockdown.json", "the channel's lockdown still applies");
-  assert.equal(spec.args[spec.args.indexOf("--model") + 1], "opus", "with no list, the first alias Claude Code maps");
+  assert.equal(spec.args.includes("--model"), false, "with no list and no chosen model, the CLI's own default answers — not the catalog's first (most expensive) entry");
   assert.equal(target.container.claudeConfigDir, undefined, "the shared target is not mutated");
 });
 

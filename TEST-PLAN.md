@@ -1,5 +1,98 @@
 # ChannelGate — Test Plan
 
+## Engine licenses: review fixes (2026-11-21)
+
+Deleted licenses, custom model names, license cost, pinned harnesses and the memory reviewer's
+login. What is stored, listed and refused is decided by the gateway before an engine runs; the
+live cases name the harness where it matters and are run once for Claude Code and once for Codex.
+
+- [x] `test/engine-licenses-lifecycle.test.js` (always runs; nine tests). A deleted license: the
+      session it stamped reads as no live session while the thread still has history, a thread
+      pin naming it resolves to the conversation's selection, `effectiveMeta` drops the stored
+      `engine` and `licensePool`, `coherentLicensePool` keeps only registered ids and the footer
+      builds no resume command. The only switched-on license is not deleted (409, nothing
+      removed). A listed custom model name passes `isLicenseListedModel`, `invalidModelOrEffort`
+      and `PUT /api/settings` as the license's default, the manifest carries `modelListClosed`,
+      and editing the list clears a default it no longer contains. Forty-one listed models is
+      refused with the count. Verification: 403 on a custom server's model list is unverified
+      and not a failure, 404 names the address, 401 is a rejected key. `verifyLicense` returns
+      the settings version it moved from and to; a page older than that gets 409
+      `settings_version_conflict` before its values are judged. A channel save refuses a new
+      model its license cannot serve (400) and drops a stale stored one when the license
+      changes. `reviewLicenseCandidates` lists the gateway login first, then approved Claude
+      sign-in licenses, never a custom-server or cloud license. A Claude sign-in license's
+      resumed turn records the cost delta, and its spend is in the dashboard's Claude share.
+- [x] `test/engine-licenses-failover.test.js` (always runs; the real orchestrator against the
+      stub engines): a thread whose session a deleted license minted continues, fresh, on the
+      conversation's current selection; a harness pinned by hand that is switched off, with no
+      other license of it usable, is refused with the "is disabled in gateway Settings" text and
+      the other harness does not run.
+- [x] `test/engine-licenses-providers.test.js` (always runs): a Claude Code custom-server turn
+      pins the three aliases to listed models (name match, else the turn's model, else the first
+      listed), a key on Anthropic's own API pins none, and a cloud route with no list and no
+      chosen model passes no `--model`.
+- [x] `test/engine-licenses.test.js` (always runs): a new path on the same host keeps the stored
+      key and clears the verification; another host without the key is refused with "Re-enter
+      the API key to move this license to <host>"; with the key it is saved.
+- [x] `test/engine-licenses-slack.test.js`, `test/engine-licenses-platforms.test.js` (always
+      run): the harness word a thread is already on keeps the thread's pinned license; the other
+      harness's word still switches.
+- [x] `test/memory-review.test.js` (always runs): in a conversation locked to an added Claude
+      sign-in license the review is skipped (`no-container-claude-credential`) without the egress
+      proxy and, behind it, runs on that license with a relay placeholder as its token, the token
+      scrubbed from the summary and the usage row under the license; a Codex-only lock still
+      skips with `harness-not-approved`.
+- [ ] Live `LICENSE-21` a deleted license (run once with an added Claude sign-in license and once
+      with an added Codex sign-in license). Fixture: the license added, signed in and switched
+      on; a disposable Worker channel `C` set to it in channel settings; one answered thread `T`
+      in `C`. Action: Settings → Engine licenses → Remove on the license, confirm; open the
+      channel settings modal in `C`; send "what did I ask you before?" in `T`. Pass: the modal
+      opens and shows the harness's default sign-in; `T` is answered by the default sign-in in a
+      fresh session that knows the earlier question; the footer's Resume button copies a command
+      for the new session; no `run_error` or "not an approved harness" appears.
+- [ ] Live `LICENSE-22` a custom server's model names (run once with a Claude Code custom-server
+      license and once with a Codex one, each on a server whose model ids are not Claude or GPT
+      names). Action: add the license with its model list, Verify, set one listed model as the
+      license's default and Save; set channel `C` to the license and that model; run `/model` in
+      `C`; send "reply with the word ready". Pass: every save succeeds; `/model` offers exactly
+      the listed models for that license; the turn is answered and its `usage` row carries the
+      license id and the listed model; for Claude Code, a prompt that starts a subagent ("use a
+      subagent to list the files here") completes without a model-not-found error from the
+      server. Then remove that model from the license's list and Save: the license's default
+      model is empty and channel settings no longer offer it.
+- [ ] Live `LICENSE-23` moving a license's endpoint (engine-independent). Action: edit a
+      custom-server license, change the base URL to another host, leave the key blank, Save;
+      then repeat with the key. Pass: the first save is refused with "Re-enter the API key to
+      move this license to <host>" and nothing is stored; the second is saved and reads
+      unverified until Verify.
+- [ ] Live `LICENSE-24` the page and Verify (engine-independent). Action: open Settings, change a
+      field without saving, press Verify on a license, then Save. Pass: Save succeeds. Then open
+      Settings in two tabs, save in the first, save in the second: the second is told the page
+      is out of date and nothing is changed.
+- [ ] Live `LICENSE-25` a pinned harness that is switched off (run once pinning Claude Code and
+      once pinning Codex, each with no other license of that harness switched on). Action: in a
+      thread, `/model` → that harness → "just this thread"; switch the harness off in Settings;
+      send a message in the thread. Pass: the reply is "<license> is disabled in gateway
+      Settings and no other <Harness> license can run here. Enable it or select another harness
+      for this thread." and no turn of the other harness is in `usage`. A thread that only
+      follows the channel default is answered by the other harness as before.
+- [ ] Live `LICENSE-26` the harness word keeps the license (run once per harness with an added
+      sign-in license). Action: pin a thread to the added license with `/model` → "just this
+      thread"; send `claude say ready` (or `codex say ready`). Pass: the `usage` row of that
+      turn carries the added license's id, and `/model` still shows it for the thread.
+- [ ] Live `LICENSE-27` license cost (Claude Code; Codex only for the unpriced case). Fixture: an
+      added Claude sign-in license and channel `C` set to it. Action: three short turns in one
+      thread. Pass: `SELECT cost_usd, provider_cost_cumulative FROM usage WHERE session_id = '<id>'
+      ORDER BY ts` shows three per-turn costs whose sum equals the last cumulative, not a
+      growing series; the Usage page's Claude share includes them. For a Codex custom-server license: the
+      row has tokens and no cost.
+- [ ] Live `LICENSE-28` memory review on a license (Claude Code). Fixture: channel `C` whose
+      approved harnesses are only an added Claude sign-in license; the egress proxy on. Action:
+      tell the bot a durable fact ("our release day is Thursday") and wait for the reply. Pass:
+      within a few minutes the thread shows the memory-saved note and a `usage` row with
+      `task_kind = 'memory_review'` carries the license id. With the lock set to a Codex license only: no
+      review runs and none is announced.
+
 ## Admin dashboard sessions survive restarts, thirty-day passkey sessions (2026-11-20)
 
 - Engine-independent (no engine runs; the change is the dashboard's own cookie session).

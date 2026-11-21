@@ -23,7 +23,7 @@ import { getSkill, listSkills as listCatalogSkills } from "../../gateway/skills/
 import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
 import { listChannels, getChannelsIndex } from "../../config/store.js";
-import { requireAdapter, modelBelongsToEngine, effortBelongsToModel } from "../../engines/registry.js";
+import { requireAdapter, modelBelongsToEngine, effortBelongsToModel, isLicenseListedModel } from "../../engines/registry.js";
 import {
   getAdminPassword,
   getSettings,
@@ -62,6 +62,7 @@ import {
   CONTAINER_IMAGE_RE,
   CONTAINER_MEMORY_RE,
   CONTAINER_CPUS_RE,
+  getSettingsVersion,
 } from "../../config/settings.js";
 import { platformUiManifest } from "../../platforms/registry.js";
 import { isServiceAccountJson, syncAllNow, driveSyncStatusAll } from "../../gateway/drivesync.js";
@@ -128,6 +129,14 @@ export function createSettingsRouter({
   // The ONE settings representation. The admin UI repaints from whatever a request returns —
   // the initial GET, the response to a successful save, or the 409 that refuses a stale one — so
   // all three must carry the same shape, or a repaint would blank the fields the other two omit.
+  // What a save made from a stale page gets back: the reason, and the CURRENT settings so the
+  // page can show what it now has instead of guessing.
+  const staleSettingsResponse = () => ({
+    error: "These settings changed elsewhere since this page loaded — nothing was saved. The latest values are shown; re-apply your change and save again.",
+    code: "settings_version_conflict",
+    stale: true,
+    ...settingsPayload(),
+  });
   const settingsPayload = (slackSnap = null) => ({
     ...settingsForApi(),
     engines: engineUiManifest(),
@@ -220,6 +229,11 @@ export function createSettingsRouter({
     try {
       await refreshEngineModels();
       const body = req.body ?? {};
+      // A page painted from older settings is told so BEFORE its values are judged: it may name a
+      // license deleted since, and "unknown engine" (400) would hide that the page is simply stale
+      // and can repaint itself. The save itself re-checks the version atomically below.
+      const pageVersion = typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
+      if (pageVersion !== "" && pageVersion !== getSettingsVersion()) return res.status(409).json(staleSettingsResponse());
       const patch = {};
       // Tokens are write-only: only overwrite when a non-empty value is provided.
       if (typeof body.slackBotToken === "string" && body.slackBotToken) patch.slackBotToken = body.slackBotToken.trim();
@@ -486,7 +500,7 @@ export function createSettingsRouter({
         for (const [rawName, target] of entries) {
           const name = rawName.toLowerCase();
           if (!MODEL_SHORTCUT_NAME_RE.test(name) || Object.hasOwn(shortcuts, name)) return res.status(400).json({ error: `invalid or duplicate model shortcut "${rawName}"` });
-          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !isValidModel(target.model) || !modelBelongsToEngine(target.model, target.engine))
+          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !(isValidModel(target.model) || isLicenseListedModel(target.model, target.engine)) || !modelBelongsToEngine(target.model, target.engine))
             return res.status(400).json({ error: `invalid model target for shortcut "${rawName}"` });
           shortcuts[name] = { engine: target.engine, model: target.model };
         }
@@ -500,7 +514,8 @@ export function createSettingsRouter({
         const key = requireAdapter(id).defaultModelKey;
         if (typeof body[key] !== "string") continue;
         const v = body[key].trim();
-        if (v && !isValidModel(v)) return res.status(400).json({ error: `unrecognized model "${v}"` });
+        // A license's own listed model (a custom server's vocabulary) is admitted by its list.
+        if (v && !isValidModel(v) && !isLicenseListedModel(v, id)) return res.status(400).json({ error: `unrecognized model "${v}"` });
         // …and that it belongs to THIS harness. The shape check alone would accept a QwenCloud
         // image/audio model as a Qwen default, or a Codex id as Claude's — either one breaks every
         // defaulted run in the deployment.
@@ -811,12 +826,7 @@ export function createSettingsRouter({
       } catch (e) {
         if (e?.code !== "settings_version_conflict") throw e;
         // Hand back the CURRENT settings so the page can show what it now has instead of guessing.
-        return res.status(409).json({
-          error: "These settings changed elsewhere since this page loaded — nothing was saved. The latest values are shown; re-apply your change and save again.",
-          code: "settings_version_conflict",
-          stale: true,
-          ...settingsPayload(),
-        });
+        return res.status(409).json(staleSettingsResponse());
       }
       applySettingsToEnv();
       if (patch.maxConcurrentRuns !== undefined || patch.reservedInteractiveRuns !== undefined) {

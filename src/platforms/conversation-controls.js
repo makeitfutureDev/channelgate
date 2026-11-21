@@ -137,7 +137,11 @@ export function createConversationControls() {
             try { await admit(wanted); } catch (error) { return await respond(error.message); }
             return await respond(`${harnessLabel(wanted)} has no license this conversation can use.`);
           }
-          try { selected = picked ? resolveLicensePick({ harness: wanted, meta, license: picked.license, also: picked.also }) : harnessSelection(wanted, meta); }
+          // A session somebody already pinned to a usable license of that harness keeps it: the
+          // harness word names where it already is, not a request to trade its license for the
+          // conversation's default one.
+          const keepsPin = !picked && rawEngine && harnessOf(rawEngine) === wanted && selectableLicenses(wanted, meta).includes(rawEngine);
+          try { selected = picked ? resolveLicensePick({ harness: wanted, meta, license: picked.license, also: picked.also }) : keepsPin ? { engine: rawEngine, licensePool: describeLicenseSelection({ engine: rawEngine, pool: rawPool }).pool } : harnessSelection(wanted, meta); }
           catch (error) { return await respond(error.message); }
         } else if (isEngineId(parts[0])) selected = { engine: parts.shift(), licensePool: '' };
         const selectedEngine = selected.engine;

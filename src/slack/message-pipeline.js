@@ -13,6 +13,7 @@ import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, p
 import { engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
 import { HARNESS_IDS } from "../engines/license-state.js";
 import { namedSelection, selectionLabel } from "./license-controls.js";
+import { selectableLicenses } from "../gateway/license-pool.js";
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult, effectiveMeta } from "../gateway/run.js";
@@ -245,9 +246,12 @@ export function runDeathRecovery(err) {
   // Do not infer OOM or replay that ambiguous work automatically.
   if (String(err?.details?.signal || "").toUpperCase() === "SIGKILL" || Number(err?.details?.exitCode) === 137) return null;
   if (err?.details?.providerError === true) return null;
-  if (err?.details?.engine === "claude" && ["ENGINE_SILENCE_BUDGET", "ENGINE_PROCESS_GONE"].includes(err.details.errorCode)) return "continue";
+  // Every license of the Claude Code harness reports its OWN id here (a sign-in or custom-server
+  // license is "claude-lic-…"/"claude-api-…"), and all of them resume the same way.
+  const onClaudeCode = harnessOf(err?.details?.engine) === "claude";
+  if (onClaudeCode && ["ENGINE_SILENCE_BUDGET", "ENGINE_PROCESS_GONE"].includes(err.details.errorCode)) return "continue";
   if (/session is dead/i.test(m)) return "retry";
-  if (err?.details?.engine === "claude" && err.details.processEnded === true && err.details.providerError !== true) return "continue";
+  if (onClaudeCode && err.details.processEnded === true && err.details.providerError !== true) return "continue";
   if (/stalled — no output|(?:warm )?claude(?: turn)? produced no output[^\n]*giving up|claude session ended|claude exited/i.test(m)) return "continue";
   return null;
 }
@@ -1281,7 +1285,15 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       if (anchored || phrase) {
         // A harness word pins this conversation's selection for that harness (license + pool);
         // a license id pins exactly that license.
-        const picked = namedSelection((anchored ? anchored[1] : phrase[1]).toLowerCase(), effectiveMeta(meta));
+        // …and a harness word in a thread somebody already pinned to a usable license of that
+        // harness names where the thread already is: its license and pool stay, instead of being
+        // traded for the conversation's default license of the harness.
+        const word = (anchored ? anchored[1] : phrase[1]).toLowerCase();
+        const pinnedLicense = HARNESS_IDS.includes(word) ? await getThreadEngine(entry.slug, threadKey) : "";
+        const keepsPin = Boolean(pinnedLicense) && harnessOf(pinnedLicense) === word && selectableLicenses(word, effectiveMeta(meta)).includes(pinnedLicense);
+        const picked = keepsPin
+          ? { engine: pinnedLicense, licensePool: await getThreadLicensePool(entry.slug, threadKey) }
+          : namedSelection(word, effectiveMeta(meta));
         const eng = picked.engine;
         if (!engineChoice) {
           await assertEngineSelectable(eng, { meta });

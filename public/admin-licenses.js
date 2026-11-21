@@ -460,6 +460,7 @@ export function mountLicensesManager({
   openBuiltin = () => null,
   blocked = () => "",
   reload = async () => {},
+  versionMoved = () => {},
 }) {
   // root        where the groups are drawn
   // state()     { manifests, enabled } — the engine manifest and the engineEnabled map
@@ -467,6 +468,7 @@ export function mountLicensesManager({
   // setEnabled  a switch was flipped (the page's own Save stores it)
   // blocked()   a reason the page cannot be reloaded right now (unsaved edits), or ""
   // reload()    repaint Settings from the daemon and call load() again
+  // versionMoved({ from, to })  a request of this panel moved the settings version by that step
   const doc = root.ownerDocument;
   const make = (tag, className, text) => {
     const el = doc.createElement(tag);
@@ -544,6 +546,9 @@ export function mountLicensesManager({
     paint();
     try {
       const result = await api(`/api/engine-licenses/${encodeURIComponent(license.id)}/verify`, { method: "POST" });
+      // The check stored its verdict, which moved the settings version; a page holding unsaved
+      // edits follows that one step rather than having its own next Save refused.
+      if (result.settingsVersion) versionMoved(result.settingsVersion);
       const badge = licenseStatusBadge({ ...license, ...(result.license || {}), status: result.status || result.license?.status, verification: result.verification ?? result.license?.verification });
       say(harness, `${license.label}: ${badge.text}${result.verification?.detail || badge.detail ? ` — ${result.verification?.detail || badge.detail}` : ""}`, badge.tone === "bad");
     } catch (error) {
@@ -797,6 +802,18 @@ export function mountLicensesManager({
       if (license.defaultEffort && !list(manifest.efforts).includes(license.defaultEffort)) effortSelect.append(option(license.defaultEffort, license.defaultEffort));
       effortSelect.value = license.defaultEffort || "";
       defaults.append(field("Default model", modelSelect), field("Default effort", effortSelect, "Used when no thread or conversation effort is set."));
+      // The default follows the models box: a model added in this edit can be made the default in
+      // the same Save, and one removed from the list stops being offered.
+      const catalogOptions = [...modelSelect.options].map((entry) => [entry.value, entry.textContent]);
+      modelsInput.addEventListener("input", () => {
+        const typed = parseModelList(modelsInput.value);
+        const picked = modelSelect.value;
+        const known = new Map(catalogOptions);
+        modelSelect.replaceChildren(...(typed.length
+          ? [option("", "CLI default"), ...typed.map((id) => option(id, known.get(id) || id))]
+          : catalogOptions.map(([value, label]) => option(value, label))));
+        modelSelect.value = [...modelSelect.options].some((entry) => entry.value === picked) ? picked : "";
+      });
     }
 
     const paintKind = () => {
@@ -859,7 +876,9 @@ export function mountLicensesManager({
         const result = await api(license ? `/api/engine-licenses/${encodeURIComponent(license.id)}` : "/api/engine-licenses", { method: license ? "PUT" : "POST", body: JSON.stringify(body) });
         const saved = result.license || {};
         if (license && manifest?.defaultModelKey && (modelSelect.value !== (license.defaultModel || "") || effortSelect.value !== (license.defaultEffort || ""))) {
-          await api("/api/settings", { method: "PUT", body: JSON.stringify({ [manifest.defaultModelKey]: modelSelect.value, [manifest.defaultEffortKey]: effortSelect.value }) });
+          // connectSlack:false — this write names two license defaults; without it the route
+          // treats the save as a possible token change and reconnects Slack.
+          await api("/api/settings", { method: "PUT", body: JSON.stringify({ [manifest.defaultModelKey]: modelSelect.value, [manifest.defaultEffortKey]: effortSelect.value, connectSlack: false }) });
         }
         const badge = licenseStatusBadge({ ...saved, verification: result.verification ?? saved.verification });
         say(harness, `${license ? "Saved" : "Added"} ${saved.label || body.label}${badge.tone === "ok" ? "." : ` — ${badge.text.toLowerCase()}${badge.detail ? `: ${badge.detail}` : "."}`}`, badge.tone === "bad");

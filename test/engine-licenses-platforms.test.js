@@ -169,6 +169,13 @@ test('/model <harness> takes the conversation\'s own licenses for that harness',
   assert.deepEqual(await pin(idSlug), { engine: spare.id, licensePool: '' });
   assert.equal(await command(slug, '/model gpt-6-sol', meta), 'Session harness: Codex · Work, then Spare; model: gpt-6-sol.');
   assert.deepEqual(await pin(slug), { engine: work.id, licensePool: [spare.id] });
+
+  // The harness word in a session ALREADY pinned to one of that harness's licenses keeps the pin:
+  // naming the harness the session is on must not move it to the channel's license.
+  assert.equal(await command(idSlug, '/model codex', meta), 'Session harness: Codex · Spare; model: inherited default.');
+  assert.deepEqual(await pin(idSlug), { engine: spare.id, licensePool: '' });
+  assert.equal(await command(idSlug, '/model codex gpt-6-sol', meta), 'Session harness: Codex · Spare; model: gpt-6-sol.');
+  assert.deepEqual(await pin(idSlug), { engine: spare.id, licensePool: '' });
 });
 
 test('/status names the harness alone, or the harness and its licenses', async () => {

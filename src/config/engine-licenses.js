@@ -17,7 +17,7 @@ import { getSettings, saveSettings, isEngineEnabled } from "./settings.js";
 import { ENGINE_IDS, adapterFor, engineRegistry, harnessOf, isDefaultLicense, isRemovableBuiltinLicense, isRemovedLicense, licenseLabel, removedBuiltinLicenses } from "../engines/registry.js";
 import {
   API_AUTH_SCHEMES, API_VERSION_RE, DEFAULT_LICENSE_NAME, GCP_PROJECT_RE, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
-  MAX_LICENSE_NAME_LENGTH, MAX_SERVICE_ACCOUNT_BYTES, cleanLicenseName, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
+  MAX_LICENSE_MODELS, MAX_LICENSE_NAME_LENGTH, MAX_SERVICE_ACCOUNT_BYTES, cleanLicenseName, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
   licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel, normalizeLicenseModels, normalizeLicenseRecord,
   normalizeLicenseNames, normalizeLicenseRecords, normalizeRemovedLicenses, normalizeServiceAccount, serviceAccountFacts,
 } from "../engines/license-state.js";
@@ -131,6 +131,7 @@ function assertLabel(label, records, selfId = "", names = null) {
 
 // The provider fields of one license, validated against what its KIND asks for (license-state.js
 // `fields`). A blank credential on an edit keeps the stored one — the form never has it to send back.
+const urlHost = (value) => { try { return new URL(value).host.toLowerCase(); } catch { return ""; } };
 const PROVIDER_NAMES = Object.freeze({ custom: "server", bedrock: "Amazon Bedrock", vertex: "Google Vertex AI", azure: "Azure" });
 function providerFields(kind, input, previous = null) {
   const has = (field) => kind.fields.includes(field);
@@ -155,6 +156,13 @@ function providerFields(kind, input, previous = null) {
     if (typed && (/\s/.test(typed) || typed.length > 4096 || typed.length < 8)) refuse("That does not look like an API key.");
     out.apiKey = typed || previous?.apiKey || "";
     if (!out.apiKey) refuse(kind.provider === "bedrock" ? "Enter the Bedrock API key." : "Enter the API key.");
+    // A stored key is only ever sent to the server it was saved for. An edit that moves the
+    // endpoint to another host — including a cleared box falling back to the kind's default
+    // server — has to bring the key with it, or the old server's key would silently start going
+    // to the new one.
+    if (!typed && previous?.apiKey && has("baseUrl") && previous.baseUrl && urlHost(out.baseUrl) !== urlHost(previous.baseUrl)) {
+      refuse(`Re-enter the API key to move this license to ${urlHost(out.baseUrl)}: the stored key is only sent to ${urlHost(previous.baseUrl)}.`);
+    }
   }
   if (has("serviceAccount")) {
     const typed = typeof input.serviceAccount === "string" ? input.serviceAccount.trim() : "";
@@ -173,6 +181,8 @@ function providerFields(kind, input, previous = null) {
   if (!kind.authSchemes.includes(out.authScheme)) refuse(`Choose how the key is sent: ${kind.authSchemes.join(" or ")}.`);
   const rawModels = input.models === undefined ? previous?.models || [] : input.models;
   if (!Array.isArray(rawModels)) refuse("List the models as an array.");
+  const listed = new Set(rawModels.map((entry) => String(typeof entry === "string" ? entry : entry?.value ?? "").trim()).filter(Boolean));
+  if (listed.size > MAX_LICENSE_MODELS) refuse(`A license lists at most ${MAX_LICENSE_MODELS} models; this list has ${listed.size}.`);
   const models = normalizeLicenseModels(rawModels);
   if (models.length !== rawModels.filter((entry) => String(typeof entry === "string" ? entry : entry?.value ?? "").trim()).length) {
     refuse("A model id may hold letters, digits and . _ : / @ [ ] - only, and each may be listed once.");
@@ -192,14 +202,17 @@ function providerFields(kind, input, previous = null) {
 const CREDENTIAL_MEMBERS = Object.freeze(["baseUrl", "apiKey", "authScheme", "region", "projectId", "serviceAccount", "apiVersion"]);
 const sameCredential = (a, b) => CREDENTIAL_MEMBERS.every((name) => (a?.[name] ?? "") === (b?.[name] ?? ""));
 
-const writeLicenses = (mutate) => {
+// `onSaved` receives the settings as this write stored them (its `settingsRev` is the version this
+// write produced), for a caller that reports which version its own write moved the settings to.
+const writeLicenses = (mutate, onSaved = null) => {
   let result;
-  saveSettings((current) => {
+  const saved = saveSettings((current) => {
     const records = stored(current).map((record) => ({ ...record }));
     const patch = mutate(records, current);
     result = patch.result;
     return patch.settings;
   });
+  onSaved?.(saved);
   return result;
 };
 
@@ -232,7 +245,7 @@ export function createLicense(input = {}) {
 }
 
 export function updateLicense(id, input = {}) {
-  return writeLicenses((records) => {
+  return writeLicenses((records, current) => {
     const index = records.findIndex((record) => record.id === id);
     if (index < 0) refuse("That license no longer exists.", 404);
     const previous = records[index];
@@ -248,17 +261,35 @@ export function updateLicense(id, input = {}) {
     if (!record) refuse("The license could not be stored.");
     const next = [...records];
     next[index] = record;
-    return { result: record, settings: { engineLicenses: next } };
+    // A default model this license no longer lists goes with the listing (and the effort chosen
+    // for it): it would never reach a run, but every picker would keep showing it as the default.
+    const defaultModel = String(current[licenseDefaultModelKey(id)] || "").trim().toLowerCase();
+    const listed = Array.isArray(record.models) ? record.models.map((model) => String(model.value || "").toLowerCase()) : [];
+    const staleDefault = Boolean(defaultModel && listed.length && !listed.includes(defaultModel));
+    return {
+      result: record,
+      settings: { engineLicenses: next, ...(staleDefault ? { [licenseDefaultModelKey(id)]: "", [licenseDefaultEffortKey(id)]: "" } : {}) },
+    };
   });
 }
 
 // Removes the record and everything that named it as a DEFAULT. Channels and threads that still
-// reference the id simply fall through to their next level (src/gateway/run.js): the id no longer
-// resolves to an engine, exactly like a retired one.
+// reference the id fall through to their next level: the id no longer resolves to an engine,
+// exactly like a retired one. The readers that make that true are the conversation projection
+// (gateway/effective-meta.js), the thread pin (gateway/thread-engine.js) and the session stamp
+// (gateway/sessions.js) — a thread whose live session this license minted continues on the
+// conversation's current selection in a fresh session with the chat transcript replayed.
 export async function deleteLicense(id) {
   const removed = writeLicenses((records, current) => {
     const record = records.find((entry) => entry.id === id);
     if (!record) refuse("That license no longer exists.", 404);
+    // The gateway must be left with something to run, exactly as for a shipped license
+    // (removeBuiltinLicense): the read-time rescue (settings.js isEngineEnabled) would otherwise
+    // switch the default harnesses back on behind the administrator's back.
+    const survivors = ENGINE_IDS.filter((other) => other !== id && !adapterFor(other)?.channelScoped && isEngineEnabled(other));
+    if (isEngineEnabled(id) && !survivors.length) {
+      refuse(`${record.label} is the only license switched on. Switch another one on (and save) before deleting it.`, 409);
+    }
     const enabled = { ...(current.engineEnabled && typeof current.engineEnabled === "object" ? current.engineEnabled : {}) };
     delete enabled[id];
     const pool = Array.isArray(current.enginePool) ? current.enginePool.filter((entry) => entry !== id) : current.enginePool;
@@ -394,6 +425,15 @@ export async function verifyLicense(id, { fetchImpl = publicPinnedFetch } = {}) 
   }
   const verdict = await verifyProviderLicense(record, { fetchImpl });
   const verification = { at: new Date().toISOString(), ok: verdict.ok, verified: verdict.verified, detail: verdict.detail };
+  // Storing the verdict moves the settings version by exactly one. The admin page echoes the
+  // version it was painted from on Save, so it is told which step was this check's own: a page
+  // holding unsaved edits can then follow it instead of having its next Save refused as "changed
+  // elsewhere" by a button it pressed itself.
+  let settingsVersion = null;
+  const noteVersion = (stored_) => {
+    const to = Number(stored_?.settingsRev);
+    if (Number.isFinite(to) && to >= 1) settingsVersion = { from: String(to - 1), to: String(to) };
+  };
   const saved = writeLicenses((records) => {
     const index = records.findIndex((entry) => entry.id === id);
     if (index < 0) refuse("That license no longer exists.", 404);
@@ -404,8 +444,8 @@ export async function verifyLicense(id, { fetchImpl = publicPinnedFetch } = {}) 
     const next = [...records];
     next[index] = normalizeLicenseRecord({ ...current, verification });
     return { result: next[index], settings: { engineLicenses: next } };
-  });
-  return { license: licenseForApi(saved), status: await licenseStatusFor(id), verification };
+  }, noteVersion);
+  return { license: licenseForApi(saved), status: await licenseStatusFor(id), verification, ...(settingsVersion ? { settingsVersion } : {}) };
 }
 
 export { licenseApiHost };
