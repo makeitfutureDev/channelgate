@@ -687,8 +687,21 @@ git worktree add -b <type>/<slug> .worktrees/<slug> origin/beta
 Land in the shared checkout (under the deployment's landing lock where one applies): bring `beta`
 current, `git merge --no-ff <type>/<slug>`, re-run a proportionate check after any conflict
 resolution, then push. Clean up only after `git merge-base --is-ancestor <type>/<slug> beta`
-succeeds, with `git worktree remove` followed by `git branch -d` — never `rm -rf` the directory,
-which leaves git's entry `prunable` and then blocks the branch delete.
+succeeds — and clean up ALL of it, every time, in this order:
+
+```sh
+git worktree remove .worktrees/<slug>        # the task worktree (never rm -rf it)
+git branch -d <type>/<slug>                  # the local branch
+git push origin --delete <type>/<slug>       # the GitHub branch, if it was ever pushed
+git fetch --prune origin                     # drop stale origin/* refs
+```
+
+Remove the worktree with `git worktree remove`, never `rm -rf` the directory: that leaves git's
+entry `prunable` and then blocks the branch delete (`git worktree prune` recovers it). A pull request merged on GitHub may already have deleted its
+head branch; that is fine. Only ever delete the task's own `<type>/<slug>` — never `main`, `beta`
+or any `archive/*` ref — and never delete an unmerged branch, local or on GitHub: leave it and
+say so. At the start of a session, `git worktree list`, `git branch --merged beta` and
+`git branch -r --merged origin/beta` show leftovers of landed work to clean up the same way.
 
 If you find uncommitted changes in the shared checkout that you did not write, they are another
 task's work in progress. Leave them alone, say so in your reply, and open your own worktree.
