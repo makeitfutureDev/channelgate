@@ -6,7 +6,7 @@ import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } fro
 import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
 import { SESSION_RUNTIME_SAVED } from '../conversation-controls.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
-import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
+import { listVisibleDirectory, normalizeRelativePath, parentRelative, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl, BROWSER_EDIT_MAX_CHARS, BROWSER_EDIT_MAX_BYTES } from '../../web/file-editor.js';
 import { docxText, DOCX_MAX_FILE_BYTES } from '../../util/docx-text.js';
@@ -32,6 +32,8 @@ const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
 const execute = (title, verb, stateId, data = {}) => ({ type: 'Action.Execute', title, verb, data: { cgAction: verb, stateId, ...data }, fallback: { type: 'Action.Submit', title, data: { cgAction: verb, stateId, ...data } } });
 const link = (title, url) => ({ type: 'Action.OpenUrl', title, url });
 const response = value => ({ status: 200, body: { statusCode: 200, type: 'application/vnd.microsoft.card.adaptive', value } });
+// The listing page a detail/upload page returns to. Only a display hint: the listing clamps it.
+const listingPage = value => Math.min(Math.max(0, Math.floor(Number(value)) || 0), 100_000);
 
 export function createTeamsControls({ connector, now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
   const states = new Map();
@@ -99,16 +101,23 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const listing = await listVisibleDirectory(context.root, normalizeRelativePath(relative), { page, pageSize: 12 });
     signal?.throwIfAborted();
     const body = [text(`Folder: /${listing.relative} — page ${listing.page + 1}/${listing.totalPages}`)];
-    for (const file of listing.entries.filter(item => item.accessible !== false)) {
-      body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, { relative: file.relative })] });
+    const visible = listing.entries.filter(item => item.accessible !== false);
+    for (const file of visible) {
+      // A file button carries its listing page so Back to files returns to the same page.
+      const data = file.type === 'directory' ? { relative: file.relative } : { relative: file.relative, page: listing.page };
+      body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, data)] });
     }
+    if (!visible.length) body.push(text('No visible files or folders on this page.'));
+    // At most six actions: Teams renders no more than six on a card.
     const actions = [execute('Root', 'files.browse', stateId)];
+    if (listing.relative) actions.push(execute('Parent folder', 'files.browse', stateId, { relative: parentRelative(listing.relative) }));
+    actions.push(execute('Refresh', 'files.browse', stateId, { relative: listing.relative, page: listing.page }));
     if (listing.page) actions.push(execute('Previous', 'files.browse', stateId, { relative: listing.relative, page: listing.page - 1 }));
     if (listing.page + 1 < listing.totalPages) actions.push(execute('Next', 'files.browse', stateId, { relative: listing.relative, page: listing.page + 1 }));
-    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
+    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative, page: listing.page }));
     return card('Conversation files', body, actions);
   }
-  async function fileDetails(state, relative, context, stateId, signal) {
+  async function fileDetails(state, relative, context, stateId, signal, page = 0) {
     signal?.throwIfAborted();
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
     // An in-conversation PREVIEW for an authorized requester, not an export: protected names stay
@@ -147,7 +156,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (baseUrl && !binary && canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
       try { const editable = await readEditableFile(context.root, target.relative, { maxChars: BROWSER_EDIT_MAX_CHARS, maxBytes: BROWSER_EDIT_MAX_BYTES, label: 'Browser editing' }); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
     }
-    actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/') }));
+    actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/'), page: listingPage(page) }));
     return card('File', body, actions);
   }
   const filesResponse = value => settingsDialogResponse(value, { title: 'Conversation files' });
@@ -392,14 +401,19 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     const relative = normalizeRelativePath(interaction.data.relative || '');
     if (interaction.action === 'files.download') {
-      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId, signal));
+      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId, signal, interaction.data.page));
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const input = { ...grant(state), baseUrl, relative };
     if (interaction.action === 'files.upload') {
       if (!canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) throw new Error('This conversation is read-only for you.');
-      return filesResponse(card('Upload files', [text('Files will be saved into this conversation workspace.')], [
-        link('Open uploader', createFileUploadGrantUrl(input)), execute('Back to files', 'files.browse', interaction.data.stateId, { relative }),
+      // The destination is the folder the user was browsing in this window; name the real one.
+      const destination = await resolveVisiblePath(context.root, relative, { kind: 'directory' });
+      signal?.throwIfAborted();
+      return filesResponse(card('Upload files', [text(`Destination: /${destination.relative}`),
+        text('Open the uploader to choose files or a folder in the browser. Come back here and select Refresh to see them.')], [
+        link('Open uploader', createFileUploadGrantUrl({ ...input, relative: destination.relative })),
+        execute('Back to files', 'files.browse', interaction.data.stateId, { relative: destination.relative, page: listingPage(interaction.data.page) }),
       ]));
     }
     throw new Error('Unsupported Teams action.');

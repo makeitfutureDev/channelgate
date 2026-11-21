@@ -3634,7 +3634,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   paginated Teams dialog offers download, upload and eligible text-edit links through the existing
   browser grants, filesystem confinement and edit policy, with current Teams membership and
   gateway authorization checked again at use. Listings and bearer links stay inside the owner's
-  dialog; actions never open a separate personal chat. Detail/upload pages return to browsing.
+  dialog; actions never open a separate personal chat. The dialog has **Root**, **Parent
+  folder**, **Refresh** and **Previous**/**Next** (at most six actions, the Teams limit) and says
+  when a page has nothing visible. Writers choose the upload destination by opening that folder
+  and selecting **Upload files**; the card names the folder (refused unless it is a real folder
+  inside the workspace) and its uploader grant saves there. Detail/upload pages return to the
+  folder and page they came from (`test/teams-files-navigation.test.js`).
   `/sendfile <relative-path>` in a channel/group posts **Open file** for the selected file in the
   same conversation. In an existing bot DM it offers native file consent there: nonempty files up to 10 MB,
   ten-minute consent expiry, a bounded pending snapshot pool, and explicit Accept/Decline.
