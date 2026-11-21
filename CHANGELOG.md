@@ -7,7 +7,10 @@
   keys and channel tokens are unchanged); a symlink inside a host skill folder (`~/.claude/skills`,
   `~/.agents/skills`, `GATEWAY_SKILL_SOURCES`, folder sources) is followed only while it stays
   inside that skill's own folder — a link to any other host file or another skill is skipped with a
-  log warning instead of being copied into channels (a skill folder that is itself a link still works).
+  log warning instead of being copied into channels (a skill folder that is itself a link still works);
+  the gateway control server of a host `/sudo` turn now applies the run capability liveness rule
+  too (asked of the daemon on every tool call, refused with the same sentence and audit event once
+  the conversation has no live work, failing closed if the daemon cannot answer).
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

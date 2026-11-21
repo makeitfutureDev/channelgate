@@ -31,6 +31,8 @@ const stub = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    // The stdio server's per-call liveness question (security audit batch 5): this channel is live.
+    if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
     approvals.push({ url: req.url, body: JSON.parse(body || "{}") });
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(approvalResponse));

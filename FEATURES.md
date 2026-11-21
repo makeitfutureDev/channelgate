@@ -1719,9 +1719,13 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
   one process and one capability across turns, so the check refuses calls BETWEEN turns and never
   kills the process. Residual: a copied token works while some work is live in that same channel,
   which is the container's own trust domain. The jti-bound remote-MCP relay registry is unchanged.
-  The daemon-spawned stdio control server used by host (`/sudo`) turns is not covered: that run
-  already executes as the daemon account with the signing secret in reach, so liveness adds nothing
-  there.
+  The daemon-spawned stdio control server used by host (`/sudo`) turns applies the same rule since
+  security audit batch 5: it cannot read the daemon's in-memory registry, so on every tool call it
+  asks the daemon over its loopback IPC (`POST /internal/capability`, the same per-process secret as
+  `/internal/approval`), which verifies the signature and liveness and audits the refusal itself.
+  It fails closed (refused, "the gateway daemon could not confirm that this run is still live")
+  when the daemon cannot answer. This is defense in depth: a `/sudo` run executes as the daemon
+  account, which can read that secret.
 
 ## Catalog-first skill authoring
 
@@ -1825,6 +1829,15 @@ Task progress remain visible; older agent streams without optional task-type met
   `Authorization: Bearer`) is authenticated by that credential with or without a cookie, because a
   cross-site page cannot send either header without a CORS preflight the gateway never answers.
   Reads (`GET /api/runs…`) stay exempt. The admin UI's `api()` helper already sends the header.
+- **Host `/sudo` control calls obey run capability liveness.** The stdio gateway MCP server a
+  host engine spawns (`src/mcp/gateway-server.js` entry, `withDaemonCapabilityLiveness`) re-checks
+  its capability on every tool call through the daemon (`POST /internal/capability`, loopback +
+  the per-process IPC secret), which applies `withCapabilityLiveness`: while the thread's turn, a
+  background job or agent, a memory review or an SSH session is live in the channel (or within the
+  30 s grace) the call proceeds; otherwise it is refused with "This run's gateway capability is no
+  longer active: its conversation has no live work." and `capability_refused_idle` is audited by
+  the daemon. An unreachable daemon or an unexpected answer refuses the call ("the gateway daemon
+  could not confirm that this run is still live"); a bad signature is refused without asking.
 - **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
   (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
   bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the

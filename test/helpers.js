@@ -193,3 +193,22 @@ function ensureTestLicense() {
   // verification a fast, harmless failure instead of an outbound request from CI.
   process.env.CHANNELGATE_PLATFORM_URL ||= "http://127.0.0.1:9/channelgate/api";
 }
+
+// A loopback stand-in for the daemon's /internal/capability answer. A test that spawns the host
+// stdio gateway MCP server (src/mcp/gateway-server.js) points CG_PORT here: that server asks the
+// daemon on every tool call whether its capability's conversation is still live and fails closed
+// otherwise (security audit batch 5), so a test with no daemon would see every call refused — or,
+// worse, reach a real daemon on the default port. This stub says "live" and answers any other
+// /internal route with {}. Resolves { port, close }.
+export async function startLiveDaemonStub() {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(req.url === "/internal/capability" ? '{"ok":true}' : "{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { port: server.address().port, close: () => new Promise((resolve) => server.close(resolve)) };
+}

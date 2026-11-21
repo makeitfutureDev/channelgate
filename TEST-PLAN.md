@@ -3348,6 +3348,33 @@ Engine-independent: none of this is reachable from an engine turn.
   Then `curl -i -X POST https://<host>/api/runs -H 'x-api-key: <channel cgk_ token>' -H 'content-type: application/json' -d '{}'`:
   `400` naming `message` (the machine path is unchanged). PASS when all three hold.
 
+### Host `/sudo` stdio control server obeys capability liveness
+
+- [x] Automated: `node --test test/capability-liveness.test.js` — "the host stdio control server
+  applies the same liveness rule through the daemon": a real `createWebApp` on a loopback port; the
+  `/internal/capability` route answers the idle sentence for an idle channel and audits
+  `capability_refused_idle` without the token, refuses a wrong IPC secret and a tampered token; a
+  stdio server built by `createGatewayMcpServerFromEnv` refuses `list_schedules` with the same
+  sentence while idle, passes the chokepoint while a turn is live and, after the turn is released,
+  while a background job is live; the verifier fails closed when the daemon throws or is
+  unavailable and never asks the daemon about a bad signature. "the stdio entry wires the
+  daemon-backed verifier" pins the wiring. Every stdio-spawning suite
+  (`test/gateway-mcp-authz.test.js`, `test/mcp-control-plane-approval.test.js`,
+  `test/license-mcp-tools.test.js`, `test/progress-report-mcp.test.js`,
+  `test/workspace-read-tools.test.js`) points `CG_PORT` at a daemon stub that answers the liveness
+  question; "an unreachable approval endpoint fails closed" now also covers the earlier refusal.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Slack test channel, organization admin): in a fresh
+  thread type `/sudo` and enable it. (1) Ask "Call list_schedules and tell me how many there are."
+  Expected: the tool answers (a live turn). (2) Ask "Start `sleep 120; echo done` with
+  run_in_background, then call list_secrets." Expected: both succeed. (3) Wait for the background
+  job's completion notice and at least 2 minutes more with nothing else live in the channel, then
+  from a host shell replay the turn's MCP child: `CG_GATEWAY_CAPABILITY=<the capability from the
+  turn's 0600 MCP config under the artifact dir> node src/mcp/gateway-server.js` driven by an MCP
+  client calling `list_schedules`. Expected: the reply contains "This run's gateway capability is
+  no longer active" and the audit feed shows `capability_refused_idle` for that tool. (4) Two quick
+  consecutive turns in the same `/sudo` thread both call `list_secrets` successfully. PASS when
+  every step holds for both engines.
+
 ### Host skill folder symlink containment
 
 - [x] Automated: `node --test test/folders-generator-paths.test.js` — "host-folder skill copies

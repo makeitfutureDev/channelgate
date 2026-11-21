@@ -28,6 +28,8 @@ const stub = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    // The stdio server's per-call liveness question (security audit batch 5): this channel is live.
+    if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
     approvalRequests.push({ url: req.url, secret: req.headers["x-cg-secret"], body: JSON.parse(body || "{}") });
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(req.url === "/internal/restart" ? restartResponse : approvalResponse));
@@ -465,9 +467,32 @@ test("an unreachable approval endpoint fails closed", async () => {
   approvalRequests.length = 0;
   await withGateway({ port: 1 }, async (client) => {
     const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
-    assert.match(resultText(result), /Couldn't save the approval/i);
+    // An unreachable daemon now refuses one step EARLIER: the stdio server cannot confirm the
+    // run's liveness (security audit batch 5), so the call never reaches the approval card.
+    assert.match(resultText(result), /could not confirm that this run is still live/i);
     assert.doesNotMatch(resultText(result), approvalReceipt);
   });
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  assert.equal(approvalRequests.length, 0);
+
+  // A daemon that confirms liveness but whose approval endpoint breaks still fails closed at the card.
+  const broken = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
+      res.socket.destroy();
+    });
+  });
+  await new Promise((resolve) => broken.listen(0, "127.0.0.1", resolve));
+  try {
+    await withGateway({ port: broken.address().port }, async (client) => {
+      const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
+      assert.match(resultText(result), /Couldn't save the approval/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
+    });
+  } finally {
+    await new Promise((resolve) => broken.close(resolve));
+  }
   assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
 });
 
