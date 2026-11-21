@@ -16,7 +16,9 @@
   verbatim replays are already dropped by the 7-day durable dedupe; run capabilities and approval
   links are signed with separate keys derived (HKDF) from the daemon secret instead of the secret
   itself — an approval link minted before the upgrade (at most 30 minutes old) stops working; answer
-  the card or ask again.
+  the card or ask again; Microsoft Graph's `validationToken` is echoed only while the gateway is
+  creating a subscription, without a notification body, for Graph's own characters, as
+  `text/plain; charset=utf-8` with nosniff and no-store — any other request gets `400`.
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

@@ -3388,6 +3388,24 @@ Engine-independent: none of this is reachable from an engine turn.
   Then a normal turn calls a gateway tool (`list_schedules`) successfully (capabilities still
   verify). PASS when every step holds for both engines.
 
+### Graph validation echo
+
+- [x] Automated: `node --test test/platform-teams-graph-events.test.js` — "Graph validation token is
+  echoed plain text without authenticating or fetching" (after a subscription creation: 200,
+  `text/plain; charset=utf-8`, nosniff, no-store, verbatim body, no Graph request) and "Graph
+  validation is echoed only during subscription creation, without a body, and never with markup":
+  with no creation in progress → 400 and nothing echoed; Graph's real token shape echoed from
+  INSIDE the creation request; `<script>…`, a quote, `&`, a newline, 4097 characters, a repeated
+  parameter and an empty value → 400, never echoed; a notification batch with the parameter → 400;
+  an empty parsed body still validates; three minutes later → 400.
+- [ ] UNEXECUTED — Live, engine-independent (Teams test tenant with message events enabled, the
+  deployment's public URL): (1) `curl -i -X POST 'https://<host>/api/teams/notifications?validationToken=%3Cb%3Ehi%3C%2Fb%3E'`
+  → `400`, empty body. (2) `curl -i -X POST 'https://<host>/api/teams/notifications?validationToken=Validation%3A%20test'`
+  with no subscription being created → `400`. (3) Disconnect and reconnect Teams, then mention the
+  bot in a test chat so a subscription is created: the event log shows
+  `teams_graph_callback_validated` and the subscription is created (no "subscription failed"
+  log); editing a message in that chat is then delivered as before. PASS when all three hold.
+
 ### Host `/sudo` stdio control server obeys capability liveness
 
 - [x] Automated: `node --test test/capability-liveness.test.js` — "the host stdio control server

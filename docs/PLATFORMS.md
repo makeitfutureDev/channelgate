@@ -324,7 +324,11 @@ For a test installation, extend the CLI setup above:
 4. Set the public HTTPS URL, enable the checkbox, save, then disconnect/reconnect Teams. Allow both
    `/api/teams/messages` (Bot Framework) and `/api/teams/notifications` (Graph notification validation
    and delivery) through the existing public reverse proxy. The Graph notification URL is separate
-   from the bot messaging endpoint; do not replace the bot endpoint with it.
+   from the bot messaging endpoint; do not replace the bot endpoint with it. The validation
+   challenge is answered only while the gateway is creating a subscription (plus two minutes), for a
+   request with no notification body and a token made of the characters Graph sends; anything else
+   carrying `validationToken` gets `400` and nothing is echoed. The echo is
+   `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
 5. Send a bot mention in each installed test conversation. An authenticated activity establishes the
    known conversation before automatic subscription creation. Existing messages from unknown chats
    are not swept or retroactively subscribed across the tenant. Subscriptions renew while enabled;

@@ -1861,6 +1861,16 @@ Task progress remain visible; older agent streams without optional task-type met
   ordinary "not valid" page, and the card in the conversation (re-posted after a restart for
   durable approvals) still decides. Capabilities never outlive the daemon process, so none needs
   to survive the change.
+- **Graph validation echo is not a reflection vector.** `POST /api/teams/notifications?validationToken=…`
+  is echoed only on a genuine endpoint-validation request: while this daemon is creating a Graph
+  subscription (Graph validates inside that POST) or within two minutes after the creation request
+  ended, with no notification body, and only when the token is 1–4096 characters of
+  `[A-Za-z0-9 :._+/=-]` (Graph sends "Validation: Testing client application reachability for
+  subscription Request-Id: <guid>"). Anything else carrying the parameter — a repeated parameter,
+  markup or control characters, a body, or no creation in progress — answers `400`, echoes nothing
+  and is recorded as `teams_graph_callback_rejected` (`unexpected_validation`,
+  `invalid_validation`, `validation_with_body`). The echo is `text/plain; charset=utf-8` with
+  `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`, set by the handler itself.
 - **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
   (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
   bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the
