@@ -41,7 +41,7 @@ import { egressActive as hookEgressActive, egressModeOf, setEgressProvider } fro
 import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
-import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
+import { isChannelLive, isOwnerLive, isThreadLive, otherOwnerActive, otherSshOpen, otherThreadActive } from "./liveness.js";
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
@@ -156,10 +156,19 @@ function editorAttached(ctx) {
 
 // canUse: the swap-time gate. Channel binding first (a placeholder only swaps from the channel it
 // was issued to; the organization's from any channel), then liveness (liveness.js).
+// A THREAD grant (a thread's own variable) swaps only while work of that thread is live and nothing
+// else is: another thread, ownerless work, an SSH session or an attached editor would otherwise be
+// able to drive it from the shared container. An unknown scope never swaps.
 export function canUseGrant(grant, ctx) {
   const channelId = String(ctx?.channelId || "");
+  if (!["organization", "channel", "thread", "personal", "relay"].includes(grant?.scope)) return { ok: false, reason: "unknown-scope" };
   if (!channelId) return { ok: false, reason: "unbound-channel" };
   if (grant.scope !== "organization" && String(grant.channelId || "") !== channelId) return { ok: false, reason: "other-channel" };
+  if (grant.scope === "thread") {
+    if (!grant.owner || !isThreadLive(channelId, grant.owner)) return { ok: false, reason: "thread-not-live" };
+    if (otherThreadActive(channelId, grant.owner) || editorAttached(ctx)) return { ok: false, reason: "another-thread-active" };
+    return { ok: true };
+  }
   if (grant.scope === "personal") {
     if (!isOwnerLive(channelId, grant.owner)) return { ok: false, reason: "owner-not-live" };
     if (otherSshOpen(channelId, grant.owner)) return { ok: false, reason: "another-person-ssh-session" };
@@ -241,6 +250,11 @@ function watchConfig(log) {
     try {
       if (change.kind === "org-env") revokeMissing({ scope: "organization", present: Object.keys(getOrgEnv()) });
       else if (change.kind === "user" && change.userId) revokeMissing({ scope: "personal", ownerId: change.userId, present: Object.keys(await getUserEnv(change.userId)) });
+      else if (change.kind === "thread-settings" && change.slug && change.threadKey && change.section === "secrets") {
+        const meta = await getChannelMeta(change.slug);
+        const { getThreadSettings } = await import("../thread-settings.js");
+        if (meta?.channelId) revokeMissing({ scope: "thread", channelId: meta.channelId, ownerId: change.threadKey, present: Object.keys(normalizeChannelEnv(getThreadSettings(change.slug, change.threadKey, "secrets").env)) });
+      }
       else if (change.kind === "channel-meta" && change.slug) {
         const meta = await getChannelMeta(change.slug);
         if (meta?.channelId) revokeMissing({ scope: "channel", channelId: meta.channelId, present: Object.keys(normalizeChannelEnv(meta.env)) });

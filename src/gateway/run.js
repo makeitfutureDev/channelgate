@@ -64,6 +64,7 @@ import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRunAccessGrants, skippedSkillGrantsWarning, userOnlySkillGrants } from "./access-grants.js";
+import { threadConnectionMeta, threadGrantTier, threadSettingsForRun } from "./thread-settings.js";
 import { getSkill } from "./skills/catalog.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
@@ -715,10 +716,17 @@ export async function runMessage(args) {
   } finally { release?.(); }
 }
 
-async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", getForkFallbackContext = null, overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "" }) {
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", getForkFallbackContext = null, overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "", settingsThreadKey = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
+  // The thread whose own settings (gateway/thread-settings.js) this run uses: its own, or — for a
+  // background agent and its continuation, which run on a synthetic `<thread>::agent-<id>` key —
+  // the source thread the daemon recorded. Never an unrelated thread.
+  const settingsKey = String(settingsThreadKey || threadKey || "");
+  if (settingsThreadKey && settingsThreadKey !== threadKey && !String(threadKey || "").startsWith(`${settingsThreadKey}::`)) {
+    throw new Error("A run's settings thread must be its own thread or the thread that launched it.");
+  }
   // The HTTP run API principal (config/api-principal.js): its key is an ADMIN credential, but no
   // person stands behind it. So it ranks as an admin (`rankUntrusted` stays false) while every
   // PERSONAL lookup — grants, secrets, Composio tokens, the capability's principal — is
@@ -750,15 +758,19 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
   // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never
   // read a stored user record or inherit that person's grants.
+  // This thread's own settings: variables, MCP connections and skill/MCP additions. They never
+  // touch channelMeta (folder provisioning, mounts and policy keep reading the channel's).
+  const threadSettings = threadSettingsForRun(entry.slug, settingsKey);
   const runGrants = await resolveRunAccessGrants({
     organization: getOrgAccessGrants(),
     channel: channelMeta,
+    thread: threadGrantTier(threadSettings),
     authorId,
     untrustedPrincipal,
     loadUser: getUser,
     lookupSkill: getSkill,
   });
-  let meta = { ...channelMeta, ...runGrants.effective };
+  let meta = threadConnectionMeta({ ...channelMeta, ...runGrants.effective }, threadSettings.mcp);
 
   // Per-run overrides (the HTTP run API can pass engine/model/effort/mode per request). Applied
   // after effectiveMeta so they win over the channel/DM-template config, and before folder
@@ -1210,6 +1222,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // withheld under egressSecretsStrict). `redactionValues` carries hidden values for the redactor.
   const egressRunEnv = await resolveEgressRunEnv({
     meta, channelId, authorId, untrustedPrincipal, clean, target,
+    thread: { key: settingsKey, env: threadSettings.secrets.env, removed: threadSettings.secrets.removed },
   });
   const { env: resolvedRunEnv, scopes: runEnvScopes } = egressRunEnv;
   const channelEnv = safeSpawnEnv(resolvedRunEnv);
@@ -1223,6 +1236,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     placeholders: egressRunEnv.placeholders, hosts: egressRunEnv.hosts,
     unprotected: egressRunEnv.unprotected, withheld: egressRunEnv.withheld, approval: egressRunEnv.approval || [],
     personalPaused: egressRunEnv.personalPaused,
+    threadWithheld: egressRunEnv.threadWithheld, threadPaused: egressRunEnv.threadPaused,
   });
   // Which browser daemon this channel's browser MCP server attaches to. Unconditional — clean
   // mode included: it injects no MCP servers, but the isolation must not depend on that staying
@@ -1312,6 +1326,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
     makeToolboxUrl, makeToolboxKey, customMcps,
     channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, origin,
+    // Signed into the capability only when it differs, so a background launch from this run
+    // resolves THIS settings thread and no other (gateway-server.js, background.js).
+    ...(settingsKey !== threadKey ? { settingsThreadKey: settingsKey } : {}),
     questionThreadKey, sudoSchedule: sudoSchedule || sudoQuestion,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
@@ -2154,7 +2171,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     // The turn is live work in this channel from here to the finally: the egress proxy swaps this
     // channel's (and, for this author, their personal) placeholders only while it is.
-    releaseEgressLive = markLive({ channelId, ownerId: untrustedPrincipal ? "" : authorId, kind: "turn", id: threadKey });
+    releaseEgressLive = markLive({ channelId, ownerId: untrustedPrincipal ? "" : authorId, kind: "turn", id: threadKey, threadKey: settingsKey });
     await bringRuntimeUp();
     // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).

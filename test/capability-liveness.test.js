@@ -158,10 +158,10 @@ test("every spawn path registers its channel as live before its first tool call"
   // releases it in the finally; background jobs/agents, memory reviews and the update smoke have
   // their own registration; SSH sessions are read from the broker. This pins each of them.
   const run = read("src/gateway/run.js");
-  assert.match(run, /releaseEgressLive = markLive\(\{ channelId, ownerId: untrustedPrincipal \? "" : authorId, kind: "turn", id: threadKey \}\);\n\s+await bringRuntimeUp\(\);/);
+  assert.match(run, /releaseEgressLive = markLive\(\{ channelId, ownerId: untrustedPrincipal \? "" : authorId, kind: "turn", id: threadKey, threadKey: settingsKey \}\);\n\s+await bringRuntimeUp\(\);/);
   assert.match(run, /finally \{[\s\S]*releaseEgressLive\?\.\(\);/);
   const background = read("src/gateway/background.js");
-  assert.match(background, /rec\.releaseLive = markLive\(\{ channelId, ownerId: authorId, kind: "job", id: runId \}\)/);
+  assert.match(background, /rec\.releaseLive = markLive\(\{ channelId, ownerId: authorId, kind: "job", id: runId, threadKey: settingsKey \}\)/);
   assert.match(background, /rec\.releaseLive = markLive\(\{ channelId: rec\.channelId, ownerId: rec\.authorId, kind: "job"/, "a recovered job re-marks itself");
   assert.match(read("src/gateway/memory-review.js"), /markLive\(\{ channelId, ownerId: "", kind: "review", id: reviewRunId \}\)/);
   assert.match(read("src/gateway/update-smoke.js"), /markLive\(\{ channelId: target\.meta\?\.channelId, kind: "turn", id: target\.slug \}\)/);

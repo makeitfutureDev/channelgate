@@ -15,6 +15,8 @@ import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // background job and the next turn all hold the same string, and the pool fingerprint does not
 // churn on a rotation. Scopes (DB spelling → placeholder letter): organization → o (channel ''),
 // channel → c, personal → p (per channel AND author: another author's turn never receives it),
+// thread → c (a thread's own variable, gateway/thread-settings.js: per channel AND thread key —
+// the owner column holds the thread key — so no other thread or channel resolves it),
 // relay → r (an engine login relay, per channel: the Claude access token `CLAUDE_CODE_OAUTH_TOKEN`,
 // and its Codex twin `CODEX_ACCESS_TOKEN` — codex-token-relay.js — keyed by secret name).
 import { getDb } from "../../db/index.js";
@@ -35,8 +37,11 @@ import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder }
 import { CLAUDE_API_RELAY_NAMES, CLAUDE_EXTRA_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME, CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
-export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
-const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
+export const GRANT_SCOPES = Object.freeze(["organization", "channel", "thread", "personal", "relay"]);
+// A thread placeholder carries the channel letter: the grant ROW is what decides its scope, never
+// the string's spelling.
+const MINT_SCOPE = { organization: "org", channel: "channel", thread: "channel", personal: "personal", relay: "relay" };
+const OWNED_SCOPES = new Set(["personal", "thread"]);
 export const RELAY_CACHE_MS = 60_000;
 export const MATERIAL_CACHE_MS = 5_000;
 
@@ -55,7 +60,7 @@ function keyFor({ scope, channelId = "", ownerId = "", secretName }) {
     scope,
     // The organization's placeholder is shared by every channel; everything else is bound to one.
     channelId: scope === "organization" ? "" : String(channelId || ""),
-    ownerId: scope === "personal" ? String(ownerId || "") : "",
+    ownerId: OWNED_SCOPES.has(scope) ? String(ownerId || "") : "",
     secretName: name,
   };
 }
@@ -78,7 +83,7 @@ function rowOut(row) {
 export function placeholderFor({ scope, channelId = "", ownerId = "", secretName, now = Date.now() }) {
   const key = keyFor({ scope, channelId, ownerId, secretName });
   if (key.scope !== "organization" && !key.channelId) throw new Error(`a ${key.scope} egress grant needs a channel`);
-  if (key.scope === "personal" && !key.ownerId) throw new Error("a personal egress grant needs an owner");
+  if (OWNED_SCOPES.has(key.scope) && !key.ownerId) throw new Error(`a ${key.scope} egress grant needs an owner`);
   const db = getDb();
   const find = () => db.prepare(
     "SELECT placeholder FROM egress_grants WHERE scope = ? AND channel_id = ? AND owner_id = ? AND secret_name = ? AND revoked_ms = 0",
@@ -291,12 +296,29 @@ export async function resolveGrantMaterial(row, deps = {}) {
     const values = meta ? await (deps.resolveChannelEnv || resolveChannelEnv)(meta) : {};
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
   }
+  if (row.scope === "thread") {
+    // Resolved LIVE from the thread's own store, through the channel the grant was issued in, so
+    // a removed variable, a deleted thread row or a moved channel resolves to nothing.
+    const entry = await threadEntryFor(row.channelId, row.ownerId, name, deps);
+    if (!entry) return { value: "", entry: null, exists: false };
+    const values = await (deps.resolveChannelEnv || resolveChannelEnv)({ env: { [name]: entry } });
+    return { value: String(values[name] || ""), entry, exists: true };
+  }
   if (row.scope === "personal") {
     const entry = (await (deps.userEntries || getUserEnv)(row.ownerId))[name] || null;
     const values = await (deps.resolveUserEnv || resolveUserEnv)(row.ownerId);
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
   }
   return { value: "", entry: null, exists: false };
+}
+
+async function threadEntryFor(channelId, threadKey, name, deps) {
+  if (!channelId || !threadKey) return null;
+  if (deps.threadEntries) return (await deps.threadEntries(channelId, threadKey))?.[name] || null;
+  const entry = await getChannelEntry(channelId);
+  if (!entry?.slug) return null;
+  const { getThreadSettings } = await import("../thread-settings.js");
+  return normalizeChannelEnv(getThreadSettings(entry.slug, threadKey, "secrets").env)[name] || null;
 }
 
 // The spec's name for the value half: "" when the secret no longer exists.
@@ -315,7 +337,9 @@ export async function resolveEgressGrant(core, deps = {}) {
   if (row.scope === "organization" && !enterpriseFeatureEnabled("organizationVariables")) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
-  if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
+  // A thread variable is re-read on every swap (one indexed row): its removal, a deleted thread
+  // row or a thread-settings write from another connection takes effect on the next request.
+  if (row.scope === "relay" || row.scope === "thread" || !material || now - material.at > MATERIAL_CACHE_MS) {
     material = { at: now, ...(await resolveGrantMaterial(row, deps)) };
     materialCache.set(row.placeholder, material);
   }
@@ -323,7 +347,11 @@ export async function resolveEgressGrant(core, deps = {}) {
     revokeGrants({ scope: row.scope, channelId: row.channelId, ownerId: row.ownerId, secretName: row.secretName });
     return null;
   }
-  const rule = row.scope === "relay" ? relayRuleFor(row.secretName) : rulesFor(row.secretName, material.entry, { value: material.value });
+  // A removal can commit while a provider resolves: never hand out a row revoked meanwhile.
+  if (row.scope === "thread" && !lookupGrant(row.placeholder)) return null;
+  const rule = row.scope === "relay" ? relayRuleFor(row.secretName)
+    : row.scope === "thread" ? (await import("../thread-settings.js")).threadVariableRule(row.secretName, material.entry, { value: material.value })
+      : rulesFor(row.secretName, material.entry, { value: material.value });
   if (!rule || !material.value) return null;
   return {
     ...(rule.approval ? { approval: true, neverHosts: engineHostsFor() } : {}),
@@ -362,17 +390,35 @@ function strictSetting(target) {
 // right now because a DIFFERENT person has an SSH session open in the channel (liveness.js) — the
 // per-attempt credential note says so instead of letting the agent chase a 403. A snapshot at
 // resolve time: the proxy re-checks on every request.
-export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
-  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false };
+//
+// `thread` ({ key, env, removed }, gateway/thread-settings.js) is the SIGNED settings thread of this
+// spawn: its variables win over every other scope for their names, but only ever as `thread`
+// placeholders bound to fixed destination hosts, and only when the proxy is this target's egress.
+// Anywhere else (legacy bridge mode, the `/sudo` host lane, a variable without a fixed
+// destination) a thread variable is WITHHELD — listed in `threadWithheld` — and its name is not
+// filled from another scope either: that would silently act as a different account. `removed`
+// hides inherited CHANNEL variables in this thread only.
+export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, thread = null, deps = {} } = {}) {
+  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false, threadWithheld: [], threadPaused: false };
   if (clean) return empty;
-  const [org, user, channel] = await Promise.all([
+  const threadKey = String(thread?.key || "");
+  const threadEntries = threadKey ? normalizeChannelEnv(thread?.env) : {};
+  const threadNames = Object.keys(threadEntries).sort();
+  const threadRemoved = threadKey && Array.isArray(thread?.removed) ? thread.removed.map(String) : [];
+  const [org, user, channelResolved, threadValues] = await Promise.all([
     enterpriseFeatureEnabled("organizationVariables") ? (deps.resolveOrgEnv || resolveOrgEnv)() : {},
     (deps.resolveUserEnv || resolveUserEnv)(authorId, { untrustedPrincipal }),
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
+    threadNames.length ? (deps.resolveChannelEnv || resolveChannelEnv)({ env: threadEntries }) : {},
   ]);
+  const channel = { ...channelResolved };
+  for (const name of threadRemoved) delete channel[name];
   const merged = mergeRunEnv({ org, user, channel });
+  // A thread's names are decided below, never by the scopes it overrides.
+  for (const name of threadNames) { delete merged.env[name]; delete merged.scopes[name]; }
+  const threadReal = safeSpawnEnv(threadValues);
   const real = safeSpawnEnv(merged.env);
-  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
+  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel)), ...Object.values(threadReal)])];
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
   const entries = {
     organization: enterpriseFeatureEnabled("organizationVariables") ? (deps.orgEntries ? deps.orgEntries() : getOrgEnv()) : {},
@@ -381,12 +427,13 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   };
   // Visibility applies to output as well as injection. Classify every scope separately so a
   // readable override cannot unmask a hidden value from another scope with the same bytes.
-  const redactionValues = [...new Set(Object.entries({ organization: org, personal: user, channel })
+  // Every thread value is hidden by construction (thread-settings.js), so all of them redact.
+  const redactionValues = [...new Set([...Object.entries({ organization: org, personal: user, channel })
     .flatMap(([scope, values]) => Object.entries(safeSpawnEnv(values))
       .filter(([name, value]) => rulesFor(name, entries[scope]?.[name] || null, { value }))
-      .map(([, value]) => value)))];
+      .map(([, value]) => value)), ...Object.values(threadReal)])];
   if (!egressActive(target)) {
-    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, redactionValues, personalPaused: false };
+    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, redactionValues, personalPaused: false, threadWithheld: threadNames, threadPaused: false };
   }
   const channelKey = String(channelId || meta?.channelId || "");
   // Reconcile first: a secret REMOVED since the last run loses its placeholder now, even if the
@@ -396,6 +443,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   revokeMissing({ scope: "organization", present: Object.keys(entries.organization) });
   if (channelKey) revokeMissing({ scope: "channel", channelId: channelKey, present: Object.keys(entries.channel) });
   if (channelKey && personalOwner) revokeMissing({ scope: "personal", channelId: channelKey, ownerId: personalOwner, present: Object.keys(entries.personal) });
+  if (channelKey && threadKey) revokeMissing({ scope: "thread", channelId: channelKey, ownerId: threadKey, present: threadNames });
 
   const strict = strictSetting(target);
   const env = {};
@@ -429,6 +477,23 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     scopes[name] = scope;
     unprotected.push(name);
   }
+  // The thread's own variables: placeholders on their fixed hosts, or withheld.
+  const threadWithheld = [];
+  const { threadVariableRule } = threadNames.length ? await import("../thread-settings.js") : {};
+  for (const name of threadNames) {
+    const rule = threadReal[name] && channelKey ? threadVariableRule(name, threadEntries[name], { value: threadReal[name] }) : null;
+    if (!rule) { threadWithheld.push(name); continue; }
+    const placeholder = placeholderFor({ scope: "thread", channelId: channelKey, ownerId: threadKey, secretName: name });
+    env[name] = placeholder;
+    scopes[name] = "thread";
+    placeholders[name] = placeholder;
+    hosts[name] = [...rule.hosts];
+  }
+  let threadPaused = false;
+  if (Object.values(scopes).includes("thread")) {
+    const liveness = await import("./liveness.js");
+    threadPaused = Boolean((deps.otherThreadActive || liveness.otherThreadActive)(channelKey, threadKey));
+  }
   let personalPaused = false;
   if (channelKey && personalOwner && Object.keys(placeholders).some((name) => scopes[name] === "personal")) {
     // Imported lazily: liveness.js reads the SSH broker, whose import graph reaches back here.
@@ -439,7 +504,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     const otherOwnerActive = deps.otherOwnerActive || liveness.otherOwnerActive;
     personalPaused = Boolean(otherSshOpen(channelKey, personalOwner) || otherOwnerActive(channelKey, personalOwner));
   }
-  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, redactionValues, personalPaused };
+  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, redactionValues, personalPaused, threadWithheld, threadPaused };
 }
 
 // ── The Claude relay ──────────────────────────────────────────────────────────────────────────

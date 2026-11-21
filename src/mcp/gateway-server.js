@@ -203,6 +203,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     createdBy,
     threadKey,
     admissionThreadKey: claims.admissionThreadKey ?? threadKey,
+    // The thread whose own settings this run uses (thread-settings.js): its own unless a signed
+    // claim names the thread that launched it. Background work inherits exactly this one.
+    settingsThreadKey: claims.settingsThreadKey || threadKey,
     questionThreadKey: claims.questionThreadKey,
     sudoSchedule: claims.sudoSchedule === true,
     origin,
@@ -222,7 +225,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     daemon: (() => {
       const transport = daemon || createDirectDaemonIpc({});
       return { ...transport, call: (kind, body, options) => transport.call(kind,
-        kind === "background" ? { ...body, admissionThreadKey: claims.admissionThreadKey ?? threadKey } : body, options) };
+        kind === "background" ? { ...body, admissionThreadKey: claims.admissionThreadKey ?? threadKey, settingsThreadKey: claims.settingsThreadKey || threadKey } : body, options) };
     })(),
     // Re-checked at every tool call. Defaults to "the claims we were built from are still valid",
     // which is only correct for a caller that has no token to re-verify (tests).
