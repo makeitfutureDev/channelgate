@@ -1,5 +1,70 @@
 # ChannelGate — Features
 
+## Engine licenses: review fixes (2026-11-21)
+
+A review of the two-harness / many-licenses implementation. Nothing is added; these are the cases
+where a license did not behave like the harness's own sign-in.
+
+- **A deleted license no longer strands what used it.** An added license's id is unregistered the
+  moment it is deleted. A thread whose live session it minted was refused on every turn as "not an
+  approved harness", and a channel whose default or pool still named it made the settings surfaces
+  throw (the Slack settings modal, an approved-harness edit). Now a session stamp naming a deleted
+  license reads like a retired engine's (`isGoneEngine` in `src/gateway/sessions.js`): the thread
+  has history but no live session, so its next turn starts fresh on the conversation's current
+  selection with the transcript replayed. `effectiveMeta` drops a stored `engine`/`licensePool`
+  that names one, `coherentLicensePool` keeps only registered ids, and the reply footer offers no
+  resume command for a session whose license is gone. The only license that is switched on cannot
+  be deleted (409), for added licenses as for shipped ones.
+- **A custom server's own model names are accepted.** `glm-4.6` or `llama3.1:70b` does not look
+  like a Claude or GPT model and was refused by the family-shape gate. A model a license LISTS is
+  now admitted for that license (`isLicenseListedModel` in `src/engines/registry.js`) at the
+  gateway default, the per-license default, the model shortcuts, a channel or DM save and the
+  `/model` wizard.
+- **A license with its own list has a closed catalog** (`modelListClosed` in the UI manifest;
+  every provider license except a key on the vendor's own API with an empty list). Pickers drop a
+  saved model the license does not list, editing the list clears a default model or effort it no
+  longer contains, and a channel save refuses a NEW model its license cannot serve (400) while a
+  stale stored one is dropped when the license changes. More than 40 listed models is refused with
+  the count instead of being cut silently.
+- **Claude Code on a custom server asks for models that server has.** Claude Code resolves its
+  `opus` / `sonnet` / `haiku` aliases itself (subagents, the small fast model). The license now
+  pins each alias to a listed model whose name contains it, else to the turn's model, else to the
+  first listed model (`ANTHROPIC_DEFAULT_*_MODEL`); a key on Anthropic's own API gets none. With no
+  list and no chosen model the run passes no `--model` and the CLI's own default answers.
+- **License cost is the turn's cost.** Claude Code reports a session-cumulative cost. An added
+  Claude sign-in or Anthropic-API license recorded that cumulative on every resumed turn; it now
+  records the delta like the default sign-in (the snapshot is keyed by session id). License spend
+  counts toward its harness in the dashboard's Claude/Codex split. A Codex license whose server is
+  not OpenAI's records tokens and no dollar figure rather than OpenAI's price.
+- **A pinned harness is not traded when it is switched off.** A thread or run pinned by hand to a
+  harness that is disabled, with no other license of that harness usable in the conversation, is
+  answered with "<license> is disabled in gateway Settings and no other <Harness> license can run
+  here…" instead of by the other harness. Channel and gateway defaults still move. A pool is
+  applied only to the harness it was chosen for.
+- **Naming the harness a thread is already on keeps its license.** `claude …` / `codex …` in
+  Slack, or `/model <harness>` on Teams and Google Chat, used to reset a thread pinned to an added
+  license back to the harness's default sign-in.
+- **The background memory reviewer follows the conversation's Claude sign-in.** When the gateway's
+  own Claude login is not approved or not usable in a conversation, the reviewer runs on the first
+  added Claude SIGN-IN license that is (`reviewLicenseCandidates`, the adapter's `claudeRunAccess`);
+  its usage is recorded under that license. It never runs on a custom-server or cloud license, and
+  a conversation with no usable Claude sign-in still skips the review.
+- **Verification says what happened.** HTTP 403 from a custom server's model list is reported as
+  unverified ("the server refused its model list") rather than a rejected key; a 404 names the
+  address as the likely cause. Moving a license's endpoint to another host requires its key again,
+  because the stored key is only ever sent to the host it was entered for.
+- **Settings page.** Verifying a license reports the settings version it produced, so a page with
+  unsaved edits is not refused by its own Verify button; a genuinely stale page gets the 409
+  before its values are validated, not a misleading field error. The per-license default-model
+  select follows the model list as it is typed.
+- Recovery after a dead run recognises every Claude Code license, not only the default sign-in.
+- Not changed: cost rows recorded before this change are not repaired; the `claude` / `codex`
+  directive is still not subject to the channel's runtime-change policy; an interactive SSH
+  session signs in with the gateway's own login whatever license the channel uses; `/resume`
+  adopts only default-sign-in sessions; the login watch reports only the default Claude login.
+
+→ TEST-PLAN: Engine licenses: review fixes.
+
 ## Removing shipped licenses and renaming the default sign-in (2026-11-20)
 
 Every engine license except a harness's own sign-in can now be removed in Settings → Engine

@@ -2,6 +2,33 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix engine licenses after a review of the Claude Code / Codex license handling:
+  - Deleting an added license no longer breaks what used it. Threads it had answered were refused
+    as "not an approved harness" and a channel that still named it could not open its settings;
+    both now continue on the conversation's current default, in a fresh session with the thread's
+    history. The only license that is switched on can no longer be deleted.
+  - A custom server's own model names (for example `glm-4.6`) are accepted as the default model,
+    in channel settings, in shortcuts and in `/model`; they used to be rejected for not looking
+    like a Claude or GPT model. A license with its own model list offers only those models, and
+    removing a model from the list clears a default that pointed at it. A list longer than 40
+    models is refused with the count instead of being shortened silently.
+  - Claude Code on a custom server now asks that server for models it actually lists when it
+    starts subagents or uses its small fast model, instead of Claude model ids.
+  - Cost for an added Claude sign-in or Anthropic API license was recorded as the session's
+    running total on every turn of a resumed thread, so long threads were over-counted. Each
+    turn now records its own cost, and license spend is included in the Claude / Codex split on
+    the Usage page. A Codex license on a server that is not OpenAI's records tokens without
+    OpenAI's price. Rows recorded before this update are not corrected.
+  - A thread pinned by hand to a harness that is later switched off is no longer answered by the
+    other harness; the reply says the harness is disabled and what to do.
+  - Typing `claude …` or `codex …` in a thread already pinned to another license of that harness
+    keeps that license instead of resetting the thread to the default sign-in.
+  - Background memory saving now works in conversations that only allow an added Claude sign-in
+    license.
+  - Changing a license's server address to another host asks for its key again. A server that
+    answers HTTP 403 for its model list is shown as unverified, not as a rejected key.
+  - Pressing Verify on a license no longer makes the next Save on the same Settings page fail
+    as out of date.
 - Add a **Skills** tab to the Activity dashboard: pick "Only me" (your skills in every
   conversation), your direct messages, or any channel you can access, then search, filter and tick
   the skills it loads and save. Organization and template skills show as always on. Settings →
