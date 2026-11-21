@@ -175,3 +175,66 @@ test("every spawn path registers its channel as live before its first tool call"
   assert.match(socket, /const verify = withCapabilityLiveness\(\(\) => verifyGatewayCapability\(cap, \{ secret: secret\(\) \}\)\);/);
   assert.match(read("src/mcp/gateway-server.js"), /ctx\.verifyCapability\(\{ tool: name \}\)/);
 });
+
+// Security audit batch 5: a host `/sudo` turn reaches the control plane through the STDIO child
+// of the same server (src/mcp/gateway-server.js entry), not the socket. Its per-call verifier now
+// asks the daemon (/internal/capability), which applies the same liveness rule, refusal sentence
+// and audit row; it fails closed when the daemon cannot answer.
+test("the host stdio control server applies the same liveness rule through the daemon", async (t) => {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { createWebApp } = await import("../src/web/app.js");
+  const { createGatewayMcpServerFromEnv, createHttpDaemonIpc, withDaemonCapabilityLiveness, CAPABILITY_UNCONFIRMED_REASON } = await import("../src/mcp/gateway-server.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const app = createWebApp({ slack: { snapshot: () => ({ status: "disconnected", connected: false }), getClient: () => null } });
+  const http = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  t.after(() => http.close());
+  const port = () => String(http.address().port);
+  const daemon = createHttpDaemonIpc({ port });
+  const cap = mint();
+
+  // The daemon route: idle → the fixed sentence; live → ok; a wrong IPC secret → forbidden.
+  assert.deepEqual(await daemon.call("capability", { capability: cap, tool: "list_schedules" }), { ok: false, reason: CAPABILITY_IDLE_REASON });
+  const audit = readEvents({ limit: 20 }).find((e) => e.event === "capability_refused_idle" && e.tool === "list_schedules");
+  assert.ok(audit, "the refusal is audited by the daemon");
+  assert.equal(JSON.stringify(audit).includes(cap), false, "never the token");
+  const stranger = createHttpDaemonIpc({ port, secret: () => "not-the-secret" });
+  assert.equal((await stranger.call("capability", { capability: cap, tool: "x" })).ok, false);
+  assert.match((await daemon.call("capability", { capability: `${cap}x`, tool: "x" })).reason, /signature|malformed|invalid/i);
+
+  // End to end through the stdio server's chokepoint.
+  const server = createGatewayMcpServerFromEnv({ CG_GATEWAY_CAPABILITY: cap, CG_ENGINE: "claude" }, { daemon });
+  const client = new Client({ name: "stdio-liveness", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+  const call = async () => (await client.callTool({ name: "list_schedules", arguments: {} })).content.map((c) => c.text || "").join("\n");
+
+  assert.match(await call(), new RegExp(CAPABILITY_IDLE_REASON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "idle channel: refused with the same sentence");
+  const releaseTurn = markLive({ channelId: CHANNEL, ownerId: AUTHOR, kind: "turn", id: "sudo-turn" });
+  assert.doesNotMatch(await call(), /capability rejected/i, "a live /sudo turn keeps working");
+  const releaseJob = markLive({ channelId: CHANNEL, ownerId: AUTHOR, kind: "job", id: "sudo-job" });
+  releaseTurn();
+  assert.doesNotMatch(await call(), /capability rejected/i, "its background job keeps the warm process's tools alive");
+  releaseJob();
+
+  // Fails closed: no daemon, a daemon that throws, or a tampered token (never sent to the daemon).
+  let asked = 0;
+  const verify = (token) => () => verifyGatewayCapability(token, { secret: SECRET });
+  const down = withDaemonCapabilityLiveness(verify(cap), { token: cap, daemon: { available: () => true, call: async () => { asked++; throw new Error("ECONNREFUSED"); } } });
+  assert.deepEqual(await down({ tool: "t" }), { ok: false, reason: CAPABILITY_UNCONFIRMED_REASON });
+  const none = withDaemonCapabilityLiveness(verify(cap), { token: cap, daemon: { available: () => false, call: async () => { asked++; return { ok: true }; } } });
+  assert.equal((await none({ tool: "t" })).ok, false);
+  const tampered = withDaemonCapabilityLiveness(verify(`${cap}x`), { token: `${cap}x`, daemon: { available: () => true, call: async () => { asked++; return { ok: true }; } } });
+  assert.equal((await tampered({ tool: "t" })).ok, false);
+  assert.equal(asked, 1, "only the reachable-but-failing daemon was asked");
+  const yes = withDaemonCapabilityLiveness(verify(cap), { token: cap, daemon: { available: () => true, call: async (kind, body) => { assert.equal(kind, "capability"); assert.equal(body.capability, cap); return { ok: true }; } } });
+  assert.equal((await yes({ tool: "t" })).ok, true);
+});
+
+test("the stdio entry wires the daemon-backed verifier", () => {
+  const source = read("src/mcp/gateway-server.js");
+  assert.match(source, /verifyCapability: withDaemonCapabilityLiveness\(verifySignature, \{ token, daemon \}\)/);
+  assert.match(read("src/web/app.js"), /app\.post\("\/internal\/capability"[\s\S]*?withCapabilityLiveness\(\(\) => verifyGatewayCapability\(/);
+});

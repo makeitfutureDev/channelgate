@@ -2,6 +2,23 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Security hardening (audit batch 5): a `POST /api/runs` authenticated by the admin session cookie
+  now needs the same `X-CG-Request` header as every other cookie-authenticated change (run-API
+  keys and channel tokens are unchanged); a symlink inside a host skill folder (`~/.claude/skills`,
+  `~/.agents/skills`, `GATEWAY_SKILL_SOURCES`, folder sources) is followed only while it stays
+  inside that skill's own folder — a link to any other host file or another skill is skipped with a
+  log warning instead of being copied into channels (a skill folder that is itself a link still works);
+  the gateway control server of a host `/sudo` turn now applies the run capability liveness rule
+  too (asked of the daemon on every tool call, refused with the same sentence and audit event once
+  the conversation has no live work, failing closed if the daemon cannot answer); the Teams webhook
+  requires the Bot Framework token's `serviceurl` claim and the activity's `serviceUrl` to be present
+  and equal (Microsoft's own SDK rule) and documents why a single-use token rule cannot apply —
+  verbatim replays are already dropped by the 7-day durable dedupe; run capabilities and approval
+  links are signed with separate keys derived (HKDF) from the daemon secret instead of the secret
+  itself — an approval link minted before the upgrade (at most 30 minutes old) stops working; answer
+  the card or ask again; Microsoft Graph's `validationToken` is echoed only while the gateway is
+  creating a subscription, without a notification body, for Graph's own characters, as
+  `text/plain; charset=utf-8` with nosniff and no-store — any other request gets `400`.
 - Teams settings now collect your edits and save each section at once. General, Variables, MCPs,
   Skills and Automations end with one **Apply to channel**, **Apply to thread** and **Discard**;
   Apply saves only that section, pending changes in other sections stay until you apply or

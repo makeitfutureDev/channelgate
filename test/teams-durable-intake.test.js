@@ -586,3 +586,36 @@ test("legacy queued Graph Stop recovers into the control lane while four normal 
   held.finish();
   await until(() => active.every(body => row(appId, body)?.status === "done"));
 });
+
+// Security audit batch 5: Bot Framework reuses one bearer token for many activities, so there is no
+// single-use jti rule (it would refuse real traffic). A verbatim replay of a captured request is
+// stopped by the durable fingerprint dedupe instead, whose retention outlives any token.
+test("one token serves many activities, and a verbatim replay within the token's life never runs twice", async t => {
+  const { INBOUND_RETENTION_MS } = await import("../src/platforms/durable-inbox.js");
+  assert.ok(INBOUND_RETENTION_MS >= 24 * 60 * 60 * 1000, "the dedupe window outlives a Bot Framework token (about an hour)");
+  const appId = randomUUID(), delivered = [];
+  const current = await transport(appId, async (message, context = {}) => { if (!context.queuedNoticeOnly) delivered.push(message.text); });
+  t.after(() => current.stop());
+  const shared = `Bearer ${token(appId)}`;
+  const first = activity(appId, { text: "first" }), second = activity(appId, { text: "second" });
+  for (const body of [first, second]) {
+    const res = response();
+    await current.handler({ body, headers: { authorization: shared } }, res);
+    assert.equal(res.code, 200, "the same token is accepted for a second, different activity");
+  }
+  await until(() => delivered.length === 2);
+  // A captured request replayed verbatim, even after its row is long finished, is acknowledged
+  // (so Bot Service stops retrying) but never dispatched again.
+  await until(() => row(appId, first)?.status === "done");
+  getDb().prepare("UPDATE inbound_events SET created_ms = ? WHERE namespace = ? AND event_id = ?")
+    .run(Date.now() - 2 * 60 * 60 * 1000, `msteams-bot:${appId}`, activityFingerprint(first));
+  const replay = response();
+  await current.handler({ body: structuredClone(first), headers: { authorization: shared } }, replay);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(replay.code, 200);
+  assert.deepEqual(delivered, ["first", "second"]);
+  // A forged activity without a Bot Framework serviceUrl is refused before intake.
+  const forged = response();
+  await current.handler({ body: activity(appId, { serviceUrl: undefined, text: "forged" }), headers: { authorization: shared } }, forged);
+  assert.equal(forged.code, 401);
+});

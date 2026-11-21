@@ -1,11 +1,11 @@
 import path from "node:path";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv, tempDir } from "./helpers.js";
+import { startLiveDaemonStub, ensureTestEnv, tempDir } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
@@ -19,6 +19,8 @@ const channelId = "C_WORKSPACE_READ";
 const secret = "workspace-read-secret";
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+const daemonStub = await startLiveDaemonStub();
+after(() => daemonStub.close());
 
 const resultText = (result) => result.content?.map((item) => item.text || "").join("\n") || "";
 
@@ -36,6 +38,7 @@ async function withGateway(engine, fn, { toolset = "full" } = {}) {
       CHANNELGATE_DB: path.join(scratch, "gateway.db"),
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId, slug, authorId: "U_WORKSPACE_READ", threadKey: `${engine}.1`, origin: "slack_foreground", engine }),
       CG_APPROVAL_SECRET: secret,
+      CG_PORT: String(daemonStub.port),
       CG_FS_ROOT: workspaceRoot,
       CG_WORKSPACE_DIR: workspaceRoot,
       CG_TOOLSET: toolset,

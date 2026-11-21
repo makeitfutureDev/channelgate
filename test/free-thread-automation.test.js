@@ -94,7 +94,7 @@ test("scheduled question continuation bills original visible thread while resumi
   assert.equal(usageTotals().runs, 2);
 });
 
-test("admission capability metadata rejects invalid types and oversized identities", () => {
+test("admission capability metadata rejects invalid types and oversized identities", async () => {
   const identity = { secret: "cap-secret", channelId: "C", slug: "c", authorId: "U", threadKey: "session", origin: "background_agent" };
   for (const admissionThreadKey of [null, {}, [], 1, "x".repeat(2049)]) {
     assert.throws(() => mintGatewayCapability({ ...identity, admissionThreadKey }), /admission thread/);
@@ -102,7 +102,11 @@ test("admission capability metadata rejects invalid types and oversized identiti
     const claims = JSON.parse(Buffer.from(valid.split(".")[0], "base64url").toString());
     claims.admissionThreadKey = admissionThreadKey;
     const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-    const signature = createHmac("sha256", identity.secret).update(payload).digest("base64url");
-    assert.equal(verifyGatewayCapability(`${payload}.${signature}`, { secret: identity.secret }).ok, false);
+    // Signed with the real (derived) capability key, so the refusal is the claim check, not the tag.
+    const { KEY_PURPOSES, purposeKey } = await import("../src/util/purpose-keys.js");
+    const signature = createHmac("sha256", purposeKey(identity.secret, KEY_PURPOSES.RUN_CAPABILITY)).update(payload).digest("base64url");
+    const verdict = verifyGatewayCapability(`${payload}.${signature}`, { secret: identity.secret });
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.reason, "invalid admission thread claim");
   }
 });

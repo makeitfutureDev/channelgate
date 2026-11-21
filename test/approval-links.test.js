@@ -132,6 +132,25 @@ test("a token is signed over id, action, scope and expiry — editing any of the
   assert.equal(verifyApprovalLinkToken(foreign.token).reason, "bad-signature");
 });
 
+test("approval links are signed with their own derived key: raw-secret, v1 and capability-keyed tags are refused", async () => {
+  const crypto = await import("node:crypto");
+  const { KEY_PURPOSES, purposeKey } = await import("../src/util/purpose-keys.js");
+  const master = process.env.CG_APPROVAL_SECRET;
+  assert.ok(master, "the test app set a daemon secret");
+  const minted = mintApprovalLinkToken({ id: "kind-sep", action: "approve", scope: "once" });
+  assert.ok(minted.token.startsWith("2."), "version 2 tokens");
+  assert.equal(verifyApprovalLinkToken(minted.token).ok, true);
+  const payload = minted.token.slice(0, minted.token.lastIndexOf("."));
+  const tag = (key) => crypto.createHmac("sha256", key).update(payload).digest().subarray(0, 16).toString("base64url");
+  // The raw daemon secret (the loopback IPC credential) and the run-capability key do not sign links.
+  assert.equal(verifyApprovalLinkToken(`${payload}.${tag(master)}`).reason, "bad-signature");
+  assert.equal(verifyApprovalLinkToken(`${payload}.${tag(purposeKey(master, KEY_PURPOSES.RUN_CAPABILITY))}`).reason, "bad-signature");
+  // A pre-upgrade version-1 link (signed with the raw secret) is no longer accepted at all.
+  const v1 = `1${payload.slice(1)}`;
+  const v1Tag = crypto.createHmac("sha256", master).update(v1).digest().subarray(0, 16).toString("base64url");
+  assert.equal(verifyApprovalLinkToken(`${v1}.${v1Tag}`).reason, "malformed");
+});
+
 test("a token expires, and the expiry is the one inside the signature", () => {
   const past = mintApprovalLinkToken({ id: "expired-1", action: "deny", expiresAt: Date.now() - 1_000 });
   const verified = verifyApprovalLinkToken(past.token);

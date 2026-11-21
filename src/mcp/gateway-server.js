@@ -61,7 +61,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "agent-mail", "code-channel", "skill-swap"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "agent-mail", "code-channel", "skill-swap", "capability"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -522,7 +522,7 @@ export function createGatewayMcpServer(ctx) {
     const handler = rawHandlers.get(name);
     if (!handler) throw new Error(`unknown gateway tool "${name}"`);
     if (!CONTROL_PLANE.has(name)) throw new Error(`"${name}" is not a control-plane tool`);
-    const capability = ctx.verifyCapability({ tool: name });
+    const capability = await ctx.verifyCapability({ tool: name });
     if (!capability.ok) throw new Error(`gateway capability rejected (${capability.reason})`);
     const result = await handler(args ?? {}, {});
     const message = (result?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join("\n");
@@ -535,9 +535,9 @@ export function createGatewayMcpServer(ctx) {
       // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
       // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
       const refuse = (message) => name === "permission_prompt" ? text(JSON.stringify({ behavior: "deny", message })) : text(message);
-      // The verifier receives the tool name for its audit row (the socket's liveness-aware verifier
-      // uses it; the stdio one ignores it).
-      const capability = ctx.verifyCapability({ tool: name });
+      // The verifier receives the tool name for its audit row. Both verifiers are liveness-aware:
+      // the socket's checks in-process, the stdio one asks the daemon (may return a promise).
+      const capability = await ctx.verifyCapability({ tool: name });
       if (!capability.ok) {
         return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
@@ -665,16 +665,39 @@ export function createGatewayMcpServer(ctx) {
 // process; the signed capability is still the only authority (the CG_* strings are hints the
 // claims override). Nothing here runs when the module is merely imported — the daemon's socket
 // listener imports the factory above in-process.
-export function createGatewayMcpServerFromEnv(env = process.env) {
+export const CAPABILITY_UNCONFIRMED_REASON = "the gateway daemon could not confirm that this run is still live";
+
+// The stdio server's per-call verifier: the signature and expiry are checked here, then the DAEMON
+// is asked whether the capability's conversation still has live work — the same rule, refusal
+// sentence and `capability_refused_idle` audit row the control socket applies
+// (gateway/capability-liveness.js). The liveness registry is the daemon's in-memory record, so a
+// stdio child cannot read it itself; it asks over the same loopback IPC its other daemon-side
+// effects use. Fails CLOSED: an unreachable daemon or an unexpected answer refuses the call.
+export function withDaemonCapabilityLiveness(verify, { token, daemon, timeoutMs = 5_000 } = {}) {
+  return async ({ tool = "" } = {}) => {
+    const checked = verify();
+    if (!checked.ok) return checked;
+    try {
+      if (!daemon?.available?.("capability")) return { ok: false, reason: CAPABILITY_UNCONFIRMED_REASON };
+      const answer = await daemon.call("capability", { capability: token, tool: String(tool || "").slice(0, 80) }, { timeoutMs });
+      if (answer?.ok === true) return checked;
+      return { ok: false, reason: typeof answer?.reason === "string" && answer.reason ? answer.reason.slice(0, 200) : CAPABILITY_UNCONFIRMED_REASON };
+    } catch {
+      return { ok: false, reason: CAPABILITY_UNCONFIRMED_REASON };
+    }
+  };
+}
+
+export function createGatewayMcpServerFromEnv(env = process.env, { daemon = createHttpDaemonIpc() } = {}) {
   const token = env.CG_GATEWAY_CAPABILITY || "";
-  const verifyCapability = () => verifyGatewayCapability(token, { secret: hostApprovalSecret() });
-  const initial = verifyCapability();
+  const verifySignature = () => verifyGatewayCapability(token, { secret: hostApprovalSecret() });
+  const initial = verifySignature();
   const ctx = ctxFromClaims(initial.ok ? initial.claims : {}, {
     engine: env.CG_ENGINE || "",
     toolset: env.CG_TOOLSET || "",
     progressReport: env.CG_PROGRESS_REPORT === "1",
-    daemon: createHttpDaemonIpc(),
-    verifyCapability,
+    daemon,
+    verifyCapability: withDaemonCapabilityLiveness(verifySignature, { token, daemon }),
   });
   return createGatewayMcpServer(ctx);
 }

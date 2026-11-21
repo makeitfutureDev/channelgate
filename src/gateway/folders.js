@@ -4,7 +4,7 @@
 // granted MCP namespaces (+ Composio, per author). The file is POLICY — confinement is the channel
 // container the folder is mounted into. Skills the channel is granted are copied into the folder. Everything here is idempotent — safe to re-run on
 // every message so config changes in the admin UI take effect on the next turn.
-import { mkdir, writeFile, cp, access, readdir, realpath, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
+import { mkdir, access, readdir, realpath, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -130,7 +130,7 @@ import { readSkillDirectory } from "./skills/import-folder.js";
 import { normalizeSkillFiles, hashSkillFiles } from "./skills/files.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { sanitizeSkillGrantNames, sharedSkillGrants } from "./access-grants.js";
-import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
+import { readNoFollow, writeNoFollow, ensureRealDir, copyTreeContained } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
 // effectiveWorkDir, so the dependency has to stay one-way). contract.js imports nothing but
 // node:crypto, which is what makes that safe.
@@ -1163,10 +1163,15 @@ export async function enableSkills(skillsDir, skillNames, { authoritative = fals
           copied = true;
           break;
         }
-        // dereference: the user's skills are often symlinks into an available_skills/ store;
-        // copy the real content so the folder is self-contained (no broken relative links).
-        await cp(src, dest, { recursive: true, dereference: true });
-        await writeFile(path.join(dest, MANAGED_SKILL_MARKER), "gateway-owned\n");
+        // The user's skills are often symlinks into an available_skills/ store, so the skill
+        // folder itself is resolved and its real content copied (no broken relative links). A
+        // symlink INSIDE the skill is followed only while it stays inside that skill's real root:
+        // one pointing anywhere else on the host is skipped with a warning, never copied into a
+        // folder the channel's container can read.
+        await copyTreeContained(src, skillsDir, [name], {
+          onSkip: (rel) => console.warn(`[skills] ${name}: skipped symlink ${rel} in host skill folder ${src} — its target is outside the skill folder (or missing), so it is not copied`),
+        });
+        await writeNoFollow(path.join(dest, MANAGED_SKILL_MARKER), "gateway-owned\n");
         enabled.push(name);
         copied = true;
         break;

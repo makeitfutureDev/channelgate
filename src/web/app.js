@@ -44,6 +44,8 @@ import { renderShell, shellContentSecurityPolicy } from "./assets.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 import { searchAgentDirectory } from "../gateway/agent-directory.js";
 import { requestSkillSwap } from "../gateway/skill-runtime.js";
+import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
+import { withCapabilityLiveness } from "../gateway/capability-liveness.js";
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -206,6 +208,20 @@ export function createWebApp({
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
+  });
+
+  // The host stdio gateway MCP server (an admin `/sudo` turn's control plane, a child of the
+  // engine) asks here, on every tool call, whether its run capability is still authority: the same
+  // signature + liveness rule the control socket applies in-process, against the daemon's
+  // in-memory liveness record the child cannot read itself. A refusal carries the fixed sentence and
+  // is audited as `capability_refused_idle` here, in the daemon.
+  app.post("/internal/capability", (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, reason: "forbidden" });
+    const capability = typeof req.body?.capability === "string" ? req.body.capability : "";
+    const tool = typeof req.body?.tool === "string" ? req.body.tool.slice(0, 80) : "";
+    const verify = withCapabilityLiveness(() => verifyGatewayCapability(capability, { secret: process.env.CG_APPROVAL_SECRET || "" }));
+    const checked = verify({ tool });
+    res.json(checked.ok ? { ok: true } : { ok: false, reason: checked.reason });
   });
 
   // Internal IPC (not behind admin auth): the gateway MCP server's permission_prompt tool calls

@@ -6,7 +6,8 @@
 // authoritative for that skill, the catalog mirrors it. A directory that disappears tombstones
 // its skill; one that comes back restores it.
 import { buildPluginSkill, PLUGIN_MANIFESTS } from "./plugin-package.js";
-import { readdir, readFile, stat, lstat } from "node:fs/promises";
+import { readdir, readFile, stat, lstat, realpath } from "node:fs/promises";
+import { containedLinkTarget, readFileNoFollow } from "../safe-fs.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { putSkillRevision, listSkills, tombstoneSkill, restoreSkill, isValidSlug } from "./catalog.js";
@@ -41,38 +42,63 @@ async function hasManifest(dir) {
   }
 }
 
+// The default report for a symlink a dereferencing read refuses to follow.
+function warnSkippedLink(dir, relPath) {
+  console.warn(`[skills] ${dir}: skipped symlink ${relPath} — its target is outside the skill folder (or missing), so it is not copied`);
+}
+
 // Read every file below `dir` as a bundle ({ path, content: Buffer, executable }). Nested skill
 // folders (a subdirectory with its own SKILL.md) belong to that skill and are skipped, as are
 // gateway marker files and VCS/system noise. Symlinks are followed when `dereference` is set —
-// the operator's own folders are often links into a store of available skills.
-export async function readSkillDirectory(dir, { dereference = true, plugin = false } = {}) {
+// the operator's own folders are often links into a store of available skills, so `dir` itself
+// may be a link — but a link INSIDE the skill is followed only while its REAL target stays inside
+// the skill's own real root. One that leaves it (to ~/.ssh, the gateway's config, a sibling skill)
+// or dangles is skipped and reported through `onSkip(relPath)`: whatever is read here is copied
+// into channel folders a container can read. A link back to a directory already on the current
+// path (a loop) is not walked again.
+export async function readSkillDirectory(dir, { dereference = true, plugin = false, onSkip = null } = {}) {
   const files = [];
-  const walk = async (current, rel) => {
+  const follow = dereference && !plugin;
+  const realRoot = follow ? await realpath(dir) : null;
+  const skip = onSkip || ((relPath) => warnSkippedLink(dir, relPath));
+  const walk = async (current, rel, ancestors) => {
     const entries = await readdir(current, { withFileTypes: true });
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (SKIP_NAMES.has(entry.name) || entry.name.startsWith(".gateway-")) continue;
-      const abs = path.join(current, entry.name);
+      let abs = path.join(current, entry.name);
       const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (follow && entry.isSymbolicLink()) {
+        const target = await containedLinkTarget(realRoot, abs);
+        if (!target) {
+          skip(relPath);
+          continue;
+        }
+        abs = target;
+      }
       let info;
       try {
-        info = dereference && !plugin ? await stat(abs) : await lstat(abs);
+        info = follow ? await stat(abs) : await lstat(abs);
       } catch {
-        continue; // dangling link or vanished entry
+        continue; // vanished entry
       }
       if (plugin && info.isSymbolicLink()) throw new Error(`plugin packages cannot contain symlinks: ${relPath}`);
       if (info.isDirectory()) {
         // A nested skill is its own skill; never fold it into this one.
         if (!plugin && (await hasManifest(abs) || await hasPluginManifest(abs))) continue;
-        await walk(abs, relPath);
+        if (follow) {
+          abs = await realpath(abs);
+          if (ancestors.has(abs)) continue;
+        }
+        await walk(abs, relPath, follow ? new Set([...ancestors, abs]) : ancestors);
         continue;
       }
       if (!info.isFile()) continue;
       if (files.length >= MAX_FILES) throw new Error(`skill folder has more than ${MAX_FILES} files`);
-      files.push({ path: relPath, content: await readFile(abs), executable: (info.mode & 0o111) !== 0 });
+      files.push({ path: relPath, content: follow ? await readFileNoFollow(abs) : await readFile(abs), executable: (info.mode & 0o111) !== 0 });
     }
   };
-  await walk(dir, "");
+  await walk(follow ? realRoot : dir, "", new Set(realRoot ? [realRoot] : []));
   return files;
 }
 

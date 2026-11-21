@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { KEY_PURPOSES, purposeKey } from "../util/purpose-keys.js";
 
 const VERSION = 2;
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -8,7 +9,9 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const ORIGINS = new Set(RUN_ORIGINS); // single source: engines/contract.js
 
 const encode = (value) => Buffer.from(value).toString("base64url");
-const sign = (payload, secret) => createHmac("sha256", secret).update(payload).digest("base64url");
+// `secret` is the daemon's master secret; the HMAC key is the run-capability key derived from it
+// (src/util/purpose-keys.js), so a capability tag can never be confused with any other signed kind.
+const sign = (payload, secret) => createHmac("sha256", purposeKey(secret, KEY_PURPOSES.RUN_CAPABILITY)).update(payload).digest("base64url");
 
 // `toolset` and `progressReport` are part of the SIGNED grant (v0.8): the gateway MCP server used
 // to read them from CG_TOOLSET / CG_PROGRESS_REPORT in its own environment, which only works when

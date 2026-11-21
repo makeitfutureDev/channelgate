@@ -1719,9 +1719,13 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
   one process and one capability across turns, so the check refuses calls BETWEEN turns and never
   kills the process. Residual: a copied token works while some work is live in that same channel,
   which is the container's own trust domain. The jti-bound remote-MCP relay registry is unchanged.
-  The daemon-spawned stdio control server used by host (`/sudo`) turns is not covered: that run
-  already executes as the daemon account with the signing secret in reach, so liveness adds nothing
-  there.
+  The daemon-spawned stdio control server used by host (`/sudo`) turns applies the same rule since
+  security audit batch 5: it cannot read the daemon's in-memory registry, so on every tool call it
+  asks the daemon over its loopback IPC (`POST /internal/capability`, the same per-process secret as
+  `/internal/approval`), which verifies the signature and liveness and audits the refusal itself.
+  It fails closed (refused, "the gateway daemon could not confirm that this run is still live")
+  when the daemon cannot answer. This is defense in depth: a `/sudo` run executes as the daemon
+  account, which can read that secret.
 
 ## Catalog-first skill authoring
 
@@ -1814,6 +1818,69 @@ Task progress remain visible; older agent streams without optional task-type met
 - The signed-out admin page serves its login script, favicon and three Poppins font files without
   a session. These exact public paths prevent authentication redirects from replacing JavaScript
   and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.
+
+## Low-severity hardening (security audit batch 5)
+
+- **A cookie-authenticated run needs the CSRF header.** `POST /api/runs` (and `/api/runs/:id/stop`)
+  authenticated by the admin SESSION COOKIE must carry `X-CG-Request: 1` like every other
+  cookie-authenticated state change; without it the request is refused with 403 before the route.
+  The exemption is now tied to the credential, not the path: a request that carries a valid
+  run-API credential (the organization key or a channel `cgk_` token, as `X-API-Key` or
+  `Authorization: Bearer`) is authenticated by that credential with or without a cookie, because a
+  cross-site page cannot send either header without a CORS preflight the gateway never answers.
+  Reads (`GET /api/runs…`) stay exempt. The admin UI's `api()` helper already sends the header.
+- **Host `/sudo` control calls obey run capability liveness.** The stdio gateway MCP server a
+  host engine spawns (`src/mcp/gateway-server.js` entry, `withDaemonCapabilityLiveness`) re-checks
+  its capability on every tool call through the daemon (`POST /internal/capability`, loopback +
+  the per-process IPC secret), which applies `withCapabilityLiveness`: while the thread's turn, a
+  background job or agent, a memory review or an SSH session is live in the channel (or within the
+  30 s grace) the call proceeds; otherwise it is refused with "This run's gateway capability is no
+  longer active: its conversation has no live work." and `capability_refused_idle` is audited by
+  the daemon. An unreachable daemon or an unexpected answer refuses the call ("the gateway daemon
+  could not confirm that this run is still live"); a bad signature is refused without asking.
+- **Teams webhook replay posture.** The Bot Framework token check now requires the token's
+  `serviceurl` claim to be present and equal to the activity's `serviceUrl` (which must itself be a
+  Bot Framework host) instead of comparing only when both happened to be present — the rule
+  Microsoft's own SDK applies. No single-use `jti` rule: Bot Service reuses one token for every
+  activity it sends during the token's hour, so that would refuse real traffic. A verbatim replay
+  of a captured request is dropped by the durable inbox's fingerprint dedupe, which keeps accepted
+  ids for 7 days (`INBOUND_RETENTION_MS`), longer than any token is valid. The remaining risk — a
+  still-valid captured token can carry altered, unsigned activities until it expires — is inherent
+  to the protocol and documented in `src/platforms/msteams/verify.js` and `docs/PLATFORMS.md` →
+  Teams → Notes and limits.
+- **One signing key per token kind.** The daemon's per-process secret (`CG_APPROVAL_SECRET`) is no
+  longer the raw HMAC key of two token kinds. Run capabilities (`src/gateway/mcp-capability.js`)
+  and approval links (`src/web/approval-links.js`) are each signed with a key derived from it by
+  HKDF-SHA256 under its own purpose label (`src/util/purpose-keys.js`: `channelgate/run-capability/v1`,
+  `channelgate/approval-link/v1`), so a tag minted for one kind can never verify as the other, and
+  no signed token carries a MAC under the raw secret, which remains the loopback IPC credential
+  (`/internal/*`, the updater's health check, `internal-auth.json`) and is compared, never used to
+  sign. Every holder (daemon, stdio MCP child, Composio SDK bridge) derives the same key from the
+  same secret, so nothing new crosses a process boundary. Approval links move to token version 2;
+  a version-1 link — at most 30 minutes old when the daemon restarts on the upgrade — shows the
+  ordinary "not valid" page, and the card in the conversation (re-posted after a restart for
+  durable approvals) still decides. Capabilities never outlive the daemon process, so none needs
+  to survive the change.
+- **Graph validation echo is not a reflection vector.** `POST /api/teams/notifications?validationToken=…`
+  is echoed only on a genuine endpoint-validation request: while this daemon is creating a Graph
+  subscription (Graph validates inside that POST) or within two minutes after the creation request
+  ended, with no notification body, and only when the token is 1–4096 characters of
+  `[A-Za-z0-9 :._+/=-]` (Graph sends "Validation: Testing client application reachability for
+  subscription Request-Id: <guid>"). Anything else carrying the parameter — a repeated parameter,
+  markup or control characters, a body, or no creation in progress — answers `400`, echoes nothing
+  and is recorded as `teams_graph_callback_rejected` (`unexpected_validation`,
+  `invalid_validation`, `validation_with_body`). The echo is `text/plain; charset=utf-8` with
+  `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`, set by the handler itself.
+- **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
+  (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
+  bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the
+  skill folder itself (it may be a symlink into an `available_skills/` store) and follow a symlink
+  INSIDE it only while its real target stays inside that skill's own real root. A link to a host
+  file, a sibling skill or a parent, and a dangling link, are skipped with a
+  `[skills] … skipped symlink <path> …` warning and never copied into the channel folder a
+  container reads. A link back to a directory on the current path is not walked again; the copy is
+  capped at 10,000 files and writes through `ensureRealDir` / `writeNoFollow`
+  (`copyTreeContained` in `src/gateway/safe-fs.js`). Mode bits are kept.
 
 ## Work-folder boundary and protected export names (security audit batch 2)
 

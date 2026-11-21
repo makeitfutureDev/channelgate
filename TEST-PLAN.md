@@ -3388,6 +3388,129 @@ Engine-independent: none of this is reachable from an engine turn.
   terminal left cooked mode; raw mode is now set first (regression test in
   `test/web-auth-posture.test.js`).
 
+## Low-severity hardening, security audit batch 5 (2026-11-21)
+
+### Run API CSRF by credential, not path
+
+- [x] Automated: `node --test test/run-api.test.js` — "a session-cookie POST to /api/runs needs the
+  CSRF header; a run-API key does not": a cookie-only `POST /api/runs` and `POST
+  /api/runs/<id>/stop` answer 403 naming `X-CG-Request`; with `X-CG-Request: 1` the request reaches
+  the route (400 missing message); cookie + valid `X-API-Key` or `Authorization: Bearer` reaches the
+  route without the header; cookie + a wrong key answers 403; `GET /api/runs` with the cookie alone
+  answers 200. The existing key-only cases in the same file still pass unchanged.
+- [ ] UNEXECUTED — Live, engine-independent (browser + shell): sign in to the admin UI, copy the
+  `cg_session` cookie from the browser's developer tools, then run
+  `curl -i -X POST https://<host>/api/runs -H 'content-type: application/json' -H 'cookie: cg_session=<value>' -d '{"message":"hi"}'`.
+  Expected: `403` with `{"error":"missing X-CG-Request header"}` and no job created (Admin UI → API
+  shows no new run). Repeat with `-H 'x-cg-request: 1'` and `-d '{}'`: `400` naming `message`.
+  Then `curl -i -X POST https://<host>/api/runs -H 'x-api-key: <channel cgk_ token>' -H 'content-type: application/json' -d '{}'`:
+  `400` naming `message` (the machine path is unchanged). PASS when all three hold.
+
+### Teams webhook token binding and replay
+
+- [x] Automated: `node --test test/platform-teams.test.js` — "the serviceUrl binding is mandatory on
+  both sides, like Microsoft's own SDK": a correctly signed token without the `serviceurl` claim is
+  refused, a valid token with no activity `serviceUrl` is refused, and a claim without the trailing
+  slash still matches; the existing forgery cases still pass. `node --test
+  test/teams-durable-intake.test.js` — "one token serves many activities, and a verbatim replay
+  within the token's life never runs twice": the same bearer is accepted for two different
+  activities (both dispatched), the first request replayed verbatim two hours after it finished is
+  acknowledged with 200 and not dispatched again, an activity without `serviceUrl` answers 401, and
+  the inbox retention is at least a day.
+- [ ] UNEXECUTED — Live, engine-independent (Teams test tenant, the deployment's public URL): send
+  the bot two messages in a personal chat ("first", "second") and confirm both are answered (one
+  Bot Framework token serves both). Then from a host shell with access to a captured inbound request
+  (body + `Authorization`, e.g. from a temporary debug proxy in front of the daemon — never from a
+  production log), replay it verbatim with `curl -i -X POST https://<host>/api/teams/messages -H
+  'content-type: application/json' -H 'authorization: <captured>' --data-binary @body.json`
+  within the hour: expected `200` and no second answer in Teams. Replay it with `serviceUrl`
+  removed from the body: expected `401`. PASS when all three hold.
+
+### Per-purpose signing keys
+
+- [x] Automated: `node --test test/mcp-capability.test.js` — "capabilities are signed with a
+  purpose-derived key, never the raw daemon secret": a minted capability verifies; the same payload
+  tagged with the raw secret or with the approval-link key is refused with `invalid capability
+  signature`; the derived keys are 32 bytes, distinct per purpose and per master, and an unknown
+  purpose or empty master throws. The hand-signed claim-check fixtures in that file and in
+  `test/free-thread-automation.test.js` sign with the derived key, so they still reach (and the
+  latter now asserts) the claim checks. `node --test test/approval-links.test.js` — "approval links
+  are signed with their own derived key…": version 2 tokens verify; tags under the raw secret or
+  the run-capability key are `bad-signature`; a version-1 token signed the old way is `malformed`.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Google Chat or Slack test channel with approval links
+  enabled, `approvalLinks: always`): before updating, raise a permission card ("Run `touch
+  /tmp/cg-batch5-probe` in the shell") and copy its *Approve once* link without opening it; update
+  and restart the daemon within 30 minutes; open the copied link. Expected: the "This approval
+  link is not valid…" page and nothing decided. Raise a new card after the restart and use its
+  link: the page confirms, POST decides it, and the agent continues with `decided_by: "link"`.
+  Then a normal turn calls a gateway tool (`list_schedules`) successfully (capabilities still
+  verify). PASS when every step holds for both engines.
+
+### Graph validation echo
+
+- [x] Automated: `node --test test/platform-teams-graph-events.test.js` — "Graph validation token is
+  echoed plain text without authenticating or fetching" (after a subscription creation: 200,
+  `text/plain; charset=utf-8`, nosniff, no-store, verbatim body, no Graph request) and "Graph
+  validation is echoed only during subscription creation, without a body, and never with markup":
+  with no creation in progress → 400 and nothing echoed; Graph's real token shape echoed from
+  INSIDE the creation request; `<script>…`, a quote, `&`, a newline, 4097 characters, a repeated
+  parameter and an empty value → 400, never echoed; a notification batch with the parameter → 400;
+  an empty parsed body still validates; three minutes later → 400.
+- [ ] UNEXECUTED — Live, engine-independent (Teams test tenant with message events enabled, the
+  deployment's public URL): (1) `curl -i -X POST 'https://<host>/api/teams/notifications?validationToken=%3Cb%3Ehi%3C%2Fb%3E'`
+  → `400`, empty body. (2) `curl -i -X POST 'https://<host>/api/teams/notifications?validationToken=Validation%3A%20test'`
+  with no subscription being created → `400`. (3) Disconnect and reconnect Teams, then mention the
+  bot in a test chat so a subscription is created: the event log shows
+  `teams_graph_callback_validated` and the subscription is created (no "subscription failed"
+  log); editing a message in that chat is then delivered as before. PASS when all three hold.
+
+### Host `/sudo` stdio control server obeys capability liveness
+
+- [x] Automated: `node --test test/capability-liveness.test.js` — "the host stdio control server
+  applies the same liveness rule through the daemon": a real `createWebApp` on a loopback port; the
+  `/internal/capability` route answers the idle sentence for an idle channel and audits
+  `capability_refused_idle` without the token, refuses a wrong IPC secret and a tampered token; a
+  stdio server built by `createGatewayMcpServerFromEnv` refuses `list_schedules` with the same
+  sentence while idle, passes the chokepoint while a turn is live and, after the turn is released,
+  while a background job is live; the verifier fails closed when the daemon throws or is
+  unavailable and never asks the daemon about a bad signature. "the stdio entry wires the
+  daemon-backed verifier" pins the wiring. Every stdio-spawning suite
+  (`test/gateway-mcp-authz.test.js`, `test/mcp-control-plane-approval.test.js`,
+  `test/license-mcp-tools.test.js`, `test/progress-report-mcp.test.js`,
+  `test/workspace-read-tools.test.js`) points `CG_PORT` at a daemon stub that answers the liveness
+  question; "an unreachable approval endpoint fails closed" now also covers the earlier refusal.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Slack test channel, organization admin): in a fresh
+  thread type `/sudo` and enable it. (1) Ask "Call list_schedules and tell me how many there are."
+  Expected: the tool answers (a live turn). (2) Ask "Start `sleep 120; echo done` with
+  run_in_background, then call list_secrets." Expected: both succeed. (3) Wait for the background
+  job's completion notice and at least 2 minutes more with nothing else live in the channel, then
+  from a host shell replay the turn's MCP child: `CG_GATEWAY_CAPABILITY=<the capability from the
+  turn's 0600 MCP config under the artifact dir> node src/mcp/gateway-server.js` driven by an MCP
+  client calling `list_schedules`. Expected: the reply contains "This run's gateway capability is
+  no longer active" and the audit feed shows `capability_refused_idle` for that tool. (4) Two quick
+  consecutive turns in the same `/sudo` thread both call `list_secrets` successfully. PASS when
+  every step holds for both engines.
+
+### Host skill folder symlink containment
+
+- [x] Automated: `node --test test/folders-generator-paths.test.js` — "host-folder skill copies
+  follow only symlinks that stay inside the skill's real root": a host skill folder that is itself
+  a symlink into a store, holding internal links (a file alias, a directory alias, a loop to `.`)
+  and hostile links (an absolute link to a host file, `../sibling/private.md`, a directory link to
+  the parent, a dangling link). Through `enableSkills` (non-authoritative and authoritative) and
+  `readSkillDirectory`: the internal links are copied as real files, the executable bit is kept,
+  every hostile link is absent from the channel copy and the bundle, each is named in a
+  `skipped symlink` warning, and no copied byte holds the host file's or sibling's content. The
+  existing host-import test in `test/skills-platform.test.js` (a symlinked skill folder still
+  imports) passes unchanged.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Worker test channel per engine, operator shell on the
+  host): `mkdir -p ~/available_skills/cg-link-probe && printf -- '---\nname: cg-link-probe\ndescription: probe\n---\n# Probe\n' > ~/available_skills/cg-link-probe/SKILL.md && ln -s ~/.ssh/known_hosts ~/available_skills/cg-link-probe/leak.txt && ln -s ~/available_skills/cg-link-probe ~/.claude/skills/cg-link-probe`,
+  then Admin UI → Skills → *Re-import host folders* and grant `cg-link-probe` to the channel. Ask:
+  "List every file in .claude/skills/cg-link-probe and print leak.txt if it exists." Expected: only
+  `SKILL.md` is listed, the agent reports leak.txt does not exist, and the daemon log shows
+  `skipped symlink leak.txt`. Clean up the probe folder and link afterwards. PASS when it holds for
+  both engines.
+
 ## Web and Slack surface hardening, batch 1 (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js

@@ -7,6 +7,22 @@ const LIFETIME = 55 * 60_000;
 const RENEW_AFTER = 20 * 60_000;
 const SAFE_ID = /^[A-Za-z0-9:@._-]+$/;
 const safeId = value => typeof value === "string" && value !== "." && value !== ".." && value.length <= 1024 && SAFE_ID.test(value);
+// Graph's endpoint-validation challenge must be echoed back verbatim as text/plain, which makes the
+// callback a reflection point. It is answered ONLY while this daemon is creating a subscription
+// (Graph validates the notificationUrl synchronously inside that POST; the grace covers a request
+// that timed out on our side while Graph was still validating), only for a request that carries no
+// notification batch, and only when the token uses the characters Graph sends ("Validation: Testing
+// client application reachability for subscription Request-Id: <guid>" — letters, digits, spaces,
+// ':' and '-'; base64 punctuation is admitted for a future opaque form). No markup character can be
+// reflected, and the response is text/plain; charset=utf-8 with nosniff and no-store.
+const VALIDATION_TOKEN = /^[A-Za-z0-9 :._+/=-]{1,4096}$/;
+const VALIDATION_GRACE_MS = 2 * 60_000;
+function hasNotificationBody(body) {
+  if (body == null || body === "") return false;
+  if (Buffer.isBuffer(body)) return body.length > 0;
+  if (typeof body === "object") return Object.keys(body).length > 0;
+  return true;
+}
 function segments(resource) {
   if (typeof resource !== "string" || resource.length > 8192) return null;
   try {
@@ -45,6 +61,10 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash) throw new Error("Teams Graph notifications need a public HTTPS URL");
   if (!tenantId || !auth?.token || !store?.list || !store?.put || !onMessage) throw new Error("Teams Graph event dependencies are incomplete");
   let timer = null;
+  // Subscription creations in flight, and until when a validation challenge is still expected.
+  let creating = 0;
+  let validationOpenUntil = 0;
+  const validationExpected = () => creating > 0 || now() <= validationOpenUntil;
   // Operational evidence must not alter authentication, acknowledgment or retry behavior.
   // Callers receive only bounded counts, fixed reasons and already authenticated target IDs.
   function note(event, fields) {
@@ -127,10 +147,16 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
       // Persist the secret before creation; Graph validates the endpoint during this request.
       row = { ...row, resource, apiVersion, clientState, notificationUrl: endpoint.href, subscriptionId: null, startedAt: row.startedAt || new Date(current).toISOString() };
       await store.put(row);
-      result = await request(apiVersion, "/subscriptions", "POST", {
-        changeType: "created,updated,deleted", notificationUrl: endpoint.href,
-        resource: subscriptionResource, includeResourceData: false, expirationDateTime: expiresAt, clientState,
-      });
+      creating += 1;
+      try {
+        result = await request(apiVersion, "/subscriptions", "POST", {
+          changeType: "created,updated,deleted", notificationUrl: endpoint.href,
+          resource: subscriptionResource, includeResourceData: false, expirationDateTime: expiresAt, clientState,
+        });
+      } finally {
+        creating -= 1;
+        validationOpenUntil = now() + VALIDATION_GRACE_MS;
+      }
       row = { ...row, subscriptionResource };
     }
     if (!safeId(result?.id)) throw new Error("Teams Graph subscription response has no valid id");
@@ -205,9 +231,20 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   }
   async function handleCallback(req, res, record) {
     const validation = req.query?.validationToken;
-    if (typeof validation === "string" && validation.length > 0 && validation.length <= 4096) {
+    if (validation !== undefined) {
+      const reason = !validationExpected() ? 'unexpected_validation'
+        : typeof validation !== "string" || !VALIDATION_TOKEN.test(validation) ? 'invalid_validation'
+          : hasNotificationBody(req.body) ? 'validation_with_body' : '';
+      if (reason) {
+        record('rejected', { status: 400, reason });
+        res.status(400).end();
+        return;
+      }
       record('validated', { status: 200 });
-      res.status(200).type("text/plain").send(validation);
+      res.status(200);
+      res.set("X-Content-Type-Options", "nosniff");
+      res.set("Cache-Control", "no-store");
+      res.type("text/plain; charset=utf-8").send(validation);
       return;
     }
     const batch = req.body?.value;

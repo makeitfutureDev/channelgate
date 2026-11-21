@@ -149,6 +149,19 @@ test("every forgery shape is refused", async () => {
   }
 });
 
+test("the serviceUrl binding is mandatory on both sides, like Microsoft's own SDK", async () => {
+  const noClaim = mintToken({ serviceurl: undefined }); // JSON.stringify drops the claim
+  const missingClaim = await verifyTeamsRequest({ authorization: `Bearer ${noClaim}`, appId: APP_ID, serviceUrl: DEFAULT_SERVICE_URL, jwks: fakeJwks() });
+  assert.equal(missingClaim.ok, false, "a token without the serviceurl claim is refused");
+  assert.match(missingClaim.reason, /serviceUrl claim/);
+  const noActivityUrl = await verifyTeamsRequest({ authorization: `Bearer ${mintToken()}`, appId: APP_ID, serviceUrl: "", jwks: fakeJwks() });
+  assert.equal(noActivityUrl.ok, false, "an activity without a Bot Framework serviceUrl is refused");
+  assert.match(noActivityUrl.reason, /serviceUrl/);
+  // Slash normalization still matches the real shape.
+  const slashless = await verifyTeamsRequest({ authorization: `Bearer ${mintToken({ serviceurl: DEFAULT_SERVICE_URL.replace(/\/$/, "") })}`, appId: APP_ID, serviceUrl: DEFAULT_SERVICE_URL, jwks: fakeJwks() });
+  assert.equal(slashless.ok, true, slashless.reason);
+});
+
 test("a re-signed token (right claims, wrong key) is refused", async () => {
   const other = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
   const verdict = await verifyTeamsRequest({

@@ -5,7 +5,7 @@
 // execution). Same posture as file-explorer.js (lstat/realpath-verified paths) and
 // run-grant-artifacts.js (exclusive temp + atomic rename): never read or write THROUGH a link the
 // gateway didn't create — operate on the link NODE, never its target.
-import { open, lstat, mkdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { open, lstat, mkdir, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -243,4 +243,87 @@ export async function ensureRealDir(base, ...segments) {
     }
   }
   return dir;
+}
+
+// Is `candidate` the same path as `root` or beneath it? Both must already be resolved (realpath)
+// when the question is about where a link really points.
+export function pathWithin(root, candidate) {
+  const rel = path.relative(root, candidate);
+  return rel === "" || !(rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel));
+}
+
+// Resolve a link found INSIDE a trusted source tree. Returns the link's real target when it stays
+// inside `realRoot` (the tree's own resolved root), or null when it dangles or leaves the tree.
+export async function containedLinkTarget(realRoot, link) {
+  let target;
+  try {
+    target = await realpath(link);
+  } catch {
+    return null;
+  }
+  return pathWithin(realRoot, target) ? target : null;
+}
+
+// Read a regular file without following a symlink at its final component (the caller has already
+// resolved and vetted any link). Throws on a non-regular file.
+export async function readFileNoFollow(file) {
+  const fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = await fh.stat();
+    if (!info.isFile()) {
+      const error = new Error("Refusing to read a path that is not a regular file.");
+      error.code = "ENOTREG";
+      throw error;
+    }
+    return await fh.readFile();
+  } finally {
+    await fh.close();
+  }
+}
+
+// Copy a host source tree (a skill folder in the operator's skill store, say) into a managed
+// workspace path base/…segments. The source root itself may be a symlink — it is resolved first —
+// but a symlink INSIDE it is followed only while its real target stays inside that resolved root:
+// a link that leaves it (to ~/.ssh, the gateway's config, another skill) or dangles is SKIPPED and
+// reported through onSkip(relPath), so a planted link can never copy an arbitrary host file into a
+// folder a container can read. A link back to a directory already on the current path (a loop) is
+// not walked again, and `maxFiles` bounds what a link fan-out could multiply. Destination
+// directories go through ensureRealDir and files through writeNoFollow, so a link planted on the
+// destination side is never written through either. Mode bits are kept.
+export async function copyTreeContained(src, base, segments, { onSkip = () => {}, maxFiles = 10_000 } = {}) {
+  const realRoot = await realpath(src);
+  let files = 0;
+  const walk = async (realDir, relSegments, ancestors) => {
+    const destDir = await ensureRealDir(base, ...segments, ...relSegments);
+    const entries = await readdir(realDir, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const relPath = [...relSegments, entry.name].join("/");
+      let abs = path.join(realDir, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = await containedLinkTarget(realRoot, abs);
+        if (!target) {
+          onSkip(relPath);
+          continue;
+        }
+        abs = target;
+      }
+      let info;
+      try {
+        info = await stat(abs);
+      } catch {
+        continue; // vanished between readdir and stat
+      }
+      if (info.isDirectory()) {
+        if (ancestors.has(abs)) continue;
+        await walk(abs, [...relSegments, entry.name], new Set([...ancestors, abs]));
+      } else if (info.isFile()) {
+        if (++files > maxFiles) throw new Error(`${src} has more than ${maxFiles} files`);
+        await writeNoFollow(path.join(destDir, entry.name), await readFileNoFollow(abs), { mode: info.mode & 0o777 });
+      }
+      // Sockets, FIFOs and devices are never copied.
+    }
+  };
+  await walk(realRoot, [], new Set([realRoot]));
+  return { files };
 }

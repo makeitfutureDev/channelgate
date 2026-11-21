@@ -1,13 +1,15 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv } from "./helpers.js";
+import { startLiveDaemonStub, ensureTestEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js");
+const daemonStub = await startLiveDaemonStub();
+after(() => daemonStub.close());
 
 function gatewayClient({ progressReport }) {
   const scratch = ensureTestEnv();
@@ -25,6 +27,7 @@ function gatewayClient({ progressReport }) {
       CHANNELGATE_DB: path.join(scratch, "gateway.db"),
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId: "C_PROGRESS_REPORT_TEST", slug: "progress-report-test", authorId: "U_PROGRESS_REPORT_TEST", threadKey: "1.000", origin: "slack_foreground", engine: "claude" }),
       CG_APPROVAL_SECRET: secret,
+      CG_PORT: String(daemonStub.port),
       ...(progressReport ? { CG_PROGRESS_REPORT: "1" } : {}),
     },
   });

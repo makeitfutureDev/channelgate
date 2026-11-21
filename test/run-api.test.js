@@ -106,6 +106,29 @@ test("GET /api/runs list without key → 401", async () => {
   assert.equal(r.status, 401);
 });
 
+test("a session-cookie POST to /api/runs needs the CSRF header; a run-API key does not", async () => {
+  // Regression (security audit batch 5): /api/runs used to be CSRF-exempt by PATH, so a cookie-
+  // authenticated cross-site POST could start an admin run. Only the machine credential is exempt.
+  const login = await post("/api/login", { password: "test-admin-pw" });
+  const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+
+  const forged = await post("/api/runs", { message: "hi" }, { cookie });
+  assert.equal(forged.status, 403, "cookie without X-CG-Request is refused before the route");
+  assert.match((await forged.json()).error, /X-CG-Request/);
+  assert.equal((await post("/api/runs/nope/stop", {}, { cookie })).status, 403, "stop is a cookie mutation too");
+
+  const sameOrigin = await post("/api/runs", {}, { cookie, "x-cg-request": "1" });
+  assert.equal(sameOrigin.status, 400, "the admin UI's header reaches the route (missing message)");
+
+  // A machine caller that also carries a cookie authenticates with its key, which no cross-site
+  // page can send without a preflight.
+  assert.equal((await post("/api/runs", {}, { cookie, "x-api-key": KEY })).status, 400);
+  assert.equal((await post("/api/runs", {}, { cookie, authorization: `Bearer ${KEY}` })).status, 400);
+  assert.equal((await post("/api/runs", { message: "hi" }, { cookie, "x-api-key": "wrong" })).status, 403);
+  // Reads stay exempt.
+  assert.equal((await get("/api/runs", { cookie })).status, 200);
+});
+
 test("GET /api/health exposes a stable daemon identity to anyone, and nothing else", async () => {
   // Health stays reachable without a session — it is how the UI notices a restart — so it must
   // not hand a stranger the absolute gateway path (which leaks the OS username), the Slack

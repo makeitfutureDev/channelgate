@@ -291,7 +291,7 @@ export function register(server, ctx) {
   // A run can act only on its capability-bound channel. The daemon controls the host
   // helper; no container gains a shell, Podman socket, NET_ADMIN or credential mount.
   const vpnControl = ctx.vpnControl || { getStatus: getChannelVpnStatus, setEnabled: setChannelVpnEnabled };
-  const vpnAccess = async () => ctx.verifyCapability?.().ok === true && await ctx.requireChannelAccess?.();
+  const vpnAccess = async () => (await ctx.verifyCapability?.())?.ok === true && await ctx.requireChannelAccess?.();
   server.registerTool("get_channel_vpn_status", {
     description: "Read this channel's configured VPN status and missing secret names. Distinguishes connecting, connected, off and failed. Never returns secrets or profiles.",
     inputSchema: {},

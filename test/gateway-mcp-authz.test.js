@@ -20,6 +20,8 @@ const approvalStub = http.createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => { body += chunk; });
   req.on("end", () => {
+    // The stdio server's per-call liveness question (security audit batch 5): this channel is live.
+    if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
     try { ipcCalls.push({ path: req.url, body: JSON.parse(body || "{}") }); } catch { /* not JSON */ }
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ allow: true, reason: "auto-approved by test stub" }));
