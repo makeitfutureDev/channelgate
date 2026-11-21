@@ -225,6 +225,11 @@ skipped and reported. A **folder** source is a directory on the gateway host.
 Existing host folders (`~/.claude/skills`, `~/.agents/skills`, `GATEWAY_SKILL_SOURCES`) keep
 working exactly as before: they are imported at boot as folder-owned skills under their directory
 names, so every stored grant still resolves. *Re-import host folders* refreshes them on demand.
+A skill folder may itself be a symlink (into an `available_skills/` store, say), and links inside
+the skill are followed while their real target stays inside that skill's own folder. A link that
+points anywhere else — another skill, `~/.ssh`, the gateway's config — or dangles is skipped with
+a `[skills] … skipped symlink …` warning in the daemon log and is never copied into a channel
+(security audit batch 5): copy a file shared by several skills into each one instead.
 
 ## Authoring and proposals
 

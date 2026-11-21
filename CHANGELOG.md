@@ -4,7 +4,10 @@
 
 - Security hardening (audit batch 5): a `POST /api/runs` authenticated by the admin session cookie
   now needs the same `X-CG-Request` header as every other cookie-authenticated change (run-API
-  keys and channel tokens are unchanged).
+  keys and channel tokens are unchanged); a symlink inside a host skill folder (`~/.claude/skills`,
+  `~/.agents/skills`, `GATEWAY_SKILL_SOURCES`, folder sources) is followed only while it stays
+  inside that skill's own folder — a link to any other host file or another skill is skipped with a
+  log warning instead of being copied into channels (a skill folder that is itself a link still works).
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

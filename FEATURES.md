@@ -1825,6 +1825,16 @@ Task progress remain visible; older agent streams without optional task-type met
   `Authorization: Bearer`) is authenticated by that credential with or without a cookie, because a
   cross-site page cannot send either header without a CORS preflight the gateway never answers.
   Reads (`GET /api/runs…`) stay exempt. The admin UI's `api()` helper already sends the header.
+- **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
+  (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
+  bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the
+  skill folder itself (it may be a symlink into an `available_skills/` store) and follow a symlink
+  INSIDE it only while its real target stays inside that skill's own real root. A link to a host
+  file, a sibling skill or a parent, and a dangling link, are skipped with a
+  `[skills] … skipped symlink <path> …` warning and never copied into the channel folder a
+  container reads. A link back to a directory on the current path is not walked again; the copy is
+  capped at 10,000 files and writes through `ensureRealDir` / `writeNoFollow`
+  (`copyTreeContained` in `src/gateway/safe-fs.js`). Mode bits are kept.
 
 ## Work-folder boundary and protected export names (security audit batch 2)
 

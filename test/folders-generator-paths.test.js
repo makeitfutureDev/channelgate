@@ -3,7 +3,7 @@
 // skill listing / host-folder grant fallback (listAvailableSkills, skillSourceDirs, enableSkills).
 // These are the functions the 2026-09-04 skills-catalog change added or reshaped in folders.js;
 // without them the security-coverage ratchet for the settings generator falls below its floor.
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -449,3 +449,91 @@ test("the managed block carries the hard rules a run must never get wrong", () =
   }
   assert.ok(worst <= 4120, `worst-case managed block is ${worst} bytes — it may shrink, never grow`);
 });
+
+// Security audit batch 5: the host-folder fallback used to copy with `dereference: true`, so a
+// symlink INSIDE a skill folder copied any host file it pointed at into a channel folder (which
+// the channel's container reads). The skill folder itself may still be a link into a store; a link
+// inside it is followed only while its real target stays inside that skill's own real root.
+test("host-folder skill copies follow only symlinks that stay inside the skill's real root", async (t) => {
+  const { readSkillDirectory } = await import("../src/gateway/skills/import-folder.js");
+  const base = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-skill-links-")));
+  const store = path.join(base, "available_skills");
+  const real = path.join(store, "linked-host-skill");
+  mkdirSync(path.join(real, "references"), { recursive: true });
+  writeFileSync(path.join(real, "SKILL.md"), "---\nname: linked-host-skill\ndescription: d\n---\n# Linked\n");
+  writeFileSync(path.join(real, "references", "guide.md"), "inside");
+  writeFileSync(path.join(real, "run.sh"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+  // Legitimate: links that stay inside the skill (a file, a directory, a loop back to the root).
+  symlinkSync("references/guide.md", path.join(real, "alias.md"));
+  symlinkSync("references", path.join(real, "refs"));
+  symlinkSync(".", path.join(real, "self"));
+  // Hostile: a host secret, a sibling skill in the same store, a parent escape and a dangling link.
+  const secret = path.join(base, "host-secret.txt");
+  writeFileSync(secret, "TOP-SECRET-HOST-FILE");
+  mkdirSync(path.join(store, "sibling"), { recursive: true });
+  writeFileSync(path.join(store, "sibling", "private.md"), "SIBLING-ONLY");
+  symlinkSync(secret, path.join(real, "leak.txt"));
+  symlinkSync(path.join(base), path.join(real, "references", "up"));
+  symlinkSync("../sibling/private.md", path.join(real, "borrowed.md"));
+  symlinkSync(path.join(base, "nowhere"), path.join(real, "dangling.md"));
+  const sources = path.join(base, "sources");
+  mkdirSync(sources);
+  symlinkSync(real, path.join(sources, "linked-host-skill")); // the skill folder itself is a link
+
+  const previous = process.env.GATEWAY_SKILL_SOURCES;
+  process.env.GATEWAY_SKILL_SOURCES = sources;
+  t.after(() => { if (previous === undefined) delete process.env.GATEWAY_SKILL_SOURCES; else process.env.GATEWAY_SKILL_SOURCES = previous; });
+  const warnings = [];
+  const warn = t.mock.method(console, "warn", (...args) => { warnings.push(args.join(" ")); });
+
+  const hostile = ["leak.txt", "borrowed.md", "dangling.md", "references/up"];
+  const check = (dir, label) => {
+    assert.equal(readFileSync(path.join(dir, "SKILL.md"), "utf8").includes("# Linked"), true, `${label}: the linked skill folder is copied`);
+    assert.equal(readFileSync(path.join(dir, "alias.md"), "utf8"), "inside", `${label}: an internal file link is followed`);
+    assert.equal(readFileSync(path.join(dir, "refs", "guide.md"), "utf8"), "inside", `${label}: an internal directory link is followed`);
+    for (const rel of hostile) assert.equal(existsSync(path.join(dir, rel)), false, `${label}: ${rel} is not copied`);
+  };
+
+  // Non-authoritative fallback (cp replacement).
+  const skillsDir = path.join(base, "chan", ".claude", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  const result = await enableSkills(skillsDir, ["linked-host-skill"]);
+  assert.ok(result.enabled.includes("linked-host-skill"));
+  const dest = path.join(skillsDir, "linked-host-skill");
+  check(dest, "fallback");
+  assert.equal(lstatSync(path.join(dest, "run.sh")).mode & 0o111, 0o111, "the executable bit is kept");
+  assert.equal(lstatSync(path.join(dest, "alias.md")).isSymbolicLink(), false, "copies are real files");
+  for (const rel of hostile) assert.ok(warnings.some((w) => w.includes(rel) && w.includes("skipped symlink")), `a warning names ${rel}`);
+  const copied = JSON.stringify(readdirRecursive(dest));
+  assert.doesNotMatch(copied, /host-secret/);
+
+  // Authoritative fallback (bundle read through readSkillDirectory).
+  const authDir = path.join(base, "chan-auth", ".claude", "skills");
+  mkdirSync(authDir, { recursive: true });
+  const auth = await enableSkills(authDir, ["linked-host-skill"], { authoritative: true, backupDir: path.join(base, "backups") });
+  assert.ok(auth.enabled.includes("linked-host-skill"));
+  check(path.join(authDir, "linked-host-skill"), "authoritative");
+
+  // The catalog import read (folder sources) applies the same rule.
+  const skipped = [];
+  const files = await readSkillDirectory(path.join(sources, "linked-host-skill"), { onSkip: (rel) => skipped.push(rel) });
+  const paths = files.map((f) => f.path);
+  for (const rel of hostile) assert.equal(paths.includes(rel), false, `import skips ${rel}`);
+  assert.deepEqual(skipped.sort(), [...hostile, "refs/up"].sort(), "the escape is skipped on every path that reaches it");
+  assert.ok(paths.includes("alias.md") && paths.includes("refs/guide.md"));
+  assert.equal(files.some((f) => String(f.content).includes("TOP-SECRET") || String(f.content).includes("SIBLING-ONLY")), false);
+  warn.mock.restore();
+});
+
+function readdirRecursive(dir, prefix = "") {
+  const out = [];
+  for (const entry of readdirSyncTyped(dir)) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    out.push(rel);
+    if (entry.isDirectory()) out.push(...readdirRecursive(path.join(dir, entry.name), rel));
+  }
+  return out;
+}
+function readdirSyncTyped(dir) {
+  return readdirSync(dir, { withFileTypes: true });
+}

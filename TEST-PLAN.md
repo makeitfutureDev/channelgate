@@ -3348,6 +3348,26 @@ Engine-independent: none of this is reachable from an engine turn.
   Then `curl -i -X POST https://<host>/api/runs -H 'x-api-key: <channel cgk_ token>' -H 'content-type: application/json' -d '{}'`:
   `400` naming `message` (the machine path is unchanged). PASS when all three hold.
 
+### Host skill folder symlink containment
+
+- [x] Automated: `node --test test/folders-generator-paths.test.js` — "host-folder skill copies
+  follow only symlinks that stay inside the skill's real root": a host skill folder that is itself
+  a symlink into a store, holding internal links (a file alias, a directory alias, a loop to `.`)
+  and hostile links (an absolute link to a host file, `../sibling/private.md`, a directory link to
+  the parent, a dangling link). Through `enableSkills` (non-authoritative and authoritative) and
+  `readSkillDirectory`: the internal links are copied as real files, the executable bit is kept,
+  every hostile link is absent from the channel copy and the bundle, each is named in a
+  `skipped symlink` warning, and no copied byte holds the host file's or sibling's content. The
+  existing host-import test in `test/skills-platform.test.js` (a symlinked skill folder still
+  imports) passes unchanged.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Worker test channel per engine, operator shell on the
+  host): `mkdir -p ~/available_skills/cg-link-probe && printf -- '---\nname: cg-link-probe\ndescription: probe\n---\n# Probe\n' > ~/available_skills/cg-link-probe/SKILL.md && ln -s ~/.ssh/known_hosts ~/available_skills/cg-link-probe/leak.txt && ln -s ~/available_skills/cg-link-probe ~/.claude/skills/cg-link-probe`,
+  then Admin UI → Skills → *Re-import host folders* and grant `cg-link-probe` to the channel. Ask:
+  "List every file in .claude/skills/cg-link-probe and print leak.txt if it exists." Expected: only
+  `SKILL.md` is listed, the agent reports leak.txt does not exist, and the daemon log shows
+  `skipped symlink leak.txt`. Clean up the probe folder and link afterwards. PASS when it holds for
+  both engines.
+
 ## Web and Slack surface hardening, batch 1 (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js
