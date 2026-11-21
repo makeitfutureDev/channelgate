@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Say why a connection to an undeclared server and port fails instead of dropping it silently.
+  With Network on, the egress proxy carries only HTTPS to a host and port the channel has not
+  declared, so an SSH or database client through `cg-egress-connect` used to see a dead connection.
+  The helper now stops before anything is sent and prints one line naming the host and port and
+  the fix: ask for them with `allow_channel_ssh_host`. Declared destinations and HTTPS are
+  unchanged. Needs the rebuilt runtime image (spec 1.6.4), which updates build automatically.
 - Fix engine licenses after a review of the Claude Code / Codex license handling:
   - Deleting an added license no longer breaks what used it. Threads it had answered were refused
     as "not an approved harness" and a channel that still named it could not open its settings;

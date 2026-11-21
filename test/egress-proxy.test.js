@@ -156,9 +156,10 @@ function connectVia(host, port) {
       socket.off("data", onData);
       const status = Number(/^HTTP\/1\.1 (\d{3})/.exec(buf.toString("latin1"))?.[1]);
       const rest = buf.subarray(end + 4);
+      const head = buf.subarray(0, end).toString("latin1");
       if (status === 200) {
         if (rest.length) socket.unshift(rest);
-        resolve({ socket, status });
+        resolve({ socket, status, head });
         return;
       }
       let body = rest.toString();
@@ -340,8 +341,9 @@ test("plain http: absolute-form requests are forwarded, but a grant without plai
 });
 
 test("a raw passthrough tunnel pipes bytes to a plain TCP server", async () => {
-  const { socket, status } = await connectVia("echo.test", echoPort);
+  const { socket, status, head } = await connectVia("echo.test", echoPort);
   assert.equal(status, 200);
+  assert.match(head, /\r\nX-ChannelGate-Tunnel: raw$/, "the 200 names a raw tunnel, so cg-egress-connect pipes bytes as-is");
   const echoed = await new Promise((resolve) => {
     let got = "";
     socket.on("data", (c) => { got += c; if (got.length >= 9) resolve(got); });
@@ -352,6 +354,13 @@ test("a raw passthrough tunnel pipes bytes to a plain TCP server", async () => {
   await waitFor(() => auditFor((e) => e.tunnel), "the tunnel audit");
   const event = auditFor((e) => e.tunnel);
   assert.deepEqual({ hostname: event.hostname, status: event.status, bytesUp: event.bytesUp, bytesDown: event.bytesDown }, { hostname: "echo.test", status: 200, bytesUp: 9, bytesDown: 9 });
+});
+
+test("an undeclared host:port gets an inspected tunnel, and the 200 says so", async () => {
+  const { socket, status, head } = await connectVia("upstream.test", portA);
+  assert.equal(status, 200);
+  assert.match(head, /\r\nX-ChannelGate-Tunnel: inspect$/, "cg-egress-connect refuses non-TLS bytes on an inspected tunnel with the reason");
+  socket.destroy();
 });
 
 test("a WebSocket upgrade is swapped and then round-trips bytes", async () => {

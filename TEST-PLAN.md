@@ -2710,6 +2710,18 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
 - [x] Admin-scoped Azure SQL raw tunnel: `test/egress-hosts.test.js` and `test/egress-service.test.js`
   verify that `host:1433` creates only the exact 1433 tunnel, is refused with Network off, and
   rejects scoped wildcards, private hosts and invalid port numbers.
+- [x] Undeclared raw destination says why (image spec 1.6.4): `test/egress-proxy.test.js` checks
+  `X-ChannelGate-Tunnel: raw` on a declared tunnel and `inspect` on an undeclared one;
+  `test/egress-connect.test.js` checks that a TDS PRELOGIN (first byte 0x12) on an inspected tunnel
+  exits 1 with one stderr line naming `allow_channel_ssh_host({host, port})` and sends no bytes, a TLS
+  ClientHello (0x16) passes unchanged, a silent client gets one hint without the tunnel ending, and
+  the helper's header name equals the proxy's.
+- [ ] Live acceptance, engine-independent (SQL-RAW-02): after the 1.6.4 image is built, from any
+  Network-on channel container run `cg-egress-connect <public-sql-host> 1434` and send a TDS
+  PRELOGIN (or `ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p' -p 2222
+  user@<undeclared public host>`). Pass: exit 1 and the single "is not a declared raw destination …
+  allow_channel_ssh_host({host, port})" line; the same probe to a declared `host:1433` still gets the
+  server's PRELOGIN response; with Network off the refusal is still `403 … network-off`.
 - [ ] Live Claude and Codex acceptance (SQL-RAW-01): use exclusive disposable equivalents of
   `cg-testing-claude-bash` and `cg-testing-codex-bash` with Network on and an owned public
   SQL Server/Azure SQL fixture at `<sql-host>:1433`, a readable database password Secret and

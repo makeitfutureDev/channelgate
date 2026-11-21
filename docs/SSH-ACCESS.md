@@ -384,6 +384,13 @@ ended); `show_channel_ssh` lists the live ones.
 - *`cg-egress-connect: the gateway's egress proxy refused github.com:22 (403 Forbidden) —
   network-off …`* — outbound SSH needs *Allow network* on; any other host must be a declared raw
   host. `kex_exchange_identification: Connection closed` right after it is ssh's own echo of that.
+- *`cg-egress-connect: server.example.com:2222 is not a declared raw destination for this channel;
+  the gateway's egress proxy carries only HTTPS (TLS) to it …`* — with *Allow network* on, an
+  undeclared host:port still gets a tunnel, but one the proxy inspects, so only TLS passes. The
+  helper sees the proxy's `X-ChannelGate-Tunnel: inspect` answer and refuses a non-TLS client (SSH,
+  SQL Server, PostgreSQL) before a byte leaves the container. A client that waits for the server to
+  speak first (MySQL, SMTP) gets the same line as a hint after five seconds. Ask for the exact host
+  and port with `allow_channel_ssh_host({host, port})`.
 - *Connection drops on daemon restart* — expected; reconnect.
 - *History differs from another person's Slack session* — ordinary Claude/Codex channel histories
   share the same transcript mounts across roles. Compare the channel/install identity and check
