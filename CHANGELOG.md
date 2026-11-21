@@ -2,6 +2,20 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Dependencies: `hono` (pulled in by `@modelcontextprotocol/sdk`) moves from 4.13.14 to 4.13.19 in
+  the lockfile, clearing GHSA-4m76-xfj5-7975 (`mount()` middleware bypass) and the four other
+  advisories for `hono` ≤ 4.13.15. ChannelGate was not exposed: it reaches `hono` only through the
+  SDK's Node request adapter for the skills MCP endpoint and uses none of the affected router,
+  `mount()`, `css`, `csrf()` or `validator` features. `npm audit --omit=dev` reports no
+  vulnerabilities.
+- An update that changes a file the channel image copies in from `src/` — the MCP socket bridge,
+  the egress forwarder, `cg-egress-connect`, the Codex secret-env bridge, the Claude Stop hook or
+  a module they import — now rebuilds the image by itself, with no `imageSpecVersion` bump. The
+  image carries a new `cg.image.bundle` label for those files; Settings → Container runtime shows
+  "Image rebuild required" while it does not match. A helper-only rebuild reuses the cached
+  toolchain layers. **After a manual `git pull` that touches one of these files, run
+  `npm run build:image`.** Images built before this release have no such label and are rebuilt
+  once, by the update that brings it.
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

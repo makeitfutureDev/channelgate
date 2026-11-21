@@ -281,8 +281,9 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   backend plus the admin-authenticated `/sudo` host backend; `local.js` remains an unregistered
   daemon-internal spawner kept for direct-runner tests), `host.js` (direct daemon-account spawn) and
   `container/` — the rootless Podman backend: the CLI probe (`podman`, then `docker`), the image
-  (expected version + digest over every file in `containers/` compared with the built image's
-  labels; a missing or stale image fails the run closed with the `npm run build:image` remedy),
+  (expected version + digest over every file in `containers/` + `image-bundle.js`'s digest over
+  the `src/` files the build stages, compared with the built image's labels; a missing image fails
+  the run closed with the `npm run build:image` remedy, a stale one is flagged and rebuilt on update),
   the lifecycle (create/start/stop, recreate by create-time fingerprint and image ID, leases, the
   idle reaper), exec (session-leader helpers so a later exec can signal the whole tree),
   credentials, the per-channel HOME volume and the mounts, the operator's VS Code lease
@@ -294,8 +295,9 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   apt adds `gh`, `git`, `ffmpeg`, `ripgrep`, `psql` and friends) and `bin/` (the POSIX `cg-*`
   helpers: init, exec, probe, signal, sweep, the MCP socket bridge shim; `cg-init` also starts the
   egress forwarder under `CG_EGRESS=proxy`). `scripts/build-image.mjs` stages only the import
-  closure of the engine-spawned helpers plus the verbatim socket bridge and egress forwarder,
-  never the checkout.
+  closure of the engine-spawned helpers plus the verbatim socket bridge, egress forwarder and SSH
+  ProxyCommand helper — the set declared once in `src/runtimes/container/image-bundle.js` and
+  digested into the `cg.image.bundle` label — never the checkout.
 - `src/mcp/` — `gateway-server.js` is a thin assembler over `tools/` (`background`,
   `channel-admin`, `license`, `schedules`, `skills`, `slack-native`, `tokens`, `workspace-read`),
   each registering its tools behind the verified capability; `socket-server.js` serves it on the
