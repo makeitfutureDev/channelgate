@@ -75,7 +75,7 @@ import path from "node:path";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
 import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor, wasAttachmentDelivered } from "./download.js";
 
-import { buildResumeCommand, footerButtons, footerText } from "./footer.js";
+import { buildResumeCommand, footerButtons, footerText, resumeCommandReply } from "./footer.js";
 import { postNoticeWithMenu } from "./deliver.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 import { renameAgentSession } from "./agent-sessions.js";
@@ -1078,11 +1078,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           if (adminSession && !authorIsAdmin) { await reply("Run a new turn under your own access level before resuming this thread."); return; }
           runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: adminSession });
           const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
-          await reply(
-            cmd
-              ? `💻 Open this thread's session in a terminal on the gateway machine:\n\`\`\`${cmd}\`\`\`\n_Paste that line back as \`/resume <command>\` in this channel to continue the session from a thread._`
-              : "No session in this thread yet — send a message first. To continue an existing session here, use `/resume <command or session id>`."
-          );
+          await reply(resumeCommandReply(cmd, sessionId, threadEngine));
           return;
         }
         // Repointing the thread mid-run would leave the running turn writing to the session it
@@ -1098,14 +1094,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           await reply("This thread is running `/clean`, so it can only continue a session built the same way. Send `/clean off` first if you want to adopt an existing session here.");
           return;
         }
-        const plan = await planSessionAdoption({ arg: sc.arg, slug: entry.slug, threadKey, workDir, threadEngine, currentSessionId: sessionId, target: runtimeTarget, log: console.log });
+        const plan = await planSessionAdoption({ arg: sc.arg, slug: entry.slug, threadKey, workDir, threadEngine, currentSessionId: sessionId, target: runtimeTarget, meta, log: console.log });
         if (!plan.ok) {
           await reply(plan.message);
           return;
         }
-        // Pin the thread to the harness that minted the id — otherwise the next turn's engine
-        // resolution could hand a Claude session to Codex (or back) and run.js would drop it as a
-        // harness switch. Evict any warm process still bound to the OLD session id, and drop the
+        // Pin the thread to the license whose directory holds the id — otherwise the next turn's
+        // engine resolution could hand a Claude session to Codex (or back), or to a license that
+        // keeps its transcripts elsewhere, and run.js would drop it or start over. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
         await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
         // The adopted id names one license. A thread already pinned to it keeps the further

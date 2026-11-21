@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- `/resume` now finds a session that was started under a license you added. Each added license
+  keeps its sessions in its own directory, and `/resume` looked only in Claude Code's and Codex's
+  default ones, so such a session was always "not found" — even when you pasted the command
+  `/resume` itself had printed. The thread continues on the license that holds the session; a
+  license the channel is not allowed to use is never searched. For a license whose sessions cannot
+  be opened in a terminal, `/resume` now gives the session id and how to continue it in another
+  thread, instead of a command that only printed a refusal.
 - The login watch now covers the sign-in licenses you added. An added Claude or ChatGPT account
   that is no longer signed in — or, for Claude, whose sign-in lapses within three days — is
   reported to every admin in one direct message with the command that signs it in again. You are

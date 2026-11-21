@@ -1,5 +1,33 @@
 # ChannelGate — Test Plan
 
+## `/resume` finds a session started under an added license (2026-11-22)
+
+- [x] `test/session-adopt.test.js` (always runs): a session in an added ChatGPT license's
+      directory in the channel's container is adopted from the pasted `env CODEX_HOME=… codex exec
+      resume …` line, as that license, with the license's directory asked first; a bare id in a
+      thread on the default Claude sign-in is adopted as the added Claude license that holds it;
+      a license's session on the host is found in its sign-in directory; a license's session
+      recorded in another folder is refused by the same-channel rule; a license that is switched
+      off, or that the channel's approved list excludes, is never read and its session is "not
+      found" (and is adopted once the restriction is gone); a miss says every license was
+      searched; `/resume` with no argument gives a thread on a Claude sign-in license its session
+      id and the license's name instead of the refusing shell line, and a ChatGPT sign-in
+      license's printed command parses back to the same session. The earlier adoption cases (both
+      harnesses, container, readable volume, bindings) run unchanged.
+- [ ] Live `LICENSE-37` `/resume` under an added license (Claude and Codex). Fixture: one added
+      ChatGPT sign-in license and one added Claude sign-in license, both signed in and switched
+      on; channels `cg-testing-codex-auto` and `cg-testing-claude-auto` with no approved-harness
+      restriction. Action, per harness, as the QA member: in a new thread choose that license with
+      `/model` → "just this thread", send `Reply with the word alpha and remember it.`; send
+      `/resume` and copy the session id from the answer (Codex: inside the printed command;
+      Claude: the answer says the session cannot be opened in a terminal and gives the id);
+      `/clear` the thread; in a second new
+      thread (default sign-in) send `/resume <id>`, then `Which word did I ask you to remember?`.
+      Pass: the second thread answers `This thread now continues <Harness> · <license name>
+      session …`, the next reply says `alpha`, and its footer names the added license. Then, as
+      the QA admin, restrict the channel's approved harnesses to the default sign-ins and repeat
+      `/resume <id>` in a third thread: it is refused with `I can't find … session`.
+
 ## The login watch covers added sign-in licenses (2026-11-22)
 
 Engine-independent: the watch reads sign-in files and posts direct messages; no turn runs.
