@@ -168,22 +168,31 @@ changing the original HOME. Divergent files or unsafe links stop migration witho
 Legacy admin history remains in its original HOME for a reviewed import: older versions could
 copy host `/sudo` transcripts there, so it cannot safely be published wholesale.
 `codex` in a session is the channel's **selected Codex license**, in that license's own directory
-in the channel's HOME — the same sign-in a chat turn of that channel runs on:
+in the channel's HOME — the same account a chat turn of that channel runs on:
 
 - the license the channel is set to (its own engine, else the gateway default) when that is a
-  Codex sign-in the channel may use: the gateway's own, Codex EU, an added ChatGPT sign-in, or the
-  channel's own account;
-- in a channel that runs on Claude Code, or on a Codex API-key / cloud-provider license, the
-  channel's Codex sign-in instead: the gateway's own when the channel's Approved harnesses admit
-  it, else the first admitted sign-in license;
-- when the channel may use no Codex sign-in, `codex` is **not signed in** and says so on start
-  (`codex: …`) — an API-key or cloud-provider Codex license cannot be used from a terminal yet,
-  and a sign-in that could not be placed (not signed in on the host, the egress proxy not this
-  container's network) is never replaced by another account's.
+  Codex license the channel may use: the gateway's own sign-in, Codex EU, an added ChatGPT
+  sign-in, the channel's own account, or an API-key / cloud-provider / custom-server license;
+- in a channel that runs on Claude Code, the channel's Codex sign-in instead: the gateway's own
+  when the channel's Approved harnesses admit it, else the first admitted sign-in license, else —
+  when no sign-in is admitted — the first admitted API-key or cloud license (what typing `codex`
+  in chat picks there);
+- when the channel may use no Codex license, or the selected one could not be placed (not signed
+  in on the host, the egress proxy not this container's network), `codex` is **not signed in** and
+  says so on start (`codex: …`). It is never replaced by another account's.
 
-The sign-in is the access-only relay file a turn writes (a proxy placeholder, no refresh token; in
+A sign-in is the access-only relay file a turn writes (a proxy placeholder, no refresh token; in
 the legacy bridge mode the gateway's own sign-in is the mounted host file and the dedicated ones
-are unavailable, as in a turn). The session's shell carries no `CODEX_HOME`: the `codex` wrapper
+are unavailable, as in a turn). An **API-key, cloud-provider or custom-server license** has no
+sign-in file: the wrapper starts `codex` with that license's provider settings and with the
+channel's *placeholder* for its key, which the gateway's egress proxy swaps for the real key on
+that license's own server only, and only while the channel has live work — your open session
+counts. The key itself never enters the container, so such a license needs the egress proxy (it
+is refused by name in the legacy bridge mode). `OPENAI_*` names and the provider's own SDK names
+(`AWS_*` on Bedrock, the Google names on Vertex) from your secrets are dropped for that `codex`,
+as they are for a turn. A license that serves only the models it lists starts on the channel's
+model when the license lists it, else on the license's default, else on its first listed model;
+`-m` on your command line still wins. The session's shell carries no `CODEX_HOME`: the `codex` wrapper
 names the selected license's directory itself, so a `CODEX_HOME` you type — the footer's Resume
 command names its session's directory — wins. A program that starts the pinned CLI directly
 (`/usr/local/bin/codex`), bypassing the wrapper, reads `~/.codex`. The session stays on the
@@ -356,7 +365,7 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
-| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-login.sh` (which license's directory `codex` runs in — no credential), `codex-args.sh` + `codex-secrets.json` (the capability only) |
+| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-login.sh` (which license's directory `codex` runs in, and for an API/cloud license its provider settings and the channel's placeholder — never a key), `codex-args.sh` + `codex-secrets.json` (the capability only) |
 | `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the container's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 

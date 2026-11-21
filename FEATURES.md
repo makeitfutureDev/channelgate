@@ -1,5 +1,42 @@
 # ChannelGate — Features
 
+## `codex` in an SSH session runs on an API or cloud license (2026-11-22)
+
+An SSH session's `codex` is the channel's selected Codex license (`sshCodexLicense`,
+`src/gateway/ssh-session.js`). That held for sign-ins only: an API-key, cloud-provider or
+custom-server license was refused by name ("cannot run on yet"), and a channel **set to** one got
+the gateway's own ChatGPT sign-in in the terminal whenever the channel could also use it — a
+different account, and a different bill, than the channel's own turns.
+
+- The session's license is now the one the channel is set to (its own, else the gateway default)
+  whenever that is a Codex license the channel may use, **whatever its kind**. A channel on Claude
+  Code still gets a sign-in first and a license billed per use only when it is the only Codex
+  license the channel may use (`primaryLicenseOf`'s order, as for `codex` typed in chat).
+- An API/cloud license is placed by its adapter's `terminalRouting(target)`
+  (`src/engines/license-adapters.js`): the readiness check a turn makes, the license's directory
+  in the channel's HOME (`~/.cg-licenses/<id>`, with its marker), the `-c` provider overrides a
+  turn passes (`codexProviderRouting`) and the provider's environment — whose credential is the
+  channel's relay **placeholder** for that license (`containerLicenseApiCredential`), swapped by
+  the egress proxy on the license's own hosts while the channel has live work. Nothing but a
+  placeholder is accepted: without the egress proxy the license is refused with the reason, and
+  the stored key is never written to a session file. A Vertex service-account key Google refuses
+  is named before the session starts, as before a turn.
+- `codex-login.sh` (`renderCodexLoginScript`) applies it the way a turn's environment does:
+  `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` and
+  the provider's own SDK names (`AWS_*`; `GOOGLE_*`, `GCLOUD_*`, `CLOUDSDK_*`, `CLOUD_ML_*`) are
+  dropped, then the routing and placeholder are set — only when `codex` runs in the license's own
+  directory. A `CODEX_HOME` the developer typed names another license's directory and gets
+  neither. A license that could not be placed still drops the names and prints why: `codex` there
+  is signed out, never on a key from the developer's secrets.
+- A license whose list is its whole catalog (`modelListClosed`: a custom server, a cloud route)
+  starts on the channel's model when the license lists it, else the license's default, else its
+  first listed model (`sshCodexModel`); OpenAI's own API and every sign-in keep the CLI's default.
+  The developer's `-m` comes after and wins.
+- Unchanged: a sign-in license's access-only relay file, the session's MCP tools and secrets, the
+  rule that a session stays on its license (no pool move in a terminal), a direct start of the
+  pinned CLI reading `~/.codex`, and `claude` in a session, which is the gateway's own Claude
+  login.
+
 ## An admin can set a channel's approved harnesses by asking (2026-11-22)
 
 Which harnesses and licenses a channel may run on (`meta.approvedEngines`, Enterprise) could be
@@ -147,10 +184,10 @@ developer's terminal could be on a different ChatGPT account than the channel th
   Codex API-key license the gateway's own ChatGPT sign-in was written into that license's
   directory.
 - **Which license.** `sshCodexLicense` (`src/gateway/ssh-session.js`): the license the channel is
-  set to — its own engine, else the gateway default — when it is a Codex sign-in the channel may
-  use (registered, switched on, admitted by Approved harnesses, available in this conversation);
-  otherwise the channel's Codex sign-in (the gateway's own when admitted, else the first admitted
-  sign-in license); otherwise none. The license's target is built by the same function a turn
+  set to — its own engine, else the gateway default — when it is a Codex license the channel may
+  use (registered, switched on, admitted by Approved harnesses, available in this conversation;
+  since 2026-11-22 of any kind, see the section at the top); otherwise the channel's Codex sign-in
+  (the gateway's own when admitted, else the first admitted sign-in license); otherwise none. The license's target is built by the same function a turn
   uses to move between licenses (`engineRuntimeTarget`, `src/gateway/engine-target.js`), from the
   container's shared Codex home every time.
 - **Where `codex` runs.** A per-developer `codex-login.sh` beside the session files names the
@@ -160,8 +197,8 @@ developer's terminal could be on a different ChatGPT account than the channel th
   tools were prepared — and a session's environment no longer carries `CODEX_HOME`, so one that is
   set was typed by the developer (the footer's Resume command) and wins.
 - **Not signed in is said, never papered over.** A license that is not signed in on the host, a
-  dedicated sign-in without the egress proxy, an API-key or cloud-provider license (not usable
-  from a terminal yet) leave `codex` signed out in the selected license's directory, and a channel
+  dedicated sign-in or an API-key / cloud-provider license without the egress proxy leave `codex`
+  signed out in the selected license's directory, and a channel
   that may use no Codex license has none to name; the wrapper prints the reason before the CLI starts, the session
   result carries `codex.license` and `codex.reason`, and the `ssh_session_start` event records
   `codexLicense` / `codexProblem`. No other account's sign-in stands in.

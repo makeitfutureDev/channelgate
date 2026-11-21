@@ -1,5 +1,44 @@
 # ChannelGate — Test Plan
 
+## `codex` in an SSH session runs on an API or cloud license (2026-11-22)
+
+- [x] `test/ssh-session.test.js` "Codex over SSH on an API license: the license's routing and the
+      channel's placeholder …" (always runs): a channel set to a custom-server license → the
+      session's license is that one although the gateway's own sign-in is also usable; only the
+      directory marker is written to the HOME volume; `codex-login.sh` and every other session
+      file hold a `cgph_…` placeholder and never the key; the generated wrapper starts the CLI in
+      the license's directory with `model_provider`, the server's `base_url`, `env_key`, the file
+      store, the first listed model, the developer's arguments last, and with `OPENAI_API_KEY` /
+      `OPENAI_BASE_URL` from the session unset; the channel's model is used when the license lists
+      it and never when it does not; a typed `CODEX_HOME` gets neither routing nor placeholder.
+- [x] "… on a cloud license: the provider's own variables are replaced, not inherited" (always
+      runs): a Bedrock license → `AWS_PROFILE` from the session is unset, `AWS_REGION` is the
+      license's, `AWS_BEARER_TOKEN_BEDROCK` is a placeholder, `model_provider="amazon-bedrock"`.
+- [x] "… that cannot be placed …" (always runs): no egress proxy → not ready, "requires the egress
+      proxy", nothing written, the wrapper prints `codex: Team API cannot run: …`, runs in the
+      license's directory with no key variable and no `OPENAI_API_KEY`; a HOME volume that refuses
+      the directory → the same, with the reason.
+- [x] "sshCodexLicense: …" (always runs): the channel's API license is the session's, with or
+      without an approved list; the gateway default applies to a channel that names none; a Claude
+      channel prefers a sign-in and falls to an API license only when it is the one Codex license
+      it may use. The earlier sign-in cases run unchanged except the two that expected a refusal.
+- [ ] Live `LICENSE-39` an API license in a terminal (Codex only: the session's `codex`). Fixture:
+      SSH access set up (`docs/SSH-ACCESS.md`) with the QA admin's key granted on
+      `cg-testing-codex-auto`; one added Codex API license `QA API` on `api.openai.com` (or the QA
+      custom server) with a valid key, switched on; the egress proxy mode. Actions: (1) as the QA
+      admin set the channel's license to `QA API` with `/model`; send `Reply with the word alpha.`
+      and note the footer's license. (2) Open an SSH session in the channel and run
+      `codex exec "Reply with the word beta."` — pass: it answers `beta` without asking to sign in.
+      (3) In the same shell run `env | grep -c CG_LICENSE_KEY; printenv CODEX_HOME` — pass: `0`
+      and nothing (the shell itself carries neither). The `d=` line of `$(command -v codex)` names
+      the session directory; read `<that directory>/$CG_SSH_USER/codex-login.sh` — pass: the only
+      credential-shaped value is a `cgph_…` placeholder, `grep -r` for the key's last four
+      characters (shown in Settings → Engines) over that directory finds nothing, and the
+      provider's usage page shows the request under the `QA API` key. (4) Switch the channel back to the default sign-in, reconnect, run
+      `codex login status` — pass: the ChatGPT account, in `~/.codex`. (5) Operator only, on a
+      scratch gateway in the legacy bridge mode: reconnect with the channel on `QA API` — pass:
+      `codex` prints `codex: QA API cannot run: … requires the egress proxy …`.
+
 ## An admin can set a channel's approved harnesses by asking (2026-11-22)
 
 - [x] `test/approved-harness-tool.test.js` (always runs): an admin narrows a channel to a whole
@@ -142,9 +181,9 @@ SSH is unchanged and has no case here; the automated cases run without an engine
 - [x] `test/ssh-session.test.js` "… a license that cannot be signed in leaves `codex` in that
       license's directory, signed out — never on another account" (always runs): a license not
       signed in on the host → nothing written, no `codex-args.sh`, the wrapper prints
-      `codex: Codex sign-in not placed: …` and runs in the license directory; an API-key license
-      where nothing else is admitted → "Team API is an API license …", nothing written, the key
-      in no session file; the same channel also admitting a sign-in → that sign-in; a failing
+      `codex: Codex sign-in not placed: …` and runs in the license directory; a channel set to
+      the unsigned seat that also admits an API-key license → still that seat, signed out, with no
+      key variable (API-key licenses themselves: see the 2026-11-22 section above); a failing
       lockdown leaves exactly `codex-login.sh` in the developer's directory with the sign-in
       placed.
 - [x] `test/ssh-session.test.js` "… a refresh after the channel changed license re-points

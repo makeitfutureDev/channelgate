@@ -464,7 +464,7 @@ export function codexProviderRouting(record, token) {
     // Codex's own Bedrock provider; only its region may be set, and the bearer key has one name.
     return {
       config: ['model_provider="amazon-bedrock"', `model_providers.amazon-bedrock.aws.region=${toml(record.region)}`],
-      env: { AWS_BEARER_TOKEN_BEDROCK: token, AWS_REGION: record.region }, strip: /^AWS_/,
+      env: { AWS_BEARER_TOKEN_BEDROCK: token, AWS_REGION: record.region }, strip: /^AWS_/, stripPrefixes: ["AWS_"],
     };
   }
   if (kind.provider === "vertex") {
@@ -474,7 +474,7 @@ export function codexProviderRouting(record, token) {
         'model_provider="gcp"', `model_providers.gcp.project_id=${toml(record.projectId)}`, `model_providers.gcp.location=${toml(record.region)}`,
         `model_providers.gcp.auth={command="printenv",args=[${toml(CODEX_KEY_ENV)}]}`,
       ],
-      env: { [CODEX_KEY_ENV]: token }, strip: /^(?:GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_ML_)/,
+      env: { [CODEX_KEY_ENV]: token }, strip: /^(?:GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_ML_)/, stripPrefixes: ["GOOGLE_", "GCLOUD_", "CLOUDSDK_", "CLOUD_ML_"],
     };
   }
   const name = kind.provider === "azure" ? "cgazure" : "cgapi";
@@ -484,7 +484,7 @@ export function codexProviderRouting(record, token) {
     record.authScheme === "api-key" ? `model_providers.${name}.env_http_headers={"api-key"=${toml(CODEX_KEY_ENV)}}` : `model_providers.${name}.env_key=${toml(CODEX_KEY_ENV)}`,
   ];
   if (record.apiVersion) config.push(`model_providers.${name}.query_params={"api-version"=${toml(record.apiVersion)}}`);
-  return { config, env: { [CODEX_KEY_ENV]: token }, strip: null };
+  return { config, env: { [CODEX_KEY_ENV]: token }, strip: null, stripPrefixes: [] };
 }
 
 // Wraps the caller's stream/event sinks so a real credential never reaches a reply.
@@ -525,6 +525,39 @@ function codexProviderLicense(codex, record) {
     discoverMcps: async () => [],
     resolveOptionalMcpConfig: async () => ({ servers: {}, rejected: [] }),
     ...providerAdapterFacts(record, status, "codex"),
+    // An interactive `codex` on this license in a channel's container — an SSH session
+    // (gateway/ssh-session.js). → { home, config, env } — the routing a turn gets,
+    // with the channel's PLACEHOLDER for this license, which the egress proxy swaps on the
+    // license's own hosts while the channel has live work — or { problem }. Never the key: a
+    // target the placeholder cannot serve (no egress proxy, a direct-host run) is a problem, not
+    // a reason to hand a terminal the stored credential.
+    async terminalRouting(resolved) {
+      const current = status();
+      if (!current.ready) return { problem: `${record.label} cannot run: ${current.detail}` };
+      if (!isIsolatedTarget(resolved)) return { problem: `${record.label} runs in a terminal only inside a channel container` };
+      const home = licenseContainerDir(id, resolved.container?.home);
+      const target = { ...resolved, meta: { ...resolved.meta, engine: id, codexHarness: "" }, container: { ...resolved.container, codexHome: home } };
+      const grants = await import("../gateway/egress/grants.js");
+      const credential = grants.containerLicenseApiCredential({ target, record });
+      if (credential.placeholder !== true || !credential.token) {
+        return { problem: `${record.label} cannot run: ${credential.error || "its credential can only be relayed by the egress proxy"}` };
+      }
+      // As before a turn: a service-account key Google refuses is named now, not as a 401 later.
+      if (LICENSE_KINDS[record.kind].credential === "service-account") {
+        const live = await grants.licenseCredentialValue(record);
+        if (!live.value) return { problem: `${record.label} cannot run: ${live.error || "its credential could not be resolved"}` };
+      }
+      try {
+        await target.runtime.writeHomeFile(target, { file: `${home}/.cg-license`, body: `${id}\n` });
+      } catch (error) {
+        return { problem: `${record.label} cannot run: its session directory could not be prepared (${String(error?.message || error).slice(0, 160)})` };
+      }
+      const { config, env } = codexProviderRouting(record, credential.token);
+      return { home, config, env };
+    },
+    // The environment-name prefixes this provider's own SDK path reads, which that `codex` must
+    // not inherit from the session (the turn's `strip`), known whether or not it could be placed.
+    terminalStripPrefixes: codexProviderRouting(record, "").stripPrefixes,
     async run(ctx) {
       const resolved = runtimeTargetOr(ctx.target, ctx.cwd);
       const isolated = isIsolatedTarget(resolved);

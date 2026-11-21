@@ -44,11 +44,11 @@ import { EGRESS_UNSET_ENV_NAMES } from "../runtimes/container/egress-env.js";
 import { egressActive } from "../runtimes/container/egress-hook.js";
 import { installVscodeClaudeRelay, installSshCodexWrapper, clearVscodeClaudeRelay, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
-import { buildCodexArgs, codexLoginEnvStrip, codexSecretBundle, headerHelperSource, installRelayedCodexLogin } from "../engines/codex.js";
+import { buildCodexArgs, codexLoginEnvStrip, codexSecretBundle, headerHelperSource, installRelayedCodexLogin, OPENAI_ROUTING_NAMES } from "../engines/codex.js";
 import { containerPaths, isIsolatedTarget } from "../engines/runtime-target.js";
-import { isEngineId, licenseLabel } from "../engines/registry.js";
+import { adapterFor, isEngineId, licenseLabel, modelBelongsToEngine } from "../engines/registry.js";
 import { isProviderKind, licenseKindOfId } from "../engines/license-state.js";
-import { getEngine } from "../config/settings.js";
+import { getDefaultModel, getEngine } from "../config/settings.js";
 import { isChannelCodex, isDedicatedCodex } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
 import { selectableLicenses } from "./license-pool.js";
@@ -257,28 +257,38 @@ export function codexSessionOverrides(args) {
   return out;
 }
 
-// ── Which Codex sign-in the terminal's `codex` is ─────────────────────────────────────────────
+// ── Which Codex license the terminal's `codex` is ─────────────────────────────────────────────
 // A turn runs on a LICENSE: its container run is pointed at that license's own directory and is
-// handed that license's own relayed sign-in (run.js, engine-target.js). A session's `codex` is the
-// same license, decided the same way, or the developer's terminal is on a different account than
-// the channel they are sitting in:
+// handed that license's own relayed credential (run.js, engine-target.js). A session's `codex` is
+// the same license, decided the same way, or the developer's terminal is on a different account
+// than the channel they are sitting in:
 //  • the license the channel is set to — its own engine, else the gateway default — when that is a
-//    Codex sign-in the channel may use;
-//  • otherwise (a Claude channel, or a Codex API/cloud license, which a terminal cannot run on yet)
-//    the channel's Codex sign-in: the gateway's own when the channel may use it, else the first
-//    sign-in license it may;
-//  • otherwise a usable API/cloud license, which the caller refuses by name; and "" when the
-//    channel may use no Codex license at all.
+//    Codex license the channel may use, a sign-in or an API/cloud license alike;
+//  • otherwise (a Claude channel, or a license the channel may no longer use) the channel's Codex
+//    sign-in: the gateway's own when the channel may use it, else the first sign-in license it may;
+//  • otherwise the first API/cloud license it may use — as a harness picked by name does in chat
+//    (`primaryLicenseOf`) — and "" when the channel may use no Codex license at all.
 // "May use" is `selectableLicenses`: registered, switched on, admitted by the channel's approved
 // harnesses and available in this conversation — nothing a session can widen.
 const isSignInLicense = (id) => !isProviderKind(licenseKindOfId(id)?.id);
 export function sshCodexLicense(meta = {}, { gatewayEngine = getEngine() } = {}) {
   const usable = selectableLicenses("codex", meta);
   const selected = [meta?.engine, gatewayEngine].find((id) => isEngineId(id)) || "";
+  if (usable.includes(selected)) return selected;
   const signIns = usable.filter(isSignInLicense);
-  if (signIns.includes(selected)) return selected;
   if (signIns.length) return signIns.includes("codex") ? "codex" : signIns[0];
-  return usable.includes(selected) ? selected : usable[0] || "";
+  return usable[0] || "";
+}
+
+// The model an API/cloud license's `codex` starts on. A sign-in's terminal keeps the CLI's own
+// default and the developer picks in the TUI; so does a license with an open catalog (OpenAI's own
+// API). A license whose list is the WHOLE catalog (a custom server, a cloud route) serves nothing
+// the CLI would pick by itself, so it starts on what a turn would: the channel's model when this
+// license lists it, else the license's default, else its first listed model. `-m` still wins.
+export function sshCodexModel(license, meta = {}) {
+  const adapter = adapterFor(license);
+  if (!adapter?.modelListClosed) return "";
+  return [meta?.model, getDefaultModel(license)].find((model) => model && modelBelongsToEngine(model, license)) || adapter.models?.[0]?.value || "";
 }
 
 // codex-login.sh, in the developer's 0700 dir and sourced by the `codex` wrapper on its own — it
@@ -290,37 +300,61 @@ export function sshCodexLicense(meta = {}, { gatewayEngine = getEngine() } = {})
 //    license the channel ran on when the container was first created — so one that IS set was
 //    typed by the developer (the footer's Resume command names its session's directory) and wins;
 //  • a dedicated sign-in reads its file store and inherits no OpenAI key, endpoint, organization
-//    or project from the developer's secrets.
-// `notice` is printed when the sign-in could not be placed: `codex` then asks to sign in, and the
+//    or project from the developer's secrets;
+//  • an API/cloud license (`routing`, the adapter's `terminalRouting`) gets what its turn gets:
+//    the names its provider's SDK would read instead are dropped (`unsetPrefixes`), its `-c`
+//    provider overrides and its environment are applied — whose credential is the channel's
+//    PLACEHOLDER, never a key — and only in the license's OWN directory: a `codex` the developer
+//    pointed at another directory is another license's and gets neither.
+// `notice` is printed when the license could not be placed: `codex` then asks to sign in, and the
 // developer should know why before they sign a personal account in.
-export function renderCodexLoginScript({ home = "", fileStore = false, unset = [], notice = "" }) {
+const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export function renderCodexLoginScript({ home = "", fileStore = false, unset = [], unsetPrefixes = [], routing = null, notice = "" }) {
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+  const prefixes = unsetPrefixes.filter((prefix) => SHELL_NAME.test(prefix));
+  const env = Object.entries(routing?.env || {}).filter(([name, value]) => SHELL_NAME.test(name) && value !== undefined && value !== null && value !== "");
+  const config = [...(routing?.config || []), ...(routing?.model ? [`model=${JSON.stringify(String(routing.model))}`] : [])];
   return [
-    "# Generated by ChannelGate — which Codex sign-in this SSH session's codex is; sourced by the codex wrapper.",
+    "# Generated by ChannelGate — which Codex license this SSH session's codex is; sourced by the codex wrapper.",
     'if [ -z "${CODEX_HOME:-}" ]; then',
     // No license the channel may use: there is no directory to name, only the reason to give.
     ...(home ? [`  CODEX_HOME=${quote(home)}; export CODEX_HOME`] : []),
     `  ${notice ? `printf 'codex: %s\\n' ${quote(notice)} >&2` : ":"}`,
     "fi",
     ...(unset.length ? [`unset ${unset.join(" ")}`] : []),
+    // Names are matched from `env`'s own output; a line inside a multi-line value can only add a
+    // well-formed name that is not set, which `unset` ignores.
+    ...prefixes.map((prefix) => `for cg_name in $(env | sed -n 's/^\\(${prefix}[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset "$cg_name"; done; unset cg_name`),
+    ...(home && routing && (env.length || config.length) ? [
+      `if [ "\${CODEX_HOME:-}" = ${quote(home)} ]; then`,
+      ...env.map(([name, value]) => `  ${name}=${quote(value)}; export ${name}`),
+      ...(config.length ? [`  set -- ${config.map((value) => `-c ${quote(value)}`).join(" ")} "$@"`] : []),
+      "fi",
+    ] : []),
     ...(fileStore ? [`set -- -c ${quote('cli_auth_credentials_store="file"')} "$@"`] : []),
     "",
   ].join("\n");
 }
 
-// Place the selected license's sign-in in its directory. → "" when `codex` is signed in, else why
-// not. Exactly a turn's rule (engines/codex.js runCodex): a dedicated or channel-account sign-in
-// is always the access-only relay file, and says so itself when the egress proxy is not this
-// container's network; the gateway's own is relayed behind the proxy and is the mounted shared
-// file in the legacy bridge mode, where there is nothing to write.
-async function codexSignInProblem(target, license, installCodexLogin) {
+// Place the selected license's credential. → { problem: "" | why not, routing: null | what an
+// API/cloud license's `codex` is started with }. Exactly a turn's rule (engines/codex.js runCodex,
+// engines/license-adapters.js): a dedicated or channel-account sign-in is always the access-only
+// relay file, and says so itself when the egress proxy is not this container's network; the
+// gateway's own is relayed behind the proxy and is the mounted shared file in the legacy bridge
+// mode, where there is nothing to write; an API/cloud license is its adapter's routing with the
+// channel's placeholder, and a problem wherever only the real key would work.
+async function placeCodexLicense(target, license, meta, installCodexLogin) {
   if (!isSignInLicense(license)) {
-    return `${licenseLabel(license)} is an API license, which Codex over SSH cannot run on yet — codex in this session is not signed in`;
+    const adapter = adapterFor(license);
+    if (typeof adapter?.terminalRouting !== "function") return { problem: `${licenseLabel(license)} cannot run in a terminal — codex in this session is not signed in`, routing: null };
+    const routing = await Promise.resolve().then(() => adapter.terminalRouting(target)).catch((error) => ({ problem: String(error?.message || error) }));
+    if (routing.problem) return { problem: `${String(routing.problem).replace(/\.$/, "")} — codex in this session is not signed in`, routing: null };
+    return { problem: "", routing: { ...routing, model: sshCodexModel(license, meta) } };
   }
   const own = isDedicatedCodex(target.meta) || isChannelCodex(target.meta);
-  if (!own && target.container?.credentialMode?.codex !== "relay") return "";
+  if (!own && target.container?.credentialMode?.codex !== "relay") return { problem: "", routing: null };
   const problem = await Promise.resolve().then(() => installCodexLogin(target)).catch((error) => String(error?.message || error));
-  return problem ? `Codex sign-in not placed: ${problem}` : "";
+  return { problem: problem ? `Codex sign-in not placed: ${problem}` : "", routing: null };
 }
 
 // `target` is the SELECTED LICENSE's target (engineRuntimeTarget) and `engine` that license.
@@ -453,14 +487,19 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // 3a. Which Codex sign-in `codex` is here (sshCodexLicense): pointed at and placed BEFORE the
   // session's tools, and kept whatever happens to them — a `codex` that fell back to the plain CLI
   // would read whatever directory and sign-in an earlier license left in this HOME.
-  const seat = { license: "", target: null, reason: "" };
+  const seat = { license: "", target: null, reason: "", routing: null };
   const writeCodexLogin = () => {
     if (!seat.target && !seat.reason) return rmSync(path.join(userDir, "codex-login.sh"), { force: true });
+    const provider = Boolean(seat.license) && !isSignInLicense(seat.license);
     mkdirSync(userDir, { recursive: true, mode: 0o700 });
     writePrivate(path.join(userDir, "codex-login.sh"), renderCodexLoginScript(seat.target ? {
       home: containerPaths(seat.target).codexHome,
-      fileStore: isDedicatedCodex(seat.target.meta) || isChannelCodex(seat.target.meta) || !isSignInLicense(seat.license),
-      unset: codexLoginEnvStrip(seat.target),
+      fileStore: isDedicatedCodex(seat.target.meta) || isChannelCodex(seat.target.meta) || provider,
+      // An API/cloud license inherits no OpenAI key, endpoint, organization or project and none of
+      // its provider's own SDK names, placed or not: `codex` there is that license or signed out.
+      unset: provider ? OPENAI_ROUTING_NAMES : codexLoginEnvStrip(seat.target),
+      unsetPrefixes: provider ? adapterFor(seat.license)?.terminalStripPrefixes || [] : [],
+      routing: seat.routing,
       notice: seat.reason.slice(0, 300),
     } : { notice: seat.reason.slice(0, 300) }));
   };
@@ -468,15 +507,19 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     seat.license = sshCodexLicense(meta);
     if (seat.license) {
       // The channel is the session's, whatever the stored record says: it is what the relayed
-      // sign-in is bound to.
+      // credential is bound to.
       seat.target = engineRuntimeTarget({ ...target, meta: { ...(target.meta || meta), channelId: entry.channelId } }, seat.license);
       writeCodexLogin();
     }
     // Always: the same step installs `with-secrets`, which has nothing to do with Codex.
     await installCodexWrapper(target, cliBin, { runCommand: (bin, args, options) => exec(args, options) });
-    seat.reason = seat.license
-      ? await codexSignInProblem(seat.target, seat.license, installCodexLogin)
-      : "no Codex license is usable in this channel — codex in this session is not signed in";
+    if (seat.license) {
+      const placed = await placeCodexLicense(seat.target, seat.license, meta, installCodexLogin);
+      seat.reason = placed.problem;
+      seat.routing = placed.routing;
+    } else {
+      seat.reason = "no Codex license is usable in this channel — codex in this session is not signed in";
+    }
   } catch (error) {
     seat.reason = `Codex not prepared: ${String(error?.message || error)}`;
   }
