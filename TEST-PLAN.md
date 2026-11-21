@@ -1,5 +1,39 @@
 # ChannelGate — Test Plan
 
+## A license or model pick outside the channel's allow list is answered (2026-11-21)
+
+The refusal is decided by the gateway before any engine starts, so the automated cases are
+engine-independent; the live case is run once naming a Codex license from a Claude-only channel
+and once naming a Claude Code license from a Codex-only channel.
+
+- [x] `test/engine-licenses-slack.test.js` "a pick outside the channel's allow list is answered,
+      pins nothing and starts no engine" (always runs). A channel approving Claude Code (any
+      license) and one Codex license, an approved member who is not an admin: `codex` pins the
+      approved Codex license; the other license's id — alone, with a task, in a thread that
+      already has a pin, as a model shortcut, and as the harness-switch card's "switch" — gets
+      exactly one reply in that thread naming what was refused and what is approved, leaves the
+      thread's engine, pool and model as they were and spawns nothing; with the list narrowed to
+      Claude only, `codex <task>` is answered the same way.
+- [x] `test/slack-fork.test.js` "a fork onto a license outside the channel's allow list is
+      answered before any child thread exists" (always runs): one reply in the source thread, no
+      fork root message, no engine turn, the source session untouched.
+- [x] `test/engine-licenses.test.js` (always runs): `channelEngineRefusal` is empty for an
+      approved pick and for a conversation with no list, names the approved harnesses and
+      licenses otherwise, and names no alternative for a malformed list.
+- [ ] Live `LICENSE-29` a pick outside the allow list (run once per direction: a Claude-only
+      channel and the word `codex`; a Codex-only channel and the word `claude`). Fixture: an
+      Enterprise license; channel `C` with Approved harnesses set to one harness only; a member
+      who is approved and not an admin; both harnesses switched on. Action: as that member, in a
+      new thread send `@bot codex say ready` (or `@bot claude say ready`); then in a second
+      thread send `@bot say ready`; then, as an admin, `/fork :<shortcut on the other harness>
+      say ready` in the second thread. Pass: the first message gets one reply "<Harness> is not
+      approved for this conversation. Approved here: <the approved harness>. …" and no progress
+      card; before the second message is sent, `SELECT COUNT(*) FROM usage WHERE channel_id =
+      '<C>' AND author_id = '<member>' AND ts >= '<time of the first message>'` is 0 and
+      `SELECT * FROM thread_overrides WHERE slug = '<C's slug>' AND thread_key = '<first thread
+      ts>'` returns no row; the second thread is answered by the approved harness; the fork gets
+      the same refusal in the second thread and no new "↪️ Fork:" message appears in the channel.
+
 ## Engine licenses: review fixes (2026-11-21)
 
 Deleted licenses, custom model names, license cost, pinned harnesses and the memory reviewer's

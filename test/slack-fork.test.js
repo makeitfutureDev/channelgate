@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -13,7 +13,7 @@ process.env.PROGRESS_VIEW = "shimmer";
 const { useFakeRuntime } = await import("./runtime-fake.js");
 const runtime = await useFakeRuntime();
 const { saveSettings } = await import("../src/config/settings.js");
-const { setUser, getChannelEntry, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { setUser, getChannelEntry, getChannelMeta, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, getThreadClean, setThreadModel, setThreadEffort, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
 const { codexEuLoginHome } = await import("../src/engines/codex-eu.js");
@@ -268,6 +268,32 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
     assert.equal(await getSession(entry.slug, event.ts), sourceId);
     assert.equal(await getThreadModel(entry.slug, event.ts), "gpt-6.1-sol");
   }
+});
+
+test("a fork onto a license outside the channel's allow list is answered before any child thread exists", async () => {
+  saveSettings({ engine: "codex", modelChangeAccess: "users", engineEnabled: { claude: true, codex: true }, modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } } });
+  const user = "U_FORK_ALLOW_LIST";
+  const channel = "C_FORK_ALLOW_LIST";
+  await setUser(user, { name: "Fork User", approved: true, isAdmin: false });
+  const client = slack();
+  const registered = await upsertChannelEntry(channel, { name: "fork-allow-list", type: "channel", isDM: false });
+  await saveChannelMeta(registered.slug, { channelId: channel, name: registered.name, type: "channel", isDM: false, template: "custom", engine: "codex" });
+  const event = { type: "message", channel, channel_type: "channel", user, ts: "7100.001", text: "<@UBOT> Source task" };
+  await processMessageEvent(event, client, { botUserId: "UBOT" });
+  const entry = await getChannelEntry(channel);
+  const sourceId = await getSession(entry.slug, event.ts);
+  assert.ok(sourceId);
+  testLicenseEnv({ tier: "enterprise" });
+  try { await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), approvedEngines: ["codex"] }); } finally { testLicenseEnv(); }
+  const before = runtime.calls.spawn.length;
+  const count = client.posted.length;
+  await processMessageEvent({ ...event, ts: "7100.002", thread_ts: event.ts, text: "<@UBOT> /fork :branch New task" }, client, { botUserId: "UBOT" });
+  assert.equal(client.posted.length, count + 1, "one answer and no fork root");
+  assert.match(client.posted.at(-1).text, /^Claude is not approved for this conversation\. Approved here: Codex\. /);
+  assert.equal(client.posted.at(-1).thread_ts, event.ts);
+  assert.equal(runtime.calls.spawn.length, before);
+  assert.equal(await getSession(entry.slug, event.ts), sourceId);
+  saveSettings({ modelShortcuts: {}, modelChangeAccess: "admins" });
 });
 
 for (const [sourceEngine, childEngine] of [["claude", "codex"], ["codex", "claude"], ["codex-eu", "codex"], ["codex", "codex-eu"]]) {

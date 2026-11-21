@@ -69,6 +69,17 @@ export function assertChannelEngineApproved(meta, engine) {
   });
 }
 
+// What a person is told when the pick they typed is outside this conversation's allow list ("" when
+// the pick is allowed): what was refused, then what the conversation may use instead. Anyone who
+// may talk here may pick a license or model, so the refusal has to be an answer, not a log line.
+export function channelEngineRefusal(meta, engine) {
+  if (isChannelEngineApproved(meta, engine)) return "";
+  const approved = describeApprovedEngines(meta?.approvedEngines);
+  return `${engineLabel(engine)} is not approved for this conversation. ${approved
+    ? `Approved here: ${approved}. Pick one of those, or ask an Enterprise administrator to change Approved harnesses in the channel settings.`
+    : "Ask an Enterprise administrator to review Approved harnesses in the channel settings."}`;
+}
+
 // Channel account harnesses belong only in this conversation's picker, never gateway/user defaults.
 export function engineAvailableForChannel(meta, engine) {
   const adapter = adapterFor(engine);

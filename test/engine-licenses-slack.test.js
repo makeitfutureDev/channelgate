@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { useFakeRuntime } = await import("./runtime-fake.js");
@@ -367,6 +367,67 @@ test("a harness word in a message pins the channel's selection; a license id pin
   assert.deepEqual(await pin("1903.002"), [second, ""]);
   assert.match(messages.at(-1).text, /This thread now uses \*Codex · Second seat\*/);
   assert.equal(runtime.calls.spawn.length, spawned, "a directive on its own starts no engine");
+});
+
+test("a pick outside the channel's allow list is answered, pins nothing and starts no engine", async () => {
+  const { work, second } = twoLicenses();
+  const USER = "U_LIC_ALLOW", BOT = "BLICALLOW", CHANNEL = "C_LIC_ALLOW";
+  const messages = [];
+  const client = {
+    chat: { postMessage: async (message) => { messages.push(message); return { ok: true, ts: "bot.1" }; }, update: async () => ({ ok: true }), postEphemeral: async () => ({ ok: true }) },
+    apiCall: async () => ({ ok: true }),
+    users: { info: async ({ user }) => ({ user: { id: user, real_name: "Member" } }), list: async () => ({ members: [] }) },
+    conversations: { info: async () => ({ channel: { id: CHANNEL, is_channel: true } }), replies: async () => ({ messages: [] }), history: async () => ({ messages: [] }) },
+  };
+  // An approved member who is not an admin: the allow list, not the person's role, bounds the pick.
+  await setUser(USER, { name: "Member", approved: true, isAdmin: false });
+  testLicenseEnv({ tier: "enterprise" });
+  let entry;
+  try { entry = await channel(CHANNEL, "lic-allow", { approvedEngines: ["harness:claude", work] }); } finally { testLicenseEnv(); }
+  const say = (text, ts, extra = {}) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "channel", user: USER, text: `<@${BOT}> ${text}`, ts }, client, { botUserId: BOT, ...extra });
+  const pin = async (ts) => [await getThreadEngine(entry.slug, ts), await getThreadLicensePool(entry.slug, ts), await getThreadModel(entry.slug, ts)];
+  const refused = /^Second seat is not approved for this conversation\. Approved here: Claude Code \(any license\), Work ChatGPT\. /;
+  const spawned = runtime.calls.spawn.length;
+
+  // Inside the list: the harness word resolves to the one Codex license this channel may use.
+  await say("codex", "1905.001");
+  assert.deepEqual(await pin("1905.001"), [work, "", ""]);
+  assert.match(messages.at(-1).text, /This thread now uses \*Codex\*/, "one usable license: the harness is the whole name");
+
+  // Outside it: a license id on its own, and one followed by a task.
+  for (const [text, ts] of [[second, "1905.002"], [`${second} summarize the README`, "1905.003"]]) {
+    const before = messages.length;
+    await say(text, ts);
+    assert.equal(messages.length, before + 1, "exactly one answer");
+    assert.match(messages.at(-1).text, refused);
+    assert.equal(messages.at(-1).thread_ts, ts, "answered in the thread it was typed in");
+    assert.deepEqual(await pin(ts), ["", "", ""]);
+  }
+  // A thread that already has a selection keeps it.
+  await say(second, "1905.001");
+  assert.match(messages.at(-1).text, refused);
+  assert.deepEqual(await pin("1905.001"), [work, "", ""]);
+
+  // A model shortcut naming a license outside the list (members may use shortcuts here).
+  saveSettings({ modelChangeAccess: "users", modelShortcuts: { seat: { engine: second, model: "gpt-6.1-sol" } } });
+  await say(":seat summarize the README", "1905.004");
+  assert.match(messages.at(-1).text, refused);
+  assert.deepEqual(await pin("1905.004"), ["", "", ""], "neither the license nor the shortcut's model is pinned");
+
+  // The harness-switch card's "switch" choice.
+  await say("summarize the README", "1905.005", { engineChoice: second, engineChoiceSwitch: true });
+  assert.match(messages.at(-1).text, refused);
+  assert.deepEqual(await pin("1905.005"), ["", "", ""]);
+
+  // A whole harness outside the list names the harness.
+  testLicenseEnv({ tier: "enterprise" });
+  try { await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), approvedEngines: ["claude"] }); } finally { testLicenseEnv(); }
+  await say("codex summarize the README", "1905.006");
+  assert.match(messages.at(-1).text, /^Codex is not approved for this conversation\. Approved here: Claude\. Pick one of those/);
+  assert.deepEqual(await pin("1905.006"), ["", "", ""]);
+
+  assert.equal(runtime.calls.spawn.length, spawned, "a refused pick never runs the message on another license");
+  saveSettings({ modelShortcuts: {} });
 });
 
 test("a fork keeps the license selection of the thread it was forked from", async () => {

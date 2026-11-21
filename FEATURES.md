@@ -1,5 +1,38 @@
 # ChannelGate — Features
 
+## A license or model pick outside the channel's allow list is answered (2026-11-21)
+
+The rule: anyone who may talk in a conversation may pick the license and model for a thread, and
+what bounds the pick is the conversation's allow list (Approved harnesses: whole harnesses and
+single licenses, `src/gateway/channel-engines.js`). The license pickers and the `claude` / `codex`
+word already offered and resolved only approved licenses. What was missing is the answer when a
+pick names something outside the list.
+
+- **Slack used to drop such a pick without a word.** A license id typed as a directive
+  (`codex-lic-… do X`), a harness word with no approved license (`codex do X` in a Claude-only
+  channel), a model shortcut whose license is not approved, and the "switch" button of the
+  harness-switch card all reached the thread-pin write, which refuses the id; the refusal was only
+  logged, so the person saw nothing and their task never ran. Each now replies in the thread, for
+  example "Second seat is not approved for this conversation. Approved here: Claude Code (any
+  license), Work ChatGPT. Pick one of those, or ask an Enterprise administrator to change Approved
+  harnesses in the channel settings." (`channelEngineRefusal`), pins nothing — a shortcut's model
+  and effort included — and does not run the message on another license.
+- **`/fork :shortcut …` onto a license outside the list** posted the new thread's root message and
+  then failed, leaving an empty fork thread. It is now refused with the same reply in the source
+  thread before any child thread exists. A fork of a thread whose own license has since left the
+  list is refused the same way.
+- A pick the stored list refuses at the write itself (the list changed between the check and the
+  pin) is answered too, after re-checking that the author may talk in the conversation.
+- Teams and Google Chat already answered a refused `/model` / `/license` pick; unchanged.
+- Not changed: who may use `/model`, `/license`, `/effort`, model shortcuts and the Settings
+  runtime controls in a channel is still the gateway setting "Who can change the model/runtime in
+  channels" (`modelChangeAccess`, "Org admins only" unless the operator chooses "All authorized
+  users"; direct messages are exempt). The `claude` / `codex` word and a typed license id are
+  open to every participant under either value. There is no per-channel model list: the models a
+  person can pick are the chosen license's.
+
+→ TEST-PLAN: A license or model pick outside the channel's allow list is answered.
+
 ## Engine licenses: review fixes (2026-11-21)
 
 A review of the two-harness / many-licenses implementation. Nothing is added; these are the cases
