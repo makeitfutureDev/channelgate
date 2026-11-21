@@ -33,6 +33,8 @@ import { logEvent } from '../../util/logger.js';
 
 export const DRAFT_SECTIONS = Object.freeze(['secrets', 'mcp', 'skills']);
 const MAX_OPS = 64;
+// Staged values live in daemon memory for up to 15 minutes in up to 500 windows: bound each draft.
+const MAX_DRAFT_BYTES = 96_000;
 const SECTION_NAMES = { secrets: 'Variables', mcp: 'MCPs', skills: 'Skills' };
 const CLOUD_ENGINES = ['claude', 'codex', 'codex-channel'];
 const str = value => typeof value === 'string' ? value.trim() : '';
@@ -65,10 +67,10 @@ function stage(ctx, section, op, { replace = () => false } = {}) {
   ctx.state.drafts ||= {};
   const draft = ctx.state.drafts[section] ||= { ops: [], baseline: { channel: channelFingerprint(ctx.meta, section), thread: threadFingerprint(ctx, section) } };
   if (draft.ops.some(item => item.op === 'follow') && op.op !== 'follow') throw new Error('Following the channel is pending for this section. Apply it to the thread, or discard it, before staging other changes.');
-  if (op.op === 'follow') draft.ops = [];
-  draft.ops = draft.ops.filter(item => !replace(item));
-  if (draft.ops.length >= MAX_OPS) throw new Error('Apply or discard the pending changes in this section before staging more.');
-  draft.ops.push(op);
+  // Built aside and committed only when it fits, so a refused edit leaves the draft as it was.
+  const next = [...(op.op === 'follow' ? [] : draft.ops.filter(item => !replace(item))), op];
+  if (next.length > MAX_OPS || Buffer.byteLength(JSON.stringify(next)) > MAX_DRAFT_BYTES) throw new Error('Apply or discard the pending changes in this section before staging more.');
+  draft.ops = next;
   return draft;
 }
 

@@ -170,3 +170,26 @@ test("a background shell job resolves its source thread's variables at its own s
   const after = await jobSpawn({ threadKey: "T-own" });
   assert.equal(after.call.env.GITHUB_TOKEN, undefined);
 });
+
+test("a host job approved later keeps its source thread: the thread's variable is withheld, never the channel's in its place", async () => {
+  const f = await fixture("claude", "durable");
+  mkdirSync(path.join(process.env.CG_WORKSPACE_DIR, "slack", f.slug), { recursive: true });
+  const hostBackend = createFakeRuntimeBackend({ isolated: false });
+  const requests = [];
+  const jobs = new BackgroundJobs({ resolveTarget: (slug, meta) => fakeTarget(hostBackend, slug, meta),
+    requestShellApproval: async (request) => { requests.push(request); return { pending: true, approvalId: "approval-thread" }; } });
+  const pending = await jobs.start({ channelId: f.channelId, authorId: f.authorId, threadKey: "T-own::agent-9999abcd", settingsThreadKey: "T-own", command: "true" });
+  assert.equal(pending.pendingApproval, true);
+  assert.equal(requests[0].durableAction.settingsThreadKey, "T-own", "the durable action records the signed settings thread");
+  const start = hostBackend.calls.spawn.length;
+  const started = await jobs.startApproved({ id: "approval-thread", decidedBy: "U-admin", action: requests[0].durableAction });
+  assert.equal(started.ok, true, started.error);
+  const deadline = Date.now() + 15_000;
+  while (jobs.count() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  const call = hostBackend.calls.spawn.slice(start).find((entry) => entry.kind === "job");
+  assert.equal(call.env.GITHUB_TOKEN, undefined, "withheld on the host — and not replaced by the channel's token");
+  assert.ok(!JSON.stringify(call.env).includes(GH_CHANNEL) && !JSON.stringify(call.env).includes(GH_THREAD));
+  // A tampered durable action naming an unrelated settings thread is refused.
+  const forged = await jobs.startApproved({ id: "approval-forged", decidedBy: "U-admin", action: { ...requests[0].durableAction, settingsThreadKey: "T-sibling" } });
+  assert.match(forged.error, /does not belong to that thread/);
+});

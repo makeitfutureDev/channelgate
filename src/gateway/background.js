@@ -421,6 +421,9 @@ export class BackgroundJobs {
               authorId,
               threadKey,
               ...(admissionThreadKey !== threadKey ? { admissionThreadKey } : {}),
+              // The settings thread rides the durable action, so the approved job resolves the same
+              // thread (re-validated by _start) instead of its synthetic key's nothing.
+              ...(settingsKey !== threadKey ? { settingsThreadKey: settingsKey } : {}),
               command: cmd,
               workDir,
               label: (label || cmd).slice(0, 80),

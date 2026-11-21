@@ -90,8 +90,14 @@ test("a section is written whole with compare-and-swap, emits a value-free chang
     assert.ok(changes.some((change) => change.kind === "thread-settings" && change.threadKey === "T1" && change.section === "secrets"));
     assert.ok(!JSON.stringify(changes).includes(GH_THREAD), "a change event never carries a value");
   } finally { stop(); }
+  // A hand-edited row that no longer validates is read fail-closed, never dropped: its variable
+  // names stay (and are withheld at run time), a malformed connection reads as disconnected.
   getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?)").run(slug, "T3", "settings_secrets", JSON.stringify({ env: { DB_PASSWORD: local("x") } }));
-  assert.deepEqual(settings.getThreadSettings(slug, "T3", "secrets"), {}, "a hand-edited row that no longer validates applies nothing");
+  assert.deepEqual(Object.keys(settings.getThreadSettings(slug, "T3", "secrets").env), ["DB_PASSWORD"]);
+  getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?)").run(slug, "T3", "settings_mcp", JSON.stringify({ composioToken: "abc", makeToolboxUrl: "http://127.0.0.1/x", makeToolboxKey: "make-key-123", adminMode: true }));
+  assert.deepEqual(settings.getThreadSettings(slug, "T3", "mcp"), { composioToken: "", makeToolboxUrl: "", makeToolboxKey: "" });
+  getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?)").run(slug, "T3", "settings_skills", "{not json");
+  assert.deepEqual(settings.getThreadSettings(slug, "T3", "skills"), {});
   // Fingerprints are keyed digests, never the value.
   assert.ok(!settings.threadSectionFingerprint(slug, "T1", "secrets").includes(GH_THREAD));
 });
@@ -138,6 +144,20 @@ test("outside a proxy-mode container a thread variable is withheld and its name 
     assert.equal(out.env.OTHER_TOKEN, "other-channel-token-value", "unrelated channel variables keep today's behavior");
     assert.ok(!JSON.stringify(out.env).includes(GH_THREAD));
     assert.match(channelCredentialsPreamble(out.env, { scopes: out.scopes, threadWithheld: out.threadWithheld }), /Withheld thread variables[^\n]*\["GITHUB_TOKEN"\]/);
+  }
+});
+
+test("a stored thread variable that lost its fixed destination is withheld, never replaced by the channel's", async () => {
+  const { channelId, slug } = await channel({ DB_PASSWORD: local("channel-db-password-0001") });
+  getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?)").run(slug, "T-stale", "settings_secrets", JSON.stringify({ env: { DB_PASSWORD: local("thread-db-password-0002") } }));
+  const meta = { channelId, env: { DB_PASSWORD: local("channel-db-password-0001") } };
+  // On a raw (bridge) target the channel's password would be injected as is; for this thread it must not be.
+  assert.equal((await grants.resolveEgressRunEnv({ meta, channelId, target: bridgeTarget(channelId), thread: { key: "T-other" } })).env.DB_PASSWORD, "channel-db-password-0001");
+  for (const target of [bridgeTarget(channelId), activeTarget(channelId)]) {
+    const out = await grants.resolveEgressRunEnv({ meta, channelId, target, thread: { key: "T-stale", ...settings.getThreadSettings(slug, "T-stale", "secrets") } });
+    assert.equal(out.env.DB_PASSWORD, undefined);
+    assert.deepEqual(out.threadWithheld, ["DB_PASSWORD"]);
+    assert.ok(!JSON.stringify(out.env).includes("password-000"));
   }
 });
 

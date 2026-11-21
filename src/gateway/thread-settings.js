@@ -166,14 +166,46 @@ function readRow(slug, threadKey, section) {
   return row ? row.value : "";
 }
 
-// Tolerant read for RUNS: a row that no longer validates (hand-edited, or written by a build with
-// other rules) applies NOTHING rather than half of itself. Writers use the strict path.
+// A row that no longer validates (hand-edited, or written under other rules) is read FAIL-CLOSED,
+// never dropped: dropping it would silently hand the thread the channel's account. Its variable
+// NAMES stay (a name without a fixed destination is then withheld at run time, and the channel's
+// value is not used in its place); a malformed connection reads as disconnected; additions that do
+// not validate are left out (narrower). Writers always use the strict path.
+function failClosed(section, raw) {
+  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  if (section === "secrets") {
+    const env = normalizeChannelEnv(value.env);
+    const removed = Array.isArray(value.removed) ? [...new Set(value.removed.filter((name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(name) && !env[name]))].sort() : [];
+    return { ...(Object.keys(env).length ? { env } : {}), ...(removed.length ? { removed } : {}) };
+  }
+  if (section === "skills") {
+    const skills = sanitizeSkillGrantNames(value.skills).slice(0, MAX_THREAD_SKILLS);
+    return skills.length ? { skills } : {};
+  }
+  const out = {};
+  if (Object.hasOwn(value, "composioToken")) {
+    try { Object.assign(out, validateMcp({ composioToken: value.composioToken, ...(value.composioToken ? { composioTokenLabel: value.composioTokenLabel ?? "" } : {}) })); }
+    catch { out.composioToken = ""; }
+  }
+  if (Object.hasOwn(value, "makeToolboxUrl") || Object.hasOwn(value, "makeToolboxKey")) {
+    try { Object.assign(out, validateMcp({ makeToolboxUrl: value.makeToolboxUrl, makeToolboxKey: value.makeToolboxKey })); }
+    catch { Object.assign(out, { makeToolboxUrl: "", makeToolboxKey: "" }); }
+  }
+  for (const field of THREAD_MCP_SELECTION_FIELDS) {
+    const list = Array.isArray(value[field]) ? value[field].filter(validSelection).slice(0, MAX_THREAD_MCP_SELECTIONS) : [];
+    if (list.length) out[field] = structuredClone(list);
+  }
+  return out;
+}
+
 export function getThreadSettings(slug, threadKey, section) {
   kindOf(section);
   if (!slug || !threadKey) return {};
   const raw = readRow(slug, threadKey, section);
   if (!raw) return {};
-  try { return validateThreadSection(section, JSON.parse(raw)); } catch { return {}; }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  try { return validateThreadSection(section, parsed); } catch { return failClosed(section, parsed); }
 }
 
 export function threadSettingsForRun(slug, threadKey) {
