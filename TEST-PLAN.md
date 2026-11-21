@@ -1,5 +1,21 @@
 # ChannelGate — Test Plan
 
+## hono advisory GHSA-4m76-xfj5-7975 (2026-11-21)
+
+- [x] `npm ls hono --all`: the only path is `@modelcontextprotocol/sdk@1.32.2` (`hono ^4.11.4`,
+      directly and through `@hono/node-server@2.1.6`), deduped at 4.13.19 — a lockfile-only move
+      inside the SDK's range, no `overrides` entry. `npm audit --omit=dev --audit-level=moderate`
+      exits 0 with no vulnerabilities (before: 1 moderate, `hono` ≤ 4.13.15).
+- [x] Exposure review: ChannelGate imports no `hono` module itself; the SDK's
+      `StreamableHTTPServerTransport` (`src/web/skills-mcp.js`) uses `@hono/node-server`'s
+      `getRequestListener` to adapt Node requests, never a Hono app, `mount()`, `RegExpRouter`,
+      `css`, `csrf()` or `validator('form')`. `test/user-skill-tokens.test.js` and
+      `test/skills-standalone.test.js` (the endpoint over HTTP) and the full suite pass on 4.13.19.
+- [ ] UNEXECUTED live `HONO-01` (engine-independent: HTTP transport, no engine involved). On an
+      updated gateway, connect an MCP client to the skills MCP endpoint with a valid skill token,
+      list tools and fetch one skill. Expect the same tools and content as before the update and a
+      401 for a missing or revoked token. Pass: no transport error in the daemon log.
+
 ## Staged image helpers make the channel image stale (2026-11-21)
 
 - [x] `test/container-image.test.js`: the staged set is the helper closure plus the verbatim
