@@ -2,6 +2,17 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A harness picked by name now brings its other sign-ins. Typing `codex` (or `claude`) in a
+  conversation that runs on the other harness, a model shortcut or `/fork :shortcut` on a harness's
+  own sign-in, the harness-switch card and a typed `/model <harness>` in Teams and Google Chat used
+  to pin that harness's default sign-in alone, so a usage limit on that one account failed the turn
+  while another approved sign-in of the same harness sat idle. The pick now carries the harness's
+  other subscription sign-ins usable in the conversation, in order, and the turn moves to the next
+  one with a note naming the license that answered. Licenses billed per use (API keys, cloud
+  routes, custom servers, a channel's own Codex account, Qwen) are never implied; a conversation's
+  own stored selection, a thread's pin, a typed license id and every picker that asks which license
+  are unchanged. `codex eu` written with a space now picks the Codex EU license while it is
+  switched on (a task that begins with the word "eu" needs `codex: eu …` there).
 - Fix updates rolling back on a configured gateway because the update's own test step failed. The
   updater runs the test suite with the serving daemon's environment, so tests saw the live Slack
   tokens, public URL and secrets instead of their fixtures (six settings, passkey and Slack-email

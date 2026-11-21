@@ -1,5 +1,50 @@
 # ChannelGate — Features
 
+## A harness picked by name brings its other sign-ins; `codex eu` names the EU license (2026-11-21)
+
+A typed `codex` in a conversation that runs on Claude Code used to pin Codex's default sign-in and
+nothing else, so a usage limit on that one account ended the turn while another approved Codex
+sign-in sat idle. The person named a harness, not one account of it.
+
+- **A harness pick that nothing follows with a license question carries the harness's other
+  sign-ins.** That is: the `claude` / `codex` word at the start of a Slack message (and "use
+  codex", "switch to claude" near the start), a model shortcut and `/fork :shortcut` whose target
+  is a harness's own sign-in, the "switch" button of the harness-switch card, and a typed
+  `/model <harness>` in Microsoft Teams and Google Chat. The pick stores the harness's own license
+  plus an ordered pool of its other **subscription sign-ins** usable in that conversation
+  (switched on, admitted by the channel's Approved harnesses, available there): the shipped ones
+  and every added ChatGPT or Claude sign-in. When the first cannot answer (usage limit, credential
+  failure, outage) the turn moves to the next on the same harness, with the existing note at the
+  top of the answer naming the license that answered; a license that is not signed in or cannot
+  serve a picked model is stepped over as before. The pick's confirmation names the order:
+  "Codex · Default sign-in, then Work ChatGPT, Second seat".
+- **A license billed per use is never implied.** API keys, cloud-provider routes, custom servers,
+  a channel's own Codex account and the Qwen licenses are licenses of a harness too — a typed
+  `claude` must not be answered by another provider's models or a metered key nobody chose. They
+  are reached by naming the license, or by choosing it or "Any license" in a picker. For the same
+  reason the implied pool is a list, never "Any license": a license added later joins it at the
+  next pick, not silently.
+- **Everything somebody chose keeps applying.** A conversation whose own default is already on
+  that harness keeps its stored license and pool, an empty pool included. A thread already pinned
+  to a usable license of that harness keeps its pin. A typed license id, a shortcut on any license
+  other than a harness's own sign-in, and a license chosen in a picker name that license alone —
+  a license picked for where its data is processed is never traded for another account. Surfaces
+  that ask which license (the `/model` wizard, the Settings pickers, the Teams model card) are
+  unchanged, and so are channel and gateway defaults. Threads pinned before this change keep the
+  pool they stored.
+- **A shipped license is also picked by its name.** `codex eu` (any case, spaces or tabs for the
+  hyphen) at the start of a message picks the `codex-eu` license, as `codex-eu` always did — but
+  only while that license is switched on; where it is off, "codex eu rules …" stays the word
+  `codex` and a task beginning "eu". The rule is general and narrow: a shipped hyphenated id whose
+  display name is the id written with a space. `codex channel …` therefore stays the harness word
+  plus a task, and an added license's opaque id is never something to say. Where Codex EU is on, a
+  task that really begins with the word "eu" after `codex` needs a separator the id does not
+  have (`codex: eu rules …`).
+- Not changed: failover order after the selection is exhausted (cross-harness, unpinned
+  conversations only), the Approved harnesses check on every pick, and who may pick.
+
+→ TEST-PLAN: A harness picked by name brings its other sign-ins; `codex eu` names the EU license.
+
 ## Everyone in a channel may change its runtime; only admins set the allow list (2026-11-21)
 
 Two rules, and nothing else decides who may change a conversation's harness, license, model or

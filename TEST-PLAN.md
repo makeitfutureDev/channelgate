@@ -1,5 +1,67 @@
 # ChannelGate — Test Plan
 
+## A harness picked by name brings its other sign-ins; `codex eu` names the EU license (2026-11-21)
+
+Which licenses a pick carries is decided by the gateway before any engine starts, so the
+automated cases are engine-independent. `LICENSE-31` is run once per harness, because the proof is
+which sign-in of that harness answers; `LICENSE-32` is Codex-only — Codex EU is the one shipped
+license whose name is its id written with a space.
+
+- [x] `test/engine-licenses.test.js` "pickers get one shape …" (always runs): with two added
+      ChatGPT sign-ins and an added Codex API-key license in a Claude-default conversation, a
+      harness pick with no license step returns Codex's own sign-in plus the two sign-ins in
+      order and never the API-key license; the same pick with a license step behind it returns
+      no pool; the channel's Approved harnesses narrows the list (one admitted sign-in → that
+      one; none → no pool; the default sign-in not admitted → the first admitted license alone);
+      a conversation whose default is already on the harness keeps its stored selection for an
+      ordered list, an empty pool and "Any license"; `impliedLicensePool` returns nothing for an
+      id that is not a harness's own sign-in.
+- [x] `test/engine-licenses-slack.test.js` "a harness picked by name where nothing asks which
+      license brings its other sign-ins" (always runs): in a Claude-default DM a typed `codex`
+      pins `codex` with the two added sign-ins and confirms "Codex · Default sign-in, then Work
+      ChatGPT, Second seat"; a model shortcut on Codex's own sign-in pins the same pool; a
+      shortcut on an added license and a typed license id pin that license with no pool; with
+      the default sign-in at its usage limit a typed `codex …` and a shortcut are both answered
+      from the next sign-in's own login directory with "using Work ChatGPT" in the answer; the
+      harness-switch card's "switch" pins the same pool; a channel set to Codex with an empty
+      pool keeps the empty pool.
+- [x] `test/engine-licenses-slack.test.js` "a shipped license is also picked by its name written
+      with a space, while it is switched on" (always runs): with Codex EU off `codex eu …` does
+      not pick it; switched on and not signed in the pick is answered "Codex EU is not
+      configured …"; signed in, `codex eu`, `Codex  EU` and `codex-eu` each pin `codex-eu` with
+      no pool, a typed `codex` then carries `codex-eu` as its next sign-in, and `codex channel`
+      stays the harness word.
+- [x] `test/engine-failover.test.js` "an engine id that is a prefix of another still selects the
+      harness the user named" (always runs): an id marked as spoken matches with spaces or tabs
+      for its hyphen and reads back as the id; a longer word (`codex europe`), a line break and an
+      id not marked as spoken (`qwen eu`) do not.
+- [x] `test/engine-licenses-platforms.test.js` (always runs): `/model codex` in a Claude-default
+      Teams / Google Chat conversation answers "Session harness: Codex · Default sign-in, then
+      Work, Spare; …" and pins that ordered pool. `test/model-shortcut-pipeline.test.js`: a
+      queued shortcut task stores its pool with its runtime.
+- [ ] Live `LICENSE-31` a typed harness moves to its next sign-in (run once typing `codex` in a
+      Claude-default channel and once typing `claude` in a Codex-default channel). Fixture: the
+      typed harness `H` has its default sign-in `D` and one added sign-in license `W`, both
+      switched on and approved in channel `C`; `D` cannot answer — at its usage limit, or signed
+      out on the host — while `W` is signed in with usage left; one added API-key license of `H`
+      is also switched on. Action: in a new thread of `C` send `@bot <H word> say ready`. Pass:
+      one answer, beginning with the note that names `W`; `SELECT kind, value FROM
+      thread_overrides WHERE slug = '<C's slug>' AND thread_key = '<thread ts>' AND kind IN
+      ('engine', 'license_pool')` returns `D`'s id as the engine and a `license_pool` holding
+      `W`'s id and NOT the API-key license's; the `usage` row of the turn
+      carries `W`'s id; no row of the turn carries the other harness or the API-key license.
+      Then set `C`'s own default to `H` with license `D` and "If it fails, also use" empty, and
+      repeat in a new thread: the turn fails with `D`'s own error and nothing is switched.
+      Restore `C`'s default.
+- [ ] Live `LICENSE-32` `codex eu` picks the EU license (Codex only). Fixture: Codex EU switched
+      on and signed in; a Claude-default channel `C`. Action: (1) in a new thread send
+      `@bot codex eu reply with the first word of this task`; (2) in a second new thread send
+      `@bot Codex EU: say ready`; (3) switch Codex EU off in gateway Settings and in a third new
+      thread send `@bot codex eu reply with the first word of this task`. Pass: (1) and (2) are
+      answered with `usage.engine = 'codex-eu'`, their `thread_overrides` rows hold `engine` =
+      `codex-eu` and an empty `license_pool`, and (1) answers "reply"; (3) is answered by `codex` and
+      answers "eu". Restore: Codex EU switched on.
+
 ## hono advisory GHSA-4m76-xfj5-7975 (2026-11-21)
 
 - [x] `npm ls hono --all`: the only path is `@modelcontextprotocol/sdk@1.32.2` (`hono ^4.11.4`,
@@ -100,7 +162,7 @@ Code, because the proof that a member's pick took effect is the engine that answ
       set Approved harnesses to the channel's original harness only, then as `M` send
       `@bot :other say ready` in a fourth new thread and open ⚙️ Settings → Agent again. Pass:
       no step answers "Only admins …"; the footers of (1), (2) and (3) name the other harness
-      and (1) the chosen model and effort; `SELECT engine FROM thread_overrides WHERE slug =
+      and (1) the chosen model and effort; `SELECT value FROM thread_overrides WHERE kind = 'engine' AND slug =
       '<C's slug>' AND thread_key IN ('<thread 1 ts>', '<thread 2 ts>')` returns the other
       harness twice; `M`'s Settings Agent page shows pickers and NO "Approved harnesses" control
       in (3) and (4); (4) gets one reply "… is not approved for this conversation. Approved here:
@@ -453,7 +515,9 @@ further licenses of the same harness, and failover walks the selection before it
       able to serve a picked model). Picker shape: `licensePicker().show` is false with one
       usable license and true with two; "Any license" with one license stores no pool; a pick the
       channel's lock does not admit is refused; a bare harness pick inherits the conversation's
-      own license and pool only when its default is on that harness. Locks: a license entry
+      own license and pool only when its default is on that harness (since 2026-11-21 a pick
+      with no license step behind it otherwise carries the harness's other sign-ins — see the
+      section of that date). Locks: a license entry
       admits only that license, `harness:codex` admits every Codex license including one added
       afterwards, a stored `codex` entry never widens to other Codex licenses, an unknown harness
       entry is refused, changing the policy needs Enterprise, and a policy naming only removed
