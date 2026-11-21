@@ -6078,7 +6078,11 @@ are retired, bullet by bullet; everything else stands.
   meta: *Allow network* off admits the engine endpoints (Claude, Codex, a configured Qwen endpoint)
   and the remote MCP hosts this channel's runs were handed; on admits any public destination; raw
   tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543; an exact
-  `host:1433` entry grants only that Azure SQL port. Audit rows
+  `host:1433` entry grants only that Azure SQL port. Every CONNECT 200 names its tunnel in an
+  `X-ChannelGate-Tunnel` header (`raw` for a declared host:port, `inspect` where TLS is terminated);
+  `cg-egress-connect` uses it to refuse a non-TLS client on an inspected tunnel with the reason and
+  the `allow_channel_ssh_host` remedy instead of a silent drop (a server-speaks-first client gets
+  the same line as a hint after five seconds). Runtime image spec 1.6.4 carries that helper. Audit rows
   (`egress` events) only for a swap of a channel/organization/personal secret, a refusal, a blocked
   destination or a raw tunnel — the relayed Claude login's swap on every API call is only counted
   (`egressStatus()`, `/api/health` → `containerRuntime.egress`), and so is a request whose only
