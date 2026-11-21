@@ -4,7 +4,7 @@
 // a class of bug that otherwise only shows up as an MCP server silently failing to start.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -22,12 +22,9 @@ const containerfile = read("containers/Containerfile");
 const versions = JSON.parse(read("containers/versions.json"));
 const pkg = JSON.parse(read("package.json"));
 
-// The build script's declared inputs, read out of the source so the test tracks the real list.
-function declaredList(name) {
-  const block = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`).exec(buildScript);
-  assert.ok(block, `${name} not found in scripts/build-image.mjs`);
-  return [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-}
+// The build's declared inputs: the ONE list scripts/build-image.mjs stages and the daemon digests.
+const { BUNDLE_ENTRIES, SOCKET_BRIDGE, VERBATIM_HELPERS, resolveBundleClosure, stagedSourceFiles, bundleDigest } =
+  await import("../src/runtimes/container/image-bundle.js");
 
 function importClosure(entries) {
   const patterns = [
@@ -56,16 +53,15 @@ function importClosure(entries) {
 }
 
 test("every helper the backend hands an engine is a path the build actually stages", () => {
-  const entries = declaredList("BUNDLE_ENTRIES");
-  const closure = importClosure(entries);
-  const bridgeSource = /const SOCKET_BRIDGE_SOURCE = "([^"]+)"/.exec(buildScript)[1];
-  const bridgeDest = /const SOCKET_BRIDGE_DEST = "([^"]+)"/.exec(buildScript)[1];
-  assert.ok(existsSync(path.join(repoRoot, bridgeSource)), `${bridgeSource} must exist to be staged`);
+  const closure = importClosure(BUNDLE_ENTRIES);
+  for (const helper of VERBATIM_HELPERS) {
+    assert.ok(existsSync(path.join(repoRoot, helper.source)), `${helper.source} must exist to be staged`);
+  }
 
-  // bundle/ mirrors src/ with the prefix stripped; bin/ is containers/bin plus the staged bridge.
+  // bundle/ mirrors src/ with the prefix stripped; bin/ is containers/bin plus the staged bridges.
   const staged = new Set([
     ...closure.map((rel) => `${CONTAINER_BUNDLE_ROOT}/${rel.replace(/^src\//, "")}`),
-    `${CONTAINER_BUNDLE_ROOT}/${bridgeDest}`,
+    ...VERBATIM_HELPERS.map((helper) => `${CONTAINER_BUNDLE_ROOT}/${helper.dest}`),
   ]);
   for (const name of readdirSyncSafe(path.join(repoRoot, "containers", "bin"))) {
     staged.add(`${CONTAINER_BIN_DIR}/${name}`);
@@ -78,7 +74,7 @@ test("every helper the backend hands an engine is a path the build actually stag
 });
 
 test("the image bundle stays minimal: no settings, no database, no engine registry inside a container", () => {
-  const closure = importClosure(declaredList("BUNDLE_ENTRIES"));
+  const closure = importClosure(BUNDLE_ENTRIES);
   for (const forbidden of ["src/config/settings.js", "src/db/index.js", "src/engines/registry.js", "src/gateway/run.js"]) {
     assert.ok(!closure.includes(forbidden), `${forbidden} must not ship in the channel image — it reads state a container cannot see`);
   }
@@ -418,6 +414,105 @@ test("needsImageBuild builds when the image spec moved, the sources changed, or 
   assert.equal(CONTAINER_DEFAULT_IMAGE.endsWith(":latest"), true);
 });
 
+// ── Staged helpers make the image stale ───────────────────────────────────────────────────────
+// build:image also stages files from src/ (the helper import closure and the verbatim socket bridge,
+// egress forwarder and SSH ProxyCommand helper). Before `cg.image.bundle`, a change to one of them
+// reached containers only when something under containers/ or a spec bump forced a rebuild.
+
+// A scratch checkout holding containers/, every staged source file and one unrelated src module.
+function scratchCheckout() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "cg-image-bundle-"));
+  const copy = (rel) => {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    writeFileSync(path.join(root, rel), readFileSync(path.join(repoRoot, rel)));
+  };
+  cpSync(path.join(repoRoot, "containers"), path.join(root, "containers"), { recursive: true });
+  for (const rel of stagedSourceFiles(repoRoot)) copy(rel);
+  copy("src/gateway/run.js");
+  return root;
+}
+
+function builtFrom(desired) {
+  return { builtSpecVersion: desired.version, builtDigest: desired.digest, builtBundleDigest: desired.bundleDigest };
+}
+function expectedFrom(desired) {
+  return { expectedSpecVersion: desired.version, expectedDigest: desired.digest, expectedBundleDigest: desired.bundleDigest };
+}
+
+test("the staged set is the helper closure plus the verbatim bridges, and the builder stages exactly that", () => {
+  const closure = resolveBundleClosure(repoRoot);
+  assert.deepEqual(closure.missing, []);
+  assert.deepEqual(closure.files, importClosure(BUNDLE_ENTRIES).sort(), "the shared resolver and this test's independent walk agree");
+  assert.deepEqual(stagedSourceFiles(repoRoot), [...new Set([...closure.files, ...VERBATIM_HELPERS.map((h) => h.source)])].sort());
+  for (const source of ["src/mcp/socket-bridge.js", "src/mcp/egress-forwarder.js", "src/mcp/egress-connect.js", "src/mcp/secret-env-bridge.js"]) {
+    assert.ok(stagedSourceFiles(repoRoot).includes(source), `${source} is staged into the image`);
+  }
+  assert.equal(SOCKET_BRIDGE.dest, "bin/cg-mcp-bridge.mjs");
+  // One declaration: the builder imports it rather than keeping a second list that could drift.
+  assert.match(buildScript, /from "\.\.\/src\/runtimes\/container\/image-bundle\.js"/);
+  assert.match(buildScript, /resolveBundleClosure\(repoRoot, BUNDLE_ENTRIES\)/);
+  assert.match(buildScript, /for \(const helper of VERBATIM_HELPERS\)/);
+  assert.doesNotMatch(buildScript, /const (BUNDLE_ENTRIES|IMPORT_PATTERNS|SOCKET_BRIDGE_SOURCE|EGRESS_FORWARDER_SOURCE|EGRESS_CONNECT_SOURCE) =/);
+  // The labels come from the same function the daemon calls.
+  assert.match(buildScript, /const desired = expectedImageBuild\(repoRoot\);/);
+  assert.match(buildScript, /IMAGE_BUILD_DIGEST=\$\{desired\.digest\}/);
+  assert.match(buildScript, /IMAGE_BUNDLE_DIGEST=\$\{desired\.bundleDigest\}/);
+  // The bundle label is declared after the last RUN: a helper-only change must not invalidate the
+  // toolchain layers (a changed ARG is a cache miss for every later RUN).
+  assert.match(containerfile, /^ARG IMAGE_BUNDLE_DIGEST$/m);
+  assert.match(containerfile, /^LABEL cg\.image\.bundle="\$\{IMAGE_BUNDLE_DIGEST\}"$/m);
+  const tail = containerfile.slice(containerfile.indexOf("ARG IMAGE_BUNDLE_DIGEST"));
+  assert.doesNotMatch(tail, /^(RUN|COPY|ADD) /m);
+});
+
+test("a change to a staged helper changes the expected bundle digest and makes needsImageBuild true", async () => {
+  const { expectedImageBuild } = await import("../src/runtimes/container/image.js");
+  const root = scratchCheckout();
+  try {
+    const original = expectedImageBuild(root);
+    assert.equal(original.bundleDigest, bundleDigest(root));
+    assert.equal(original.bundleDigest, expectedImageBuild(repoRoot).bundleDigest, "same bytes, same digest — whatever the checkout path");
+    assert.equal(original.digest, expectedImageBuild(repoRoot).digest);
+    const built = builtFrom(original);
+    assert.equal(needsImageBuild({ changedPaths: [], ...built, ...expectedFrom(original) }), false);
+
+    for (const rel of ["src/mcp/egress-connect.js", "src/mcp/socket-bridge.js", "src/mcp/egress-forwarder.js", "src/engines/child-env.js", "src/gateway/hooks/stop-subagents.mjs"]) {
+      const before = readFileSync(path.join(root, rel));
+      writeFileSync(path.join(root, rel), `${before}\n// changed\n`);
+      const moved = expectedImageBuild(root);
+      assert.notEqual(moved.bundleDigest, original.bundleDigest, `${rel} must move the bundle digest`);
+      assert.equal(moved.digest, original.digest, "cg.image.digest keeps covering containers/ only");
+      assert.equal(moved.version, original.version, "no spec bump is needed");
+      assert.equal(needsImageBuild({ changedPaths: [rel], ...built, ...expectedFrom(moved) }), true, `${rel} must rebuild the image`);
+      writeFileSync(path.join(root, rel), before);
+    }
+    assert.equal(expectedImageBuild(root).bundleDigest, original.bundleDigest, "restored bytes restore the digest");
+
+    // A missing staged file is a different digest (the build refuses it), never a thrown health check.
+    rmSync(path.join(root, "src/mcp/egress-connect.js"));
+    assert.notEqual(expectedImageBuild(root).bundleDigest, original.bundleDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unrelated src change leaves the expected image digests alone and builds nothing", async () => {
+  const { expectedImageBuild } = await import("../src/runtimes/container/image.js");
+  const root = scratchCheckout();
+  try {
+    const original = expectedImageBuild(root);
+    writeFileSync(path.join(root, "src/gateway/run.js"), `${readFileSync(path.join(root, "src/gateway/run.js"))}\n// changed\n`);
+    mkdirSync(path.join(root, "src/mcp/tools"), { recursive: true });
+    writeFileSync(path.join(root, "src/mcp/tools/new-tool.js"), "export const x = 1;\n");
+    const after = expectedImageBuild(root);
+    assert.equal(after.bundleDigest, original.bundleDigest);
+    assert.equal(after.digest, original.digest);
+    assert.equal(needsImageBuild({ changedPaths: ["src/gateway/run.js", "src/mcp/tools/new-tool.js"], ...builtFrom(original), ...expectedFrom(after) }), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("image diagnostics expose built and desired toolchains and detect legacy unlabeled images", async () => {
   const { createContainerImage, expectedImageBuild, IMAGE_INSPECT_FORMAT } = await import("../src/runtimes/container/image.js");
   const desired = expectedImageBuild(repoRoot);
@@ -431,10 +526,20 @@ test("image diagnostics expose built and desired toolchains and detect legacy un
   assert.equal(old.needsRebuild, true);
   assert.equal(old.managed, true);
   assert.deepEqual(old.desiredToolchain, desired.toolchain);
+  // An image built before the bundle label existed: containers/ matches, the staged helpers are
+  // uncertified — stale exactly once.
   stdout = `sha256:new|${desired.version}|${desired.digest}|${JSON.stringify(desired.toolchain)}`;
+  const unlabeled = await image.inspect({}, settings, { force: true });
+  assert.equal(unlabeled.bundleDigest, "");
+  assert.equal(unlabeled.needsRebuild, true, "an image without cg.image.bundle must not certify the staged helpers");
+  stdout = `sha256:new|${desired.version}|${desired.digest}|${JSON.stringify(desired.toolchain)}|<no value>`;
+  assert.equal((await image.inspect({}, settings, { force: true })).needsRebuild, true, "a missing label reads as <no value>");
+  stdout = `sha256:new|${desired.version}|${desired.digest}|${JSON.stringify(desired.toolchain)}|${desired.bundleDigest}`;
   const current = await image.inspect({}, settings, { force: true });
   assert.equal(current.needsRebuild, false);
   assert.equal(current.digest, desired.digest);
+  assert.equal(current.bundleDigest, desired.bundleDigest);
+  assert.equal(current.desiredBundleDigest, desired.bundleDigest);
   assert.deepEqual(current.toolchain, desired.toolchain);
   const custom = await image.inspect({}, { image: "private.example/runtime:custom" }, { force: true });
   assert.equal(custom.managed, false);

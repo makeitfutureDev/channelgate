@@ -460,10 +460,15 @@ export async function defaultImageBuild({
   })).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
   const before = await builtImageInfo({ cli: settings.cli, image: settings.image, run });
   const desired = expectedImageBuild(repoRoot);
-  const drift = (built) => needsImageBuild({ builtSpecVersion: built.version, expectedSpecVersion: desired.version, builtDigest: built.digest, expectedDigest: desired.digest });
-  if (!needsImageBuild({ changedPaths, builtSpecVersion: before.version, expectedSpecVersion: desired.version, builtDigest: before.digest, expectedDigest: desired.digest })) {
+  const drift = (built, extra = {}) => needsImageBuild({
+    ...extra,
+    builtSpecVersion: built.version, expectedSpecVersion: desired.version,
+    builtDigest: built.digest, expectedDigest: desired.digest,
+    builtBundleDigest: built.bundleDigest, expectedBundleDigest: desired.bundleDigest,
+  });
+  if (!drift(before, { changedPaths })) {
     await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
-    log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}) — no rebuild needed.`);
+    log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}, bundle ${before.bundleDigest}) — no rebuild needed.`);
     return { built: false, needed: false, reason: "the built image already matches this revision" };
   }
   if (settings.image !== CONTAINER_DEFAULT_IMAGE) {
@@ -473,12 +478,12 @@ export async function defaultImageBuild({
   }
 
   if (owner) updateUpdateState({ root, owner, patch: { phase: "image" } });
-  log(`→ Rebuilding the channel image ${settings.image} (spec ${before.version || "none built"} → ${desired.version}, digest ${before.digest || "unknown"} → ${desired.digest}). This takes several minutes; the restart waits for it…`);
+  log(`→ Rebuilding the channel image ${settings.image} (spec ${before.version || "none built"} → ${desired.version}, digest ${before.digest || "unknown"} → ${desired.digest}, bundle ${before.bundleDigest || "unknown"} → ${desired.bundleDigest}). This takes several minutes; the restart waits for it…`);
   try {
     const result = await run(process.execPath, [path.join(repoRoot, "scripts", "build-image.mjs"), "--cli", before.cli || settings.cli], { cwd: repoRoot, timeoutMs: IMAGE_BUILD_TIMEOUT_MS });
     if (result.code !== 0) throw new Error(`image builder exited ${result.code}`);
     const after = await builtImageInfo({ cli: before.cli || settings.cli, image: settings.image, run });
-    if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest}`);
+    if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest} / bundle digest ${desired.bundleDigest}`);
     await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
     log(`→ Channel image rebuilt: ${settings.image} → ${after.id}. Idle channels pick it up on their next turn.`);
     return { built: true, needed: true, imageId: after.id, digest: after.digest };

@@ -6458,6 +6458,18 @@ are retired, bullet by bullet; everything else stands.
   instead of leaving channels on yesterday's toolchain. The image is never built inside a turn: a
   missing image fails the run closed with the one command that fixes it. → TEST-PLAN: Container
   runtime (v0.8 P1).
+- **An image is only current for the helpers it was built from.** Besides `containers/`, the
+  build stages files from `src/`: the import closure of the engine-spawned helpers
+  (`secret-env-bridge.js`, the Stop hook and what they import) and the verbatim socket bridge,
+  egress forwarder and SSH `ProxyCommand` helper. That set is declared once in
+  `src/runtimes/container/image-bundle.js`, which `scripts/build-image.mjs` stages from and the
+  daemon digests: the image carries `cg.image.bundle` (sha256 over those files' paths and bytes)
+  beside `cg.image.digest` (`containers/` only, unchanged), and a mismatch on either marks the
+  image as needing a rebuild — the updater rebuilds it, and Settings → Container runtime says
+  "Image rebuild required" until then — with no `imageSpecVersion` bump. Any other `src/` change
+  leaves the image alone. The label is the Containerfile's last instruction, so a helper-only
+  rebuild reuses the cached toolchain layers. An image built before the label existed reads as
+  stale once. → TEST-PLAN: Staged image helpers make the channel image stale (2026-11-21).
 - **Built-in local video understanding (image spec 1.2.0).** Every conversation
   image includes `ffmpeg`/`ffprobe`, pinned `opencv-python-headless` + `faster-whisper`, and a
   root-owned pre-cached Whisper `small` model. The always-present `gateway-usage` skill owns the
@@ -6787,7 +6799,8 @@ are retired, bullet by bullet; everything else stands.
   discarded.
 - **The update rebuilds the channel image**: with the container runtime on, the updater runs
   `scripts/build-image.mjs` itself — after dependencies, before the restart — whenever the candidate
-  changed anything under `containers/`, moved `imageSpecVersion`, or no image is built at all
+  changed anything under `containers/`, changed a file the image stages from `src/` (the
+  `cg.image.bundle` digest), moved `imageSpecVersion`, or no image is built at all
   (`needsImageBuild()` in `src/runtimes/container/image.js`; built version from the image's
   `cg.image.version` label, expected version from the CANDIDATE's `containers/versions.json`, never
   a constant the runner imported before the checkout moved). It is the one step that never blocks:
