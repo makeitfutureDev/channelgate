@@ -109,7 +109,10 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
 // same `-c mcp_servers.*` overrides a chat turn uses (codex-args.sh — credentials stay in the 0600
 // bundle their helpers read, never argv), and — when started from HOME, `/` or a parent of the
 // channel folder, where there is no project context — starts in the channel folder so its AGENTS.md
-// applies; anywhere else it stays put, so relative paths and `codex resume` keep their meaning. Anything else falls straight through to the pinned CLI.
+// applies; anywhere else it stays put, so relative paths and `codex resume` keep their meaning.
+// Which sign-in it is rides a file of its own (codex-login.sh — gateway/ssh-session.js): the
+// selected license's directory as CODEX_HOME unless the command named one, its file credential
+// store, and none of the OpenAI names a turn strips. Anything else falls straight through to the pinned CLI.
 export const CONTAINER_CODEX_BIN = "/usr/local/bin/codex";
 export function renderCodexWrapper({ usersDir, codexBin = CONTAINER_CODEX_BIN }) {
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -126,6 +129,10 @@ export function renderCodexWrapper({ usersDir, codexBin = CONTAINER_CODEX_BIN })
     '    if [ -n "$here" ]; then cd "$CG_WORKDIR" && printf \'codex: starting in the channel folder %s\\n\' "$CG_WORKDIR" >&2; fi',
     "  fi",
     "fi",
+    // After the secrets, so a sign-in never inherits an OpenAI key from them — and on its own: a
+    // session whose tools were not prepared is still on the channel's license, not on whatever an
+    // earlier one left in ~/.codex.
+    'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/codex-login.sh" ]; then . "$d/codex-login.sh"; fi',
     `exec ${quote(codexBin)} "$@"`,
     "",
   ].join("\n");

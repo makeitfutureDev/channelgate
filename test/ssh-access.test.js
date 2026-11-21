@@ -192,17 +192,21 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
 
 // Live finding (0.5.3): over SSH, `claude` showed onboarding and a login screen while `claude -p`
 // answered — sshd had started the session with a clean environment, so CLAUDE_CONFIG_DIR (and PATH,
-// CODEX_HOME, TZ, the CG_* identity) never reached it.
+// TZ, the CG_* identity) never reached it.
 test("container side: the session inherits the container's environment through ONE SetEnv, and CG_WORKDIR names the channel folder", () => {
   const env = access.containerSessionEnv([
     "PATH=/home/agent/.local/bin:/usr/bin", "CLAUDE_CONFIG_DIR=/home/agent/.claude", "TZ=Europe/Bucharest",
-    "HOME=/home/agent", "HOSTNAME=abc", "container=podman", "TERM=xterm", "USER=agent",
+    "HOME=/home/agent", "HOSTNAME=abc", "container=podman", "TERM=xterm", "USER=agent", "CODEX_HOME=/home/agent/.cg-licenses/codex-lic-0a1b2c3d",
     'QUOTE=a"b', "BACKSLASH=a\\b", "NEWLINE=a\nb", "=nameless", "1BAD=x", "no-equals", "SPACED=a b",
   ], { workDir: "/home/me/My Project" });
   assert.deepEqual(env, {
     PATH: "/home/agent/.local/bin:/usr/bin", CLAUDE_CONFIG_DIR: "/home/agent/.claude", TZ: "Europe/Bucharest",
     SPACED: "a b", CG_WORKDIR: "/home/me/My Project",
   }, "names sshd owns and anything sshd_config cannot carry verbatim are dropped, never escaped");
+  // CODEX_HOME is a create-time fact — the license the channel ran on when its container was
+  // created — so a session never inherits it: the session's `codex` names the SELECTED license's
+  // directory itself (ssh-session.js codex-login.sh).
+  assert.equal(env.CODEX_HOME, undefined);
   const lines = access.renderContainerSshdConfig("/x/ssh", env).split("\n").filter((l) => l.startsWith("SetEnv"));
   assert.deepEqual(lines, ['SetEnv "CG_WORKDIR=/home/me/My Project" "CLAUDE_CONFIG_DIR=/home/agent/.claude" "PATH=/home/agent/.local/bin:/usr/bin" "SPACED=a b" "TZ=Europe/Bucharest"'],
     "sshd honours only the FIRST SetEnv line, so every variable rides one directive");

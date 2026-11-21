@@ -315,7 +315,12 @@ export function containerSshDir(target) {
 // what the gateway set at create — no secret rides either; channel secrets go per exec, to engine
 // turns only), minus the names sshd itself owns per session, plus CG_WORKDIR so a login shell can
 // start in the channel folder. Anything sshd_config cannot carry verbatim is dropped, not escaped.
-const SESSION_ENV_SKIP = new Set(["HOME", "USER", "LOGNAME", "SHELL", "MAIL", "HOSTNAME", "TERM", "container", "SSH_AUTH_SOCK"]);
+// CODEX_HOME is skipped too: the container's is a create-time fact — the license the channel ran
+// on when the container was first created, which a later change of license never rewrites — so a
+// session that inherited it ran `codex` in one license's directory while the selected license's
+// sign-in sat in another. The session's `codex` wrapper names the selected license's directory
+// itself (ssh-session.js codex-login.sh), and only when the command did not.
+const SESSION_ENV_SKIP = new Set(["HOME", "USER", "LOGNAME", "SHELL", "MAIL", "HOSTNAME", "TERM", "container", "SSH_AUTH_SOCK", "CODEX_HOME"]);
 const SESSION_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SESSION_ENV_VALUE = /^[^"\\\x00-\x1f\x7f]*$/;
 

@@ -44,8 +44,14 @@ import { EGRESS_UNSET_ENV_NAMES } from "../runtimes/container/egress-env.js";
 import { egressActive } from "../runtimes/container/egress-hook.js";
 import { installVscodeClaudeRelay, installSshCodexWrapper, clearVscodeClaudeRelay, CLAUDE_ONBOARDING_FILE, sshUsersDirOf } from "../runtimes/container/vscode.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
-import { buildCodexArgs, codexSecretBundle, headerHelperSource, installRelayedCodexLogin } from "../engines/codex.js";
-import { isIsolatedTarget } from "../engines/runtime-target.js";
+import { buildCodexArgs, codexLoginEnvStrip, codexSecretBundle, headerHelperSource, installRelayedCodexLogin } from "../engines/codex.js";
+import { containerPaths, isIsolatedTarget } from "../engines/runtime-target.js";
+import { isEngineId, licenseLabel } from "../engines/registry.js";
+import { isProviderKind, licenseKindOfId } from "../engines/license-state.js";
+import { getEngine } from "../config/settings.js";
+import { isChannelCodex, isDedicatedCodex } from "./channel-codex-paths.js";
+import { engineRuntimeTarget } from "./engine-target.js";
+import { selectableLicenses } from "./license-pool.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
 import { buildSettings } from "./folders.js";
@@ -251,15 +257,74 @@ export function codexSessionOverrides(args) {
   return out;
 }
 
-async function prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps, cliBin, runCommand, installWrapper, installCodexLogin = installRelayedCodexLogin }) {
-  // Behind the egress proxy the container has no Codex login until one is placed: the same
-  // access-only relay file a turn writes (src/gateway/codex-token-relay.js), so an interactive
-  // `codex` works before the channel's first Codex turn — and never sees a refresh token.
-  if (target?.container?.credentialMode?.codex === "relay" || requireAdapter(target?.meta?.engine || "codex").channelScoped) {
-    const problem = await installCodexLogin(target);
-    if (problem) throw new Error(`Codex sign-in not placed: ${problem}`);
+// ── Which Codex sign-in the terminal's `codex` is ─────────────────────────────────────────────
+// A turn runs on a LICENSE: its container run is pointed at that license's own directory and is
+// handed that license's own relayed sign-in (run.js, engine-target.js). A session's `codex` is the
+// same license, decided the same way, or the developer's terminal is on a different account than
+// the channel they are sitting in:
+//  • the license the channel is set to — its own engine, else the gateway default — when that is a
+//    Codex sign-in the channel may use;
+//  • otherwise (a Claude channel, or a Codex API/cloud license, which a terminal cannot run on yet)
+//    the channel's Codex sign-in: the gateway's own when the channel may use it, else the first
+//    sign-in license it may;
+//  • otherwise a usable API/cloud license, which the caller refuses by name; and "" when the
+//    channel may use no Codex license at all.
+// "May use" is `selectableLicenses`: registered, switched on, admitted by the channel's approved
+// harnesses and available in this conversation — nothing a session can widen.
+const isSignInLicense = (id) => !isProviderKind(licenseKindOfId(id)?.id);
+export function sshCodexLicense(meta = {}, { gatewayEngine = getEngine() } = {}) {
+  const usable = selectableLicenses("codex", meta);
+  const selected = [meta?.engine, gatewayEngine].find((id) => isEngineId(id)) || "";
+  const signIns = usable.filter(isSignInLicense);
+  if (signIns.includes(selected)) return selected;
+  if (signIns.length) return signIns.includes("codex") ? "codex" : signIns[0];
+  return usable.includes(selected) ? selected : usable[0] || "";
+}
+
+// codex-login.sh, in the developer's 0700 dir and sourced by the `codex` wrapper on its own — it
+// needs none of the session's other files, so a session whose tools could not be prepared still
+// runs `codex` in the selected license's directory (signed out there, never signed in elsewhere).
+// It does what a turn's environment does (engines/codex.js buildCodexEnv/buildCodexArgs):
+//  • CODEX_HOME is the license's directory in this channel's HOME. A session's environment
+//    carries no CODEX_HOME of its own (ssh-access.js) — the container's is a create-time fact, the
+//    license the channel ran on when the container was first created — so one that IS set was
+//    typed by the developer (the footer's Resume command names its session's directory) and wins;
+//  • a dedicated sign-in reads its file store and inherits no OpenAI key, endpoint, organization
+//    or project from the developer's secrets.
+// `notice` is printed when the sign-in could not be placed: `codex` then asks to sign in, and the
+// developer should know why before they sign a personal account in.
+export function renderCodexLoginScript({ home = "", fileStore = false, unset = [], notice = "" }) {
+  const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+  return [
+    "# Generated by ChannelGate — which Codex sign-in this SSH session's codex is; sourced by the codex wrapper.",
+    'if [ -z "${CODEX_HOME:-}" ]; then',
+    // No license the channel may use: there is no directory to name, only the reason to give.
+    ...(home ? [`  CODEX_HOME=${quote(home)}; export CODEX_HOME`] : []),
+    `  ${notice ? `printf 'codex: %s\\n' ${quote(notice)} >&2` : ":"}`,
+    "fi",
+    ...(unset.length ? [`unset ${unset.join(" ")}`] : []),
+    ...(fileStore ? [`set -- -c ${quote('cli_auth_credentials_store="file"')} "$@"`] : []),
+    "",
+  ].join("\n");
+}
+
+// Place the selected license's sign-in in its directory. → "" when `codex` is signed in, else why
+// not. Exactly a turn's rule (engines/codex.js runCodex): a dedicated or channel-account sign-in
+// is always the access-only relay file, and says so itself when the egress proxy is not this
+// container's network; the gateway's own is relayed behind the proxy and is the mounted shared
+// file in the legacy bridge mode, where there is nothing to write.
+async function codexSignInProblem(target, license, installCodexLogin) {
+  if (!isSignInLicense(license)) {
+    return `${licenseLabel(license)} is an API license, which Codex over SSH cannot run on yet — codex in this session is not signed in`;
   }
-  const engine = requireAdapter(target?.meta?.engine || "codex").modelFamily === "codex" ? target.meta.engine : "codex";
+  const own = isDedicatedCodex(target.meta) || isChannelCodex(target.meta);
+  if (!own && target.container?.credentialMode?.codex !== "relay") return "";
+  const problem = await Promise.resolve().then(() => installCodexLogin(target)).catch((error) => String(error?.message || error));
+  return problem ? `Codex sign-in not placed: ${problem}` : "";
+}
+
+// `target` is the SELECTED LICENSE's target (engineRuntimeTarget) and `engine` that license.
+async function prepareCodexSessionFiles({ target, engine, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps }) {
   const allowed = meta[requireAdapter(engine).mcpMetaKey] || [];
   // Minted for Codex: the capability names the engine that holds it.
   const runtime = await buildMcpRuntime({
@@ -301,7 +366,6 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   }
   const overrides = [...codexSessionOverrides(args), `tui.status_line=${JSON.stringify(SSH_CODEX_STATUS_LINE)}`];
   writePrivate(path.join(userDir, "codex-args.sh"), renderCodexArgsScript(overrides));
-  await installWrapper(target, cliBin, runCommand ? { runCommand: (bin, a, o) => runCommand(a, o) } : {});
   const servers = [...new Set(overrides.filter((v) => v.startsWith("mcp_servers.")).map((v) => v.split(".")[1]))];
   return { ready: true, mcpServers: servers.sort(), reason: "", relayJti: runtime.relayJti || "" };
 }
@@ -381,10 +445,49 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   // `codex`: Codex gets the same session as Claude (QA-0925: over SSH it had no gateway MCP, no
   // Composio and no secrets). Best effort and separate from `problems`: a Codex failure never costs
   // the developer the Claude session.
-  const result = { claude, toolset: SSH_TOOLSET, mcpServers: [], secrets: [], rejectedMcps: [], userDir, problems: [], codex: { ready: false, mcpServers: [], reason: "" } };
+  const result = { claude, toolset: SSH_TOOLSET, mcpServers: [], secrets: [], rejectedMcps: [], userDir, problems: [], codex: { ready: false, mcpServers: [], reason: "", license: "" } };
   const relayJtis = [];
   mkdirSync(userDir, { recursive: true, mode: 0o700 });
   chmodSync(userDir, 0o700);
+
+  // 3a. Which Codex sign-in `codex` is here (sshCodexLicense): pointed at and placed BEFORE the
+  // session's tools, and kept whatever happens to them — a `codex` that fell back to the plain CLI
+  // would read whatever directory and sign-in an earlier license left in this HOME.
+  const seat = { license: "", target: null, reason: "" };
+  const writeCodexLogin = () => {
+    if (!seat.target && !seat.reason) return rmSync(path.join(userDir, "codex-login.sh"), { force: true });
+    mkdirSync(userDir, { recursive: true, mode: 0o700 });
+    writePrivate(path.join(userDir, "codex-login.sh"), renderCodexLoginScript(seat.target ? {
+      home: containerPaths(seat.target).codexHome,
+      fileStore: isDedicatedCodex(seat.target.meta) || isChannelCodex(seat.target.meta) || !isSignInLicense(seat.license),
+      unset: codexLoginEnvStrip(seat.target),
+      notice: seat.reason.slice(0, 300),
+    } : { notice: seat.reason.slice(0, 300) }));
+  };
+  try {
+    seat.license = sshCodexLicense(meta);
+    if (seat.license) {
+      // The channel is the session's, whatever the stored record says: it is what the relayed
+      // sign-in is bound to.
+      seat.target = engineRuntimeTarget({ ...target, meta: { ...(target.meta || meta), channelId: entry.channelId } }, seat.license);
+      writeCodexLogin();
+    }
+    // Always: the same step installs `with-secrets`, which has nothing to do with Codex.
+    await installCodexWrapper(target, cliBin, { runCommand: (bin, args, options) => exec(args, options) });
+    seat.reason = seat.license
+      ? await codexSignInProblem(seat.target, seat.license, installCodexLogin)
+      : "no Codex license is usable in this channel — codex in this session is not signed in";
+  } catch (error) {
+    seat.reason = `Codex not prepared: ${String(error?.message || error)}`;
+  }
+  writeCodexLogin();
+  const codexOff = (reason) => {
+    result.codex = { ready: false, mcpServers: [], reason: String(reason).slice(0, 160), license: seat.license };
+    for (const name of ["codex-args.sh", "codex-secrets.json"]) rmSync(path.join(userDir, name), { force: true });
+    log?.warn?.(`[ssh] ${slug}/${user.id}: Codex session files not prepared — ${result.codex.reason}`);
+  };
+  if (seat.reason) codexOff(seat.reason);
+  else result.codex.license = seat.license;
   try {
     const lockdown = await buildLockdown({ ...meta, _slug: slug }, { target });
     writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(withSshStatusline(lockdown, userDir), null, 2)}\n`);
@@ -414,14 +517,14 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     writePrivate(path.join(userDir, "mcp.json"), runtime.mcpConfigJson);
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});
     result.rejectedMcps = runtime.rejectedMcps || [];
-    try {
-      const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps, cliBin, runCommand: exec, installWrapper: installCodexWrapper, installCodexLogin });
-      if (codexRelayJti) relayJtis.push(codexRelayJti);
-      result.codex = codex;
-    } catch (error) {
-      result.codex = { ready: false, mcpServers: [], reason: String(error?.message || error).slice(0, 160) };
-      for (const name of ["codex-args.sh", "codex-secrets.json"]) rmSync(path.join(userDir, name), { force: true });
-      log?.warn?.(`[ssh] ${slug}/${user.id}: Codex session files not prepared — ${result.codex.reason}`);
+    if (!seat.reason) {
+      try {
+        const { relayJti: codexRelayJti = "", ...codex } = await prepareCodexSessionFiles({ target: seat.target, engine: seat.license, userDir, integrations, meta, clean, entry, user, threadKey, now, buildMcpRuntime, listMcps: listCodexMcps });
+        if (codexRelayJti) relayJtis.push(codexRelayJti);
+        result.codex = { ...codex, license: seat.license };
+      } catch (error) {
+        codexOff(error?.message || error);
+      }
     }
   } catch (error) {
     result.problems.push(`mcp: ${String(error?.message || error).slice(0, 160)}`);
@@ -465,7 +568,9 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     rmSync(userDir, { recursive: true, force: true });
     // The files that named these grants are gone, so nothing will ever connect with them.
     for (const jti of relayJtis.splice(0)) releaseRemoteMcps(jti);
-    result.codex = { ready: false, mcpServers: [], reason: result.codex.reason || "the session files were not prepared" };
+    result.codex = { ready: false, mcpServers: [], reason: result.codex.reason || "the session files were not prepared", license: seat.license };
+    // …except which sign-in `codex` is: the plain CLI must not land in another license's directory.
+    writeCodexLogin();
     result.mcpServers = [];
     result.secrets = [];
     log?.warn?.(`[ssh] ${slug}/${user.id}: session files not prepared — ${result.problems.join("; ")}`);
