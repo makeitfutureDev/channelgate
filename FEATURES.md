@@ -1,5 +1,22 @@
 # ChannelGate — Features
 
+## A health check starts each CLI once (2026-11-22)
+
+Every engine id is a license of one of two harnesses, and every license's health check began with
+its harness's `--version`. `GET /api/health` (which the admin page polls) and the boot check ask
+every registered license at once, so a gateway with twenty added Codex licenses started twenty-odd
+`codex --version` processes per poll, in parallel — slow, and a visible burst against a container
+host's process budget.
+
+- `engineHealth` (`src/engines/registry.js`) hands every adapter one shared `cliProbes` map for the
+  check, and `commandHealth` (`src/engines/contract.js`) starts a CLI only when the map has no
+  answer for it yet. A check over any number of licenses starts each CLI once (today: `claude`,
+  `codex` and, where registered, `qwen`).
+- Unchanged: every license still reports its own verdict — the version its harness reported plus
+  its own sign-in state, which is a file read, not a process. Nothing is cached ACROSS checks: an
+  update replaces the binary under a running daemon, so the next check asks again. A caller that
+  passes no map (a single adapter's `health()`) probes as before.
+
 ## An SSH session's `codex` is the channel's selected Codex license (2026-11-21)
 
 A chat turn runs on a license: its container run is pointed at that license's own directory and

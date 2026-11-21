@@ -1,5 +1,21 @@
 # ChannelGate — Test Plan
 
+## A health check starts each CLI once (2026-11-22)
+
+Engine-independent: the check runs `--version`, never a turn, and no model is involved.
+
+- [x] `test/engine-licenses.test.js` "a health check starts each CLI once, however many licenses
+      run on it" (always runs): four added Codex sign-ins, one added Claude sign-in and one API
+      license → every registered license id has a verdict carrying its harness's version and its
+      own sign-in state, each CLI was started exactly once, and a second check starts it again.
+- [ ] Live `LICENSE-34` health with several licenses (engine-independent). Fixture: a gateway
+      with at least three added licenses of one harness, at least one of them not signed in.
+      Action: as a signed-in admin, `GET /api/health` twice; during the second call run
+      `pgrep -fc -- 'codex --version'` in a loop on the host. Pass: `engines` lists every license
+      id with `available: true`, the same `version` as that harness's own sign-in, and its own
+      `auth` (the unsigned one `authenticated: false` with its sign-in command); the loop never
+      reports more than one `codex --version` process at a time.
+
 ## An SSH session's `codex` is the channel's selected Codex license (2026-11-21)
 
 Only Codex is affected: the change is which Codex sign-in a terminal's `codex` reads. Claude over
