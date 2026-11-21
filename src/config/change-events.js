@@ -9,7 +9,8 @@
 // connection and this emitter never sees those (they are refreshed by the periodic tick).
 import { EventEmitter } from "node:events";
 
-export const CONFIG_CHANGE_KINDS = Object.freeze(["channel-meta", "user", "org-env"]);
+// `thread-settings` names one thread's settings section (gateway/thread-settings.js).
+export const CONFIG_CHANGE_KINDS = Object.freeze(["channel-meta", "user", "org-env", "thread-settings"]);
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(50);

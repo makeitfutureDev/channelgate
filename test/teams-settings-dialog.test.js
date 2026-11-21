@@ -79,7 +79,7 @@ test('Teams launcher opens a native dialog and saves without publishing any form
   assert.equal(dialog.result.body.task.value.width, 'large');
   assert.equal(dialog.result.body.task.value.height, 'large');
   assert.ok(nodes(dialog.card).some(item => item.id === 'channel_engine'));
-  assert.ok(actions(dialog.card).some(action => action.title === '• General'));
+  assert.ok(actions(dialog.card).some(action => action.title === '✓ General'));
   const general = continued(await f.submit(dialog.stateId, 'settings.page', { page: 'general' }));
   for (const action of actions(general)) {
     assert.equal(action.type, 'Action.Submit');
@@ -91,7 +91,7 @@ test('Teams launcher opens a native dialog and saves without publishing any form
   assert.equal(f.posted.length, 1);
   assert.deepEqual(f.updated, []);
   const reopened = await f.open(launcher);
-  assert.ok(actions(reopened.card).some(action => action.title === '• General'));
+  assert.ok(actions(reopened.card).some(action => action.title === '✓ General'));
   assert.ok(nodes(reopened.card).some(item => item.id === 'channel_engine'));
 });
 
@@ -183,17 +183,22 @@ test('separate Teams dialog openings isolate confirmation state and never trust 
   const f = await fixture(t), launcher = await f.command();
   const first = await f.open(launcher), second = await f.open(launcher);
   assert.notEqual(first.stateId, second.stateId);
-  const original = addSchedule({ channelId: f.channelId, slug: f.entry.slug, prompt: 'First reminder', runAt: '2030-01-01T00:00:00Z', once: true });
-  const replacement = addSchedule({ channelId: f.channelId, slug: f.entry.slug, prompt: 'Second reminder', runAt: '2030-01-02T00:00:00Z', once: true });
-  const confirm = continued(await f.submit(first.stateId, 'settings.automation.delete', { id: original.id }));
+  const { listUserEnv } = await import('../src/config/scoped-env.js');
+  for (const name of ['FIRST_PERSONAL_TOKEN', 'SECOND_PERSONAL_TOKEN']) continued(await f.submit(first.stateId, 'settings.variable.save', { variableScope: 'personal', variableName: name, variableValue: 'dialog-confirm-fixture' }));
+  const names = async () => (await listUserEnv(f.owner)).map(row => row.name).sort();
+  const confirm = continued(await f.submit(first.stateId, 'settings.variable.remove', { variableScope: 'personal', name: 'FIRST_PERSONAL_TOKEN' }));
   const token = confirm.actions.find(action => action.data.cgAction === 'settings.confirm').data.token;
   assert.ok(confirm.actions.every(action => action.type === 'Action.Submit'));
-  assert.equal(listForChannel(f.channelId).length, 2);
+  assert.deepEqual(await names(), ['FIRST_PERSONAL_TOKEN', 'SECOND_PERSONAL_TOKEN']);
   denied(await f.submit(second.stateId, 'settings.confirm', { token }));
-  continued(await f.submit(second.stateId, 'settings.page', { page: 'automations' }));
-  continued(await f.submit(first.stateId, 'settings.confirm', { token, id: replacement.id }));
-  assert.deepEqual(listForChannel(f.channelId).map(row => row.id), [replacement.id]);
+  continued(await f.submit(second.stateId, 'settings.page', { page: 'secrets' }));
+  continued(await f.submit(first.stateId, 'settings.confirm', { token, name: 'SECOND_PERSONAL_TOKEN', variableScope: 'organization' }));
+  assert.deepEqual(await names(), ['SECOND_PERSONAL_TOKEN']);
   denied(await f.submit(first.stateId, 'settings.confirm', { token }));
+  assert.deepEqual(await names(), ['SECOND_PERSONAL_TOKEN']);
+  // Automation removals in the window are staged, never confirmed one by one.
+  const reminder = addSchedule({ channelId: f.channelId, slug: f.entry.slug, prompt: 'First reminder', runAt: '2030-01-01T00:00:00Z', once: true });
+  continued(await f.submit(first.stateId, 'settings.automation.delete', { id: reminder.id }));
   assert.equal(listForChannel(f.channelId).length, 1);
   assert.equal(f.posted.length, 1);
   assert.deepEqual(f.updated, []);

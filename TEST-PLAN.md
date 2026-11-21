@@ -14926,8 +14926,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
    card in the original conversation, unchanged workspace/session identity and no proactive DM.
-   Click the button: require a large popup inside Teams with all six section buttons centered in
-   one horizontal row, General marked selected and its channel/session form already visible
+   Click the button: require a large full-width popup inside Teams with the six section buttons in
+   two columns (three rows of two), General marked ✓ selected and its channel/session form already visible
    without another click (desktop and narrow windows). Select every
    section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
    `/secrets` must open the popup on Variables. Navigate to Skills, then close/reopen the
@@ -14938,7 +14938,7 @@ case. Also run a group with an external member to check tenant/channel delivery 
    refuse without exposing any form in chat. Repeat on Teams desktop, web and mobile; record
    actual popup dimensions/layout and callbacks. No screenshot/fixture counts as a live pass.
 2. General: select engine, model and effort before saving; require exactly one Apply to channel
-   and one Apply to thread at the end of their runtime lists. Apply one scope and require its
+   and one Apply to thread, in the Save area at the end of the General section. Apply one scope and require its
    complete compatible triple to change, with the other scope and access settings unchanged.
    Invalid/missing values refuse all writes. Change the stored triple from another authorized
    card before submitting the first: require stale-form refusal, preserving the newer triple.
@@ -14961,6 +14961,9 @@ case. Also run a group with an external member to check tenant/channel delivery 
    while the roster/discovery request is held: require denial and no mutation. Large/over-budget
    rosters explicitly defer complete-list edits without dropping grants; former-member selections
    show a replacement warning before Apply.
+   (Variables, MCPs, Skills and Automations changes below are staged and saved with the section's
+   Apply to channel; the batch and thread-scope cases are in "Teams batch settings and thread
+   overrides".)
 4. Variables/MCPs: inside the popup rotate synthetic channel/personal values and (as an admin)
    organization values. Require blank/masked inputs after refresh, masked listing only, preserved
    Used-on-hosts unless explicitly replaced/cleared, and no raw values in card JSON or event logs.
@@ -14983,6 +14986,100 @@ case. Also run a group with an external member to check tenant/channel delivery 
 8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
    card placement and pass/fail for each case in the private registry through the personal identity.
    Any unexecuted, blocked or failed case remains pending acceptance; no release-readiness claim.
+
+## Teams batch settings and thread overrides (0.7.0)
+
+Regression (engine-independent unless noted; no live client):
+- [x] `test/teams-settings-batch.test.js`: every editable section ends with one Save area (Apply to
+      channel, Apply to thread, Discard), Resume has none, the card is full-width Adaptive Card 1.4
+      with ≤6 actions per action set; Variables stage across navigation and save only the chosen
+      scope, never echoing a value in the card, notice or event log; one value without a fixed
+      destination refuses the whole thread batch; Apply saves only the open section and Discard
+      drops only its own drafts; stale channel/thread baselines refuse without overwriting; revoked
+      access refuses before any write; MCP connection overrides go to the thread masked and an
+      invalid Make pair saves nothing; Cloud MCP staging is admin-only; Follow channel clears one
+      thread section; a thread adds shared skills only and cannot remove a channel skill or add a
+      personal one; General Apply to channel saves runtime and access together, Apply to thread
+      refuses access edits, a non-manager's or demoted manager's batch saves neither half; General
+      edits survive navigation and are discarded on a concurrent change; automations apply as one
+      batch and thread scope only for loops bound to that exact thread.
+- [x] `test/thread-settings.test.js`: write-time refusal of readable/approval-only thread values,
+      reserved names, other providers and runtime-posture fields; whole-section compare-and-swap
+      with value-free change events; thread placeholders bound to (channel, thread) that only that
+      thread resolves while siblings and other channels keep the channel value; withheld (not
+      backfilled) on bridge, host and target-less spawns; hiding a channel variable per thread;
+      proxy swaps only while that thread is the only live work (another thread, an unthreaded job,
+      a review, any SSH session pause it); removal revokes at once even without the listener;
+      thread skills/Cloud MCP only join `effective` grants and never a personal skill.
+- [x] `test/thread-settings-run.test.js` (Claude and Codex through `runMessage` on a proxy-mode fake
+      runtime): the thread's variable reaches its own turn as a `thread` placeholder and a sibling
+      thread gets the channel's; no value in env, argv, prompt, streamed or final answer or event
+      log; a background agent resolves only its signed launching thread and an unrelated settings
+      thread is refused; the capability's `settingsThreadKey` must prefix the run's own key and is
+      forced onto background launches; shell jobs resolve the source thread at their own spawn
+      (including nested agent jobs) and honour a removal made before that spawn.
+
+Live acceptance — all UNEXECUTED. Fixtures: a disposable registered Teams channel with two
+threads A and B, a group chat and a personal chat with the bot; an approved member (not a
+manager), a channel manager and an organization admin; the channel in Worker + Auto mode with
+Allow network ON, the egress proxy running (`containerEgressMode` proxy) and strict secrets on;
+a free test API reachable over HTTPS (for example `httpbin.org`); synthetic values only:
+channel `HTTPBIN_TOKEN=channel-xxxx` and thread value `thread-yyyy`, both "Used on hosts"
+`httpbin.org`; one shared catalog skill `qa-thread-skill`; one channel cron task and a `/loop`
+started in thread A. Run every client case on Teams desktop, web and mobile separately, and every
+engine case once with the channel on Claude and once on Codex.
+
+- [ ] UNEXECUTED (client, engine-independent): in thread A send `@bot /settings`, open the window.
+      Require a full-width card, compact header naming the conversation and "opened from a thread",
+      two-column section buttons, grouped panels and one Save area per editable section with
+      Apply to channel, Apply to thread, Discard changes (Variables/MCPs/Skills also Follow
+      channel); Resume has no Save area; no row shows more than six buttons (mobile included).
+- [ ] UNEXECUTED (client): Variables → add `HTTPBIN_TOKEN` = `thread-yyyy`, Used on hosts
+      `httpbin.org`, Add variable. Go to Skills, stage Activate on `qa-thread-skill`, go back:
+      require "Pending, not saved yet: Skills (1)" and Variables still listing the pending set
+      with the value hidden. Apply to thread on Variables: require the notice "1 Variables change
+      saved to this thread", the row "This thread · HTTPBIN_TOKEN · ••••" and Skills still pending.
+      Discard Skills: nothing saved there. The value never appears in the card or chat.
+- [ ] UNEXECUTED (client): stage `DB_PASSWORD` = `x-pass-1234` plus another valid variable, Apply
+      to thread: require "Not saved: DB_PASSWORD needs a fixed destination … Nothing was written."
+      and neither variable saved; Apply to channel then saves both to the channel.
+- [ ] UNEXECUTED (client): open two windows on thread A; stage a variable in window 1, apply a
+      different variable from window 2, then Apply to thread in window 1: require "changed while
+      you were editing" and window 2's change intact.
+- [ ] UNEXECUTED (client): as the non-manager, General shows no access controls; as the manager,
+      change Mode and Allow network plus the channel model, Apply to thread: refused, nothing
+      saved; Apply to channel: runtime and access saved together. Demote the manager with the
+      window open and Apply to channel again: refused, neither half saved.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "Call https://httpbin.org/bearer with
+      Authorization: Bearer $HTTPBIN_TOKEN and tell me the JSON `token` field". Require the
+      answer to show `[REDACTED]` (or the agent to refuse to print it) and the gateway `egress`
+      event to show `HTTPBIN_TOKEN` swapped with scope `thread`. Ask the same in thread B:
+      require scope `channel`. In neither answer may `thread-yyyy` appear.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "run this in the background: every 10 seconds
+      for 3 minutes, curl -s -o /dev/null -w '%{http_code}\n' -H \"Authorization: Bearer
+      $HTTPBIN_TOKEN\" https://httpbin.org/bearer". While it runs, send "@bot say hi" in thread B.
+      Require the job's egress events to show `HTTPBIN_TOKEN` swapped with scope `thread` before
+      and after thread B's turn and refused `another-thread-active` (403 in the job output) while
+      it ran — never swapped with the channel value.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "launch a background agent that calls
+      https://httpbin.org/bearer with $HTTPBIN_TOKEN and reports the status". Require the agent's
+      swap scope `thread` (thread A's value); repeat from thread B: scope `channel`.
+- [ ] UNEXECUTED (Claude AND Codex): Variables → Stage removal of thread A's `HTTPBIN_TOKEN`,
+      Apply to thread, then immediately re-run the bearer request in thread A: require it to run
+      with the channel value (scope `channel`) or, if a turn kept the old placeholder, a refusal —
+      never the removed thread value. Hide the channel `HTTPBIN_TOKEN` in thread A: the variable
+      is absent in thread A and still present in thread B.
+- [ ] UNEXECUTED (Claude AND Codex): Skills → stage Activate `qa-thread-skill`, Apply to thread;
+      in thread A ask "which skills do you have?" — listed; thread B — not listed. Stage Deactivate
+      on a channel skill and Apply to thread: refused "only remove skills it added".
+- [ ] UNEXECUTED (Claude AND Codex): MCPs → stage Disconnect Composio, Apply to thread; in thread A
+      require no `composio-agent` tools, in thread B the channel's.
+- [ ] UNEXECUTED (client): Automations → stage pause of the channel cron task and stop of thread
+      A's loop; Apply to thread: refused "runs in the channel"; Undo the cron change, Apply to
+      thread: the loop stops, the cron task is untouched. From thread B, the loop's Apply to thread
+      is refused.
+Record client, conversation kind, engine, actions, observed card layout and egress evidence for
+each case in the private registry. Any unexecuted, blocked or failed case remains pending.
 
 ## Slack Secrets tab removal and form navigation (2026-09-09)
 

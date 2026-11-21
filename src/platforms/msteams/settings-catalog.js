@@ -36,21 +36,21 @@ function emailAccountRows(ui, scope, accounts, emptyText) {
 const label = scope => ({ channel: 'Channel', organization: 'Organization', personal: 'Personal' })[scope];
 const str = value => typeof value === 'string' ? value.trim() : '';
 const configured = value => value ? `Configured${typeof value === 'string' && value.length >= 12 ? ` (••••${value.slice(-4)})` : ''}` : 'Not configured';
-const keyFor = (engine, item) => requireAdapter(engine).cli === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
-const orgKeys = () => new Set((getOrgAccessGrants().skills || []).map(value => value.toLowerCase()));
+export const keyFor = (engine, item) => requireAdapter(engine).cli === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
+export const orgKeys = () => new Set((getOrgAccessGrants().skills || []).map(value => value.toLowerCase()));
 
-function pageSlice(items, requested, size = PAGE_SIZE) {
+export function pageSlice(items, requested, size = PAGE_SIZE) {
   const totalPages = Math.max(1, Math.ceil(items.length / size));
   const page = Math.min(Math.max(0, Number.isSafeInteger(Number(requested)) ? Number(requested) : 0), totalPages - 1);
   return { items: items.slice(page * size, (page + 1) * size), page, totalPages };
 }
-function pager(ui, pageKey, page, totalPages, extra = {}) {
+export function pager(ui, pageKey, page, totalPages, extra = {}) {
   const actions = [];
   if (page) actions.push(ui.execute('Previous', 'settings.catalog.page', { page: pageKey, index: page - 1, ...extra }, 'none'));
   if (page + 1 < totalPages) actions.push(ui.execute('Next', 'settings.catalog.page', { page: pageKey, index: page + 1, ...extra }, 'none'));
   return actions;
 }
-function skillItems(ctx) {
+export function skillItems(ctx) {
   const channel = new Set(channelSkillGrants(effectiveMeta(ctx.meta)).map(value => value.toLowerCase()));
   const org = orgKeys();
   const direct = new Set((ctx.meta.skills || []).map(value => value.toLowerCase()));
@@ -65,7 +65,7 @@ function skillItems(ctx) {
   for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: getSkill(key)?.visibility === 'personal' ? 'Personal skill — not loaded here (only its author can use it); deactivate to remove' : 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
   return [...rows.values()].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
-async function cloudItems(ctx, engine) {
+export async function cloudItems(ctx, engine) {
   const field = selectionFieldForEngine(engine);
   const direct = ctx.meta[field] || [];
   const org = getOrgAccessGrants()[field] || [];
@@ -162,6 +162,14 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (meta.composioToken) disconnect.push(ui.execute('Disconnect Composio', 'settings.connections.remove', { connection: 'composio' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
+  body.push(...await mailAndPersonalRows(ctx, ui));
+  return cloudRows(ctx, ui, page, body, actions);
+}
+
+// The parts of the MCP page that are not conversation/thread settings: the email accounts (their
+// logins are verified on save) and the person's own connections. Shared with the Teams batch page.
+export async function mailAndPersonalRows(ctx, ui) {
+  const body = [], meta = ctx.meta;
   // Email accounts: the list is masked (hosts, ports, user names — never a password). Inputs are
   // never prefilled, and a public space card gets no inputs at all.
   body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
@@ -187,6 +195,10 @@ export async function renderCatalogPage(page, ctx, ui) {
     body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
       ...(ctx.publicCredentials ? [] : [ui.text('Add or update one with the email account form above, choosing "Me (personal)". It is used only for your own requests.')]));
   }
+  return body;
+}
+
+async function cloudRows(ctx, ui, page, body, actions) {
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
   if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));

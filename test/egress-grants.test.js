@@ -152,7 +152,7 @@ test("resolveEgressRunEnv: inactive egress is exactly the real resolve", async (
   assert.deepEqual(out.placeholders, {});
   assert.deepEqual(out.unprotected, []);
   assert.ok(out.realValues.includes("ghp_plain_value_0001"));
-  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false });
+  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false, threadWithheld: [], threadPaused: false });
   // No target at all (an agent job resolves its own per turn), even with a running service: real values.
   setEgressProvider({ running: () => true, socketDirFor: () => "/x", caBundlePath: () => "/y" });
   try {

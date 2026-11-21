@@ -3596,16 +3596,33 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a compact **Open settings** launcher in the original channel/thread or chat. Clicking it opens
   a large private popup inside Teams; all six sections, navigation, confirmations and saves stay
   there, retaining the original conversation and session. `/secrets` uses the same popup and
-  starts on Variables. All six section buttons appear in one centered row above the form;
+  starts on Variables. The popup is a full-width Adaptive Card 1.4 with a compact header,
+  two-column navigation (three rows of two), grouped setting panels and one Save area per
+  section, never more than six actions in an action set;
   `/settings` selects General and displays its form immediately, including after reopening.
   Each opening has isolated drafts and confirmations with a 15-minute expiry. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
-  channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
-  button. Each model list contains only models for that scope's selected engine. After changing
+  channel default. **Batch settings:** General, Variables, MCPs, Skills and Automations collect
+  edits as pending changes and end with one Save area — **Apply to channel**, **Apply to thread**
+  (only when opened from a thread), **Discard changes** and, for Variables/MCPs/Skills, **Follow
+  channel** (stage clearing the thread's overrides). Apply saves the open section only; drafts in
+  other sections stay pending (listed in the header and the section buttons) until applied,
+  discarded or the 15-minute window expires. Every Apply re-authorizes, validates the whole
+  section against the chosen scope's current value and the baseline it was staged on, and writes
+  nothing if any part fails or changed meanwhile; the reason appears on the card with every
+  submitted or staged credential removed (a caller who lost access gets only the generic error).
+  General's Apply to channel saves the channel runtime and changed access controls in one write by
+  a current manager; Apply to thread saves the session runtime and refuses changed access. Variables,
+  MCP connections and skills apply to the channel or to the thread's own override stores (see
+  **Thread-scoped settings**); skill templates are channel-only. Automations stage pause, resume,
+  delete and stop and apply as one transaction; Apply to thread only changes loops that execute in
+  that exact thread. Resume is read-only; VPN, email accounts, personal connections and
+  personal/organization variables keep immediate controls. Google Chat's shared cards keep their
+  immediate saves. Each model list contains only models for that scope's selected engine. After changing
   Engine, **Load models** refreshes its choices without saving; incompatible draft model/effort
   values clear to default. Compatible saved full model IDs stay selectable even if discovery
   omits them. The compatible triple is saved atomically for that scope. Stale forms refuse to
-  overwrite newer runtime settings. Other settings keep their explicit controls.
+  overwrite newer runtime settings.
   Runtime edits in this console admit every authorized member, independently of the `/model`
   text-command policy. Access policy and native member selection require managers/admins; Cloud
   MCP and organization variable changes require admins. Complete roster selectors fall back to
@@ -6210,6 +6227,41 @@ are retired, bullet by bullet; everything else stands.
   (hosts)" / "unprotected (raw)"; the output redactor keeps every REAL value; `run_config` records
   `networkEnforced`, `egress` (`proxy` / `proxy+raw` / `bridge` / `unavailable` / `host`) and the
   unprotected/withheld names. → TEST-PLAN: Egress proxy, placeholders and `--network none`.
+- **Thread-scoped settings (variables, MCP connections, skill additions).** A thread can carry its
+  own settings beside the channel's, stored per section in `thread_overrides`
+  (`src/gateway/thread-settings.js`, kinds `settings_secrets` / `settings_mcp` / `settings_skills`,
+  each written whole with a compare-and-swap) and written today from Teams' **Apply to thread**.
+  They never rewrite channel metadata, the shared `.claude/skills/` tree, mounts, tool policy,
+  network or access. **Variables** are placeholder-only: a thread variable needs a fixed
+  destination (a known credential name's catalog hosts or declared "Used on hosts"); a readable
+  value or one that would need per-server admin approval is refused on write and stays
+  channel-only. At run time it wins over the channel/personal/organization variable of the same
+  name in that thread only, as a `thread`-scope egress placeholder (grant keyed by channel AND
+  thread key) that the proxy swaps on its hosts only while work of that thread is live and NO other
+  work is — another thread's turn or job, a memory review, any SSH session or an attached editor
+  pauses it (403 `thread-not-live` / `another-thread-active`). Outside a proxy-mode container (the
+  legacy bridge, a `/sudo` host run) it is withheld and its name is not filled from another scope;
+  the per-attempt note lists it as withheld. A thread can also hide a variable: it is then
+  injected from NO scope in that thread (no personal or organization value stands in). A stored
+  variables or connections row that can no longer be read fails closed: turns and background
+  jobs in that thread are refused with the remedy (Follow channel resets it) instead of running
+  with the conversation's values. Residual, shared with personal placeholders: a process another
+  thread's work left running untracked in the same container (`nohup … &`) is not live work, so it
+  could read and use the placeholder while this thread is the only registered work.
+  The proxy re-reads the thread's store on every swap, so a removal (or a deleted row) revokes the
+  placeholder at once; values are redacted from replies, streams and job output and never appear in
+  a card, listing, log or grant row. **MCP connections:** the thread may replace or disconnect the
+  conversation's Composio (`composio-agent`) and Make connections (in Composio SDK mode a thread
+  cannot have its own account: refused on write, and a stored thread choice withholds the
+  conversation's session there); Cloud MCP selections and **skills**
+  are ADDITIONS on a thread grant tier that joins the run's effective grants only (per-run overlay
+  and MCP config, so sibling threads never see them), filtered like the shared tiers (no personal
+  skill, directly or by `requires:`). A thread never removes a channel or organization grant, and
+  only an administrator can clear a thread's Cloud MCP additions (Follow channel included).
+  **Background work** inherits exactly the thread that launched it: the run capability signs a
+  `settingsThreadKey` claim (only a prefix of the run's own key), background agents, their
+  continuations and shell jobs record it, resolve the thread's settings at their OWN spawn and
+  mark liveness under it. → TEST-PLAN: Teams batch settings and thread overrides.
 - **SSH and VS Code sessions on placeholders (container-secrets P3).** A developer's SSH session
   resolves its environment through the same `resolveEgressRunEnv` a turn uses (this channel, the
   developer as a trusted principal, the session's target), so behind the egress proxy the session

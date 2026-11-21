@@ -2,6 +2,17 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams settings now collect your edits and save each section at once. General, Variables, MCPs,
+  Skills and Automations end with one **Apply to channel**, **Apply to thread** and **Discard**;
+  Apply saves only that section, pending changes in other sections stay until you apply or
+  discard them, and nothing is written if any part is invalid or someone changed it meanwhile
+  (the window says why). General saves the channel's runtime and access together. **Apply to
+  thread** gives the thread its own settings without touching the channel or other threads:
+  variables (always hidden behind the egress proxy, on fixed hosts, and only while that thread is
+  the only work in the container), its own or no Composio/Make connection, and extra skills or
+  Cloud MCPs. Background agents and jobs launched from the thread use them too. Thread
+  automations are limited to loops running in that thread. The window has a new full-width layout
+  with two-column navigation. Google Chat and Slack settings are unchanged.
 - Dependencies: `hono` (pulled in by `@modelcontextprotocol/sdk`) moves from 4.13.14 to 4.13.19 in
   the lockfile, clearing GHSA-4m76-xfj5-7975 (`mount()` middleware bypass) and the four other
   advisories for `hono` ≤ 4.13.15. ChannelGate was not exposed: it reaches `hono` only through the

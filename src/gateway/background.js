@@ -34,6 +34,7 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 // A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
 import { resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
+import { assertThreadSettingsReadable, getThreadSettings } from "./thread-settings.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
@@ -250,7 +251,7 @@ export class BackgroundJobs {
           // behaving exactly as before (pid + kernel start time are its identity); a job in an
           // isolated runtime is found again by its runId, because its pid belongs to a client
           // process that is already gone.
-          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0, overrides: j.overrides || null }));
+          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, settingsThreadKey: j.settingsThreadKey || j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0, overrides: j.overrides || null }));
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -296,7 +297,7 @@ export class BackgroundJobs {
     });
   }
 
-  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, command, label, maxMs = 0, kind = "shell", task, engine = "", model = "" }, approval = {}) {
+  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, settingsThreadKey = "", command, label, maxMs = 0, kind = "shell", task, engine = "", model = "" }, approval = {}) {
     // Never persist a new job while boot recovery still has un-re-tracked rows in bg_jobs.
     if (this._recoveryGate) await this._recoveryGate;
     const isAgent = kind === "agent";
@@ -316,6 +317,13 @@ export class BackgroundJobs {
     let approvedBy = String(approval.approvedBy || "").replace(/[<@>]/g, ""); // audit trail for unsandboxed exec
     if (isAgent ? !taskText : !cmd) return { ok: false, error: isAgent ? "No task provided." : "No command provided." };
     if (!channelId || !threadKey) return { ok: false, error: "Missing channel/thread context." };
+    // The thread whose own settings (variables, MCP connections, skills) this job runs with: the
+    // signed settings thread of the run that launched it (gateway-server.js) — its own thread, or
+    // the thread a background agent was launched from. Nothing else is accepted.
+    const settingsKey = String(settingsThreadKey || threadKey);
+    if (settingsKey !== threadKey && !String(threadKey).startsWith(`${settingsKey}::`)) {
+      return { ok: false, error: "This background work does not belong to that thread." };
+    }
     if (this.count() >= MAX_GLOBAL) return { ok: false, error: "Too many background jobs are already running on the gateway. Try again shortly." };
     if (this._threadCount(threadKey) >= MAX_PER_THREAD) return { ok: false, error: `This thread already has ${MAX_PER_THREAD} background jobs running.` };
 
@@ -413,6 +421,9 @@ export class BackgroundJobs {
               authorId,
               threadKey,
               ...(admissionThreadKey !== threadKey ? { admissionThreadKey } : {}),
+              // The settings thread rides the durable action, so the approved job resolves the same
+              // thread (re-validated by _start) instead of its synthetic key's nothing.
+              ...(settingsKey !== threadKey ? { settingsThreadKey: settingsKey } : {}),
               command: cmd,
               workDir,
               label: (label || cmd).slice(0, 80),
@@ -484,7 +495,7 @@ export class BackgroundJobs {
       /* logging is best-effort */
     }
 
-    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target, overrides: agentOverrides };
+    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, settingsThreadKey: settingsKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target, overrides: agentOverrides };
     const writeChunk = (chunk) => {
       try {
         logStream?.write(chunk);
@@ -502,7 +513,12 @@ export class BackgroundJobs {
     // Through the egress wrapper (src/gateway/egress/grants.js) with THIS job's target: in a
     // proxy-mode container a ruled secret is its placeholder, exactly as in the foreground. The
     // redaction set contains hidden REAL values; readable configuration remains shareable.
-    const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target });
+    // The launching thread's own variables apply too, resolved HERE from its store (a removal since
+    // the launch is honoured): placeholders only in a proxy-mode container, withheld anywhere else.
+    const threadSecrets = getThreadSettings(entry.slug, settingsKey, "secrets");
+    try { assertThreadSettingsReadable(threadSecrets); } catch (error) { logStream?.end(); return { ok: false, error: error.message }; }
+    const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target,
+      thread: { key: settingsKey, env: threadSecrets.env, removed: threadSecrets.removed } });
     const jobEnv = safeSpawnEnv(jobRunEnv.env);
     const jobSecretValues = jobRunEnv.redactionValues;
     rec.secretValues = [...jobSecretValues, ...serviceSecretValues()];
@@ -542,7 +558,7 @@ export class BackgroundJobs {
       rec.lease = target.runtime.acquireLease(target, { kind: "job", id: runId });
       // A running job is live work in its channel: the egress proxy swaps the channel's (and the
       // launching author's personal) placeholders only while something like it is running.
-      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId });
+      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId, threadKey: settingsKey });
       try {
         // Minimal allowlisted env plus THIS channel's own secrets — this IS agent-authored shell,
         // so the daemon's secrets must not be visible, and another channel's never are. The browser
@@ -655,6 +671,9 @@ export class BackgroundJobs {
       threadKey: `${rec.threadKey}::agent-${rec.id}`,
       admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
       sudoSourceThreadKey: rec.threadKey,
+      // The agent's synthetic session key is not a thread anyone configured: it runs with the
+      // settings of the thread that launched it, which the daemon recorded at launch.
+      settingsThreadKey: rec.settingsThreadKey || rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
       // The agent's own engine/model when one was asked for (validated in _start); applyRunOverrides
       // can only narrow capability, never widen it.
@@ -900,6 +919,7 @@ export class BackgroundJobs {
               text,
               threadKey: rec.threadKey,
               admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
+              settingsThreadKey: rec.settingsThreadKey || rec.threadKey,
               origin: "continuation",
               signal: handle.controller.signal,
             });
@@ -1054,7 +1074,7 @@ export class BackgroundJobs {
       } else if (await this._jobAlive(rec)) {
         await logEvent("bg_recover_watch", { id: rec.id, slug: rec.slug, pid: rec.pid, runtime: rec.runtime?.backend || "host" });
         // Still running after a restart: live work again, for the egress proxy's swap gate.
-        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id });
+        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id, threadKey: rec.settingsThreadKey || rec.threadKey });
         // It keeps the lease taken before this loop (the pre-pass above) until _finish.
         this._watchByProbe(rec, { recovered: true });
       } else {
@@ -1093,7 +1113,9 @@ export class BackgroundJobs {
         // Recovery may attach to a job launched before this build stopped injecting operator VPN
         // credentials. Resolve a value-only projection so those former environment values remain
         // covered by output redaction without making them available to new jobs.
-        rec.secretValues = [...(await resolveEgressRunEnv({ meta: { env: meta.env }, authorId: rec.authorId })).redactionValues, ...serviceSecretValues()];
+        const threadSecrets = getThreadSettings(rec.slug, rec.settingsThreadKey || rec.threadKey, "secrets");
+        rec.secretValues = [...(await resolveEgressRunEnv({ meta: { env: meta.env }, authorId: rec.authorId,
+          thread: { key: rec.settingsThreadKey || rec.threadKey, env: threadSecrets.env } })).redactionValues, ...serviceSecretValues()];
       } catch {
         rec.secretValues = serviceSecretValues();
       }

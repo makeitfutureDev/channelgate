@@ -83,6 +83,7 @@ function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRunt
     authorId: identity.authorId || "",
     threadKey: identity.threadKey || "",
     admissionThreadKey: identity.admissionThreadKey ?? identity.threadKey ?? "",
+    settingsThreadKey: identity.settingsThreadKey ?? identity.threadKey ?? "",
     questionThreadKey: identity.questionThreadKey,
     sudoSchedule: identity.sudoSchedule === true,
     origin: identity.origin || "",
