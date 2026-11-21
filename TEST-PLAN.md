@@ -1,5 +1,63 @@
 # ChannelGate — Test Plan
 
+## hono advisory GHSA-4m76-xfj5-7975 (2026-11-21)
+
+- [x] `npm ls hono --all`: the only path is `@modelcontextprotocol/sdk@1.32.2` (`hono ^4.11.4`,
+      directly and through `@hono/node-server@2.1.6`), deduped at 4.13.19 — a lockfile-only move
+      inside the SDK's range, no `overrides` entry. `npm audit --omit=dev --audit-level=moderate`
+      exits 0 with no vulnerabilities (before: 1 moderate, `hono` ≤ 4.13.15).
+- [x] Exposure review: ChannelGate imports no `hono` module itself; the SDK's
+      `StreamableHTTPServerTransport` (`src/web/skills-mcp.js`) uses `@hono/node-server`'s
+      `getRequestListener` to adapt Node requests, never a Hono app, `mount()`, `RegExpRouter`,
+      `css`, `csrf()` or `validator('form')`. `test/user-skill-tokens.test.js` and
+      `test/skills-standalone.test.js` (the endpoint over HTTP) and the full suite pass on 4.13.19.
+- [ ] UNEXECUTED live `HONO-01` (engine-independent: HTTP transport, no engine involved). On an
+      updated gateway, connect an MCP client to the skills MCP endpoint with a valid skill token,
+      list tools and fetch one skill. Expect the same tools and content as before the update and a
+      401 for a missing or revoked token. Pass: no transport error in the daemon log.
+
+## Staged image helpers make the channel image stale (2026-11-21)
+
+- [x] `test/container-image.test.js`: the staged set is the helper closure plus the verbatim
+      socket bridge, egress forwarder and `cg-egress-connect` helper, the shared resolver agrees
+      with the test's own import walk, and `scripts/build-image.mjs` imports that one declaration
+      (no second list), stages every verbatim helper and passes `IMAGE_BUILD_DIGEST` and
+      `IMAGE_BUNDLE_DIGEST` from the same `expectedImageBuild()` the daemon calls; the Containerfile
+      declares `ARG IMAGE_BUNDLE_DIGEST` + `LABEL cg.image.bundle` after its last `RUN`/`COPY`. In a
+      scratch checkout, appending a line to `egress-connect.js`, `socket-bridge.js`,
+      `egress-forwarder.js`, `child-env.js` or the Stop hook moves `bundleDigest` (never `digest` or
+      `version`) and makes `needsImageBuild` true; restoring the bytes restores the digest; a
+      missing staged file yields a different digest instead of throwing; changing
+      `src/gateway/run.js` or adding an unimported module moves neither digest and builds nothing.
+      The same checkout bytes give the same digest at any path. Image inspection: a 4-field
+      (pre-label) answer and `<no value>` read as `needsRebuild`, a matching 5-field answer does not.
+- [x] `test/update-runner.test.js`: a candidate whose staged helper changed (built bundle label
+      differs, same spec) rebuilds and logs the bundle digests; an unlabeled image is rebuilt once
+      and a matching one is left alone; a builder that exits 0 but leaves the old bundle label is a
+      failure naming the bundle digest. `test/egress-forwarder.test.js` and
+      `test/egress-connect.test.js` read the staged destinations from `image-bundle.js`.
+- [ ] UNEXECUTED live `IMG-BUNDLE-01` (engine-independent: image build and labels, no engine
+      involved). On a gateway with a current image, add a comment line to
+      `src/mcp/egress-connect.js` in a scratch checkout and run `npm run build:image`. Expect
+      `podman image inspect --format '{{index .Config.Labels "cg.image.bundle"}}' channelgate/runtime:latest`
+      to equal `node -e 'import("./src/runtimes/container/image-bundle.js").then(m=>console.log(m.bundleDigest(process.cwd())))'`
+      and `cg.image.digest` to be unchanged, the build log to show cache hits up to the bundle
+      `COPY`, and `podman run --rm --entrypoint tail channelgate/runtime:latest -1 /opt/channelgate/bin/cg-egress-connect.mjs`
+      to print the added line. Pass: labels equal the daemon's expectation and only the bundle
+      layers rebuilt.
+- [ ] UNEXECUTED live `IMG-BUNDLE-02` (engine-independent). On a gateway at revision A with a
+      matching image, update (Settings → Update) to a revision B that differs from A only in
+      `src/mcp/egress-connect.js`. Expect `logs/update.log` to contain "Rebuilding the channel
+      image … bundle <old> → <new>", the update to finish `updated`, Settings → Container runtime
+      not to say "Image rebuild required", and a following update with no change to log "is
+      current". Then `git pull` a similar change by hand and restart without building: expect
+      "Image rebuild required; run Update to retry." in Settings → Container runtime and existing
+      channels still answering on the old image. Pass: the rebuild needs no `imageSpecVersion` bump.
+- [ ] UNEXECUTED live `IMG-BUNDLE-03` (Claude AND Codex). After `IMG-BUNDLE-02`, in a disposable
+      Worker channel with network on and an SSH host granted, ask "ssh to <host> and print
+      `hostname`". Expect the answer to arrive through `cg-egress-connect` from the rebuilt image
+      (the container recreated onto the new image ID). Pass: both engines answer.
+
 ## Everyone in a channel may change its runtime; only admins set the allow list (2026-11-21)
 
 Who may change a runtime and what the allow list admits are decided by the gateway before any
@@ -14991,8 +15049,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
    card in the original conversation, unchanged workspace/session identity and no proactive DM.
-   Click the button: require a large popup inside Teams with all six section buttons centered in
-   one horizontal row, General marked selected and its channel/session form already visible
+   Click the button: require a large full-width popup inside Teams with the six section buttons in
+   two columns (three rows of two), General marked ✓ selected and its channel/session form already visible
    without another click (desktop and narrow windows). Select every
    section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
    `/secrets` must open the popup on Variables. Navigate to Skills, then close/reopen the
@@ -15003,7 +15061,7 @@ case. Also run a group with an external member to check tenant/channel delivery 
    refuse without exposing any form in chat. Repeat on Teams desktop, web and mobile; record
    actual popup dimensions/layout and callbacks. No screenshot/fixture counts as a live pass.
 2. General: select engine, model and effort before saving; require exactly one Apply to channel
-   and one Apply to thread at the end of their runtime lists. Apply one scope and require its
+   and one Apply to thread, in the Save area at the end of the General section. Apply one scope and require its
    complete compatible triple to change, with the other scope and access settings unchanged.
    Invalid/missing values refuse all writes. Change the stored triple from another authorized
    card before submitting the first: require stale-form refusal, preserving the newer triple.
@@ -15026,6 +15084,9 @@ case. Also run a group with an external member to check tenant/channel delivery 
    while the roster/discovery request is held: require denial and no mutation. Large/over-budget
    rosters explicitly defer complete-list edits without dropping grants; former-member selections
    show a replacement warning before Apply.
+   (Variables, MCPs, Skills and Automations changes below are staged and saved with the section's
+   Apply to channel; the batch and thread-scope cases are in "Teams batch settings and thread
+   overrides".)
 4. Variables/MCPs: inside the popup rotate synthetic channel/personal values and (as an admin)
    organization values. Require blank/masked inputs after refresh, masked listing only, preserved
    Used-on-hosts unless explicitly replaced/cleared, and no raw values in card JSON or event logs.
@@ -15048,6 +15109,100 @@ case. Also run a group with an external member to check tenant/channel delivery 
 8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
    card placement and pass/fail for each case in the private registry through the personal identity.
    Any unexecuted, blocked or failed case remains pending acceptance; no release-readiness claim.
+
+## Teams batch settings and thread overrides (0.7.0)
+
+Regression (engine-independent unless noted; no live client):
+- [x] `test/teams-settings-batch.test.js`: every editable section ends with one Save area (Apply to
+      channel, Apply to thread, Discard), Resume has none, the card is full-width Adaptive Card 1.4
+      with ≤6 actions per action set; Variables stage across navigation and save only the chosen
+      scope, never echoing a value in the card, notice or event log; one value without a fixed
+      destination refuses the whole thread batch; Apply saves only the open section and Discard
+      drops only its own drafts; stale channel/thread baselines refuse without overwriting; revoked
+      access refuses before any write; MCP connection overrides go to the thread masked and an
+      invalid Make pair saves nothing; Cloud MCP staging is admin-only; Follow channel clears one
+      thread section; a thread adds shared skills only and cannot remove a channel skill or add a
+      personal one; General Apply to channel saves runtime and access together, Apply to thread
+      refuses access edits, a non-manager's or demoted manager's batch saves neither half; General
+      edits survive navigation and are discarded on a concurrent change; automations apply as one
+      batch and thread scope only for loops bound to that exact thread.
+- [x] `test/thread-settings.test.js`: write-time refusal of readable/approval-only thread values,
+      reserved names, other providers and runtime-posture fields; whole-section compare-and-swap
+      with value-free change events; thread placeholders bound to (channel, thread) that only that
+      thread resolves while siblings and other channels keep the channel value; withheld (not
+      backfilled) on bridge, host and target-less spawns; hiding a channel variable per thread;
+      proxy swaps only while that thread is the only live work (another thread, an unthreaded job,
+      a review, any SSH session pause it); removal revokes at once even without the listener;
+      thread skills/Cloud MCP only join `effective` grants and never a personal skill.
+- [x] `test/thread-settings-run.test.js` (Claude and Codex through `runMessage` on a proxy-mode fake
+      runtime): the thread's variable reaches its own turn as a `thread` placeholder and a sibling
+      thread gets the channel's; no value in env, argv, prompt, streamed or final answer or event
+      log; a background agent resolves only its signed launching thread and an unrelated settings
+      thread is refused; the capability's `settingsThreadKey` must prefix the run's own key and is
+      forced onto background launches; shell jobs resolve the source thread at their own spawn
+      (including nested agent jobs) and honour a removal made before that spawn.
+
+Live acceptance — all UNEXECUTED. Fixtures: a disposable registered Teams channel with two
+threads A and B, a group chat and a personal chat with the bot; an approved member (not a
+manager), a channel manager and an organization admin; the channel in Worker + Auto mode with
+Allow network ON, the egress proxy running (`containerEgressMode` proxy) and strict secrets on;
+a free test API reachable over HTTPS (for example `httpbin.org`); synthetic values only:
+channel `HTTPBIN_TOKEN=channel-xxxx` and thread value `thread-yyyy`, both "Used on hosts"
+`httpbin.org`; one shared catalog skill `qa-thread-skill`; one channel cron task and a `/loop`
+started in thread A. Run every client case on Teams desktop, web and mobile separately, and every
+engine case once with the channel on Claude and once on Codex.
+
+- [ ] UNEXECUTED (client, engine-independent): in thread A send `@bot /settings`, open the window.
+      Require a full-width card, compact header naming the conversation and "opened from a thread",
+      two-column section buttons, grouped panels and one Save area per editable section with
+      Apply to channel, Apply to thread, Discard changes (Variables/MCPs/Skills also Follow
+      channel); Resume has no Save area; no row shows more than six buttons (mobile included).
+- [ ] UNEXECUTED (client): Variables → add `HTTPBIN_TOKEN` = `thread-yyyy`, Used on hosts
+      `httpbin.org`, Add variable. Go to Skills, stage Activate on `qa-thread-skill`, go back:
+      require "Pending, not saved yet: Skills (1)" and Variables still listing the pending set
+      with the value hidden. Apply to thread on Variables: require the notice "1 Variables change
+      saved to this thread", the row "This thread · HTTPBIN_TOKEN · ••••" and Skills still pending.
+      Discard Skills: nothing saved there. The value never appears in the card or chat.
+- [ ] UNEXECUTED (client): stage `DB_PASSWORD` = `x-pass-1234` plus another valid variable, Apply
+      to thread: require "Not saved: DB_PASSWORD needs a fixed destination … Nothing was written."
+      and neither variable saved; Apply to channel then saves both to the channel.
+- [ ] UNEXECUTED (client): open two windows on thread A; stage a variable in window 1, apply a
+      different variable from window 2, then Apply to thread in window 1: require "changed while
+      you were editing" and window 2's change intact.
+- [ ] UNEXECUTED (client): as the non-manager, General shows no access controls; as the manager,
+      change Mode and Allow network plus the channel model, Apply to thread: refused, nothing
+      saved; Apply to channel: runtime and access saved together. Demote the manager with the
+      window open and Apply to channel again: refused, neither half saved.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "Call https://httpbin.org/bearer with
+      Authorization: Bearer $HTTPBIN_TOKEN and tell me the JSON `token` field". Require the
+      answer to show `[REDACTED]` (or the agent to refuse to print it) and the gateway `egress`
+      event to show `HTTPBIN_TOKEN` swapped with scope `thread`. Ask the same in thread B:
+      require scope `channel`. In neither answer may `thread-yyyy` appear.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "run this in the background: every 10 seconds
+      for 3 minutes, curl -s -o /dev/null -w '%{http_code}\n' -H \"Authorization: Bearer
+      $HTTPBIN_TOKEN\" https://httpbin.org/bearer". While it runs, send "@bot say hi" in thread B.
+      Require the job's egress events to show `HTTPBIN_TOKEN` swapped with scope `thread` before
+      and after thread B's turn and refused `another-thread-active` (403 in the job output) while
+      it ran — never swapped with the channel value.
+- [ ] UNEXECUTED (Claude AND Codex): in thread A ask "launch a background agent that calls
+      https://httpbin.org/bearer with $HTTPBIN_TOKEN and reports the status". Require the agent's
+      swap scope `thread` (thread A's value); repeat from thread B: scope `channel`.
+- [ ] UNEXECUTED (Claude AND Codex): Variables → Stage removal of thread A's `HTTPBIN_TOKEN`,
+      Apply to thread, then immediately re-run the bearer request in thread A: require it to run
+      with the channel value (scope `channel`) or, if a turn kept the old placeholder, a refusal —
+      never the removed thread value. Hide the channel `HTTPBIN_TOKEN` in thread A: the variable
+      is absent in thread A and still present in thread B.
+- [ ] UNEXECUTED (Claude AND Codex): Skills → stage Activate `qa-thread-skill`, Apply to thread;
+      in thread A ask "which skills do you have?" — listed; thread B — not listed. Stage Deactivate
+      on a channel skill and Apply to thread: refused "only remove skills it added".
+- [ ] UNEXECUTED (Claude AND Codex): MCPs → stage Disconnect Composio, Apply to thread; in thread A
+      require no `composio-agent` tools, in thread B the channel's.
+- [ ] UNEXECUTED (client): Automations → stage pause of the channel cron task and stop of thread
+      A's loop; Apply to thread: refused "runs in the channel"; Undo the cron change, Apply to
+      thread: the loop stops, the cron task is untouched. From thread B, the loop's Apply to thread
+      is refused.
+Record client, conversation kind, engine, actions, observed card layout and egress evidence for
+each case in the private registry. Any unexecuted, blocked or failed case remains pending.
 
 ## Slack Secrets tab removal and form navigation (2026-09-09)
 

@@ -134,10 +134,11 @@ test("the forwarder imports node built-ins only (it is copied verbatim into the 
   for (const spec of specifiers) assert.match(spec, /^node:/, `${spec} is not a node built-in`);
 });
 
-test("the image build stages the forwarder where cg-init starts it", () => {
-  const build = readFileSync(new URL("../scripts/build-image.mjs", import.meta.url), "utf8");
-  assert.equal(/const EGRESS_FORWARDER_SOURCE = "([^"]+)"/.exec(build)[1], "src/mcp/egress-forwarder.js");
-  assert.equal(/const EGRESS_FORWARDER_DEST = "([^"]+)"/.exec(build)[1], "bin/cg-egress.mjs");
+test("the image build stages the forwarder where cg-init starts it", async () => {
+  const { EGRESS_FORWARDER, VERBATIM_HELPERS } = await import("../src/runtimes/container/image-bundle.js");
+  assert.equal(EGRESS_FORWARDER.source, "src/mcp/egress-forwarder.js");
+  assert.equal(EGRESS_FORWARDER.dest, "bin/cg-egress.mjs");
+  assert.ok(VERBATIM_HELPERS.includes(EGRESS_FORWARDER), "scripts/build-image.mjs stages every verbatim helper");
   const init = readFileSync(new URL("../containers/bin/cg-init", import.meta.url), "utf8");
   assert.match(init, /"\$\{CG_EGRESS:-\}" = "proxy"/, "started only when the daemon created the container in proxy mode");
   assert.match(init, /node \/opt\/channelgate\/bin\/cg-egress\.mjs [^\n]*2>>\/run\/cg\/egress\.log &/, "in the background, its stderr kept on the /run tmpfs");

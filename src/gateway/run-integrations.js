@@ -53,6 +53,10 @@ export async function resolveComposioRuntime({
   channelToken = "",
   isDM = false,
   principalTrusted = true,
+  // A thread that replaced or disconnected the conversation's Composio account (thread-settings.js).
+  // SDK mode has no per-thread account, so the shared identity is withheld for that thread rather
+  // than silently acting as the conversation's.
+  threadComposioOverride = false,
   resolveSdk = resolveSdkSession,
 } = {}) {
   if (clean || mode !== "sdk") {
@@ -85,7 +89,7 @@ export async function resolveComposioRuntime({
       manageConnections: true,
     }) : null,
     // Same rule as personal mode: a DM has no shared audience, so no channel session is minted.
-    isDM
+    isDM || threadComposioOverride
       ? null
       : resolveSdk({
         workspaceId,
@@ -104,8 +108,8 @@ export async function resolveComposioRuntime({
       : userResult.status === "fulfilled"
       ? { token: "", source: "sdk-user", endpoint: userResult.value }
       : { token: "", source: "sdk-unavailable", endpoint: null },
-    shared: isDM
-      ? { token: "", source: "none-dm", endpoint: null }
+    shared: isDM || threadComposioOverride
+      ? { token: "", source: isDM ? "none-dm" : "none-thread", endpoint: null }
       : sharedResult.status === "fulfilled"
         ? { token: "", source: "sdk-channel", endpoint: sharedResult.value }
         : { token: "", source: "sdk-unavailable", endpoint: null },
@@ -146,6 +150,7 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     channelToken: meta.composioToken,
     userToken: userIdentity.composioToken,
     isDM: Boolean(meta.isDM || meta.type === "im"),
+    threadComposioOverride: meta.threadComposioOverride === true,
   });
   const composioUserToken = composio.user.token;
   const composioToken = composio.shared.token;

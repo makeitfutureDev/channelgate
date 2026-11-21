@@ -19,6 +19,31 @@
   the card or ask again; Microsoft Graph's `validationToken` is echoed only while the gateway is
   creating a subscription, without a notification body, for Graph's own characters, as
   `text/plain; charset=utf-8` with nosniff and no-store — any other request gets `400`.
+- Teams settings now collect your edits and save each section at once. General, Variables, MCPs,
+  Skills and Automations end with one **Apply to channel**, **Apply to thread** and **Discard**;
+  Apply saves only that section, pending changes in other sections stay until you apply or
+  discard them, and nothing is written if any part is invalid or someone changed it meanwhile
+  (the window says why). General saves the channel's runtime and access together. **Apply to
+  thread** gives the thread its own settings without touching the channel or other threads:
+  variables (always hidden behind the egress proxy, on fixed hosts, and only while that thread is
+  the only work in the container), its own or no Composio/Make connection, and extra skills or
+  Cloud MCPs. Background agents and jobs launched from the thread use them too. Thread
+  automations are limited to loops running in that thread. The window has a new full-width layout
+  with two-column navigation. Google Chat and Slack settings are unchanged.
+- Dependencies: `hono` (pulled in by `@modelcontextprotocol/sdk`) moves from 4.13.14 to 4.13.19 in
+  the lockfile, clearing GHSA-4m76-xfj5-7975 (`mount()` middleware bypass) and the four other
+  advisories for `hono` ≤ 4.13.15. ChannelGate was not exposed: it reaches `hono` only through the
+  SDK's Node request adapter for the skills MCP endpoint and uses none of the affected router,
+  `mount()`, `css`, `csrf()` or `validator` features. `npm audit --omit=dev` reports no
+  vulnerabilities.
+- An update that changes a file the channel image copies in from `src/` — the MCP socket bridge,
+  the egress forwarder, `cg-egress-connect`, the Codex secret-env bridge, the Claude Stop hook or
+  a module they import — now rebuilds the image by itself, with no `imageSpecVersion` bump. The
+  image carries a new `cg.image.bundle` label for those files; Settings → Container runtime shows
+  "Image rebuild required" while it does not match. A helper-only rebuild reuses the cached
+  toolchain layers. **After a manual `git pull` that touches one of these files, run
+  `npm run build:image`.** Images built before this release have no such label and are rebuilt
+  once, by the update that brings it.
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

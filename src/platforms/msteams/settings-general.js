@@ -117,7 +117,7 @@ export function licenseStepRows(ui, prefix, picker) {
 export const hasLicenseStep = meta => selectableHarnesses(meta).some(harness => selectableLicenses(harness, meta).length > 1);
 export const loadLabel = meta => hasLicenseStep(meta) ? 'Load licenses and models' : 'Load models';
 
-function runtimeRows(scope, snapshot, locked, ui, meta) {
+function runtimeRows(scope, snapshot, locked, ui, meta, { batch = false } = {}) {
   const body = [];
   const models = modelsForEngine(snapshot.engine);
   const efforts = [...new Set([
@@ -142,34 +142,177 @@ function runtimeRows(scope, snapshot, locked, ui, meta) {
       : scope === 'thread' ? 'Follow compatible channel effort / engine default' : 'Engine default';
     body.push(ui.choice(`${scope}_${field}`, field[0].toUpperCase() + field.slice(1), selected || RUNTIME_DEFAULT_VALUE, [defaultChoice(inherited), ...choices]));
   }
-  body.push(ui.buttons([ui.execute(scope === 'channel' ? 'Apply to channel' : 'Apply to thread', 'settings.runtime.apply', { scope })]));
+  // Batch (Teams) cards save every scope from the one Save area at the end of the section.
+  if (!batch) body.push(ui.buttons([ui.execute(scope === 'channel' ? 'Apply to channel' : 'Apply to thread', 'settings.runtime.apply', { scope })]));
   return body;
+}
+
+// A batch card's captured model/effort choices for one scope, laid over what it shows. Kept only
+// while they are still offered for the harness on the card.
+function capturedRuntime(ctx, scope, snapshot) {
+  const inputs = ctx.state.generalDraft?.inputs || {};
+  const values = { ...snapshot.values };
+  const models = modelsForEngine(snapshot.engine).map(item => item.value);
+  const model = inputs[`${scope}_model`];
+  if (model !== undefined) values.model = model === RUNTIME_DEFAULT_VALUE ? '' : models.includes(model) || model === snapshot.values.model ? model : values.model;
+  const effort = inputs[`${scope}_effort`];
+  if (effort !== undefined) values.effort = effort === RUNTIME_DEFAULT_VALUE ? '' : effortsForModel(snapshot.engine, values.model || snapshot.model).includes(effort) ? effort : values.effort;
+  return { ...snapshot, values };
 }
 
 function runtimeDisplay(ctx, scope, snapshot, locked) {
   const draft = ctx.state.runtimeDrafts?.[scope];
-  if (!draft) return snapshot;
+  if (!draft) return ctx.state.generalDraft ? capturedRuntime(ctx, scope, snapshot) : snapshot;
   const shown = draft.values.engine || snapshot.inheritedEngine;
   if (draft.locked !== locked || draft.inheritedEngine !== snapshot.inheritedEngine ||
     SELECTION_FIELDS.some(field => draft.baseline[field] !== snapshot.values[field]) || !usableHere(ctx.meta, shown)) {
     delete ctx.state.runtimeDrafts[scope];
     return snapshot;
   }
-  return { ...snapshot, engine: shown, values: draft.values };
+  return ctx.state.generalDraft ? capturedRuntime(ctx, scope, { ...snapshot, engine: shown, values: draft.values }) : { ...snapshot, engine: shown, values: draft.values };
+}
+
+// ── Batch (Teams) General: one Save area for runtime AND access ──────────────────────────────
+// The normalized value an access control shows for `field`, from stored meta.
+function accessValueOf(meta, field, members = null) {
+  const effective = effectiveMeta(meta);
+  if (namedFields.includes(field)) {
+    const ids = Array.isArray(effective[field]) ? effective[field] : [];
+    return [...new Set(members ? ids.filter(id => members.some(member => member.id === id)) : ids)].sort().join(',');
+  }
+  if (field === 'mode') return channelMode(effective);
+  if (field === 'access') return effective.access || 'approved';
+  if (field === 'manageAccess') return effective.manageAccess || 'admins';
+  return effective[field] ? 'on' : 'off';
+}
+function readAccessInput(field, raw) {
+  if (typeof raw !== 'string' || raw.length > (namedFields.includes(field) ? 100 * 257 : 128)) throw new Error('Select a valid access setting.');
+  if (accessChoices[field] && !accessChoices[field].some(choice => choice.value === raw)) throw new Error('Invalid access setting.');
+  if (flagFields.includes(field) && !['on', 'off'].includes(raw)) throw new Error('Invalid access option.');
+  if (!namedFields.includes(field)) return raw;
+  const ids = [...new Set(raw.split(',').map(id => id.trim()).filter(Boolean))].sort();
+  if (ids.length > 100) throw new Error('Choose up to 100 current members.');
+  return ids.join(',');
+}
+// Access controls submitted with a batch Apply that differ from what the card showed.
+function submittedAccessChanges(ctx, data) {
+  const baseline = ctx.state.accessBaseline || {};
+  const changes = {};
+  for (const key of Object.keys(data).filter(item => item.startsWith('access_'))) {
+    const field = key.slice('access_'.length);
+    if (!Object.hasOwn(baseline, field)) throw new Error('That access setting was not on this card. Reopen General.');
+    const value = readAccessInput(field, data[key]);
+    if (value !== baseline[field]) changes[field] = value;
+  }
+  return changes;
+}
+// The channel-meta patch for a batch of access changes, built against the record being replaced.
+function accessBatchPatch(ctx, fresh, current, changes, members) {
+  const fields = Object.keys(changes);
+  if (!fields.length) return {};
+  if (current.isDM) {
+    assertCurrentAuthorized(fresh, current);
+    if (fields.some(field => !['mode', 'autoMode', 'cleanMode', 'skillRuntimeSwap'].includes(field))) throw new Error('This setting is managed by the DM template.');
+  } else assertManager(fresh, current);
+  for (const field of fields) {
+    if (accessValueOf(current, field, namedFields.includes(field) ? members : null) !== ctx.state.accessBaseline[field]) {
+      throw new Error('These access settings changed while you were editing. Discard General changes to load the current values.');
+    }
+  }
+  for (const field of namedFields.filter(item => Object.hasOwn(changes, item))) {
+    const ids = changes[field].split(',').filter(Boolean);
+    if (ids.some(id => !members.some(member => member.id === id && (fresh.isHumanMember ? fresh.isHumanMember(member) : !member.id.startsWith('28:') && member.id !== fresh.connector?.botId)))) {
+      throw new Error('Named users must still be current human conversation members.');
+    }
+  }
+  const baseline = effectiveMeta(current);
+  const options = { ...(changes.mode ? { mode: changes.mode } : {}),
+    ...Object.fromEntries(['autoMode', 'cleanMode'].filter(field => Object.hasOwn(changes, field)).map(field => [field, changes[field] === 'on'])) };
+  const patch = Object.keys(options).length ? modeSettingsPatch(baseline, options, { isAdminUser: fresh.userIsAdmin, canEnableAdmin: !current.isDM || fresh.userIsAdmin }) : {};
+  for (const [field, value] of Object.entries(changes)) {
+    if (['mode', 'autoMode', 'cleanMode'].includes(field)) continue;
+    patch[field] = namedFields.includes(field) ? value.split(',').filter(Boolean) : flagFields.includes(field) ? value === 'on' : value;
+  }
+  return current.isDM && ['user', 'admin'].includes(current.template) ? { ...baseline, ...patch, template: 'custom' } : patch;
+}
+
+const RUNTIME_INPUTS = ['engine', 'license', 'also', 'model', 'effort'];
+// The runtime inputs of one scope as the card showed them (recorded at render), for "changed?".
+function runtimeChanged(ctx, scope, data) {
+  if (ctx.state.runtimeDrafts?.[scope]) return true;
+  const shown = ctx.state.generalRendered?.[scope] || {};
+  return RUNTIME_INPUTS.some(field => {
+    const key = `${scope}_${field}`;
+    if (!Object.hasOwn(data, key)) return false;
+    const sent = typeof data[key] === 'string' ? data[key] : '';
+    return field === 'also' ? sent.split(',').filter(Boolean).sort().join(',') !== String(shown[field] || '').split(',').filter(Boolean).sort().join(',') : sent !== String(shown[field] ?? '');
+  });
+}
+
+// Navigating away from General keeps its edits pending (validated, never authority): the model,
+// effort and access choices, and — through the same reload a Load button does — a changed harness.
+export async function captureGeneralDraft(data, ctx) {
+  const shown = ctx.state.generalRendered;
+  if (!shown) return;
+  const inputs = {};
+  for (const scope of ['channel', 'thread']) {
+    if (!shown[scope]) continue;
+    const harness = data[`${scope}_engine`], license = data[`${scope}_license`];
+    if ((typeof harness === 'string' && harness !== shown[scope].engine) || (typeof license === 'string' && license !== String(shown[scope].license || ''))) {
+      try { await stageRuntimeDraft(ctx, scope, data, () => ''); } catch { /* an unusable harness is simply not kept */ }
+    }
+    for (const field of ['model', 'effort']) {
+      const value = data[`${scope}_${field}`];
+      if (typeof value === 'string' && value.length <= 128 && value !== String(shown[scope][field] ?? '')) inputs[`${scope}_${field}`] = value;
+    }
+  }
+  for (const key of Object.keys(data).filter(item => item.startsWith('access_'))) {
+    const field = key.slice('access_'.length);
+    if (!Object.hasOwn(ctx.state.accessBaseline || {}, field)) continue;
+    let value;
+    try { value = readAccessInput(field, data[key]); } catch { continue; }
+    if (value !== ctx.state.accessBaseline[field]) inputs[key] = value;
+  }
+  const runtimeKept = Object.keys(ctx.state.runtimeDrafts || {}).length;
+  if (!Object.keys(inputs).length && !runtimeKept) { delete ctx.state.generalDraft; return; }
+  ctx.state.generalDraft = { inputs, baseline: { runtime: structuredClone(ctx.state.runtimeBaseline || {}), access: { ...(ctx.state.accessBaseline || {}) } } };
+}
+export function generalPending(ctx) {
+  return Object.keys(ctx.state.generalDraft?.inputs || {}).length + Object.keys(ctx.state.runtimeDrafts || {}).length;
+}
+function clearGeneralDraft(ctx, scope = '') {
+  if (!scope) { delete ctx.state.generalDraft; delete ctx.state.runtimeDrafts; return; }
+  if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];
+  const inputs = ctx.state.generalDraft?.inputs;
+  if (!inputs) return;
+  for (const key of Object.keys(inputs)) if (key.startsWith(`${scope}_`) || (scope === 'channel' && key.startsWith('access_'))) delete inputs[key];
+  if (!Object.keys(inputs).length) delete ctx.state.generalDraft;
 }
 
 // `part` slices the page the way Slack's modal does: 'agent' is the runtime, the mode with its
 // options, the network line and the VPN; 'access' is who may use and manage the conversation and
 // the named people. Without one (Teams) the page is everything, as before.
-export async function renderGeneral(ctx, ui, { part = '' } = {}) {
+export async function renderGeneral(ctx, ui, { part = '', batch = false } = {}) {
   const { channel, thread, locked } = await generalRuntimeScopes(ctx);
-  ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
+  const runtimeNow = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
+  // A kept draft was staged against what the card showed then. Anything changed since (another
+  // person, card or turn) drops it rather than letting Apply overwrite the newer value.
+  if (batch && ctx.state.generalDraft && JSON.stringify(ctx.state.generalDraft.baseline.runtime) !== JSON.stringify(runtimeNow)) {
+    clearGeneralDraft(ctx);
+    ctx.state.notice = 'General settings changed meanwhile, so your pending General changes were discarded. Nothing was saved.';
+  }
+  ctx.state.runtimeBaseline = runtimeNow;
+  if (batch) ctx.state.accessBaseline = {};
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
   const agent = part !== 'access', access = part !== 'agent';
   const steps = hasLicenseStep(ctx.meta)
     ? 'Licenses and models are shown only for the selected harness. After changing Harness or License, use Load licenses and models, then choose model and effort and Apply for that scope.'
     : 'Models are shown only for the selected harness. After changing Harness, use Load models, then choose model and effort and Apply for that scope.';
-  const body = !agent ? [] : [ui.text(`${steps} Channel defaults affect new sessions; thread overrides apply to this session.`), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui, ctx.meta)];
+  const shownChannel = runtimeDisplay(ctx, 'channel', channel, locked);
+  const shownThread = thread ? runtimeDisplay(ctx, 'thread', thread, locked) : null;
+  const intro = batch ? `${steps.replace(/ and Apply for that scope\.$/, '.')} Then save General once below: Apply to channel saves the channel defaults and access; Apply to thread saves this session's runtime.`
+    : `${steps} Channel defaults affect new sessions; thread overrides apply to this session.`;
+  const body = !agent ? [] : [ui.text(intro), ui.heading('Channel defaults'), ...runtimeRows('channel', shownChannel, locked, ui, ctx.meta, { batch })];
   if (agent && ctx.meta.codexAuthSource === 'channel') {
     const login = await channelCodexLoginStatus(ctx.channelId).catch(error => {
       if (error.code === "enterprise_required") return { enterpriseRequired: true };
@@ -178,7 +321,7 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
     body.push(ui.text(`Channel Codex login: ${login.enterpriseRequired ? 'Enterprise required; switch to the gateway login in admin Settings to resume runs' : login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
   }
   if (agent && thread) {
-    body.push(ui.heading('Current session'), ...runtimeRows('thread', runtimeDisplay(ctx, 'thread', thread, locked), locked, ui, ctx.meta));
+    body.push(ui.heading('Current session'), ...runtimeRows('thread', shownThread, locked, ui, ctx.meta, { batch }));
     if (thread.sessionEngine) body.push(ui.text(`This session already runs on ${describe(ctx.meta, thread.sessionEngine, thread.pool)}. A channel default does not replace its live engine; choose a harness here to switch it.`));
     body.push(ui.buttons([ui.execute('Follow channel default', 'settings.thread.reset', {}, 'none')]));
   }
@@ -190,7 +333,10 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
     for (const field of fields) {
       const value = field === 'mode' ? channelMode(meta) : field === 'access' ? meta.access || 'approved' : field === 'manageAccess' ? meta.manageAccess || 'admins' : meta[field] ? 'on' : 'off';
       const choices = accessChoices[field] || [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }];
-      body.push(ui.choice(`access_${field}`, labels[field], value, choices), ui.buttons([ui.execute(`Apply ${labels[field].split(' — ')[0]}`, 'settings.access', { field })]));
+      if (batch) {
+        ctx.state.accessBaseline[field] = value;
+        body.push(ui.choice(`access_${field}`, labels[field], ctx.state.generalDraft?.inputs?.[`access_${field}`] ?? value, choices));
+      } else body.push(ui.choice(`access_${field}`, labels[field], value, choices), ui.buttons([ui.execute(`Apply ${labels[field].split(' — ')[0]}`, 'settings.access', { field })]));
     }
     if (!ctx.meta.isDM && access) {
       if (part) body.push(ui.heading('People'));
@@ -204,18 +350,41 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
             continue;
           }
           if (selected.some(id => !members.some(member => member.id === id))) namedRows.push(ui.text(`${labels[field]} includes former members. Applying this field replaces it with the current members selected below.`));
-          namedRows.push({ type: 'Input.ChoiceSet', id: `access_${field}`, label: labels[field], isMultiSelect: true, style: 'compact', value: selected.filter(id => members.some(member => member.id === id)).join(','), choices: members.map(member => ({ title: String(member.name || member.email || member.id).slice(0, 80), value: member.id })) });
-          namedRows.push(ui.buttons([ui.execute(`Apply ${labels[field]}`, 'settings.access', { field })]));
+          const current = [...new Set(selected.filter(id => members.some(member => member.id === id)))].sort().join(',');
+          if (batch) ctx.state.accessBaseline[field] = current;
+          namedRows.push({ type: 'Input.ChoiceSet', id: `access_${field}`, label: labels[field], isMultiSelect: true, style: 'compact', value: (batch && ctx.state.generalDraft?.inputs?.[`access_${field}`]) ?? current, choices: members.map(member => ({ title: String(member.name || member.email || member.id).slice(0, 80), value: member.id })) });
+          if (!batch) namedRows.push(ui.buttons([ui.execute(`Apply ${labels[field]}`, 'settings.access', { field })]));
         }
         if (Buffer.byteLength(JSON.stringify([...body, ...namedRows])) <= MAX_GENERAL_BODY_BYTES) body.push(...namedRows);
-        else body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
+        else if (batch) {
+          for (const field of namedFields) delete ctx.state.accessBaseline[field];
+          body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
+        } else body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
       } catch { body.push(ui.text('Named users cannot be edited until current conversation membership is available.')); }
     }
   } else if (part === 'access') {
     const named = field => accessChoices[field].find(item => item.value === (meta[field] || (field === 'access' ? 'approved' : 'admins')))?.label;
     body.push(ui.text(`${labels.access}: ${named('access')}\n${labels.manageAccess}: ${named('manageAccess')}`));
   } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}${meta.skillRuntimeSwap ? ' · Skill model swap' : ''}. Only current managers can change channel access settings.`));
-  if (!agent) return { body, actions: [] };
+  if (batch) {
+    // A kept access draft whose field changed since it was staged is dropped, like runtime above.
+    const baseline = ctx.state.generalDraft?.baseline?.access || {};
+    if (Object.keys(ctx.state.generalDraft?.inputs || {}).some(key => key.startsWith('access_') && baseline[key.slice(7)] !== ctx.state.accessBaseline[key.slice(7)])) {
+      clearGeneralDraft(ctx);
+      ctx.state.notice = 'Access settings changed meanwhile, so your pending General changes were discarded. Nothing was saved.';
+      return renderGeneral(ctx, ui, { part, batch });
+    }
+    const rendered = scope => scope && { engine: scope.values.engine ? harnessOf(scope.values.engine) : RUNTIME_DEFAULT_VALUE, license: '', also: '',
+      model: scope.values.model || RUNTIME_DEFAULT_VALUE, effort: scope.values.effort || RUNTIME_DEFAULT_VALUE };
+    ctx.state.generalRendered = { channel: rendered(shownChannel), ...(shownThread ? { thread: rendered(shownThread) } : {}) };
+    for (const [scope, snapshot] of [['channel', shownChannel], ['thread', shownThread]]) {
+      if (!snapshot?.values.engine) continue;
+      const picker = licensePicker({ harness: harnessOf(snapshot.values.engine), meta: ctx.meta, engine: snapshot.values.engine, pool: snapshot.values.licensePool });
+      if (picker.show) Object.assign(ctx.state.generalRendered[scope], { license: picker.selected, also: picker.selected !== LICENSE_POOL_ANY ? picker.also.join(',') : '' });
+    }
+  }
+  const save = batch ? { title: 'General', verb: 'settings.runtime.apply', discard: 'settings.general.discard', data: {}, pending: generalPending(ctx), thread: Boolean(thread), follow: false } : undefined;
+  if (!agent) return { body, actions: [], ...(save ? { save } : {}) };
   body.push(ui.text(networkLabel(meta, { detail: true })));
   let vpn = unconfiguredChannelVpnStatus(ctx.meta);
   if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this conversation.' }; } }
@@ -223,8 +392,9 @@ export async function renderGeneral(ctx, ui, { part = '' } = {}) {
   if (vpn.configured && manager && !vpn.busy && vpn.state !== 'unavailable') {
     const enabled = !(vpn.enabled || vpn.running || ['on', 'starting'].includes(vpn.state));
     if (!enabled || (vpn.allowNetwork && !vpn.missingSecrets?.length && vpn.state !== 'stopping')) body.push(ui.buttons([ui.execute(enabled ? 'Enable VPN' : 'Disable VPN', 'settings.vpn', { enabled }, 'none')]));
+    if (batch) body.push(ui.text('VPN buttons act immediately; they are not part of the pending General changes.'));
   }
-  return { body, actions: [] };
+  return { body, actions: [], ...(save ? { save } : {}) };
 }
 
 function assertCurrentAuthorized(ctx, meta = ctx.meta) {
@@ -360,7 +530,90 @@ async function stageRuntimeDraft(ctx, scope, data, notice) {
   return true;
 }
 
+// The channel half of a runtime Apply: admission (async) before the write, then the patch against
+// the record being replaced.
+async function planChannelRuntime(ctx, input) {
+  await admitSubmittedHarness(input.harness, ctx.meta, ctx.channelId);
+  return admitSelection(submittedSelection(input, { meta: ctx.meta, own: ownChannel(ctx.meta), above: aboveChannel(ctx.meta) }), ctx.meta, ctx.channelId);
+}
+function channelRuntimePatch(ctx, data, input, planned, current) {
+  const own = ownChannel(current);
+  assertRuntimeBaseline(ctx, 'channel', own, false);
+  const selection = sameSelection(planned, submittedSelection(input, { meta: current, own, above: aboveChannel(current) }));
+  const next = combinedRuntimeSelection(data, 'channel', current, parentEngine(current), selection.engine);
+  return { ...next, licensePool: selection.licensePool };
+}
+async function applyThreadRuntime(ctx, data, input) {
+  const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
+  try {
+    const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
+    const [engine, model, effort, pool] = await Promise.all([
+      getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getThreadLicensePool(ctx.entry.slug, session),
+    ]);
+    const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
+    const locked = false, own = ownThread(engine, model, effort, pool);
+    assertRuntimeBaseline(ctx, 'thread', own, locked);
+    // The roster check above can outlive a turn that creates/replaces this live session.
+    const mintedEngine = await getSessionEngine(ctx.entry.slug, session);
+    const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
+    await admitSubmittedHarness(input.harness, latest.meta, ctx.channelId);
+    const selection = submittedSelection(input, { meta: latest.meta, own, above: aboveThread(latest.meta) });
+    const next = combinedRuntimeSelection(data, 'thread', latest.meta, inheritedEngine, selection.engine);
+    await admitSelection(next, latest.meta, ctx.channelId);
+    setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, licensePool: selection.licensePool }, { expected: { engine, model, effort } });
+  } finally { release(); }
+}
+
+// Batch Apply (Teams): Apply to channel saves the channel runtime AND the access controls in one
+// write; Apply to thread saves this session's runtime and refuses changed access controls, which
+// belong to the whole conversation. Only what differs from the card is written.
+async function applyGeneralBatch(data, ctx) {
+  const { scope } = data;
+  if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
+  const access = submittedAccessChanges(ctx, data);
+  const runtime = runtimeChanged(ctx, scope, data);
+  if (scope === 'thread') {
+    requireSession(ctx);
+    if (Object.keys(access).length) throw new Error('Access settings apply to the whole conversation. Use Apply to channel, or discard General changes before applying to the thread.');
+  }
+  if (!runtime && !Object.keys(access).length) {
+    ctx.state.tab = 'general'; ctx.state.notice = `No General changes for ${scope === 'thread' ? 'this thread' : 'the channel'}.`;
+    return true;
+  }
+  const input = readSelectionInput(data, scope);
+  if (runtime && staleLicenseStep(input)) {
+    return stageRuntimeDraft(ctx, scope, data, () => 'Harness changed, so its licenses and models were loaded. Nothing was saved yet — check the selection, then Apply.');
+  }
+  if (scope === 'thread') await applyThreadRuntime(ctx, data, input);
+  else {
+    let members = [];
+    if (namedFields.some(field => Object.hasOwn(access, field))) {
+      const fresh = await ctx.authorize(); assertManager(fresh, fresh.meta);
+      members = await roster(fresh);
+    }
+    const planned = runtime ? await planChannelRuntime(ctx, input) : null;
+    ctx.meta = await ctx.patch((current, fresh) => {
+      assertCurrentAuthorized(fresh, current);
+      const accessPatch = accessBatchPatch(ctx, fresh, current, access, members);
+      return { ...accessPatch, ...(runtime ? channelRuntimePatch(ctx, data, input, planned, current) : {}) };
+    });
+  }
+  clearGeneralDraft(ctx, scope);
+  ctx.state.tab = 'general';
+  ctx.state.notice = `${scope === 'channel' ? `Channel ${[runtime ? 'defaults' : '', Object.keys(access).length ? 'access' : ''].filter(Boolean).join(' and ')}` : 'Thread overrides'} saved. Applies to the next turn.`;
+  await logEvent(scope === 'channel' ? 'channel_runtime_updated' : 'thread_runtime_updated', {
+    channel: ctx.channelId, slug: ctx.entry.slug, author: ctx.ownerId, fields: [...(runtime ? SELECTION_FIELDS : []), ...Object.keys(access)], via: ctx.source || 'teams_settings',
+  });
+  return true;
+}
+
 export async function handleGeneral(action, data, ctx, _ui) {
+  if (action === 'settings.general.discard') {
+    clearGeneralDraft(ctx);
+    ctx.state.tab = 'general'; ctx.state.notice = 'Pending General changes discarded. Other sections keep theirs.';
+    return true;
+  }
+  if (action === 'settings.runtime.apply' && ctx.batch) return applyGeneralBatch(data, ctx);
   if (action === 'settings.runtime.models') {
     const { scope } = data;
     if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
@@ -378,37 +631,12 @@ export async function handleGeneral(action, data, ctx, _ui) {
       return stageRuntimeDraft(ctx, scope, data, () => 'Harness changed, so its licenses and models were loaded. Nothing was saved yet — check the selection, then Apply.');
     }
     if (scope === 'channel') {
-      await admitSubmittedHarness(input.harness, ctx.meta, ctx.channelId);
-      const planned = await admitSelection(submittedSelection(input, { meta: ctx.meta, own: ownChannel(ctx.meta), above: aboveChannel(ctx.meta) }), ctx.meta, ctx.channelId);
+      const planned = await planChannelRuntime(ctx, input);
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
-        const locked = false;
-        const own = ownChannel(current);
-        assertRuntimeBaseline(ctx, scope, own, locked);
-        const selection = sameSelection(planned, submittedSelection(input, { meta: current, own, above: aboveChannel(current) }));
-        const next = combinedRuntimeSelection(data, scope, current, parentEngine(current), selection.engine);
-        return { ...next, licensePool: selection.licensePool };
+        return channelRuntimePatch(ctx, data, input, planned, current);
       });
-    } else {
-      const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
-      try {
-        const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
-        const [engine, model, effort, pool] = await Promise.all([
-          getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getThreadLicensePool(ctx.entry.slug, session),
-        ]);
-        const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
-        const locked = false, own = ownThread(engine, model, effort, pool);
-        assertRuntimeBaseline(ctx, scope, own, locked);
-        // The roster check above can outlive a turn that creates/replaces this live session.
-        const mintedEngine = await getSessionEngine(ctx.entry.slug, session);
-        const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
-        await admitSubmittedHarness(input.harness, latest.meta, ctx.channelId);
-        const selection = submittedSelection(input, { meta: latest.meta, own, above: aboveThread(latest.meta) });
-        const next = combinedRuntimeSelection(data, scope, latest.meta, inheritedEngine, selection.engine);
-        await admitSelection(next, latest.meta, ctx.channelId);
-        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, licensePool: selection.licensePool }, { expected: { engine, model, effort } });
-      } finally { release(); }
-    }
+    } else await applyThreadRuntime(ctx, data, input);
     if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];
     ctx.state.tab = 'general';
     ctx.state.notice = `${scope === 'channel' ? 'Channel defaults' : 'Thread overrides'} updated. Applies to the next turn.`;

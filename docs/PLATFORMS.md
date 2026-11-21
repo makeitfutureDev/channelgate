@@ -406,11 +406,32 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   The launcher and each independently opened popup expire after 15 minutes. Closing with Teams'
   close control discards unapplied inputs; applied changes remain saved. Other members open their
   own requester-bound `/settings` launcher.
+  The popup is a full-width Adaptive Card 1.4: a compact header, the six sections as two-column
+  navigation (three rows of two), each section's settings in grouped panels, and one **Save** area
+  at the end of every editable section with **Apply to channel**, **Apply to thread** (only when
+  opened from a thread), **Discard changes** and, for Variables/MCPs/Skills, **Follow channel**
+  (stage clearing the thread's overrides). No action set holds more than six actions.
+  Edits are **pending** until applied: General, Variables, MCPs, Skills and Automations each keep
+  their own draft in the requester-bound, 15-minute card state (daemon memory only; a staged value
+  or token is never rendered, echoed or logged). Navigation keeps every section's drafts — the
+  header lists the sections with pending changes — and **Apply saves only the open section**.
+  Apply re-authorizes, validates the whole section against the scope's current value and the
+  baseline it was staged on, and writes nothing if any part fails or the stored value changed
+  meanwhile; the refusal is shown on the card without any submitted or staged credential.
   General edits channel defaults and current-session harness/license/model/effort independently, with
-  engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
-  or Apply to thread button saves that scope's harness/license/model/effort together after compatibility
-  checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
-  keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
+  engine-labelled model choices, inherited labels and Follow channel default. **Apply to channel**
+  saves the channel runtime and the access controls (mode, options, policies, named people) in one
+  write, as a current manager; **Apply to thread** saves the session's runtime and refuses changed
+  access controls. Variables, MCP connections and skills apply to the channel's stores, or to the
+  thread's own override stores (`src/gateway/thread-settings.js`): a thread variable is always a
+  hidden egress placeholder on a known or declared destination, swapped only while that thread is
+  the only live work in the container and never injected into a host or legacy-bridge run (values
+  without a fixed destination are channel-only); a thread can replace or disconnect its Composio
+  and Make connections and ADD shared skills and (admins) Cloud MCP capabilities, never remove the
+  channel's. Background agents and jobs inherit the signed thread that launched them. Skill
+  templates and access are channel-only. Automations apply as one validated batch; Apply to thread
+  is limited to loops that execute in that exact thread. Resume is read-only; VPN, email accounts,
+  personal connections and personal/organization variables keep their immediate controls. Authorized users can edit runtime,
   variables, connections, channel skills and automations, matching Slack Settings. Access controls
   require a current manager/admin, organization variable changes and Cloud MCP require admins.
   Native member selectors defer to the authenticated website when the complete roster exceeds

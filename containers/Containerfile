@@ -230,3 +230,10 @@ WORKDIR /home/agent
 # HOME volume on EVERY start (not just at build time) and then execs the real command.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/opt/channelgate/bin/cg-init", "sleep", "infinity"]
+
+# The digest of the checkout files OUTSIDE containers/ that the build stages (the helper import
+# closure and the verbatim bridges — src/runtimes/container/image-bundle.js); the daemon compares it
+# with its own checkout. Declared LAST on purpose: an ARG whose value changed is a cache miss for
+# every later RUN, so a helper-only change rebuilds from the bundle COPY above, not the toolchain.
+ARG IMAGE_BUNDLE_DIGEST
+LABEL cg.image.bundle="${IMAGE_BUNDLE_DIGEST}"

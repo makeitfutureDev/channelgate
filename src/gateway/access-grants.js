@@ -53,7 +53,7 @@ export function unionGrantEntries(...tiers) {
   return [...out.values()];
 }
 
-export function resolveAccessGrants({ organization = {}, channel = {}, user = {} } = {}) {
+export function resolveAccessGrants({ organization = {}, channel = {}, thread = {}, user = {} } = {}) {
   return Object.fromEntries(
     ACCESS_GRANT_FIELDS.map((field) => [
       field,
@@ -61,9 +61,10 @@ export function resolveAccessGrants({ organization = {}, channel = {}, user = {}
         ? unionGrantEntries(
             sanitizeSkillGrantNames(organization?.[field]),
             sanitizeSkillGrantNames(channel?.[field]),
+            sanitizeSkillGrantNames(thread?.[field]),
             sanitizeSkillGrantNames(user?.[field]),
           )
-        : unionGrantEntries(organization?.[field], channel?.[field], user?.[field]),
+        : unionGrantEntries(organization?.[field], channel?.[field], thread?.[field], user?.[field]),
     ]),
   );
 }
@@ -156,11 +157,11 @@ export function skippedSkillGrantsWarning(skipped = []) {
   if (mine.length) {
     lines.push(`⚠️ Skipped ${mine.length === 1 ? "a skill" : `${mine.length} skills`} in your personal grants: ${mine.map(item).join(", ")} — ${mine.length === 1 ? "it is" : "they are"} another person's personal skill. An admin can remove ${it(mine.length)} under Users, or the author can make ${it(mine.length)} an organization skill. Continuing without ${it(mine.length)}.`);
   }
-  for (const tier of ["channel", "organization"]) {
+  for (const tier of ["thread", "channel", "organization"]) {
     const shared = skipped.filter((entry) => entry.tier === tier);
     if (!shared.length) continue;
-    const where = tier === "channel" ? "this conversation's skills" : "the organization's skills";
-    lines.push(`⚠️ Skipped ${shared.length === 1 ? "a skill" : `${shared.length} skills`} in ${where}: ${shared.map(item).join(", ")} — a personal skill loads only for its author. An admin can remove ${it(shared.length)} in ${tier === "channel" ? "this conversation's settings" : "Settings → organization grants"}, or the author can make ${it(shared.length)} an organization skill. Continuing without ${it(shared.length)}.`);
+    const where = tier === "thread" ? "this thread's skills" : tier === "channel" ? "this conversation's skills" : "the organization's skills";
+    lines.push(`⚠️ Skipped ${shared.length === 1 ? "a skill" : `${shared.length} skills`} in ${where}: ${shared.map(item).join(", ")} — a personal skill loads only for its author. An admin can remove ${it(shared.length)} in ${tier === "organization" ? "Settings → organization grants" : tier === "thread" ? "this thread's settings" : "this conversation's settings"}, or the author can make ${it(shared.length)} an organization skill. Continuing without ${it(shared.length)}.`);
   }
   return `${lines.join("\n")}\n\n`;
 }
@@ -169,9 +170,16 @@ export function skippedSkillGrantsWarning(skipped = []) {
 // effective grants. HTTP run callers supply an author id but do not authenticate that Slack user,
 // so an untrusted principal must not even trigger a stored-user lookup: naming somebody else's
 // public Slack id can never inherit their private connector/skill grants.
+//
+// `thread` is the run's settings thread's ADDITIONS (gateway/thread-settings.js threadGrantTier):
+// it joins `effective` only — never `shared`, which is what the durable channel folder materializes
+// — so a thread's skills ride the per-run overlay and its MCP additions the per-run config, and a
+// sibling thread never sees either. Its skills are filtered exactly like a shared tier: no
+// personal skill, directly or through `requires:`.
 export async function resolveRunAccessGrants({
   organization = {},
   channel = {},
+  thread = {},
   authorId = "",
   untrustedPrincipal = false,
   loadUser = async () => null,
@@ -183,11 +191,14 @@ export async function resolveRunAccessGrants({
   const shared = sharedSkillGrants({ organization: organization?.skills, channel: channel?.skills, lookupSkill });
   const org = { ...organization, skills: shared.organization };
   const chan = { ...channel, skills: shared.channel };
+  const threadSkills = filterSkillGrants(thread?.skills, "", lookupSkill, "thread");
+  const threadTier = { ...thread, skills: threadSkills.names };
   return {
     shared: resolveAccessGrants({ organization: org, channel: chan }),
-    effective: resolveAccessGrants({ organization: org, channel: chan, user }),
+    effective: resolveAccessGrants({ organization: org, channel: chan, thread: threadTier, user }),
     user: resolveAccessGrants({ user }),
-    skippedSkills: [...shared.skipped, ...userSkills.skipped],
+    thread: resolveAccessGrants({ thread: threadTier }),
+    skippedSkills: [...shared.skipped, ...threadSkills.skipped, ...userSkills.skipped],
   };
 }
 

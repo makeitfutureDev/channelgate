@@ -194,15 +194,17 @@ test("an unreachable forwarder and bad arguments fail with the reason", async ()
   assert.match(usage.stderr, /invalid port[\s\S]*usage: cg-egress-connect <host> <port>/);
 });
 
-test("the helper is dependency-free, and the image stages it behind a POSIX shim", () => {
+test("the helper is dependency-free, and the image stages it behind a POSIX shim", async () => {
   const source = readFileSync(HELPER, "utf8");
   const imports = [...source.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
   assert.ok(imports.length > 0);
   for (const spec of imports) assert.match(spec, /^node:/, `${spec} is not a node built-in`);
+  const { EGRESS_CONNECT, VERBATIM_HELPERS } = await import("../src/runtimes/container/image-bundle.js");
+  assert.equal(EGRESS_CONNECT.source, "src/mcp/egress-connect.js");
+  assert.equal(EGRESS_CONNECT.dest, "bin/cg-egress-connect.mjs");
+  assert.ok(VERBATIM_HELPERS.includes(EGRESS_CONNECT));
   const build = readFileSync(new URL("../scripts/build-image.mjs", import.meta.url), "utf8");
-  assert.match(build, /const EGRESS_CONNECT_SOURCE = "src\/mcp\/egress-connect\.js";/);
-  assert.match(build, /const EGRESS_CONNECT_DEST = "bin\/cg-egress-connect\.mjs";/);
-  assert.match(build, /cpSync\(connect, path\.join\(dir, EGRESS_CONNECT_DEST\)\)/);
+  assert.match(build, /for \(const helper of VERBATIM_HELPERS\)[\s\S]*?cpSync\(source, path\.join\(dir, helper\.dest\)\)/);
   const shim = readFileSync(new URL("../containers/bin/cg-egress-connect", import.meta.url), "utf8");
   assert.match(shim, /^#!\/bin\/sh\n/);
   assert.match(shim, /exec node \/opt\/channelgate\/bin\/cg-egress-connect\.mjs "\$@"\n$/);
