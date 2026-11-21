@@ -266,6 +266,11 @@ test("a channel is locked to licenses, to whole harnesses, or both", () => {
   assert.equal(policy.isChannelEngineApproved({ approvedEngines: ["codex"] }, a.id), false, "a stored `codex` entry never widens to other Codex licenses");
   assert.equal(policy.isChannelEngineApproved({ approvedEngines: ["harness:claude", "harness:codex"] }, b.id), true);
   assert.match(policy.describeApprovedEngines(["harness:codex", b.id]), /Codex \(any license\), Lock B/);
+  // What a person is told for a pick outside the list: the pick, then what the conversation may use.
+  assert.equal(policy.channelEngineRefusal(harnessLock, a.id), "");
+  assert.equal(policy.channelEngineRefusal({}, "claude"), "", "no list refuses nothing");
+  assert.match(policy.channelEngineRefusal({ approvedEngines: ["harness:codex", b.id] }, "claude"), /^Claude is not approved for this conversation\. Approved here: Codex \(any license\), Lock B\. Pick one of those/);
+  assert.match(policy.channelEngineRefusal({ approvedEngines: "codex" }, "codex"), /^Codex is not approved for this conversation\. Ask an Enterprise administrator to review/, "a malformed list approves nothing and names no alternative");
   assert.throws(() => policy.assertChannelEngineApproved(licenseLock, "codex"), /not an approved harness/);
   assert.throws(() => policy.assertApprovedEnginesUpdate({}, ["harness:codex"], { enterprise: false }), (error) => error.code === "enterprise_required");
   assert.deepEqual(policy.assertApprovedEnginesUpdate({}, ["harness:codex"], { enterprise: true }), ["harness:codex"]);

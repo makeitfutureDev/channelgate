@@ -14,6 +14,7 @@ import { engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/r
 import { HARNESS_IDS } from "../engines/license-state.js";
 import { namedSelection, selectionLabel } from "./license-controls.js";
 import { selectableLicenses } from "../gateway/license-pool.js";
+import { channelEngineRefusal } from "../gateway/channel-engines.js";
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult, effectiveMeta } from "../gateway/run.js";
@@ -927,6 +928,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           }
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
           await assertEngineSelectable(childEngine, { channelId: event.channel, meta });
+          // Checked before the fork's root message exists: a refused fork must not leave an empty thread.
+          const forkRefusal = channelEngineRefusal(meta, childEngine);
+          if (forkRefusal) { await reply(forkRefusal); return; }
           const nativeFork = childEngine === sourceEngine;
           const sourceClean = Boolean(meta.cleanMode || await getThreadClean(entry.slug, threadKey));
           if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning
@@ -1219,6 +1223,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // setting is read for each message, so admins can repoint names without restarting Slack.
     // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
     const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    // Anyone who may talk here may pick the license and model for a thread; the channel's allow
+    // list is what bounds the pick. A pick outside it is ANSWERED with what is approved here and
+    // changes nothing — the thread keeps its selection and the message does not run elsewhere.
+    const answeredRefusedPick = async (engine) => {
+      const refusal = channelEngineRefusal(meta, engine);
+      if (refusal) await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: refusal });
+      return Boolean(refusal);
+    };
     // A retry/switch card already selected the runtime. Keep its choice, but remove the
     // original shortcut prefix before replaying the task to the engine.
     if (shortcut && engineChoice) prompt = shortcut.task;
@@ -1242,6 +1254,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         return;
       }
       await assertEngineSelectable(target.engine, { meta });
+      if (await answeredRefusedPick(target.engine)) return;
       // Each accepted task keeps its selection even if later queued messages change the pins.
       shortcutRuntimeOverrides = { engine: target.engine, model: target.model, effort: shortcut.effort || "" };
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
@@ -1261,6 +1274,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // when the message first ran, so it is stripped below but not re-applied over this choice.
     if (engineChoice && ENGINE_IDS.includes(engineChoice) && engineChoiceSwitch) {
       await assertEngineSelectable(engineChoice, { meta });
+      if (await answeredRefusedPick(engineChoice)) return;
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
       await setThreadEngine(entry.slug, threadKey, engineChoice);
       if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
@@ -1297,6 +1311,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const eng = picked.engine;
         if (!engineChoice) {
           await assertEngineSelectable(eng, { meta });
+          if (await answeredRefusedPick(eng)) return;
           engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
           await setThreadEngine(entry.slug, threadKey, eng, { licensePool: picked.licensePool });
           // A thread model/effort pinned by the /model wizard is engine-specific — switching the
@@ -2063,7 +2078,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
     console.error("[slack] handler error:", outer);
-    if (outer?.code === "workspace_selection_conflict") {
+    // A selection the allow list refused at the write (the stored policy changed under a pick):
+    // the pre-checks above answer the ordinary case, this keeps the rare one from being silent.
+    if (outer?.code === "workspace_selection_conflict" || outer?.code === "channel_engine_not_approved") {
       try {
         // Registration can fail before the normal authorization gate. Do not disclose
         // configuration to an unauthorized author, or identify another private conversation.
@@ -2075,10 +2092,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({
           channel: event.channel,
           thread_ts: event.thread_ts ?? event.ts,
-          text: "⚠️ I couldn’t start: the linked working-folder setup could not be resolved. Ask a gateway admin to inspect the source conversation shown in Settings and repair its folder assignment. Then send your request again.",
+          text: outer.code === "channel_engine_not_approved" ? outer.message
+            : "⚠️ I couldn’t start: the linked working-folder setup could not be resolved. Ask a gateway admin to inspect the source conversation shown in Settings and repair its folder assignment. Then send your request again.",
         });
       } catch (notificationError) {
-        console.error("[slack] workspace conflict notification failed:", notificationError);
+        console.error("[slack] handler error notification failed:", notificationError);
       }
     }
   }

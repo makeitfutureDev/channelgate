@@ -29,6 +29,12 @@
     answers HTTP 403 for its model list is shown as unverified, not as a rejected key.
   - Pressing Verify on a license no longer makes the next Save on the same Settings page fail
     as out of date.
+- Answer a license or model pick that the channel's Approved harnesses list does not allow. In
+  Slack, typing `codex …`, a license id or a model shortcut for a harness or license the channel
+  has not approved — or pressing "switch" on the harness-switch card — used to do nothing at all:
+  no reply and no run. The thread now gets a reply naming what was refused and what the
+  conversation may use, and keeps its current selection. `/fork` onto a license that is not
+  approved is refused the same way instead of leaving an empty fork thread.
 - Add a **Skills** tab to the Activity dashboard: pick "Only me" (your skills in every
   conversation), your direct messages, or any channel you can access, then search, filter and tick
   the skills it loads and save. Organization and template skills show as always on. Settings →
