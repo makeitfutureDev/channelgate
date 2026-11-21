@@ -400,7 +400,7 @@ function candidateCheckout(spec) {
 }
 
 // A `run` stand-in: answers `git diff` and the image-label inspect, records the build invocation.
-function fakeRun({ changed = [], builtVersion = "1.1.1", buildFails = false, desired = expectedImageBuild(candidateCheckout("1.1.1")), builtDigest = desired.digest, staleAfterBuild = false } = {}) {
+function fakeRun({ changed = [], builtVersion = "1.1.1", buildFails = false, desired = expectedImageBuild(candidateCheckout("1.1.1")), builtDigest = desired.digest, builtBundleDigest = desired.bundleDigest, staleAfterBuild = false } = {}) {
   let rebuilt = false;
   const calls = [];
   const run = async (command, args = []) => {
@@ -408,7 +408,7 @@ function fakeRun({ changed = [], builtVersion = "1.1.1", buildFails = false, des
     if (command === "git") return { code: 0, stdout: `${changed.join("\n")}\n`, stderr: "" };
     if (args[0] === "image" && args[1] === "inspect") {
       const format = String(args[3] || "");
-      if (format.includes("cg.image.version")) return { code: builtVersion === null && !rebuilt ? 1 : 0, stdout: `sha256:deadbeef|${rebuilt ? desired.version : builtVersion}|${rebuilt && !staleAfterBuild ? desired.digest : builtDigest}|{}\n`, stderr: "" };
+      if (format.includes("cg.image.version")) return { code: builtVersion === null && !rebuilt ? 1 : 0, stdout: `sha256:deadbeef|${rebuilt ? desired.version : builtVersion}|${rebuilt && !staleAfterBuild ? desired.digest : builtDigest}|{}|${rebuilt && !staleAfterBuild ? desired.bundleDigest : builtBundleDigest}\n`, stderr: "" };
       return { code: 0, stdout: "sha256:deadbeef\n", stderr: "" };
     }
     if (String(args[0] || "").endsWith("build-image.mjs")) {
@@ -454,6 +454,32 @@ test("a change under containers/ rebuilds and an unrelated change does not", asy
 
   const sources = fakeRun({ changed: ["containers/Containerfile"] });
   assert.equal((await defaultImageBuild({ root, repoRoot, context, run: sources.run, log: () => {} })).built, true);
+});
+
+test("a staged helper change rebuilds the image automatically, without a spec bump", async () => {
+  // src/mcp/egress-connect.js and friends are copied into the image; the candidate's bundle digest
+  // no longer matches the built image's cg.image.bundle label, so the updater rebuilds by itself.
+  const root = containerRoot();
+  const repoRoot = candidateCheckout("1.1.1");
+  const desired = expectedImageBuild(repoRoot);
+  const logs = [];
+  const fake = fakeRun({ changed: ["src/mcp/egress-connect.js"], desired, builtBundleDigest: "helpers-before" });
+  const result = await defaultImageBuild({ root, repoRoot, context: { oldRevision: "old", targetRevision: "new" }, run: fake.run, log: (m) => logs.push(m) });
+  assert.equal(result.built, true);
+  assert.equal(fake.built(), true);
+  assert.match(logs.join("\n"), new RegExp(`bundle helpers-before → ${desired.bundleDigest}`));
+
+  // An image built before the label existed has none: it is rebuilt once, then left alone.
+  const legacy = fakeRun({ desired, builtBundleDigest: "" });
+  assert.equal((await defaultImageBuild({ root, repoRoot, context: { oldRevision: "a", targetRevision: "b" }, run: legacy.run, log: () => {} })).built, true);
+  const current = fakeRun({ changed: ["src/gateway/run.js"], desired });
+  assert.equal((await defaultImageBuild({ root, repoRoot, context: { oldRevision: "a", targetRevision: "b" }, run: current.run, log: () => {} })).needed, false);
+
+  // A builder that exits 0 but leaves the old bundle label is not a rebuild.
+  const stale = fakeRun({ desired, builtBundleDigest: "helpers-before", staleAfterBuild: true });
+  const failed = await defaultImageBuild({ root, repoRoot, context: { oldRevision: "a", targetRevision: "b" }, run: stale.run, log: () => {} });
+  assert.equal(failed.failed, true);
+  assert.match(failed.reason, /bundle digest/);
 });
 
 test("a failed image build reports the remedy and never blocks the update", async () => {

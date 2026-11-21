@@ -450,13 +450,20 @@ turn (the container fingerprint follows the resolved image ID, not the moving ta
 
 **A self-update rebuilds it for you.** The transactional updater runs the build itself, after
 dependencies and before the restart, whenever the candidate
-changed anything under `containers/`, bumped `imageSpecVersion`, or no image is built at all — so a
-`/update` checks the image against the checkout's expected version and source digest. Build or
+changed anything under `containers/`, changed a file the build copies in from `src/` (the
+engine-spawned helpers and their imports, the MCP socket bridge, the egress forwarder and
+`cg-egress-connect` — listed in `src/runtimes/container/image-bundle.js`), bumped
+`imageSpecVersion`, or no image is built at all — so a
+`/update` checks the image against the checkout's expected version and source digests
+(`cg.image.digest` for `containers/`, `cg.image.bundle` for the staged `src/` files). Build or
 executable-check failures leave an explicit image warning while the host daemon can still restart.
-New container runs fail closed when the image is missing or stale; an existing image is not a
-promise that channels remain usable. Run `npm run build:image` to repair it, or retry Update / Repair
+New container runs fail closed when the image is missing; an image that is merely stale keeps
+running the files it was built from, and Settings → Container runtime says "Image rebuild
+required" until it is rebuilt. Run `npm run build:image` to repair it, or retry Update / Repair
 (the build is retried even when Git is already current). Active containers retain their current
-image until idle. A manual `git pull` still needs a matching image rebuild.
+image until idle. A manual `git pull` still needs a matching image rebuild — including one that
+only changed a staged helper. A helper-only rebuild reuses the cached toolchain layers, so it
+takes far less time than a pin bump.
 
 **Settings → Container runtime** (admin UI):
 
@@ -1124,7 +1131,8 @@ Settings → License → *Usage this month*.
 
 ### Verifying and recovering a container toolchain update
 
-The image carries a digest of its container build sources and its pinned CLI versions. Update
+The image carries a digest of its container build sources (`containers/`), a digest of the
+helper files it stages from `src/`, and its pinned CLI versions. Update
 compares this with the desired checkout even when no Git revision changed. A failed image build
 is retried by the next Update; a zero exit with stale labels is reported as a failure. Custom image
 references are operator-managed and are never silently replaced with the default image.

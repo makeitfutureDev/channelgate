@@ -1,5 +1,47 @@
 # ChannelGate — Test Plan
 
+## Staged image helpers make the channel image stale (2026-11-21)
+
+- [x] `test/container-image.test.js`: the staged set is the helper closure plus the verbatim
+      socket bridge, egress forwarder and `cg-egress-connect` helper, the shared resolver agrees
+      with the test's own import walk, and `scripts/build-image.mjs` imports that one declaration
+      (no second list), stages every verbatim helper and passes `IMAGE_BUILD_DIGEST` and
+      `IMAGE_BUNDLE_DIGEST` from the same `expectedImageBuild()` the daemon calls; the Containerfile
+      declares `ARG IMAGE_BUNDLE_DIGEST` + `LABEL cg.image.bundle` after its last `RUN`/`COPY`. In a
+      scratch checkout, appending a line to `egress-connect.js`, `socket-bridge.js`,
+      `egress-forwarder.js`, `child-env.js` or the Stop hook moves `bundleDigest` (never `digest` or
+      `version`) and makes `needsImageBuild` true; restoring the bytes restores the digest; a
+      missing staged file yields a different digest instead of throwing; changing
+      `src/gateway/run.js` or adding an unimported module moves neither digest and builds nothing.
+      The same checkout bytes give the same digest at any path. Image inspection: a 4-field
+      (pre-label) answer and `<no value>` read as `needsRebuild`, a matching 5-field answer does not.
+- [x] `test/update-runner.test.js`: a candidate whose staged helper changed (built bundle label
+      differs, same spec) rebuilds and logs the bundle digests; an unlabeled image is rebuilt once
+      and a matching one is left alone; a builder that exits 0 but leaves the old bundle label is a
+      failure naming the bundle digest. `test/egress-forwarder.test.js` and
+      `test/egress-connect.test.js` read the staged destinations from `image-bundle.js`.
+- [ ] UNEXECUTED live `IMG-BUNDLE-01` (engine-independent: image build and labels, no engine
+      involved). On a gateway with a current image, add a comment line to
+      `src/mcp/egress-connect.js` in a scratch checkout and run `npm run build:image`. Expect
+      `podman image inspect --format '{{index .Config.Labels "cg.image.bundle"}}' channelgate/runtime:latest`
+      to equal `node -e 'import("./src/runtimes/container/image-bundle.js").then(m=>console.log(m.bundleDigest(process.cwd())))'`
+      and `cg.image.digest` to be unchanged, the build log to show cache hits up to the bundle
+      `COPY`, and `podman run --rm --entrypoint tail channelgate/runtime:latest -1 /opt/channelgate/bin/cg-egress-connect.mjs`
+      to print the added line. Pass: labels equal the daemon's expectation and only the bundle
+      layers rebuilt.
+- [ ] UNEXECUTED live `IMG-BUNDLE-02` (engine-independent). On a gateway at revision A with a
+      matching image, update (Settings → Update) to a revision B that differs from A only in
+      `src/mcp/egress-connect.js`. Expect `logs/update.log` to contain "Rebuilding the channel
+      image … bundle <old> → <new>", the update to finish `updated`, Settings → Container runtime
+      not to say "Image rebuild required", and a following update with no change to log "is
+      current". Then `git pull` a similar change by hand and restart without building: expect
+      "Image rebuild required; run Update to retry." in Settings → Container runtime and existing
+      channels still answering on the old image. Pass: the rebuild needs no `imageSpecVersion` bump.
+- [ ] UNEXECUTED live `IMG-BUNDLE-03` (Claude AND Codex). After `IMG-BUNDLE-02`, in a disposable
+      Worker channel with network on and an SSH host granted, ask "ssh to <host> and print
+      `hostname`". Expect the answer to arrive through `cg-egress-connect` from the rebuilt image
+      (the container recreated onto the new image ID). Pass: both engines answer.
+
 ## Everyone in a channel may change its runtime; only admins set the allow list (2026-11-21)
 
 Who may change a runtime and what the allow list admits are decided by the gateway before any
