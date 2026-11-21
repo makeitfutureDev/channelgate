@@ -116,13 +116,14 @@ export function claudeSessionDelta(current, previous = null) {
 }
 
 // The last recorded cumulative of a provider session, read from the ledger. `beforeId` keeps a
-// re-record (the repair) from reading its own row.
+// re-record (the repair) from reading its own row. Keyed by the session id alone: only a Claude
+// Code session records a cumulative, whichever license of the harness ran it.
 export function latestClaudeSnapshot(db, sessionId, { beforeId = null } = {}) {
   const id = String(sessionId || "").trim();
   if (!id) return null;
   const row = db.prepare(
     `SELECT provider_cost_cumulative, provider_model_usage FROM usage
-      WHERE engine = 'claude' AND session_id = ? AND provider_cost_cumulative IS NOT NULL
+      WHERE session_id = ? AND provider_cost_cumulative IS NOT NULL
         ${beforeId ? "AND id < ?" : ""}
       ORDER BY id DESC LIMIT 1`
   ).get(...(beforeId ? [id, beforeId] : [id]));

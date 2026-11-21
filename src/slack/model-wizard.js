@@ -34,7 +34,7 @@ import { setThreadEngine, getThreadEngine, getThreadLicensePool, setThreadModel,
 // Which harness MINTED the thread's live session. A channel-scope pick made inside a thread has
 // to know that before it can move the thread — see applyChannelRuntimeToThread below.
 import { getSessionEngine } from "../gateway/sessions.js";
-import { ENGINE_IDS, adapterFor, harnessOf, requireAdapter, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, harnessOf, requireAdapter, isLicenseListedModel, modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine, refreshEngineModels } from "../engines/registry.js";
 import { HARNESS_IDS, LICENSE_POOL_ANY, harnessLabel, isHarnessId } from "../engines/license-state.js";
 import { ALSO_USE_LABEL, LICENSE_HELP_TEXT, clipLabel, harnessChoices, licenseChoices, namedSelection, nextLicenseSelection, selectionLabel, storedSelectionFor } from "./license-controls.js";
 import { isValidModel } from "./util.js";
@@ -124,14 +124,15 @@ const EFFORT_DESCRIPTIONS = {
 };
 const effortOption = (v) => ({ label: EFFORT_LABELS[v] || v, value: v, description: EFFORT_DESCRIPTIONS[v] });
 function runtimeEngine(meta = {}) {
-  const id = String(meta.engine || getEngine() || "").toLowerCase();
-  return adapterFor(id) ? id : ENGINE_IDS[0];
+  // A stored license that was deleted since falls back to the gateway default — what a turn here
+  // runs on — before the first registered engine, which is nobody's choice.
+  return [meta.engine, getEngine()].map((id) => String(id || "").toLowerCase()).find((id) => adapterFor(id)) || ENGINE_IDS[0];
 }
 
 export function modelOptionsForEngine(engine, current = "") {
   const options = [MODEL_DEFAULT_OPTION, ...modelsForEngine(engine)];
   // A saved alias or older full ID remains visible and selectable while this scope uses it.
-  if (current && isValidModel(current) && modelBelongsToEngine(current, engine) && !options.some((option) => option.value === current)) {
+  if (current && (isValidModel(current) || isLicenseListedModel(current, engine)) && modelBelongsToEngine(current, engine) && !options.some((option) => option.value === current)) {
     options.push({ label: `Current: ${current.slice(0, 66)}`, value: current, description: "Previously selected model." });
   }
   return options;
@@ -608,11 +609,11 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     if (isPickerAction(actionId, MODEL_PICKER_ACTION)) {
       const currentModel = scope === "thread" ? await getThreadModel(entry.slug, threadTs) : meta.model || "";
       const offered = modelOptionsForEngine(engine, currentModel).some((o) => o.value === (val || DEFAULT_PICKER_VALUE));
-      if (!offered && !(engine === "claude" && LEGACY_CLAUDE_PICKER_VALUES.has(val))) {
+      if (!offered && !(harnessOf(engine) === "claude" && LEGACY_CLAUDE_PICKER_VALUES.has(val) && modelBelongsToEngine(val, engine))) {
         await ephemeral("That model does not belong to the chosen harness.");
         return;
       }
-      if (val && !isValidModel(val)) {
+      if (val && !isValidModel(val) && !isLicenseListedModel(val, engine)) {
         await ephemeral("That model is not allowed by the gateway validation rules.");
         return;
       }

@@ -25,7 +25,8 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
-import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine, sameHarness } from "../engines/registry.js";
+import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine, sameHarness, harnessOf } from "../engines/registry.js";
+import { harnessLabel } from "../engines/license-state.js";
 import { validateRunContext } from "../engines/contract.js";
 import { getRunConcurrency, getEngine, getEnginePool, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
@@ -805,6 +806,10 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const licensePool = overrides?.engine && ENGINES.includes(overrides.engine) ? readLicensePool(overrides.licensePool)
     : threadEngine ? await getThreadLicensePool(entry.slug, threadKey)
       : channelEngine ? readLicensePool(meta.licensePool) : getEnginePool();
+  // The harness that selection was made for. A turn that ends up on the OTHER harness (a thread
+  // continuing on the harness its session was born under, a switched-off harness substituted)
+  // runs without the pool: "any" would otherwise become every license of a harness nobody chose.
+  const selectionHarness = harnessOf(engine);
   // Explicit = the ask names an engine for THIS thread/run specifically (per-run API override or
   // per-thread directive/wizard). Channel/global values are defaults, not asks — an existing
   // thread outranks them and keeps running on the engine its session was born under (see
@@ -861,9 +866,19 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // conversation keeps its harness whenever one of its licenses can still run — then anything.
     const usableHere = (id) => isChannelEngineApproved(channelMeta, id) && (!requireAdapter(id).channelScoped || channelMeta.codexAuthSource === "channel");
     const enabledEngines = getEnabledEngines();
-    const substitute = licensePoolCandidates({ engine, pool: licensePool, meta: channelMeta })[0]
-      || enabledEngines.find(id => sameHarness(id, engine) && usableHere(id))
-      || enabledEngines.find(usableHere) || "";
+    const sameHarnessSubstitute = licensePoolCandidates({ engine, pool: licensePool, meta: channelMeta })[0]
+      || enabledEngines.find(id => sameHarness(id, engine) && usableHere(id)) || "";
+    // A harness a PERSON pinned for this thread or run is never traded for the other one: with no
+    // license of that harness left to run on, the turn says so instead of being quietly answered
+    // by a harness nobody asked for. Channel and gateway defaults are not pins and keep moving.
+    if (!sameHarnessSubstitute && enginePinnedByUser) {
+      return {
+        slug: entry.slug, cwd: "", model: "", engine,
+        content: `${engineLabel(engine)} is disabled in gateway Settings and no other ${harnessLabel(harnessOf(engine))} license can run here. Enable it or select another harness for this thread.`,
+        sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
+      };
+    }
+    const substitute = sameHarnessSubstitute || enabledEngines.find(usableHere) || "";
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);
       engine = substitute;
@@ -1773,7 +1788,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   //   2. the other HARNESS (cross-engine failover) — only for an unpinned turn, and only when the
   //      gateway setting allows it.
   const pickedModel = [threadModel, overrides?.model, meta.model].find((m) => m && modelBelongsToEngine(m, engine)) || "";
-  const poolEngines = licensePoolCandidates({ engine, pool: licensePool, meta: channelMeta, model: pickedModel });
+  const poolEngines = licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pickedModel });
   const crossEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "" : "";
   // `fallbackPolicy` is the caller's word on WHO decides a switch of HARNESS: "auto" (or nothing —
   // every unattended origin) switches here; "ask" (a watched Slack thread, Settings →
@@ -1884,7 +1899,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // (picked for the engine that just failed) — it gets the channel's own override only if that
     // belongs to its model family (a Claude model would be rejected by `codex -m`, and vice versa),
     // else its gateway default.
-    const fallbackGatewayDefaultModel = getDefaultModel(fallbackEngine);
+    // A default the license no longer lists (its model list was edited) is no default at all.
+    const fallbackGatewayDefaultModel = [getDefaultModel(fallbackEngine)].find((m) => m && modelBelongsToEngine(m, fallbackEngine)) || "";
     // "The turn's model" is one somebody picked, or — when the license has no default of its own —
     // the default the turn was already running on.
     const keepsTurnModel = sameHarnessMove && Boolean(model) && modelBelongsToEngine(model, fallbackEngine)

@@ -195,3 +195,50 @@ test("a removed license leaves a working channel: the selection falls back to wh
   const after = await turn("D_LIC_GONE", "U_LIC_GONE", "hello again", "2010.020");
   assert.equal(after.engine, "codex", "the gateway default answers once the channel's license is gone");
 });
+
+test("a thread whose session a deleted license minted continues, fresh, on the conversation's current selection", async () => {
+  fresh();
+  const second = signedInLicense("Minted then removed");
+  await setUser("U_LIC_HEAL", { name: "Lic Heal", approved: true, isAdmin: false });
+  const entry = await channel("D_LIC_HEAL", "lic-heal", { engine: second.id });
+  const first = await turn("D_LIC_HEAL", "U_LIC_HEAL", "hello", "2011.010");
+  assert.equal(first.engine, second.id);
+  // A second thread is pinned to the license by hand, pool and all.
+  await setThreadEngine(entry.slug, "2011.020", second.id);
+
+  await deleteLicense(second.id);
+  assert.equal(await getSessionEngine(entry.slug, "2011.010"), "", "the stamp of a license that is gone names no live session");
+  // The SAME thread: not "not an approved harness", not a resume of a session nothing can open.
+  const again = await turn("D_LIC_HEAL", "U_LIC_HEAL", "hello again", "2011.010");
+  assert.equal(again.engine, "codex");
+  assert.match(again.content, /Codex stub reply/);
+  assert.equal(await getSessionEngine(entry.slug, "2011.010"), "codex");
+  const pinned = await turn("D_LIC_HEAL", "U_LIC_HEAL", "and here", "2011.020");
+  assert.equal(pinned.engine, "codex", "a pin on a deleted license is no pin");
+});
+
+test("a harness pinned by hand is not traded for the other one when it is switched off", async () => {
+  fresh({ engine: "claude", engineEnabled: { claude: true, codex: false } });
+  await setUser("U_LIC_OFFPIN", { name: "Lic Offpin", approved: true, isAdmin: false });
+  const entry = await channel("D_LIC_OFFPIN", "lic-offpin", { engine: "claude" });
+  await setThreadEngine(entry.slug, "2012.010", "codex");
+  const before = backend.calls.spawn.length;
+
+  const refused = await turn("D_LIC_OFFPIN", "U_LIC_OFFPIN", "hello", "2012.010");
+  assert.equal(refused.engineRefused, true);
+  assert.equal(refused.engine, "codex");
+  assert.match(refused.content, /Codex is disabled in gateway Settings and no other Codex license can run here/);
+  assert.equal(backend.calls.spawn.length, before, "no engine was started for it");
+
+  // A license of the SAME harness that is switched on answers instead: the harness did not change.
+  const seat = signedInLicense("Still on");
+  const moved = await turn("D_LIC_OFFPIN", "U_LIC_OFFPIN", "hello", "2012.010");
+  assert.equal(moved.engine, seat.id);
+  assert.notEqual(moved.engineRefused, true);
+
+  // A channel DEFAULT is not a pin: with its harness off and no license of it, the turn still moves.
+  await deleteLicense(seat.id);
+  await channel("D_LIC_OFFDEFAULT", "lic-offdefault", { engine: "codex" });
+  const defaulted = await turn("D_LIC_OFFDEFAULT", "U_LIC_OFFPIN", "hello", "2012.020");
+  assert.equal(defaulted.engine, "claude");
+});

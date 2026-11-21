@@ -83,8 +83,15 @@ test("an API license's key is write-only on every read path", () => {
   const kept = store.updateLicense(record.id, { label: "Team API 2", apiKey: "" });
   assert.equal(kept.apiKey, API_KEY);
   assert.equal(kept.verification.ok, true, "an unchanged credential keeps its verdict");
-  const moved = store.updateLicense(record.id, { baseUrl: "https://llm2.example.com/v1" });
+  const moved = store.updateLicense(record.id, { baseUrl: "https://llm.example.com/v2" });
   assert.equal(moved.verification, null);
+  assert.equal(moved.apiKey, API_KEY, "another path on the same server keeps the stored key");
+  // The stored key is only ever sent to the server it was saved for: another host needs the key again.
+  assert.throws(() => store.updateLicense(record.id, { baseUrl: "https://llm2.example.com/v1" }), /Re-enter the API key to move this license to llm2\.example\.com/);
+  assert.equal(store.getLicenseRecord(record.id).baseUrl, "https://llm.example.com/v2", "a refused move changes nothing");
+  const rehomed = store.updateLicense(record.id, { baseUrl: "https://llm2.example.com/v1", apiKey: `${API_KEY}-2` });
+  assert.equal(rehomed.baseUrl, "https://llm2.example.com/v1");
+  assert.equal(rehomed.apiKey, `${API_KEY}-2`);
 });
 
 test("removing a license unregisters it and every default that named it", async () => {

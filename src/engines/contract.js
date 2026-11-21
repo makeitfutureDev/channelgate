@@ -165,7 +165,7 @@ export function createAdapterRegistry(adapters) {
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
     // structuredClone throws on those. The UI has no use for where a transcript lives on disk —
     // nor for where a license keeps its credential (`ownCredential`).
-    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, ...manifest }) => structuredClone(manifest)),
+    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, claudeRunAccess, ...manifest }) => structuredClone(manifest)),
   });
 }
 

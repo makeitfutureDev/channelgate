@@ -182,8 +182,13 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  const family = ENGINE_MANIFESTS.find((m) => m.id === engine)?.modelFamily || engine;
-  if (family === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  const manifest = ENGINE_MANIFESTS.find((m) => m.id === engine);
+  // A license whose listed models are its whole catalog has no family of further ids: a saved
+  // model it no longer lists is dropped, not offered again for a save the server would refuse.
+  if (manifest?.modelListClosed) return false;
+  const family = manifest?.modelFamily || engine;
+  // A license's own family ("license:<id>") follows its harness's shapes.
+  if (family === "codex" || (String(family).startsWith("license:") && manifest?.harness === "codex")) return /^(?:gpt-|o[0-9]|codex)/i.test(model);
   if (family === "claude-extra") return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov)?:bedrock:/i.test(model);
   if (family === "bedrock") return /^(?:opus|sonnet|haiku)$|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov|-cn)?:bedrock:/i.test(model);
   // Mirrors isQwenTextModel (src/engines/qwen.js): the provider families, minus the image/audio
@@ -4184,6 +4189,8 @@ function paintEngineLicenses() {
     openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => revealSettingsNode(builtinLicenseSettings(m.id)) : null,
     blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
     reload: loadSettings,
+    // Only the step this page can account for: its own version → the one the check produced.
+    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
   });
   licensesManager.paint();
 }

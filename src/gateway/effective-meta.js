@@ -1,6 +1,19 @@
 import { getEngine, getDmTemplate, ENGINES } from "../config/settings.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { isLicenseShapedId } from "../engines/license-state.js";
 import { normalizeModeMeta } from "./modes.js";
+
+// A conversation default naming a LICENSE an administrator has since deleted reads as "no default
+// here": the conversation follows the gateway default again, and the pool chosen beside that
+// license goes with it. The stored record is left alone (nothing is rewritten on a read), so this
+// is the one projection every settings surface, policy check and picker shares — a deleted id
+// reaching the registry lookups behind them throws, which is what stopped the Slack settings
+// modal from opening and refused every approved-harness edit on such a channel.
+function withoutDeletedLicense(meta) {
+  if (!meta || !isLicenseShapedId(meta.engine) || ENGINES.includes(meta.engine)) return meta;
+  const { engine: _engine, licensePool: _pool, ...rest } = meta;
+  return rest;
+}
 
 // For a DM that selected an org template (user/admin), overlay the template's knobs onto its
 // meta. "custom" DMs and regular channels use their own meta unchanged. Engine/model/effort are
@@ -33,6 +46,5 @@ export function effectiveMeta(meta) {
       licensePool: ENGINES.includes(meta.engine) ? meta.licensePool || "" : t.licensePool || "",
     });
   }
-  return normalizeModeMeta(meta);
+  return normalizeModeMeta(withoutDeletedLicense(meta));
 }
-

@@ -44,7 +44,10 @@ export function coherentLicensePool(pool, engine) {
   const selection = readLicensePool(pool);
   if (!harness || !selection) return "";
   if (selection === LICENSE_POOL_ANY) return LICENSE_POOL_ANY;
-  const rest = selection.filter((id) => id !== engine && harnessOf(id) === harness);
+  // A license-shaped id still names its harness after the license is deleted, so existence is
+  // asked separately — a stored pool echoed back by a settings page must not fail the strict
+  // validation for a license nobody can pick any more.
+  const rest = selection.filter((id) => id !== engine && isEngineId(id) && harnessOf(id) === harness);
   return rest.length ? rest : "";
 }
 // What a picker calls this license once the harness is already chosen: the harness's own id is the
@@ -150,6 +153,19 @@ export function engineSessionParent(engine, firstLine) {
 export function modelBelongsToEngine(model, engine) {
   const value = String(model || "").trim().toLowerCase();
   return !value || Boolean(requireAdapter(engine).modelBelongs(value));
+}
+// A model id an admin LISTED on a license. A custom server speaks its own vocabulary ("glm-4.6",
+// "llama3.1:70b", "accounts/acme/models/large"), which the family-shape gate of the built-in
+// harnesses (isValidModel in src/slack/util.js) knows nothing about. The license's own list —
+// shape-checked when it was saved (normalizeLicenseModels) — is what admits such a name: with
+// `engine`, that license's list; without, any registered license's.
+export function isLicenseListedModel(model, engine = "") {
+  const value = String(model || "").trim().toLowerCase();
+  if (!value) return false;
+  return (engine ? [engine] : ENGINE_IDS).some((id) => {
+    const adapter = adapterFor(id);
+    return Boolean(adapter?.license) && (adapter.models || []).some((entry) => String(entry?.value || "").toLowerCase() === value);
+  });
 }
 export function effortBelongsToEngine(effort, engine) {
   const value = String(effort || "").trim().toLowerCase();
@@ -297,6 +313,8 @@ export function engineUiManifest() {
     removable: isRemovableBuiltinLicense(manifest.id),
     // What removing it deletes, for the confirmation's wording: "api-key", "sign-in" or "".
     ownCredential: adapterFor(manifest.id)?.ownCredential?.kind || "",
+    // True when the listed models are the license's whole catalog (a custom server's own list).
+    modelListClosed: adapterFor(manifest.id)?.modelListClosed === true,
   }));
 }
 
