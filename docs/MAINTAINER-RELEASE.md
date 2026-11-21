@@ -7,9 +7,10 @@ Keep private account aliases and test-channel identifiers in deployment-owned re
 
 ## Release version selection
 
-Keep releases on **0.6.x**. Advance to **0.7** only when the project owner explicitly requests
-that minor-version change; feature scope alone does not authorize it. The current candidate is
-**0.6.5**.
+Advance the minor version only when the project owner explicitly requests it; feature scope alone
+does not authorize it. The owner requested **0.7** on 2026-11-21, so the current candidate is
+**0.7.0** (formerly prepared as 0.6.5) and holds everything integrated on beta. Patch releases stay
+on **0.7.x** until the owner asks for **0.8**.
 
 ## Candidate evidence
 

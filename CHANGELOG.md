@@ -1,6 +1,6 @@
 # Changelog — ChannelGate
 
-## 0.6.5 — candidate, pending approval
+## 0.7.0 — candidate, pending approval
 
 - Say why a connection to an undeclared server and port fails instead of dropping it silently.
   With Network on, the egress proxy carries only HTTPS to a host and port the channel has not
@@ -547,9 +547,10 @@
 - Show readable, redacted provider errors when a background job's automatic follow-up fails,
   preserving diagnostic audit detail and protection against replaying interrupted work.
 
-Prepared 2026-11-06 from integrated beta development. This is not a publication date.
-Requires Node.js 24.0.0 or newer and runtime image spec 1.6.3. See
-[the candidate record](docs/releases/0.6.5.md) for scope, excluded unfinished work and
+Prepared 2026-11-06 as 0.6.5 and renamed 0.7.0 on 2026-11-21 at the owner's request; the
+candidate is everything integrated on beta, including the Unreleased entries below. This is not a
+publication date. Requires Node.js 24.0.0 or newer and runtime image spec 1.6.4. See
+[the candidate record](docs/releases/0.7.0.md) for scope, excluded unfinished work and
 release gates. Stable promotion and publication require approval of the exact tested candidate.
 
 ### Beta development notes
@@ -835,7 +836,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
+## Unreleased (included in the 0.7.0 candidate)
 
 - Add an Automations tab to the Activity dashboard: pick any conversation you can access (your DM shows your personal ones), see its automations with recurrence in plain words, expand for run history, and delete ones you own.
 - Require Enterprise for new mandatory organization skill grants and organization-wide agent instructions. Saved policies remain active after downgrade; explicit removal remains available.
