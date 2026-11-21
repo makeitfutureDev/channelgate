@@ -1,5 +1,59 @@
 # ChannelGate — Test Plan
 
+## An SSH session's `codex` is the channel's selected Codex license (2026-11-21)
+
+Only Codex is affected: the change is which Codex sign-in a terminal's `codex` reads. Claude over
+SSH is unchanged and has no case here; the automated cases run without an engine.
+
+- [x] `test/ssh-session.test.js` "Codex over SSH signs in as the channel's selected license, in
+      that license's own directory" (always runs): a channel set to an added ChatGPT sign-in gets
+      one write, `<license dir>/auth.json`, carrying that license's account, an empty refresh
+      token and no real token; the generated wrapper runs the CLI with `CODEX_HOME` = the license
+      directory and `cli_auth_credentials_store="file"`, keeps a `CODEX_HOME` set by the command,
+      and drops `OPENAI_API_KEY`.
+- [x] `test/ssh-session.test.js` "… follows the gateway default license when the channel names
+      none, and the channel's Codex pick when it runs on Claude" (always runs): a channel without
+      an engine on a gateway whose default is the license; a Claude channel whose Approved
+      harnesses admit only that license; a Claude channel that admits no Codex license → not
+      prepared, "no Codex license is usable", nothing written, Claude unaffected.
+- [x] `test/ssh-session.test.js` "… a license that cannot be signed in leaves `codex` in that
+      license's directory, signed out — never on another account" (always runs): a license not
+      signed in on the host → nothing written, no `codex-args.sh`, the wrapper prints
+      `codex: Codex sign-in not placed: …` and runs in the license directory; an API-key license
+      where nothing else is admitted → "Team API is an API license …", nothing written, the key
+      in no session file; the same channel also admitting a sign-in → that sign-in; a failing
+      lockdown leaves exactly `codex-login.sh` in the developer's directory with the sign-in
+      placed.
+- [x] `test/ssh-session.test.js` "… a refresh after the channel changed license re-points
+      `codex`" (always runs): an attach-time container object that still names the old license's
+      directory resolves to `/home/agent/.codex` for the gateway's own sign-in, bound to the
+      session's channel; `with-secrets` is installed where the channel has no Codex license.
+- [x] `test/ssh-session.test.js` "sshCodexLicense: …" (always runs): the selection table.
+      `test/ssh-access.test.js`: a session's environment drops `CODEX_HOME`.
+      `test/codex-args.test.js` / `test/codex-eu.test.js` / `test/engine-licenses-providers.test.js`
+      keep proving a turn's environment through the shared strip list.
+- [ ] Live `LICENSE-33` an SSH session's `codex` is the channel's license (Codex only). Fixture:
+      proxy egress; an added ChatGPT sign-in license `W`, signed in on the host to a DIFFERENT
+      account than the gateway's own Codex sign-in `D` (compare `tokens.account_id` of the two
+      host login files; never print a token); channel `C` whose container was created while `C`
+      ran on `D` (at least one earlier Codex turn on `D`), then set to `W`; a developer with SSH
+      access to `C`. Action: (1) connect and run `printenv CODEX_HOME; echo`, then
+      `codex exec --skip-git-repo-check "say ready"`, then
+      `jq -r .tokens.account_id,.tokens.refresh_token /home/agent/.cg-licenses/<W's id>/auth.json`
+      and `find /home/agent/.cg-licenses/<W's id>/sessions /home/agent/.codex/sessions -newermt '-5 minutes' -name '*.jsonl'`;
+      (2) set `C` back to `D`, reconnect, run the same `codex exec` and
+      `jq -r .tokens.account_id /home/agent/.codex/auth.json` and the same `find`; (3) set `C`'s
+      Approved harnesses to Claude only, reconnect and run `codex --version`. Pass: (1) the
+      `printenv` line is empty, the answer arrives, the account id is `W`'s with an empty refresh
+      token, the new session file is under `W`'s directory and none is new under
+      `/home/agent/.codex/sessions`, and
+      `SELECT data FROM events WHERE event = 'ssh_session_start' ORDER BY id DESC LIMIT 1` holds
+      `codexLicense` = `W`'s id and no `codexProblem`; (2) the account id is `D`'s, the new
+      session file is under `/home/agent/.codex/sessions`, and the event holds `codexLicense` =
+      `codex`; (3) `codex` prints `codex: no Codex license is usable in this channel …` before
+      its version and the event holds an empty `codexLicense` with that `codexProblem`. Restore
+      `C`'s Approved harnesses and license.
+
 ## A harness picked by name brings its other sign-ins; `codex eu` names the EU license (2026-11-21)
 
 Which licenses a pick carries is decided by the gateway before any engine starts, so the

@@ -1,5 +1,48 @@
 # ChannelGate — Features
 
+## An SSH session's `codex` is the channel's selected Codex license (2026-11-21)
+
+A chat turn runs on a license: its container run is pointed at that license's own directory and
+handed that license's own relayed sign-in. An SSH session's `codex` did neither reliably, so a
+developer's terminal could be on a different ChatGPT account than the channel they were sitting in.
+
+- **Cause.** A container's `CODEX_HOME` is a create-time fact — the license the channel ran on
+  when its container was first created — and changing a channel's license never recreates the
+  container. A session inherited that variable while the selected license's sign-in was written to
+  the license's own directory, so `codex` read one directory and the sign-in sat in another;
+  typically it found the gateway's own sign-in a previous turn had left in `~/.codex`. A channel
+  with no engine of its own that follows a gateway-default license, and a Claude channel whose
+  Approved harnesses admit a single Codex license, were treated as "the gateway's own sign-in". A
+  refresh after a license change reused the directory resolved when the developer connected. On a
+  Codex API-key license the gateway's own ChatGPT sign-in was written into that license's
+  directory.
+- **Which license.** `sshCodexLicense` (`src/gateway/ssh-session.js`): the license the channel is
+  set to — its own engine, else the gateway default — when it is a Codex sign-in the channel may
+  use (registered, switched on, admitted by Approved harnesses, available in this conversation);
+  otherwise the channel's Codex sign-in (the gateway's own when admitted, else the first admitted
+  sign-in license); otherwise none. The license's target is built by the same function a turn
+  uses to move between licenses (`engineRuntimeTarget`, `src/gateway/engine-target.js`), from the
+  container's shared Codex home every time.
+- **Where `codex` runs.** A per-developer `codex-login.sh` beside the session files names the
+  license's directory as `CODEX_HOME`, adds the file credential store for a dedicated sign-in and
+  unsets the OpenAI names a turn strips (`codexLoginEnvStrip`, one list for both). The `codex`
+  wrapper sources it on its own — after the developer's secrets, and whether or not the session's
+  tools were prepared — and a session's environment no longer carries `CODEX_HOME`, so one that is
+  set was typed by the developer (the footer's Resume command) and wins.
+- **Not signed in is said, never papered over.** A license that is not signed in on the host, a
+  dedicated sign-in without the egress proxy, an API-key or cloud-provider license (not usable
+  from a terminal yet) leave `codex` signed out in the selected license's directory, and a channel
+  that may use no Codex license has none to name; the wrapper prints the reason before the CLI starts, the session
+  result carries `codex.license` and `codex.reason`, and the `ssh_session_start` event records
+  `codexLicense` / `codexProblem`. No other account's sign-in stands in.
+- Not changed: Claude over SSH, the session's tools and secrets, what a session may reach, and the
+  gateway's own Codex sign-in in a channel that uses it (same directory, same relay file). The
+  session stays on the selected license — no pool move. Known limits: a sign-in file a channel
+  used earlier stays in its HOME volume until it expires, so a program that starts the pinned CLI
+  directly (bypassing the wrapper) or a channel that may use no Codex license reads `~/.codex`.
+
+→ TEST-PLAN: An SSH session's `codex` is the channel's selected Codex license.
+
 ## A harness picked by name brings its other sign-ins; `codex eu` names the EU license (2026-11-21)
 
 A typed `codex` in a conversation that runs on Claude Code used to pin Codex's default sign-in and

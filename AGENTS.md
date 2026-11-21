@@ -227,7 +227,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   and a data-dependent capacity forecast. Admin routes in `src/web/routes/system-health.js`,
   browser page in `public/admin-system-health.js`, isolated canary in `scripts/system-health-soak.mjs`.
 - Smaller gateway modules: `sessions.js` + `thread-engine.js` (thread key ↔ engine session,
-  per-thread pins), `session-adopt.js` + `session-carry.js` (`/resume` of a local session whose
+  per-thread pins), `engine-target.js` (the ONE place a resolved target is re-pointed at another
+  license — its login and its directory — for a turn's pool move and an SSH session's `codex`), `session-adopt.js` + `session-carry.js` (`/resume` of a local session whose
   cwd is this channel; host → container carry-over), `stopped-turns.js`, `active-runs.js`
   (durable rows so interactive turns recover after a restart), `usage.js` + `usage-repair.js`,
   `model-info.js`, `runtime-identity.js` + `runtime-access.js` + `channel-credentials.js` (the
