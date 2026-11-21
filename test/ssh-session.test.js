@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
@@ -168,7 +168,9 @@ test("when the login file cannot be written the token rides the environment inst
   assert.match(r2.problems[0], /^lockdown: no lockdown/);
   assert.deepEqual(r2.mcpServers, []);
   assert.deepEqual(r2.secrets, []);
-  assert.equal(existsSync(session.sshUserDir(t, user.id)), false, "the wrapper needs all three files, so a partial set is removed");
+  // The claude wrapper needs all three files, so a partial set is removed. What stays is the one
+  // file that says which Codex sign-in `codex` is: it stands on its own (see the license tests below).
+  assert.deepEqual(readdirSync(session.sshUserDir(t, user.id)), ["codex-login.sh"]);
   assert.equal(r2.claude.account, true, "the login itself still works");
   assert.equal(session.sshUsersDir(t), path.join(containerSshDir(t), "users"));
   assert.throws(() => session.sshUserDir(t, "../escape"), /invalid user id/);
@@ -647,4 +649,210 @@ test("Codex over SSH behind the egress proxy: the relayed access-only login is p
   await session.prepareSshSession({ target: bridged, entry: { slug: "ssh-codex-bridge", channelId: "C_CXB" }, meta: {}, user, cliBin: "podman", log: { warn() {} } },
     { ...deps, installCodexLogin: async () => { none.push(1); return null; } });
   assert.deepEqual(none, []);
+});
+
+// ── Which Codex login a session's `codex` is (2026-11-21) ─────────────────────────────────────
+// A turn retargets its container run at the license it runs on: that license's own directory and
+// that license's own relayed sign-in. A session did neither — the container's CODEX_HOME is a
+// create-time fact (whatever license the channel ran on when the container was created), so the
+// terminal's `codex` read one directory while the selected license's sign-in was written to
+// another, and a channel following a gateway-default license got the gateway's own sign-in.
+const { saveSettings: saveGatewaySettings } = await import("../src/config/settings.js");
+const engineLicenses = await import("../src/config/engine-licenses.js");
+const { licenseLoginHome, licenseContainerDir } = await import("../src/engines/license-state.js");
+const { harnessPolicyEntry } = await import("../src/gateway/channel-engines.js");
+const { containerPaths } = await import("../src/engines/runtime-target.js");
+
+const chatgptJwt = (account) => `${Buffer.from('{"alg":"RS256"}').toString("base64url")}.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 864000, "https://api.openai.com/auth": { chatgpt_plan_type: "plus", chatgpt_account_id: account } })).toString("base64url")}.c2lnbmF0dXJl`;
+function signInCodexLicense(id, account) {
+  mkdirSync(licenseLoginHome(id), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(licenseLoginHome(id), "auth.json"), JSON.stringify({ tokens: { access_token: chatgptJwt(account), refresh_token: "fixture-refresh", account_id: account } }), { mode: 0o600 });
+}
+const resetLicenses = () => saveGatewaySettings({ engineLicenses: [], engine: "claude", enginePool: "", engineEnabled: { claude: true, codex: true } });
+// A proxy-mode target whose backend records what is written into the channel's HOME.
+function licenseSessionTarget(slug, channelId, meta = {}) {
+  const base = egressTarget(slug, channelId);
+  const writes = [];
+  const t = {
+    ...base, meta: { channelId, ...meta },
+    runtime: { ...base.runtime, writeHomeFile: async (_target, spec) => { writes.push(spec); } },
+    container: { ...base.container, credentialMode: { claude: "relay", codex: "relay" } },
+  };
+  return { t, writes };
+}
+const accountOf = (authJson) => JSON.parse(Buffer.from(JSON.parse(authJson).tokens.access_token.split(".")[1], "base64url").toString())["https://api.openai.com/auth"].chatgpt_account_id;
+const sessionFile = (t, name) => path.join(session.sshUserDir(t, user.id), name);
+// What the generated wrapper hands the CLI: its CODEX_HOME and its argv, one per line.
+function wrapperFor(t) {
+  const fakeCli = path.join(scratch, "fake-codex-cli.sh");
+  writeFileSync(fakeCli, '#!/bin/sh\nprintf "CODEX_HOME=%s\\n" "${CODEX_HOME-<unset>}"\nprintf "OPENAI_API_KEY=%s\\n" "${OPENAI_API_KEY-<unset>}"\nfor a in "$@"; do printf "arg=%s\\n" "$a"; done\n', { mode: 0o700 });
+  const wrapper = path.join(scratch, `codex-wrapper-${t.slug}.sh`);
+  writeFileSync(wrapper, renderCodexWrapper({ usersDir: session.sshUsersDir(t), codexBin: fakeCli }), { mode: 0o700 });
+  return wrapper;
+}
+function runWrapped(t, { env = {}, args = [] } = {}) {
+  return execFileSync("sh", [wrapperFor(t), ...args], { encoding: "utf8", cwd: scratch, stdio: ["ignore", "pipe", "ignore"], env: { PATH: process.env.PATH, HOME: scratch, CG_SSH_USER: user.id, ...env } });
+}
+const { renderCodexWrapper } = await import("../src/runtimes/container/vscode.js");
+
+test("Codex over SSH signs in as the channel's selected license, in that license's own directory", async () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Second seat" });
+  signInCodexLicense(seat.id, "acct-second-seat");
+  const { entry: e } = await egressChannel("C_SSH_LIC");
+  const { t, writes } = licenseSessionTarget("ssh-codex-license", e.channelId, { engine: seat.id });
+  const { deps } = egressDeps();
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(result.codex.ready, true, result.codex.reason);
+  assert.equal(result.codex.license, seat.id);
+
+  // The sign-in placed is the LICENSE's, in the license's directory in this channel's HOME.
+  const home = licenseContainerDir(seat.id);
+  assert.deepEqual(writes.map((spec) => spec.file), [`${home}/auth.json`]);
+  assert.equal(accountOf(writes[0].body), "acct-second-seat");
+  assert.equal(JSON.parse(writes[0].body).tokens.refresh_token, "", "access-only: no refresh token");
+  assert.doesNotMatch(writes[0].body, /c2lnbmF0dXJl|fixture-refresh/, "the real token never reaches the container");
+
+  // …and the terminal's `codex` reads THAT directory, from the file store, whatever CODEX_HOME
+  // the container was created with (a session's environment no longer carries one).
+  const out = runWrapped(t, { args: ["--version"] });
+  assert.match(out, new RegExp(`^CODEX_HOME=${home}$`, "m"));
+  assert.match(out, /^arg=cli_auth_credentials_store="file"$/m);
+  assert.match(out, /^arg=--version$/m);
+  // A command that names its own directory keeps it (the footer's Resume command does).
+  assert.match(runWrapped(t, { env: { CODEX_HOME: "/home/agent/.cg-licenses/other" } }), /^CODEX_HOME=\/home\/agent\/\.cg-licenses\/other$/m);
+  // A dedicated sign-in never inherits an API key from the session's secrets.
+  assert.match(runWrapped(t, { env: { OPENAI_API_KEY: "sk-channel-secret" } }), /^OPENAI_API_KEY=<unset>$/m);
+});
+
+test("Codex over SSH follows the gateway default license when the channel names none, and the channel's Codex pick when it runs on Claude", async () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Default seat" });
+  signInCodexLicense(seat.id, "acct-default-seat");
+  saveGatewaySettings({ engine: seat.id });
+  const { entry: e } = await egressChannel("C_SSH_LIC_DEFAULT");
+  const { deps } = egressDeps();
+
+  const inherited = licenseSessionTarget("ssh-codex-license-default", e.channelId);
+  const first = await session.prepareSshSession({ target: inherited.t, entry: e, meta: inherited.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(first.codex.license, seat.id, first.codex.reason);
+  assert.deepEqual(inherited.writes.map((spec) => spec.file), [`${licenseContainerDir(seat.id)}/auth.json`]);
+  assert.equal(accountOf(inherited.writes[0].body), "acct-default-seat");
+
+  // A Claude channel locked to this one Codex license: `codex` there is that license, never the
+  // gateway's own sign-in the channel may not use.
+  saveGatewaySettings({ engine: "claude" });
+  const locked = licenseSessionTarget("ssh-codex-license-locked", e.channelId, { engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), seat.id] });
+  const second = await session.prepareSshSession({ target: locked.t, entry: e, meta: locked.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(second.codex.license, seat.id, second.codex.reason);
+  assert.equal(accountOf(locked.writes[0].body), "acct-default-seat");
+
+  // No Codex license the channel may use: nothing is placed, and the session says so.
+  const none = licenseSessionTarget("ssh-codex-license-none", e.channelId, { engine: "claude", approvedEngines: [harnessPolicyEntry("claude")] });
+  const third = await session.prepareSshSession({ target: none.t, entry: e, meta: none.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(third.codex.ready, false);
+  assert.match(third.codex.reason, /no Codex license/i);
+  assert.deepEqual(none.writes, []);
+  assert.equal(third.claude.relayed, true, "Claude is unaffected");
+});
+
+test("Codex over SSH: a license that cannot be signed in leaves `codex` in that license's directory, signed out — never on another account", async () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Unsigned seat" }); // never signed in
+  const api = engineLicenses.createLicense({ kind: "codex-api", label: "Team API", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: "sk-fixture-ssh-license-0001", authScheme: "bearer", models: ["team-large"] });
+  const { entry: e } = await egressChannel("C_SSH_LIC_OUT");
+  const { deps } = egressDeps();
+
+  const unsigned = licenseSessionTarget("ssh-codex-license-unsigned", e.channelId, { engine: seat.id });
+  const first = await session.prepareSshSession({ target: unsigned.t, entry: e, meta: unsigned.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(first.codex.ready, false);
+  assert.equal(first.codex.license, seat.id);
+  assert.match(first.codex.reason, /Codex sign-in not placed/);
+  assert.deepEqual(unsigned.writes, [], "nothing of another login stands in");
+  assert.equal(existsSync(sessionFile(unsigned.t, "codex-args.sh")), false, "no session tools without a sign-in");
+  // The terminal says why before the CLI asks the developer to sign in.
+  const signedOut = spawnSync("sh", [wrapperFor(unsigned.t)], { encoding: "utf8", cwd: scratch, env: { PATH: process.env.PATH, HOME: scratch, CG_SSH_USER: user.id } });
+  assert.match(signedOut.stdout, new RegExp(`^CODEX_HOME=${licenseContainerDir(seat.id)}$`, "m"));
+  assert.match(signedOut.stderr, /^codex: Codex sign-in not placed: /);
+
+  // An API license is not something a terminal session can run on yet. Where the channel may use
+  // nothing else, that is said plainly and nothing is placed — least of all the gateway's own
+  // sign-in in the API license's directory.
+  const provider = licenseSessionTarget("ssh-codex-license-api", e.channelId, { engine: api.id, approvedEngines: [api.id] });
+  const second = await session.prepareSshSession({ target: provider.t, entry: e, meta: provider.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(second.codex.ready, false);
+  assert.equal(second.codex.license, api.id);
+  assert.match(second.codex.reason, /Team API is an API license/);
+  assert.deepEqual(provider.writes, []);
+  assert.match(runWrapped(provider.t), new RegExp(`^CODEX_HOME=${licenseContainerDir(api.id)}$`, "m"));
+  assert.doesNotMatch(readFileSync(sessionFile(provider.t, "codex-login.sh"), "utf8"), /sk-fixture-ssh-license-0001/);
+
+  // Where the channel may also use a sign-in, `codex` is that sign-in — in ITS directory.
+  const mixed = licenseSessionTarget("ssh-codex-license-api-mixed", e.channelId, { engine: api.id, approvedEngines: [api.id, seat.id] });
+  const third = await session.prepareSshSession({ target: mixed.t, entry: e, meta: mixed.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(third.codex.license, seat.id);
+  assert.match(runWrapped(mixed.t), new RegExp(`^CODEX_HOME=${licenseContainerDir(seat.id)}$`, "m"));
+
+  // The session's tools failing changes nothing about which sign-in `codex` is.
+  signInCodexLicense(seat.id, "acct-late-seat");
+  const broken = licenseSessionTarget("ssh-codex-license-broken", e.channelId, { engine: seat.id });
+  const fourth = await session.prepareSshSession({ target: broken.t, entry: e, meta: broken.t.meta, user, cliBin: "podman", log: { warn() {} } },
+    { ...deps, buildLockdown: async () => { throw new Error("no lockdown"); } });
+  assert.match(fourth.problems[0], /^lockdown: /);
+  assert.equal(fourth.codex.ready, false);
+  assert.deepEqual(broken.writes.map((spec) => spec.file), [`${licenseContainerDir(seat.id)}/auth.json`]);
+  assert.deepEqual(readdirSync(session.sshUserDir(broken.t, user.id)), ["codex-login.sh"]);
+  assert.match(runWrapped(broken.t), new RegExp(`^CODEX_HOME=${licenseContainerDir(seat.id)}$`, "m"));
+  resetLicenses();
+});
+
+test("Codex over SSH: a refresh after the channel changed license re-points `codex`, even though the attached container object still names the old directory", async () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Old seat" });
+  const { entry: e } = await egressChannel("C_SSH_LIC_MOVE");
+  // The broker refreshes with the ATTACH-TIME target and the CURRENT channel record: the container
+  // facts were resolved for the license the channel was on when the developer connected.
+  const moved = licenseSessionTarget("ssh-codex-license-moved", e.channelId, { engine: "codex" });
+  moved.t.container = { ...moved.t.container, baseCodexHome: "/home/agent/.codex", codexHome: licenseContainerDir(seat.id) };
+  const placed = [];
+  const { deps, execs } = egressDeps();
+  const result = await session.prepareSshSession({ target: moved.t, entry: e, meta: moved.t.meta, user, cliBin: "podman", log: { warn() {} } },
+    { ...deps, installCodexLogin: async (tgt) => { placed.push([tgt.meta.engine, tgt.meta.channelId, containerPaths(tgt).codexHome]); return null; } });
+  assert.equal(result.codex.license, "codex");
+  assert.deepEqual(placed, [["codex", e.channelId, "/home/agent/.codex"]]);
+  const out = runWrapped(moved.t, { env: { OPENAI_API_KEY: "sk-channel-secret" } });
+  assert.match(out, /^CODEX_HOME=\/home\/agent\/\.codex$/m);
+  assert.match(out, /^OPENAI_API_KEY=<unset>$/m, "a relayed sign-in is never outranked by a key from the session's secrets — as in a turn");
+  assert.doesNotMatch(out, /cli_auth_credentials_store/, "the gateway's own sign-in keeps the CLI's default store, as in a turn");
+  // `with-secrets` is installed with the wrapper whether or not the channel has a Codex license.
+  const none = licenseSessionTarget("ssh-codex-license-nowrap", e.channelId, { engine: "claude", approvedEngines: [harnessPolicyEntry("claude")] });
+  const quiet = egressDeps();
+  await session.prepareSshSession({ target: none.t, entry: e, meta: none.t.meta, user, cliBin: "podman", log: { warn() {} } }, quiet.deps);
+  assert.ok(quiet.execs.some((x) => String(x.args.at(-1)).includes("/home/agent/.local/bin/with-secrets")));
+  // …and with none there is no directory to name, only the reason to give.
+  const told = spawnSync("sh", [wrapperFor(none.t), "--version"], { encoding: "utf8", cwd: scratch, env: { PATH: process.env.PATH, HOME: scratch, CG_SSH_USER: user.id } });
+  assert.match(told.stdout, /^CODEX_HOME=<unset>$/m);
+  assert.match(told.stdout, /^arg=--version$/m);
+  assert.match(told.stderr, /^codex: no Codex license is usable in this channel/);
+  assert.ok(execs.length);
+  resetLicenses();
+});
+
+test("sshCodexLicense: the selected Codex sign-in, else the channel's Codex sign-in, else an API license to refuse, else none", () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Seat" });
+  const api = engineLicenses.createLicense({ kind: "codex-api", label: "Team API", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: "sk-fixture-ssh-license-0002", authScheme: "bearer", models: ["team-large"] });
+  const pick = (meta, gatewayEngine = "claude") => session.sshCodexLicense(meta, { gatewayEngine });
+  assert.equal(pick({}), "codex", "a Claude channel: the gateway's own Codex sign-in");
+  assert.equal(pick({ engine: seat.id }), seat.id);
+  assert.equal(pick({}, seat.id), seat.id, "the gateway default license, for a channel that names none");
+  assert.equal(pick({ engine: "codex" }, seat.id), "codex", "the channel's own choice beats the gateway default");
+  assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), seat.id] }), seat.id);
+  assert.equal(pick({ engine: seat.id, approvedEngines: ["codex"] }), "codex", "a license the channel may not use is never the session's");
+  assert.equal(pick({ engine: api.id }), "codex");
+  assert.equal(pick({ engine: api.id, approvedEngines: [api.id] }), api.id);
+  assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude")] }), "");
+  // The channel-account sign-in exists only where the channel connected one.
+  assert.equal(pick({ engine: "codex-channel" }), "codex");
+  resetLicenses();
 });

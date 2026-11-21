@@ -56,6 +56,7 @@ import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
 import { codexHarnessFor } from "./channel-codex-paths.js";
+import { engineRuntimeTarget } from "./engine-target.js";
 import { licensePoolCandidates, readLicensePool } from "./license-pool.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -1824,16 +1825,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // with the credential facts re-pointed at that engine — which login its container run is relayed
   // (`meta.engine`, `codexHarness`) and which directory holds its sessions. Without this a move
   // from one Codex license to another would run in the first license's directory, as its login.
-  const targetForEngine = (candidate) => {
-    if (candidate === target.meta?.engine) return target;
-    const candidateMeta = { ...target.meta, engine: candidate, codexHarness: codexHarnessFor(candidate) };
-    if (!target.container) return { ...target, meta: candidateMeta };
-    const container = { ...target.container, codexHome: target.container.baseCodexHome || target.container.codexHome };
-    const state = adapterFor(candidate)?.cli === "codex" ? adapterFor(candidate).sessionState : null;
-    const dir = typeof state?.containerDir === "function" ? state.containerDir(container) : container[state?.containerDirKey || ""];
-    if (dir) container.codexHome = dir;
-    return { ...target, meta: candidateMeta, container };
-  };
+  const targetForEngine = (candidate) => candidate === target.meta?.engine ? target : engineRuntimeTarget(target, candidate);
   const coolingDown = (id) => (engineLimitedUntil.get(`${id}::${entry.slug}`) || 0) > Date.now() || (engineAuthFailedUntil.get(id) || 0) > Date.now();
   const labelList = (labels) => labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0] || "";
   // Walk the queue until something answers. `noteFor(label)` is the sentence the answer leads

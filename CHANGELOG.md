@@ -2,6 +2,16 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Fix `codex` in an SSH session running on a different ChatGPT account than the channel. A
+  container's `CODEX_HOME` is set when the container is created and is not rewritten when the
+  channel's license changes, so the terminal's `codex` read one directory while the selected
+  license's sign-in was written to another — usually finding the gateway's own sign-in instead of
+  an added license's (or Codex EU's). A session's `codex` now runs in the channel's selected Codex
+  license's own directory with that license's relayed sign-in, also for a channel that follows a
+  gateway-default license and for a Claude channel whose Approved harnesses admit one Codex
+  license. A license that is not signed in, an API-key or cloud-provider Codex license (not usable
+  from a terminal yet) and a channel that may use no Codex license leave `codex` signed out with
+  the reason printed, never on another account. A `CODEX_HOME` typed in a command still wins.
 - A harness picked by name now brings its other sign-ins. Typing `codex` (or `claude`) in a
   conversation that runs on the other harness, a model shortcut or `/fork :shortcut` on a harness's
   own sign-in, the harness-switch card and a typed `/model <harness>` in Teams and Google Chat used

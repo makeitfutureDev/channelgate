@@ -167,8 +167,29 @@ The first use copies legacy project history additively, after project writers fi
 changing the original HOME. Divergent files or unsafe links stop migration without overwriting.
 Legacy admin history remains in its original HOME for a reviewed import: older versions could
 copy host `/sudo` transcripts there, so it cannot safely be published wholesale.
-Codex uses the channel's selected login (a proxy placeholder in proxy mode, a host file mount in
-legacy bridge mode), and `codex` in a session gets what a chat turn's Codex gets:
+`codex` in a session is the channel's **selected Codex license**, in that license's own directory
+in the channel's HOME — the same sign-in a chat turn of that channel runs on:
+
+- the license the channel is set to (its own engine, else the gateway default) when that is a
+  Codex sign-in the channel may use: the gateway's own, Codex EU, an added ChatGPT sign-in, or the
+  channel's own account;
+- in a channel that runs on Claude Code, or on a Codex API-key / cloud-provider license, the
+  channel's Codex sign-in instead: the gateway's own when the channel's Approved harnesses admit
+  it, else the first admitted sign-in license;
+- when the channel may use no Codex sign-in, `codex` is **not signed in** and says so on start
+  (`codex: …`) — an API-key or cloud-provider Codex license cannot be used from a terminal yet,
+  and a sign-in that could not be placed (not signed in on the host, the egress proxy not this
+  container's network) is never replaced by another account's.
+
+The sign-in is the access-only relay file a turn writes (a proxy placeholder, no refresh token; in
+the legacy bridge mode the gateway's own sign-in is the mounted host file and the dedicated ones
+are unavailable, as in a turn). The session's shell carries no `CODEX_HOME`: the `codex` wrapper
+names the selected license's directory itself, so a `CODEX_HOME` you type — the footer's Resume
+command names its session's directory — wins. A program that starts the pinned CLI directly
+(`/usr/local/bin/codex`), bypassing the wrapper, reads `~/.codex`. The session stays on the
+selected license: it does not move to another license of a pool the way a turn does.
+
+`codex` in a session also gets what a chat turn's Codex gets:
 the gateway tools, your own Composio accounts as `composio-user`, the channel's as
 `composio-agent`, the channel's selected MCP servers and your channel secrets. Started from your
 home, `/` or a parent of the channel folder it moves into the channel folder so its `AGENTS.md`
@@ -214,7 +235,8 @@ session gets:
   the shared channel history, including ordinary conversations created by the other role.
   Host `/sudo` history stays separate; it is never copied back into shared channel history.
 
-Codex over SSH uses the same selected login as a channel turn. "show SSH access" in the
+Codex over SSH uses the same selected license as a channel turn (above); the `ssh_session_start`
+event records it as `codexLicense`, with `codexProblem` when it is not signed in. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.
@@ -334,7 +356,7 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
-| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-args.sh` + `codex-secrets.json` (the capability only) |
+| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-login.sh` (which license's directory `codex` runs in — no credential), `codex-args.sh` + `codex-secrets.json` (the capability only) |
 | `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the container's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 

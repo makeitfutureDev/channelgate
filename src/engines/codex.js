@@ -930,6 +930,18 @@ function applyCodexProviderEnv(env, provider) {
   return env;
 }
 
+// The OpenAI names a container run on a SIGN-IN must not inherit, because each one outranks or
+// redirects the login file the gateway placed: an API key in the environment answers instead of
+// the relayed sign-in, and a dedicated login (Codex EU, an added license, the channel's own
+// account) must not be pointed at another endpoint, organization or project either. One list for
+// a turn's environment (below) and for the `codex` an SSH session runs (gateway/ssh-session.js),
+// so a terminal can never be on a different account than the same channel's turn.
+export function codexLoginEnvStrip(target) {
+  const dedicated = isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta);
+  if (!dedicated && target?.container?.credentialMode?.codex !== "relay") return [];
+  return ["OPENAI_API_KEY", "CODEX_API_KEY", ...(dedicated ? ["OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"] : [])];
+}
+
 export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null, provider = null } = {}, source = process.env) {
   // An ISOLATED runtime has the image's layout, not the host's: HOME and CODEX_HOME are the
   // container's (CODEX_HOME is the bind-mounted per-install codex home that carries auth.json),
@@ -952,15 +964,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       TMPDIR: image.tmpDir,
       PATH: image.path,
     }, target);
-    if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta) || target?.container?.credentialMode?.codex === "relay") {
-      delete env.OPENAI_API_KEY;
-      delete env.CODEX_API_KEY;
-      if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta)) {
-        delete env.OPENAI_BASE_URL;
-        delete env.OPENAI_ORG_ID;
-        delete env.OPENAI_PROJECT_ID;
-      }
-    }
+    for (const name of codexLoginEnvStrip(target)) delete env[name];
     // Behind the proxy NODE_USE_ENV_PROXY=1 makes Node 22 print its experimental-EnvHttpProxyAgent
     // warning on every node process's stderr — the Codex npm launcher's and every node child a
     // shell command starts. Gateway-owned and set LAST: NODE_OPTIONS is a reserved name a channel

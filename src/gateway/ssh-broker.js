@@ -303,7 +303,7 @@ async function runSession(socket, header, leftover, state) {
     await logEvent("ssh_session_start", {
       slug: entry.slug, channel: entry.channelId, author: user.id, session: id, fingerprint: key.fingerprint, client,
       claudeRelayed: claude.relayed, claudeAccount: Boolean(claude.account), mcp: prepared.mcpServers || [], secrets: prepared.secrets || [], problems: prepared.problems || [],
-      codexMcp: prepared.codex?.mcpServers || [], ...(prepared.codex?.reason ? { codexProblem: prepared.codex.reason } : {}),
+      codexMcp: prepared.codex?.mcpServers || [], codexLicense: prepared.codex?.license || "", ...(prepared.codex?.reason ? { codexProblem: prepared.codex.reason } : {}),
     });
   } catch (error) {
     writeLine(socket, { ok: false, error: `could not attach: ${String(error?.message || error)}` });
