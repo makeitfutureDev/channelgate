@@ -64,17 +64,18 @@ test("operator-script tests leave an inherited canonical runtime and database un
   assert.deepEqual(snapshot(external), before, "no backup, restore, rotation, retention, or DB write may reach the inherited runtime");
 });
 
-test("aggregate test runner removes serving-runtime selectors while preserving other environment and node flags", () => {
+test("aggregate test runner removes serving-runtime selectors and deployment configuration while preserving other environment and node flags", () => {
   const fixture = tempDir("cg-suite-env-isolation-");
   mkdirSync(path.join(fixture, "scripts"));
   mkdirSync(path.join(fixture, "test"));
   copyFileSync(path.join(repoRoot, "scripts", "run-tests.mjs"), path.join(fixture, "scripts", "run-tests.mjs"));
+  copyFileSync(path.join(repoRoot, "scripts", "test-env.mjs"), path.join(fixture, "scripts", "test-env.mjs"));
   writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
   const evidence = path.join(fixture, "evidence.json");
   writeFileSync(path.join(fixture, "test", "fixture.test.js"), `
     import { writeFileSync } from 'node:fs';
     writeFileSync(process.env.FIXTURE_EVIDENCE, JSON.stringify({ env: Object.fromEntries(
-      ['CHANNELGATE_DIR', 'CHANNELGATE_DB', 'CLAUDE_GATEWAY_DIR', 'CLAUDE_GATEWAY_DB', 'CG_WORKSPACE_DIR', 'CG_TEST_SCRATCH', 'FIXTURE_PRESERVED'].map(key => [key, process.env[key] ?? null])
+      ['CHANNELGATE_DIR', 'CHANNELGATE_DB', 'CLAUDE_GATEWAY_DIR', 'CLAUDE_GATEWAY_DB', 'CG_WORKSPACE_DIR', 'CG_TEST_SCRATCH', 'SLACK_BOT_TOKEN', 'GATEWAY_PUBLIC_URL', 'CG_APPROVAL_SECRET', 'FIXTURE_PRESERVED'].map(key => [key, process.env[key] ?? null])
     ), flags: process.execArgv }));
   `);
   const external = path.join(fixture, "external");
@@ -85,13 +86,16 @@ test("aggregate test runner removes serving-runtime selectors while preserving o
     CHANNELGATE_DIR: external, CLAUDE_GATEWAY_DIR: external,
     CHANNELGATE_DB: path.join(external, "canonical.db"), CLAUDE_GATEWAY_DB: path.join(external, "legacy.db"),
     CG_WORKSPACE_DIR: external, CG_TEST_SCRATCH: external,
+    // What the live updater also passes: the serving deployment's configuration.
+    SLACK_BOT_TOKEN: "xoxb-serving", GATEWAY_PUBLIC_URL: "https://serving.example", CG_APPROVAL_SECRET: "serving",
   };
   const before = snapshot(external);
   runNode(["scripts/run-tests.mjs", "--no-warnings"], { env, cwd: fixture, output: path.join(fixture, "runner.log") });
   const observed = JSON.parse(readFileSync(evidence, "utf8"));
   assert.deepEqual(observed.env, {
     CHANNELGATE_DIR: null, CHANNELGATE_DB: null, CLAUDE_GATEWAY_DIR: null, CLAUDE_GATEWAY_DB: null,
-    CG_WORKSPACE_DIR: null, CG_TEST_SCRATCH: null, FIXTURE_PRESERVED: "yes",
+    CG_WORKSPACE_DIR: null, CG_TEST_SCRATCH: null,
+    SLACK_BOT_TOKEN: null, GATEWAY_PUBLIC_URL: null, CG_APPROVAL_SECRET: null, FIXTURE_PRESERVED: "yes",
   });
   assert.ok(observed.flags.includes("--no-warnings"));
   assert.deepEqual(snapshot(external), before);
@@ -102,6 +106,7 @@ test("aggregate test runner detects a fixture left in ChannelGate Testing", () =
   mkdirSync(path.join(fixture, "scripts"));
   mkdirSync(path.join(fixture, "test"));
   copyFileSync(path.join(repoRoot, "scripts", "run-tests.mjs"), path.join(fixture, "scripts", "run-tests.mjs"));
+  copyFileSync(path.join(repoRoot, "scripts", "test-env.mjs"), path.join(fixture, "scripts", "test-env.mjs"));
   writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
   writeFileSync(path.join(fixture, "test", "leak.test.js"), `
     import { mkdirSync } from 'node:fs';

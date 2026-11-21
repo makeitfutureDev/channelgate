@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { testEnvironment } from "./test-env.mjs";
 
 // Enforced coverage floors. Baseline measured 2026-08-04: lines 69.13 / branches 68.98 /
 // functions 68.61 — floors sit 1-2 points under so real regressions fail CI without flaking on
@@ -84,10 +85,9 @@ function homeSnapshot() {
 // Do not let those production selectors override fixtures that exercise legacy aliases. Each
 // test supplies its own runtime through helpers or explicit subprocess env; direct `node --test`
 // invocations remain available for tests intentionally given a particular environment.
-const testEnv = { ...process.env };
-for (const key of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CLAUDE_GATEWAY_DIR", "CLAUDE_GATEWAY_DB", "CG_WORKSPACE_DIR", "CG_TEST_SCRATCH"]) {
-  delete testEnv[key];
-}
+// The live updater also passes the daemon's whole configuration (Slack tokens, public URL,
+// license payloads, secrets); scripts/test-env.mjs strips every deployment setting.
+const testEnv = testEnvironment(process.env);
 
 // The folder-generator test deliberately uses this one named home folder. Include its children
 // in the before/after leak guard so a missed cleanup fails the suite.

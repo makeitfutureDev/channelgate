@@ -16184,3 +16184,18 @@ Composio project key in the channel inventory:
    sample or Slack List is produced.
 3. Ask "@bot give me a list of questions about how to filter my HubSpot deals". Pass: choices are
    grounded in real pipelines/fields and delivered as an `ask_questions` form.
+
+## Test suite isolated from the serving deployment's environment (2026-11-21)
+
+- [x] `test/test-env.test.js`: `testEnvironment()` strips `SLACK_*`, `GATEWAY_*`, `CHANNELGATE_*`,
+  `CLAUDE_GATEWAY_*`, `COMPOSIO_*`, `GOOGLE_CHAT_*`, `TEAMS_*`, provider keys, `PORT`,
+  `ADMIN_PASSWORD`, runtime knobs and every `CG_*` except the `CG_LIVE_*`, `CG_BROWSER_*` and
+  screenshot switches; the OS environment survives. `test/test-runner-isolation.test.js` proves
+  the spawned suite sees none of a serving Slack token, public URL or approval secret.
+- [x] Host reproduction (engine-independent): with the environment of a running
+  `update-runner.mjs` process, the three files admin-container-runtime, admin-auth-http and
+  admin-password-slack-email failed 6 tests under the old runner and pass 12/12 under the new
+  one; the full `npm test` under that environment passes (5,601 tests, 0 failures).
+- [ ] Live: run `update_gateway` on a gateway whose `.env` configures Slack. Pass: the update's
+  test step passes, the result is "updated", and when the image is stale the log shows
+  "Channel image rebuilt".

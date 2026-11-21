@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Fix updates rolling back on a configured gateway because the update's own test step failed. The
+  updater runs the test suite with the serving daemon's environment, so tests saw the live Slack
+  tokens, public URL and secrets instead of their fixtures (six settings, passkey and Slack-email
+  tests failed on the host while passing everywhere else), the update was rolled back, and the
+  channel image was never rebuilt. The test runner now strips the deployment's configuration
+  (`scripts/test-env.mjs`); test switches such as `CG_LIVE_CONTAINER` still pass through.
 - Security hardening (audit batch 5): a `POST /api/runs` authenticated by the admin session cookie
   now needs the same `X-CG-Request` header as every other cookie-authenticated change (run-API
   keys and channel tokens are unchanged); a symlink inside a host skill folder (`~/.claude/skills`,
