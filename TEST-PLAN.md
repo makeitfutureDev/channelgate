@@ -1,5 +1,37 @@
 # ChannelGate — Test Plan
 
+## An admin can set a channel's approved harnesses by asking (2026-11-22)
+
+- [x] `test/approved-harness-tool.test.js` (always runs): an admin narrows a channel to a whole
+      harness plus one added license given by name, the stored list holds the harness entry and
+      the license id, the default sign-in of the other harness is no longer approved, and one
+      audit row names `approvedEngines`, the admin and source `mcp`; the same list given by id and
+      by "Harness · name" is not a change; `"all"` clears the restriction; an approved member is
+      refused and the list is unchanged, sees the current list, and is not shown the entries that
+      could be approved; an admin is shown them; an entry that names nothing changes nothing and
+      lists the entries; a list that leaves out the license the channel runs on is refused with
+      the `/model` pointer and no audit row; without the Enterprise entitlement the change is
+      refused and the existing list stays.
+- [x] `test/mcp-control-plane-approval.test.js` (always runs): `set_channel_approved_harnesses`
+      is a gated control-plane tool (`authz: "admin"`), `get_channel_approved_harnesses` an open
+      read.
+- [ ] Live `LICENSE-38` approved harnesses set from chat (engine-independent: the tool runs in the
+      daemon; run it once on either engine). Fixture: an Enterprise license key; one added ChatGPT
+      sign-in license named `QA seat`, signed in and switched on; channel `cg-testing-claude-auto`
+      on the default Claude sign-in with no restriction. Actions: (1) as the QA member send
+      `Restrict this channel to Claude Code only.` — pass: the reply says only an organization
+      admin can change it, and Settings → Agent still shows no restriction. (2) As the QA admin
+      send `Which harnesses and licenses can this channel use, and which could I approve?` — pass:
+      the reply lists `harness:claude`, `harness:codex` and `QA seat`. (3) As the QA admin send
+      `Approve only Claude Code (any license) and the QA seat license for this channel.` — pass:
+      the reply confirms both entries, Settings → Agent shows the same two, and the admin UI's
+      Activity shows one `channel_meta_changed` for `approvedEngines` by the admin. (4) As the QA
+      member open `/model` in a new thread — pass: the Codex choices offer `QA seat` only, and the
+      Codex default sign-in is not offered. (5) As the QA admin send `Approve only
+      Codex for this channel.` — pass: refused, naming Claude as what the channel runs on. (6) As
+      the QA admin send `Remove the harness restriction from this channel.` — pass: confirmed, and
+      Settings shows no restriction.
+
 ## `/resume` finds a session started under an added license (2026-11-22)
 
 - [x] `test/session-adopt.test.js` (always runs): a session in an added ChatGPT license's

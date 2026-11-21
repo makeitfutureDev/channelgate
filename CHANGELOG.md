@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- An admin can now set a channel's approved harnesses by asking the agent. Which harnesses and
+  licenses a channel may use could only be changed in Settings; an organization admin can now say
+  it in the channel ("approve only Claude Code and the Team seat license here"), and anyone can
+  ask what the channel is allowed to use. Everyone in the channel still picks among the approved
+  entries with `/model`; only admins change the list, it still needs an Enterprise license, and it
+  cannot leave out the license the channel currently runs on.
 - `/resume` now finds a session that was started under a license you added. Each added license
   keeps its sessions in its own directory, and `/resume` looked only in Claude Code's and Codex's
   default ones, so such a session was always "not found" — even when you pasted the command

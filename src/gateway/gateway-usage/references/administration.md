@@ -155,6 +155,15 @@ These channel modes do not leave the container. The separate organization-admin-
   Provisioning a VPN for THIS or any OTHER channel (profile import, image build, user unit,
   secrets, failure classes, rotation and retirement): `references/channel-vpn.md`. Those steps run
   on the gateway host as the operator account — a channel container cannot perform them.
+- `get_channel_approved_harnesses` / `set_channel_approved_harnesses` (admin, Enterprise) — which
+  harnesses and licenses this channel may run on: the same **Approved harnesses** list as channel
+  Settings. Anyone allowed to talk here picks among the approved entries (`/model`, `/license`,
+  `/effort`); only an organization admin decides what the entries are. `approved` is `"all"` (no
+  restriction) or a list of `harness:claude` / `harness:codex` (every license of that harness,
+  including ones added later) and single license ids or names — call the `get` tool first, it lists
+  the exact entries for an admin. The list must keep the license the channel currently runs on:
+  change that with `/model` first, then narrow. A refusal ("Nothing was changed: …") is the answer
+  to relay; never work around it by editing files or settings.
 - `set_channel_network` (admin) — set whether this channel may use the network (needs Bash on to
   be useful) so `git`/`gh`/`curl` and deploy CLIs work; the engines are told the answer (Codex read
   mode refuses network on its own). There is no per-domain allow-list to add to. The container has

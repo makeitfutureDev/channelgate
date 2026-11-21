@@ -1,5 +1,32 @@
 # ChannelGate — Features
 
+## An admin can set a channel's approved harnesses by asking (2026-11-22)
+
+Which harnesses and licenses a channel may run on (`meta.approvedEngines`, Enterprise) could be
+changed in two places only: the admin web UI's channel editor and Slack Settings → Agent. The
+split of authority is: anyone allowed to talk in a channel picks the license, model and effort
+among what the channel approves; only an organization admin decides what it approves. The second
+half had no tool, so an admin working in chat, a schedule or the run API could not set it.
+
+- `set_channel_approved_harnesses` (`src/mcp/tools/channel-admin.js`, control plane `authz:
+  "admin"`, automatic — no approval card): `approved` is `"all"` (no restriction) or a list of
+  `harness:claude` / `harness:codex` and single licenses, each by id or by name ("Team seat" or
+  "Codex · Team seat"). A name that matches nothing changes nothing and answers with the entries
+  that exist — an approved list decides which account pays, so nothing is guessed.
+- It holds every rule the Settings control holds, through the same functions: the Enterprise
+  entitlement (`assertApprovedEnginesUpdate`; without it an existing list is kept and cannot be
+  widened), the rule that the list must keep the license the channel currently runs on
+  (`assertChannelEngineApproved`, answered with a pointer to `/model`), and one
+  `channel_meta_changed` audit row naming `approvedEngines`, the admin and source `mcp`. An
+  identical list is not a change and writes no row.
+- `get_channel_approved_harnesses` shows the channel's current list to anyone in it. For an admin
+  it also lists every entry that can be approved with the value to pass; for everyone else it
+  says only an organization admin can change the list (the gateway's full license inventory is
+  not shown to non-admins).
+- Unchanged: who may pick among the approved entries (`/model`, `/license`, `/effort` — everyone
+  allowed to talk there), what the list is checked against (channel selection, pools, thread
+  pins, saved sessions, per-run overrides, queued work, failover), and the Settings controls.
+
 ## `/resume` finds a session started under an added license (2026-11-22)
 
 `/resume <command or id>` re-attaches an existing session to a thread
