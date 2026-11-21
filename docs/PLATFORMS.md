@@ -515,6 +515,19 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
   matching entity. The formatter emits both together.
 - **Private controls:** settings/files use private Teams windows. Approval controls stay in the
   source conversation; no supplemental decision links are sent to a separate personal chat.
+- **Request replay (inherent to Bot Framework).** Azure Bot Service authenticates itself, not each
+  activity: one bearer token (valid about an hour) signs every activity it sends in that time, the
+  activity body is not signed, and the token carries no per-activity claim. ChannelGate therefore
+  does not apply a single-use `jti` rule, which would refuse real deliveries. It checks the issuer,
+  audience (this bot), signature against Microsoft's published keys, `exp`/`nbf` with ±5 minutes of
+  clock skew, and requires the token's `serviceurl` claim to be present and equal to the
+  activity's `serviceUrl` (itself restricted to Microsoft's Bot Framework hosts) — the same rule as
+  Microsoft's SDK. A captured request replayed verbatim is a no-op: the durable inbox keeps each
+  accepted activity's fingerprint for 7 days, longer than any token lives. What remains: whoever
+  obtains a still-valid token (from a compromised TLS terminator, proxy or request log) can POST
+  altered activities — any text, any claimed sender — until it expires, and nothing in the request
+  distinguishes them from Microsoft's. Every turn still re-checks the claimed sender's
+  authorization. Keep the endpoint behind TLS you control and never log `Authorization` headers.
 
 ---
 

@@ -10,8 +10,27 @@
 //   • issuer is api.botframework.com
 //   • audience is OUR app id (a token minted for another bot must not work here)
 //   • not expired / not used before nbf, with a small clock-skew allowance
-//   • the token's serviceUrl claim matches the activity's serviceUrl — this is what stops a replayed
-//     real token from being used to point our outbound token at somebody else's host
+//   • the token's serviceUrl claim is PRESENT and matches the activity's serviceUrl (also present) —
+//     this is what stops a replayed real token from being used to point our outbound token at
+//     somebody else's host. Microsoft's own SDK (botframework-connector ChannelValidation) refuses a
+//     token without the claim, so requiring it costs real traffic nothing.
+//
+// REPLAY — what this check can and cannot do (security audit batch 5). A Bot Framework token is a
+// bearer for the CHANNEL (Azure Bot Service), not for one activity: Microsoft reuses one token for
+// every activity it sends during the token's lifetime (about an hour), the body is not signed, and
+// the token carries no per-activity claim. A single-use `jti` rule would therefore refuse real
+// deliveries and is deliberately not applied. What protects against a captured request:
+//   • TLS on the public endpoint (a token is only exposed by a compromised terminator or log);
+//   • the audience, issuer, signature, exp/nbf (±5 min) and serviceUrl binding below, so a capture
+//     stops working within about an hour plus the skew and only ever answers on Microsoft's hosts;
+//   • the activity dedupe: the durable inbox keeps every accepted activity's fingerprint for 7 days
+//     (src/platforms/durable-inbox.js), far beyond any token's validity, so replaying a captured
+//     request VERBATIM is a no-op;
+//   • authorization is still per sender on every turn (isAuthorized), and approvals stay bound to
+//     their persisted single-use records.
+// Residual, inherent to the protocol: whoever holds a still-valid captured token can POST a NEW,
+// altered activity (any text, any sender id) until the token expires. Nothing in the request lets
+// the receiver tell it from Microsoft's own; docs/PLATFORMS.md → Teams → Notes and limits says so.
 import { createHash, createPublicKey, createVerify, timingSafeEqual } from "node:crypto";
 
 const OPENID_CONFIG = "https://login.botframework.com/v1/.well-known/openidconfiguration";
@@ -102,12 +121,13 @@ export async function verifyTeamsRequest({ authorization, appId, serviceUrl = ""
   if (Number(claims?.exp || 0) + CLOCK_SKEW_SEC < nowSec) return { ok: false, reason: "token expired" };
   if (Number(claims?.nbf || 0) - CLOCK_SKEW_SEC > nowSec) return { ok: false, reason: "token not yet valid" };
 
-  // A real token carries the serviceUrl it was minted for. Requiring it to match the activity is
-  // what makes a captured token useless for redirecting our replies.
-  if (claims?.serviceurl && serviceUrl) {
-    const claimUrl = String(claims.serviceurl).replace(/\/$/, "");
-    if (claimUrl !== String(serviceUrl).replace(/\/$/, "")) return { ok: false, reason: "serviceUrl mismatch" };
-  }
+  // A real token carries the serviceUrl it was minted for. Requiring it — present on BOTH sides —
+  // to match the activity is what makes a captured token useless for redirecting our replies; a
+  // token or activity without one is not something Bot Service sends.
+  if (!claims?.serviceurl) return { ok: false, reason: "token carries no serviceUrl claim" };
+  if (!serviceUrl) return { ok: false, reason: "activity carries no Bot Framework serviceUrl" };
+  const claimUrl = String(claims.serviceurl).replace(/\/$/, "");
+  if (claimUrl !== String(serviceUrl).replace(/\/$/, "")) return { ok: false, reason: "serviceUrl mismatch" };
 
   const jwk = await jwks.get(head.kid).catch(() => null);
   if (!jwk) return { ok: false, reason: "unknown signing key" };

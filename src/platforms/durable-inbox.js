@@ -8,7 +8,11 @@ const activeConversations = new Set();
 const pumps = new Set();
 const MAX_ACTIVE = 4;
 const MAX_PENDING = 1000;
+// How long a completed event's id is kept. It is also the replay window of the transports that
+// dedupe on it: a Teams bearer token is valid for about an hour, so a captured request replayed
+// verbatim at any point in its token's life finds its id here (msteams/verify.js → REPLAY).
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const INBOUND_RETENTION_MS = RETENTION_MS;
 const CLEANUP_INTERVAL_MS = 60_000;
 const CLEANUP_BATCH = 500;
 

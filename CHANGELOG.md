@@ -10,7 +10,10 @@
   log warning instead of being copied into channels (a skill folder that is itself a link still works);
   the gateway control server of a host `/sudo` turn now applies the run capability liveness rule
   too (asked of the daemon on every tool call, refused with the same sentence and audit event once
-  the conversation has no live work, failing closed if the daemon cannot answer).
+  the conversation has no live work, failing closed if the daemon cannot answer); the Teams webhook
+  requires the Bot Framework token's `serviceurl` claim and the activity's `serviceUrl` to be present
+  and equal (Microsoft's own SDK rule) and documents why a single-use token rule cannot apply —
+  verbatim replays are already dropped by the 7-day durable dedupe.
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and

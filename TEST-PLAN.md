@@ -3348,6 +3348,26 @@ Engine-independent: none of this is reachable from an engine turn.
   Then `curl -i -X POST https://<host>/api/runs -H 'x-api-key: <channel cgk_ token>' -H 'content-type: application/json' -d '{}'`:
   `400` naming `message` (the machine path is unchanged). PASS when all three hold.
 
+### Teams webhook token binding and replay
+
+- [x] Automated: `node --test test/platform-teams.test.js` — "the serviceUrl binding is mandatory on
+  both sides, like Microsoft's own SDK": a correctly signed token without the `serviceurl` claim is
+  refused, a valid token with no activity `serviceUrl` is refused, and a claim without the trailing
+  slash still matches; the existing forgery cases still pass. `node --test
+  test/teams-durable-intake.test.js` — "one token serves many activities, and a verbatim replay
+  within the token's life never runs twice": the same bearer is accepted for two different
+  activities (both dispatched), the first request replayed verbatim two hours after it finished is
+  acknowledged with 200 and not dispatched again, an activity without `serviceUrl` answers 401, and
+  the inbox retention is at least a day.
+- [ ] UNEXECUTED — Live, engine-independent (Teams test tenant, the deployment's public URL): send
+  the bot two messages in a personal chat ("first", "second") and confirm both are answered (one
+  Bot Framework token serves both). Then from a host shell with access to a captured inbound request
+  (body + `Authorization`, e.g. from a temporary debug proxy in front of the daemon — never from a
+  production log), replay it verbatim with `curl -i -X POST https://<host>/api/teams/messages -H
+  'content-type: application/json' -H 'authorization: <captured>' --data-binary @body.json`
+  within the hour: expected `200` and no second answer in Teams. Replay it with `serviceUrl`
+  removed from the body: expected `401`. PASS when all three hold.
+
 ### Host `/sudo` stdio control server obeys capability liveness
 
 - [x] Automated: `node --test test/capability-liveness.test.js` — "the host stdio control server

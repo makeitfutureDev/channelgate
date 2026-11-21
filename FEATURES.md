@@ -1838,6 +1838,16 @@ Task progress remain visible; older agent streams without optional task-type met
   longer active: its conversation has no live work." and `capability_refused_idle` is audited by
   the daemon. An unreachable daemon or an unexpected answer refuses the call ("the gateway daemon
   could not confirm that this run is still live"); a bad signature is refused without asking.
+- **Teams webhook replay posture.** The Bot Framework token check now requires the token's
+  `serviceurl` claim to be present and equal to the activity's `serviceUrl` (which must itself be a
+  Bot Framework host) instead of comparing only when both happened to be present — the rule
+  Microsoft's own SDK applies. No single-use `jti` rule: Bot Service reuses one token for every
+  activity it sends during the token's hour, so that would refuse real traffic. A verbatim replay
+  of a captured request is dropped by the durable inbox's fingerprint dedupe, which keeps accepted
+  ids for 7 days (`INBOUND_RETENTION_MS`), longer than any token is valid. The remaining risk — a
+  still-valid captured token can carry altered, unsigned activities until it expires — is inherent
+  to the protocol and documented in `src/platforms/msteams/verify.js` and `docs/PLATFORMS.md` →
+  Teams → Notes and limits.
 - **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
   (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
   bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the
