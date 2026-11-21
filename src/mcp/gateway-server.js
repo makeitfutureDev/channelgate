@@ -351,6 +351,10 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
     ["allow_channel_ssh_host", { authz: "worker", details: ({ host, port }) => `Allow raw TCP connections to ${host} for THIS channel on ${port === undefined ? "ports 22 (SSH), 5432 and 6543 (PostgreSQL)" : `TCP port ${port} only`}? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
+    // Which licenses the channel may run on: admins only, and reversible with one more call. The
+    // handler keeps the Enterprise entitlement check and refuses a list that excludes the license
+    // the channel runs on.
+    ["set_channel_approved_harnesses", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_skill_swap", { authz: "manage", details: AUTOMATIC }],

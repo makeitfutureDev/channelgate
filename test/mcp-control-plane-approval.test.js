@@ -685,6 +685,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "propose_thread_forks",
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
     "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_approved_harnesses", // which licenses the channel may run on: admins only, automatic, audited
     "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_folder", "remove_channel_folder", // an extra mount keeps a card; removing one narrows and is automatic
@@ -722,6 +723,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     // read-only
     "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "list_folders",
     "get_channel_workdir", "list_channel_folders", "get_channel_drive_folder", "get_gateway_guide",
+    "get_channel_approved_harnesses", // read-only; the full list of approvable entries is shown to admins only
     "workspace_list", "workspace_read", "workspace_search", "search_agents", "continue_agent_conversation", // continuing a human-started exchange: open, like answering in a thread
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here
