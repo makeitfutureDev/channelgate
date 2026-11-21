@@ -685,7 +685,7 @@ const sessionFile = (t, name) => path.join(session.sshUserDir(t, user.id), name)
 // What the generated wrapper hands the CLI: its CODEX_HOME and its argv, one per line.
 function wrapperFor(t) {
   const fakeCli = path.join(scratch, "fake-codex-cli.sh");
-  writeFileSync(fakeCli, '#!/bin/sh\nprintf "CODEX_HOME=%s\\n" "${CODEX_HOME-<unset>}"\nprintf "OPENAI_API_KEY=%s\\n" "${OPENAI_API_KEY-<unset>}"\nfor a in "$@"; do printf "arg=%s\\n" "$a"; done\n', { mode: 0o700 });
+  writeFileSync(fakeCli, '#!/bin/sh\nprintf "CODEX_HOME=%s\\n" "${CODEX_HOME-<unset>}"\nprintf "OPENAI_API_KEY=%s\\n" "${OPENAI_API_KEY-<unset>}"\nfor n in CG_LICENSE_KEY OPENAI_BASE_URL AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_PROFILE; do eval "v=\\${$n-<unset>}"; printf "%s=%s\\n" "$n" "$v"; done\nfor a in "$@"; do printf "arg=%s\\n" "$a"; done\n', { mode: 0o700 });
   const wrapper = path.join(scratch, `codex-wrapper-${t.slug}.sh`);
   writeFileSync(wrapper, renderCodexWrapper({ usersDir: session.sshUsersDir(t), codexBin: fakeCli }), { mode: 0o700 });
   return wrapper;
@@ -775,23 +775,13 @@ test("Codex over SSH: a license that cannot be signed in leaves `codex` in that 
   assert.match(signedOut.stdout, new RegExp(`^CODEX_HOME=${licenseContainerDir(seat.id)}$`, "m"));
   assert.match(signedOut.stderr, /^codex: Codex sign-in not placed: /);
 
-  // An API license is not something a terminal session can run on yet. Where the channel may use
-  // nothing else, that is said plainly and nothing is placed — least of all the gateway's own
-  // sign-in in the API license's directory.
-  const provider = licenseSessionTarget("ssh-codex-license-api", e.channelId, { engine: api.id, approvedEngines: [api.id] });
-  const second = await session.prepareSshSession({ target: provider.t, entry: e, meta: provider.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
-  assert.equal(second.codex.ready, false);
-  assert.equal(second.codex.license, api.id);
-  assert.match(second.codex.reason, /Team API is an API license/);
-  assert.deepEqual(provider.writes, []);
-  assert.match(runWrapped(provider.t), new RegExp(`^CODEX_HOME=${licenseContainerDir(api.id)}$`, "m"));
-  assert.doesNotMatch(readFileSync(sessionFile(provider.t, "codex-login.sh"), "utf8"), /sk-fixture-ssh-license-0001/);
-
-  // Where the channel may also use a sign-in, `codex` is that sign-in — in ITS directory.
-  const mixed = licenseSessionTarget("ssh-codex-license-api-mixed", e.channelId, { engine: api.id, approvedEngines: [api.id, seat.id] });
+  // A license the channel is not set to never stands in for the one it is: the channel runs on
+  // the unsigned seat, so `codex` is that seat, signed out — not the API license beside it.
+  const mixed = licenseSessionTarget("ssh-codex-license-api-mixed", e.channelId, { engine: seat.id, approvedEngines: [api.id, seat.id] });
   const third = await session.prepareSshSession({ target: mixed.t, entry: e, meta: mixed.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
   assert.equal(third.codex.license, seat.id);
   assert.match(runWrapped(mixed.t), new RegExp(`^CODEX_HOME=${licenseContainerDir(seat.id)}$`, "m"));
+  assert.match(runWrapped(mixed.t), /^CG_LICENSE_KEY=<unset>$/m);
 
   // The session's tools failing changes nothing about which sign-in `codex` is.
   signInCodexLicense(seat.id, "acct-late-seat");
@@ -838,7 +828,118 @@ test("Codex over SSH: a refresh after the channel changed license re-points `cod
   resetLicenses();
 });
 
-test("sshCodexLicense: the selected Codex sign-in, else the channel's Codex sign-in, else an API license to refuse, else none", () => {
+// ── An API/cloud license in a terminal (2026-11-22) ───────────────────────────────────────────
+// A session's `codex` on an API or cloud license was refused ("cannot run on yet"), and a channel
+// set to one got the gateway's own ChatGPT sign-in instead — a different account, and a different
+// bill, than the channel's turns.
+const SSH_API_KEY = "sk-fixture-ssh-license-0003";
+const apiLicense = (extra = {}) => engineLicenses.createLicense({ kind: "codex-api", label: "Team API", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: SSH_API_KEY, authScheme: "bearer", models: ["team-large", "team-small"], ...extra });
+
+test("Codex over SSH on an API license: the license's routing and the channel's placeholder, in the license's directory — never the key", async () => {
+  resetLicenses();
+  const api = apiLicense();
+  const { entry: e } = await egressChannel("C_SSH_LIC_API");
+  const { deps } = egressDeps();
+  // The channel runs on the API license, and may use the gateway's own sign-in as well.
+  const { t, writes } = licenseSessionTarget("ssh-codex-license-provider", e.channelId, { engine: api.id });
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(result.codex.license, api.id, "the channel's license, not a sign-in it could also use");
+  assert.equal(result.codex.ready, true, result.codex.reason);
+
+  // Only the directory marker is written into the HOME volume: no sign-in file of any account.
+  const home = licenseContainerDir(api.id);
+  assert.deepEqual(writes.map((spec) => [spec.file, spec.body]), [[`${home}/.cg-license`, `${api.id}\n`]]);
+
+  const script = readFileSync(sessionFile(t, "codex-login.sh"), "utf8");
+  assert.doesNotMatch(script, new RegExp(SSH_API_KEY), "the key never reaches the session");
+  const placeholder = /CG_LICENSE_KEY='(cgph_[A-Za-z0-9_-]+)'/.exec(script)?.[1];
+  assert.ok(placeholder, "the credential is the channel's placeholder");
+  for (const name of readdirSync(session.sshUserDir(t, user.id))) {
+    assert.doesNotMatch(readFileSync(sessionFile(t, name), "utf8"), new RegExp(SSH_API_KEY), `${name} holds no key`);
+  }
+
+  // What the CLI is started with: the license's directory, its provider, its key variable, the
+  // file store, and a model the server lists (the first, no default being set).
+  const out = runWrapped(t, { env: { OPENAI_API_KEY: "sk-channel-secret", OPENAI_BASE_URL: "https://elsewhere.example.com/v1" }, args: ["--version"] });
+  assert.match(out, new RegExp(`^CODEX_HOME=${home}$`, "m"));
+  assert.match(out, new RegExp(`^CG_LICENSE_KEY=${placeholder}$`, "m"));
+  assert.match(out, /^OPENAI_API_KEY=<unset>$/m, "a key from the session's secrets is not sent to the license's server");
+  assert.match(out, /^OPENAI_BASE_URL=<unset>$/m, "and the license's key is not sent to another endpoint");
+  assert.match(out, /^arg=model_provider="cgapi"$/m);
+  assert.match(out, /^arg=model_providers\.cgapi\.base_url="https:\/\/llm\.example\.com\/v1"$/m);
+  assert.match(out, /^arg=model_providers\.cgapi\.env_key="CG_LICENSE_KEY"$/m);
+  assert.match(out, /^arg=model="team-large"$/m);
+  assert.match(out, /^arg=cli_auth_credentials_store="file"$/m);
+  assert.match(out, /^arg=--version$/m);
+  assert.ok(out.indexOf('arg=model="team-large"') < out.indexOf("arg=--version"), "the developer's own arguments come last and win");
+
+  // The channel's own model, when the license lists it, is the one a turn would use.
+  const small = licenseSessionTarget("ssh-codex-license-provider-model", e.channelId, { engine: api.id, model: "team-small" });
+  await session.prepareSshSession({ target: small.t, entry: e, meta: small.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.match(runWrapped(small.t), /^arg=model="team-small"$/m);
+  assert.equal(session.sshCodexModel(api.id, { model: "gpt-5.1-codex" }), "team-large", "a model the license does not list is never passed");
+  assert.equal(session.sshCodexModel("codex", { model: "gpt-5.1-codex" }), "", "a sign-in keeps the CLI's own default");
+
+  // A `codex` the developer pointed at another directory is another license's: it gets neither
+  // this license's routing nor its credential.
+  const elsewhere = runWrapped(t, { env: { CODEX_HOME: "/home/agent/.cg-licenses/other" } });
+  assert.match(elsewhere, /^CODEX_HOME=\/home\/agent\/\.cg-licenses\/other$/m);
+  assert.match(elsewhere, /^CG_LICENSE_KEY=<unset>$/m);
+  assert.doesNotMatch(elsewhere, /model_provider/);
+  resetLicenses();
+});
+
+test("Codex over SSH on a cloud license: the provider's own variables are replaced, not inherited", async () => {
+  resetLicenses();
+  const aws = engineLicenses.createLicense({ kind: "codex-aws", label: "Team Bedrock", type: "api", region: "eu-central-1", apiKey: "bedrock-fixture-ssh-0004", models: ["openai.gpt-oss-120b"] });
+  const { entry: e } = await egressChannel("C_SSH_LIC_AWS");
+  const { deps } = egressDeps();
+  const { t } = licenseSessionTarget("ssh-codex-license-aws", e.channelId, { engine: aws.id });
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(result.codex.license, aws.id);
+  assert.equal(result.codex.ready, true, result.codex.reason);
+  const out = runWrapped(t, { env: { AWS_PROFILE: "developer", AWS_REGION: "us-east-1", AWS_BEARER_TOKEN_BEDROCK: "developers-own" } });
+  assert.match(out, /^AWS_PROFILE=<unset>$/m, "the developer's AWS identity is not this license's");
+  assert.match(out, /^AWS_REGION=eu-central-1$/m);
+  assert.match(out, /^AWS_BEARER_TOKEN_BEDROCK=cgph_[A-Za-z0-9_-]+$/m);
+  assert.match(out, /^arg=model_provider="amazon-bedrock"$/m);
+  assert.doesNotMatch(readFileSync(sessionFile(t, "codex-login.sh"), "utf8"), /bedrock-fixture-ssh-0004/);
+  resetLicenses();
+});
+
+test("Codex over SSH on an API license that cannot be placed: said plainly, signed out in its own directory, and no key anywhere", async () => {
+  resetLicenses();
+  const api = apiLicense();
+  const { entry: e } = await egressChannel("C_SSH_LIC_API_OFF");
+  const { deps } = egressDeps();
+
+  // Without the egress proxy only the real key would work, so nothing is handed over.
+  const bridged = licenseSessionTarget("ssh-codex-license-provider-bridge", e.channelId, { engine: api.id, approvedEngines: [api.id] });
+  bridged.t.container = { ...bridged.t.container, egress: null };
+  const first = await session.prepareSshSession({ target: bridged.t, entry: e, meta: bridged.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(first.codex.ready, false);
+  assert.equal(first.codex.license, api.id);
+  assert.match(first.codex.reason, /Team API cannot run: Team API requires the egress proxy/);
+  assert.deepEqual(bridged.writes, []);
+  const told = spawnSync("sh", [wrapperFor(bridged.t)], { encoding: "utf8", cwd: scratch, env: { PATH: process.env.PATH, HOME: scratch, CG_SSH_USER: user.id, OPENAI_API_KEY: "sk-channel-secret" } });
+  assert.match(told.stdout, new RegExp(`^CODEX_HOME=${licenseContainerDir(api.id)}$`, "m"));
+  assert.match(told.stdout, /^CG_LICENSE_KEY=<unset>$/m);
+  assert.match(told.stdout, /^OPENAI_API_KEY=<unset>$/m, "signed out there, not on a key from the session's secrets");
+  assert.doesNotMatch(told.stdout, /model_provider/);
+  assert.match(told.stderr, /^codex: Team API cannot run: /);
+  assert.doesNotMatch(readFileSync(sessionFile(bridged.t, "codex-login.sh"), "utf8"), new RegExp(SSH_API_KEY));
+
+  // A HOME volume that cannot take the license's directory: the same answer, with the reason.
+  const full = licenseSessionTarget("ssh-codex-license-provider-full", e.channelId, { engine: api.id });
+  full.t.runtime = { ...full.t.runtime, writeHomeFile: async () => { throw new Error("no space left on device"); } };
+  const second = await session.prepareSshSession({ target: full.t, entry: e, meta: full.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(second.codex.ready, false);
+  assert.match(second.codex.reason, /Team API cannot run: its session directory could not be prepared \(no space left on device\)/);
+  assert.match(runWrapped(full.t), /^CG_LICENSE_KEY=<unset>$/m);
+  resetLicenses();
+});
+
+test("sshCodexLicense: the channel's selected Codex license, else its Codex sign-in, else an API license it may use, else none", () => {
   resetLicenses();
   const seat = engineLicenses.createLicense({ kind: "codex-login", label: "Seat" });
   const api = engineLicenses.createLicense({ kind: "codex-api", label: "Team API", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: "sk-fixture-ssh-license-0002", authScheme: "bearer", models: ["team-large"] });
@@ -849,8 +950,11 @@ test("sshCodexLicense: the selected Codex sign-in, else the channel's Codex sign
   assert.equal(pick({ engine: "codex" }, seat.id), "codex", "the channel's own choice beats the gateway default");
   assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), seat.id] }), seat.id);
   assert.equal(pick({ engine: seat.id, approvedEngines: ["codex"] }), "codex", "a license the channel may not use is never the session's");
-  assert.equal(pick({ engine: api.id }), "codex");
+  assert.equal(pick({ engine: api.id }), api.id, "an API license the channel is set to is the terminal's too");
   assert.equal(pick({ engine: api.id, approvedEngines: [api.id] }), api.id);
+  assert.equal(pick({}, api.id), api.id, "the gateway default license, API or not");
+  assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), api.id, seat.id] }), seat.id, "a Claude channel: a sign-in before a license billed per use");
+  assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), api.id] }), api.id, "…and the API license when it is the only Codex license the channel may use");
   assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude")] }), "");
   // The channel-account sign-in exists only where the channel connected one.
   assert.equal(pick({ engine: "codex-channel" }), "codex");

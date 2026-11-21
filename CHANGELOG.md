@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- `codex` in an SSH session now runs on an API-key, cloud or custom-server license. Such a license
+  was refused in a terminal, and a channel set to one got the gateway's ChatGPT sign-in there
+  instead — a different account than the channel's own turns. The terminal now uses the channel's
+  license whatever its kind. The key still never enters the container: the session holds a
+  placeholder that the gateway swaps on that license's own server, so these licenses need the
+  egress proxy.
 - An admin can now set a channel's approved harnesses by asking the agent. Which harnesses and
   licenses a channel may use could only be changed in Settings; an organization admin can now say
   it in the channel ("approve only Claude Code and the Team seat license here"), and anyone can

@@ -912,7 +912,7 @@ export const CODEX_PROXY_NODE_OPTIONS = "--disable-warning=UNDICI-EHPA";
 // The names that authenticate or redirect this CLI at OpenAI. A provider license's run must carry
 // none of them: an inherited key would be sent to a third-party server, and an inherited base URL
 // would send the license's key somewhere else.
-const OPENAI_ROUTING_NAMES = ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
+export const OPENAI_ROUTING_NAMES = ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
 
 // `provider` (a provider license) is gateway-owned and applied dead last, like Claude's
 // providerEnv: the OpenAI routing names go, whatever family the provider's own SDK path reads
