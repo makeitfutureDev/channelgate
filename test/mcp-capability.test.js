@@ -2,8 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { mintGatewayCapability, verifyGatewayCapability } from "../src/gateway/mcp-capability.js";
+import { KEY_PURPOSES, purposeKey } from "../src/util/purpose-keys.js";
 
 const secret = "unit-test-capability-secret";
+// Capabilities are signed with the run-capability key DERIVED from the daemon secret (security audit
+// batch 5); hand-signed fixtures below use the same derivation so they test the claim checks.
+const capabilityKey = (master) => purposeKey(master, KEY_PURPOSES.RUN_CAPABILITY);
 const identity = {
   secret,
   channelId: "C_CAP",
@@ -41,7 +45,7 @@ test("scheduled question destinations and sudo source are signed, bounded option
     assert.equal(verified.claims.sudoSchedule, true);
     for (const extra of [{ questionThreadKey: "sched-forged" }, { questionThreadKey: {} }, { sudoSchedule: "yes" }]) {
       const payload = Buffer.from(JSON.stringify({ ...verified.claims, ...extra })).toString("base64url");
-      const malformed = `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+      const malformed = `${payload}.${createHmac("sha256", capabilityKey(secret)).update(payload).digest("base64url")}`;
       assert.equal(verifyGatewayCapability(malformed, { secret }).ok, false);
     }
   }
@@ -82,7 +86,7 @@ test("a token minted before these claims existed still verifies — they are opt
     scope: "gateway-tools", iat: 1_000, exp: 6_000, jti: "old-token",
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  const legacy = `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+  const legacy = `${payload}.${createHmac("sha256", capabilityKey(secret)).update(payload).digest("base64url")}`;
   const verified = verifyGatewayCapability(legacy, { secret, now: 2_000 });
   assert.equal(verified.ok, true, verified.reason);
   assert.equal(verified.claims.toolset, undefined);
@@ -97,7 +101,7 @@ test("a tampered toolset/progress claim of the wrong TYPE is refused, not coerce
       scope: "gateway-tools", iat: 1_000, exp: 6_000, jti: "forged", ...extra,
     };
     const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-    return `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+    return `${payload}.${createHmac("sha256", capabilityKey(secret)).update(payload).digest("base64url")}`;
   };
   assert.match(verifyGatewayCapability(forge({ toolset: { evil: true } }), { secret, now: 2_000 }).reason, /invalid capability toolset/);
   assert.match(verifyGatewayCapability(forge({ progressReport: "yes" }), { secret, now: 2_000 }).reason, /invalid capability progress/);
@@ -108,7 +112,7 @@ test("a tampered toolset/progress claim of the wrong TYPE is refused, not coerce
 // one of them through would be caught here rather than masked by "invalid signature".
 function signedWith(claims) {
   const payload = Buffer.from(typeof claims === "string" ? claims : JSON.stringify(claims)).toString("base64url");
-  return `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+  return `${payload}.${createHmac("sha256", capabilityKey(secret)).update(payload).digest("base64url")}`;
 }
 
 test("a genuinely signed token is still refused when its claims are not a grant", () => {
@@ -160,4 +164,25 @@ test("a wrong-typed remoteMcps claim is refused at mint and at verify", () => {
     assert.equal(verifyGatewayCapability(signedWith({ ...base, remoteMcps: bad }), { secret }).reason, "invalid remote MCP grants", JSON.stringify(bad));
   }
   assert.equal(verifyGatewayCapability(signedWith({ ...base, remoteMcps: [] }), { secret }).ok, true, "an empty list is a valid (empty) grant");
+});
+
+test("capabilities are signed with a purpose-derived key, never the raw daemon secret", async () => {
+  const token = mintGatewayCapability({ ...identity });
+  const [payload] = token.split(".");
+  assert.equal(verifyGatewayCapability(token, { secret }).ok, true);
+  // A tag made with the raw master (the pre-batch-5 scheme, and what the loopback IPC credential is)
+  // no longer verifies.
+  const raw = `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+  assert.equal(verifyGatewayCapability(raw, { secret }).reason, "invalid capability signature");
+  // Nor does one made with another purpose's key: an approval-link tag over the same bytes.
+  const crossKind = `${payload}.${createHmac("sha256", purposeKey(secret, KEY_PURPOSES.APPROVAL_LINK)).update(payload).digest("base64url")}`;
+  assert.equal(verifyGatewayCapability(crossKind, { secret }).reason, "invalid capability signature");
+  // The derived keys are distinct, stable per master, and differ between masters.
+  const a = purposeKey(secret, KEY_PURPOSES.RUN_CAPABILITY);
+  assert.equal(a.length, 32);
+  assert.notDeepEqual(a, purposeKey(secret, KEY_PURPOSES.APPROVAL_LINK));
+  assert.deepEqual(a, purposeKey(secret, KEY_PURPOSES.RUN_CAPABILITY));
+  assert.notDeepEqual(a, purposeKey(`${secret}x`, KEY_PURPOSES.RUN_CAPABILITY));
+  assert.throws(() => purposeKey(secret, "other"), /unknown key purpose/);
+  assert.throws(() => purposeKey("", KEY_PURPOSES.RUN_CAPABILITY), /no master secret/);
 });

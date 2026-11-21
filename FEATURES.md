@@ -1848,6 +1848,19 @@ Task progress remain visible; older agent streams without optional task-type met
   still-valid captured token can carry altered, unsigned activities until it expires — is inherent
   to the protocol and documented in `src/platforms/msteams/verify.js` and `docs/PLATFORMS.md` →
   Teams → Notes and limits.
+- **One signing key per token kind.** The daemon's per-process secret (`CG_APPROVAL_SECRET`) is no
+  longer the raw HMAC key of two token kinds. Run capabilities (`src/gateway/mcp-capability.js`)
+  and approval links (`src/web/approval-links.js`) are each signed with a key derived from it by
+  HKDF-SHA256 under its own purpose label (`src/util/purpose-keys.js`: `channelgate/run-capability/v1`,
+  `channelgate/approval-link/v1`), so a tag minted for one kind can never verify as the other, and
+  no signed token carries a MAC under the raw secret, which remains the loopback IPC credential
+  (`/internal/*`, the updater's health check, `internal-auth.json`) and is compared, never used to
+  sign. Every holder (daemon, stdio MCP child, Composio SDK bridge) derives the same key from the
+  same secret, so nothing new crosses a process boundary. Approval links move to token version 2;
+  a version-1 link — at most 30 minutes old when the daemon restarts on the upgrade — shows the
+  ordinary "not valid" page, and the card in the conversation (re-posted after a restart for
+  durable approvals) still decides. Capabilities never outlive the daemon process, so none needs
+  to survive the change.
 - **A host skill folder's symlinks never leave the skill.** The host-folder grant fallback
   (`enableSkills` for a grant the catalog does not hold — both the plain copy and the authoritative
   bundle read) and the catalog import of host and folder sources (`readSkillDirectory`) resolve the

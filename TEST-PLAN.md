@@ -3368,6 +3368,26 @@ Engine-independent: none of this is reachable from an engine turn.
   within the hour: expected `200` and no second answer in Teams. Replay it with `serviceUrl`
   removed from the body: expected `401`. PASS when all three hold.
 
+### Per-purpose signing keys
+
+- [x] Automated: `node --test test/mcp-capability.test.js` — "capabilities are signed with a
+  purpose-derived key, never the raw daemon secret": a minted capability verifies; the same payload
+  tagged with the raw secret or with the approval-link key is refused with `invalid capability
+  signature`; the derived keys are 32 bytes, distinct per purpose and per master, and an unknown
+  purpose or empty master throws. The hand-signed claim-check fixtures in that file and in
+  `test/free-thread-automation.test.js` sign with the derived key, so they still reach (and the
+  latter now asserts) the claim checks. `node --test test/approval-links.test.js` — "approval links
+  are signed with their own derived key…": version 2 tokens verify; tags under the raw secret or
+  the run-capability key are `bad-signature`; a version-1 token signed the old way is `malformed`.
+- [ ] UNEXECUTED — Live, Claude AND Codex (Google Chat or Slack test channel with approval links
+  enabled, `approvalLinks: always`): before updating, raise a permission card ("Run `touch
+  /tmp/cg-batch5-probe` in the shell") and copy its *Approve once* link without opening it; update
+  and restart the daemon within 30 minutes; open the copied link. Expected: the "This approval
+  link is not valid…" page and nothing decided. Raise a new card after the restart and use its
+  link: the page confirms, POST decides it, and the agent continues with `decided_by: "link"`.
+  Then a normal turn calls a gateway tool (`list_schedules`) successfully (capabilities still
+  verify). PASS when every step holds for both engines.
+
 ### Host `/sudo` stdio control server obeys capability liveness
 
 - [x] Automated: `node --test test/capability-liveness.test.js` — "the host stdio control server

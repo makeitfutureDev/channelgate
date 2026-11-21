@@ -8,7 +8,12 @@
 //
 // The shape of the thing:
 //
-//   token   = "1.<approvalId>.<action>.<scope>.<expiry base36>.<nonce>.<HMAC-SHA256/128 b64url>"
+//   token   = "2.<approvalId>.<kind a|t>.<action>.<scope>.<expiry base36>.<nonce>.<HMAC-SHA256/128 b64url>"
+//
+// Version 2 (security audit batch 5) signs with the approval-link key DERIVED from the daemon's
+// secret (src/util/purpose-keys.js) instead of the raw secret, which also signs run capabilities
+// and authenticates loopback IPC. A version-1 link (at most 30 minutes old at the upgrade) no longer
+// verifies and shows the ordinary "not valid" page; the card in the conversation still works.
 //   link    = <publicUrl>/approve/<token>
 //   GET     renders a confirmation page and changes NOTHING
 //   POST    performs the decision, exactly once
@@ -32,6 +37,7 @@ import crypto from "node:crypto";
 
 import { getApprovalLinks, getAiTestingUsers, getPublicUrl } from "../config/settings.js";
 import { recordApprovalLinkToken } from "../gateway/approval-link-tokens.js";
+import { KEY_PURPOSES, purposeKey } from "../util/purpose-keys.js";
 
 // A link lives as long as the card it belongs to plus a little slack for a person who is reading
 // their notifications. Volatile permission cards expire after 4 minutes on their own; durable
@@ -45,7 +51,7 @@ export const APPROVAL_LINK_ACTIONS = Object.freeze(["approve", "deny", "steer", 
 export const APPROVAL_LINK_SCOPES = Object.freeze(["", "once", "thread", "forever"]);
 
 const SEP = ".";
-const TOKEN_VERSION = "1";
+const TOKEN_VERSION = "2";
 // A 128-bit tag is the standard truncation for HMAC-SHA256 and keeps the URL short enough to read
 // aloud. Truncation does not weaken the forgery bound that matters here.
 const TAG_BYTES = 16;
@@ -63,7 +69,7 @@ function secretOf(explicit) {
 // rather than a re-serialization of them (a re-serialization is where a canonicalization bug and
 // therefore a signature bypass would live).
 function sign(payload, secret) {
-  return b64(crypto.createHmac("sha256", secretOf(secret)).update(payload).digest().subarray(0, TAG_BYTES));
+  return b64(crypto.createHmac("sha256", purposeKey(secretOf(secret), KEY_PURPOSES.APPROVAL_LINK)).update(payload).digest().subarray(0, TAG_BYTES));
 }
 
 // Field values may not contain the separator; ids are UUIDs and actions/scopes come from the

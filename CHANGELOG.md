@@ -13,7 +13,10 @@
   the conversation has no live work, failing closed if the daemon cannot answer); the Teams webhook
   requires the Bot Framework token's `serviceurl` claim and the activity's `serviceUrl` to be present
   and equal (Microsoft's own SDK rule) and documents why a single-use token rule cannot apply —
-  verbatim replays are already dropped by the 7-day durable dedupe.
+  verbatim replays are already dropped by the 7-day durable dedupe; run capabilities and approval
+  links are signed with separate keys derived (HKDF) from the daemon secret instead of the secret
+  itself — an approval link minted before the upgrade (at most 30 minutes old) stops working; answer
+  the card or ask again.
 - Teams Files window: **Parent folder** and **Refresh** buttons join Root and the page buttons,
   and an empty folder says so instead of showing a bare heading. **Upload files** now names the
   destination folder you are browsing (and refuses one that is not a real workspace folder), and
