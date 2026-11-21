@@ -225,7 +225,7 @@ test('automation removals are staged, applied only in this conversation, and con
   assert.equal(staged.body[0].text, 'Channel settings');
   assert.equal(listForChannel(f.channelId).length, 1, 'staging writes nothing');
   for (const action of ['settings.automation.delete', 'settings.automation.toggle']) {
-    assert.match(value(await f.invoke({ stateId: f.stateId, id: foreign.id, enabled: false }, action)), /^Action could not be completed/);
+    assert.match(texts(value(await f.invoke({ stateId: f.stateId, id: foreign.id, enabled: false }, action))).join('\n'), /Not saved: This automation is no longer in this conversation/);
   }
   value(await f.invoke({ stateId: f.stateId, scope: 'channel' }, 'settings.automation.apply'));
   assert.equal(listForChannel(f.channelId).length, 0);

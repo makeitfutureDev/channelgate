@@ -23,6 +23,7 @@ import { renderCatalogPage, handleCatalogAction } from './settings-catalog.js';
 import { renderDraftPage, handleDraftAction, pendingCount } from './settings-drafts.js';
 import { renderAutomations, handleAutomations, automationPending } from './settings-automations.js';
 import { teamsSettingsCard } from './settings-layout.js';
+import { redactSecretValues } from '../../util/redact.js';
 
 export const TEAMS_SETTINGS_PAGES = Object.freeze([
   ['general', 'General'], ['secrets', 'Variables'], ['mcp', 'MCPs'],
@@ -222,7 +223,28 @@ function confirmationDetails(action, data, ctx) {
   return `Deactivate ${name} for this conversation?`;
 }
 
+// Batch staging and Apply refuse with a reason the person can act on ("needs a fixed destination",
+// "changed while you were editing"). It is shown as a notice on the re-authorized card — never for a
+// caller who lost access — with every submitted and staged string removed, so no value is echoed.
+const BATCH_ACTIONS = ['settings.draft.', 'settings.automation.', 'settings.general.'];
+const SECRET_FIELDS = new Set(['value', 'variableValue', 'composioToken', 'makeToolboxKey', 'personalComposioToken', 'imapPassword', 'smtpPassword']);
+// Every string under a credential-bearing key, at any depth (submitted inputs, staged intents).
+const secretStrings = value => Array.isArray(value) ? value.flatMap(secretStrings)
+  : value && typeof value === 'object' ? Object.entries(value).flatMap(([key, item]) => SECRET_FIELDS.has(key) && typeof item === 'string' ? [item] : secretStrings(item)) : [];
+
 export async function handleTeamsSettings(action, data, ctx, stateId) {
+  if (!ctx.batch || !(BATCH_ACTIONS.some(prefix => action.startsWith(prefix)) || action === 'settings.runtime.apply')) return handleSettingsAction(action, data, ctx, stateId);
+  try {
+    return await handleSettingsAction(action, data, ctx, stateId);
+  } catch (error) {
+    await ctx.authorize();
+    const reason = redactSecretValues(String(error?.message || 'This change could not be saved.'), secretStrings([data, ctx.state.drafts]));
+    ctx.state.notice = `Not saved: ${reason.slice(0, 400)} Nothing was written.`;
+    return buildTeamsSettings(ctx, stateId);
+  }
+}
+
+async function handleSettingsAction(action, data, ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
   await ctx.authorize();
   if (ctx.isShared && action.startsWith('settings.variable.') && data.variableScope !== 'channel') {
