@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The login watch now covers the sign-in licenses you added. An added Claude or ChatGPT account
+  that is no longer signed in — or, for Claude, whose sign-in lapses within three days — is
+  reported to every admin in one direct message with the command that signs it in again. You are
+  told once per license per problem, not daily; the service log repeats it hourly. Licenses with a
+  key have no sign-in and are not watched.
 - The run API now refuses a `model` its license cannot serve. A model of the other harness, or one
   a custom-server license does not list, was dropped when the run started and answered on the
   license's default model — a successful job from a model the caller had not asked for. `POST

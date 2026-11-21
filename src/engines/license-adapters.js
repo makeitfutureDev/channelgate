@@ -202,7 +202,9 @@ function claudeLoginLicense(claude, record) {
       return { ready: false, signedIn: false, method: "", plan: null, detail: `Not signed in — ${why || remedy()}.`, fingerprint: "" };
     }
     const plan = describeLicensePlan({ harness: "claude", declared: record.type, plan: provider.login.plan });
-    return { ready: plan.matches !== false, signedIn: true, method: "claude-subscription", plan, detail: plan.detail, fingerprint: provider.login.fingerprint || "" };
+    // `expiresAt` is when the SIGN-IN itself lapses (a date only a new interactive sign-in moves) —
+    // a fact for the settings page and the login watch, never a credential.
+    return { ready: plan.matches !== false, signedIn: true, method: "claude-subscription", plan, detail: plan.detail, expiresAt: provider.login.expiresAt || 0, fingerprint: provider.login.fingerprint || "" };
   };
   // What ANY Claude Code process needs to run as this license on `resolved`: the target carrying
   // the license's own transcript directory, and the environment holding its sign-in (the

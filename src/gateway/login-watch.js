@@ -16,12 +16,21 @@
 //
 // Nothing here touches token material: the resolver hands out paths, expiries and an opaque
 // fingerprint, and this module forwards only the kind, the config dir, the expiry and the remedy.
+//
+// The sign-in licenses an administrator ADDED (Settings → Licenses: more Claude or ChatGPT accounts,
+// each signed in on the host in its own directory) lapse the same way and had no watch at all: a
+// selection quietly moved to its next license, or a channel pinned to the lapsed one failed turn
+// after turn, until somebody opened the settings page. `licenseLoginWatchTick` below is their half
+// of the same hourly pass.
 import { isEngineEnabled } from "../config/settings.js";
 import { getUsers } from "../config/store.js";
+import { listLicenseRecords, licenseStatusFor } from "../config/engine-licenses.js";
 import { metaGet, metaSet } from "../db/index.js";
 import { logEvent } from "../util/logger.js";
 import { postDirectMessage } from "../platforms/notify.js";
-import { resolveClaudeLogin, claudeLoginExpiryWarning, claudeLoginHint } from "./claude-login.js";
+import { engineDisplayName } from "../engines/registry.js";
+import { isProviderKind, licenseLoginCommand } from "../engines/license-state.js";
+import { resolveClaudeLogin, claudeLoginExpiryWarning, claudeLoginHint, CLAUDE_LOGIN_EXPIRY_WARNING_MS } from "./claude-login.js";
 
 export const CLAUDE_LOGIN_WATCH_INTERVAL_MS = 60 * 60 * 1000;
 // Not at boot: Slack connects a few seconds in, and an alert posted into a disconnected manager
@@ -218,6 +227,143 @@ export async function claudeLoginWatchTick({
   return { alertClass, sent, notified: sent > 0, recipients: recipients.length };
 }
 
+// ── Added sign-in licenses ─────────────────────────────────────────────────────────────────────
+// One `_meta` row holding a JSON map `{ <license id>: "<class>" }` — what the admins have already
+// been told. Unlike the gateway's own Claude login above, a license is told ONCE per problem, not
+// once a day: a gateway can hold dozens of them, one abandoned seat must not DM every admin every
+// morning forever, and the log line (every tick) plus the settings page keep the state visible. A
+// license that recovers, is switched off or is deleted leaves the map, so its next lapse is news.
+export const LICENSE_LOGIN_ALERT_META_KEY = "license_login_alerts";
+// A license somebody just added is about to be signed in; "not signed in" is not news yet.
+export const LICENSE_SIGN_IN_GRACE_MS = 60 * 60 * 1000;
+
+function readLicenseMarkMap(raw) {
+  try {
+    const parsed = typeof raw === "string" && raw ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => value === "missing" || value === "expiring"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * What state one added sign-in license is in. "" is healthy. A Claude sign-in reports when it
+ * lapses, so it can warn ahead; a ChatGPT sign-in file carries no such date, so Codex is only ever
+ * "missing" — and only once the file itself no longer holds a sign-in (a sign-in revoked on
+ * OpenAI's side is discovered by the turn that hits it, which moves on by the selection).
+ */
+export function classifyLicenseLogin(status, { now = Date.now(), windowMs = CLAUDE_LOGIN_EXPIRY_WARNING_MS } = {}) {
+  if (!status?.signedIn) return "missing";
+  const expiresAt = Number(status.expiresAt) || 0;
+  if (!expiresAt) return "";
+  return expiresAt - now <= windowMs ? (expiresAt <= now ? "missing" : "expiring") : "";
+}
+
+/** The DM body: every license currently in trouble, the newly reported ones first. */
+export function licenseAlertText({ problems = [], now = Date.now() } = {}) {
+  const head = problems.length === 1
+    ? "⚠️ *ChannelGate — a sign-in license needs a new sign-in*"
+    : `⚠️ *ChannelGate — ${problems.length} sign-in licenses need a new sign-in*`;
+  const lines = problems.map((problem) => {
+    const local = problem.expiresAt ? localStamp(problem.expiresAt) : "";
+    const state = problem.alertClass === "expiring"
+      ? `its sign-in expires in ${Math.max(1, Math.round((problem.expiresAt - now) / 3_600_000))}h (\`${utcStamp(problem.expiresAt)}\`${local ? ` · \`${local}\`` : ""})`
+      : "not signed in";
+    return `• *${problem.name}* — ${state}.${problem.command ? ` On the gateway host, as the service user: \`${problem.command}\`` : ""}`;
+  });
+  return [
+    head,
+    ...lines,
+    "Until then, turns that select such a license move to the next license of their selection, or fail when it is the only one.",
+    "The gateway reads a new sign-in on its next turn — no restart needed. You are told once per license; Settings → Licenses shows the live state.",
+  ].join("\n");
+}
+
+/**
+ * The added-license half of the hourly pass. Every dependency is injectable, like the tick above.
+ * @returns {Promise<{problems:Array<{id:string,alertClass:string}>, fresh:number, sent:number, notified:boolean}>}
+ */
+export async function licenseLoginWatchTick({
+  slack = null,
+  now = Date.now,
+  log = console,
+  admins = adminUserIds,
+  notify = null,
+  licenseRecords = listLicenseRecords,
+  licenseStatus = licenseStatusFor,
+  licenseEnabled = isEngineEnabled,
+  readLicenseMarks = () => metaGet(LICENSE_LOGIN_ALERT_META_KEY) || "",
+  writeLicenseMarks = (value) => metaSet(LICENSE_LOGIN_ALERT_META_KEY, value),
+  windowMs = CLAUDE_LOGIN_EXPIRY_WARNING_MS,
+  graceMs = LICENSE_SIGN_IN_GRACE_MS,
+} = {}) {
+  const at = now();
+  const marks = readLicenseMarkMap(readLicenseMarks());
+  const problems = [];
+  // Read the live records and switches on every tick: adding, switching off or deleting a license
+  // needs no restart. A switched-off license needs neither a sign-in nor a reminder.
+  for (const record of licenseRecords() || []) {
+    if (!record?.id || isProviderKind(record.kind) || !licenseEnabled(record.id)) continue;
+    let status;
+    try {
+      status = await licenseStatus(record.id);
+    } catch (error) {
+      log?.warn?.(`[license-login] could not check ${record.id}: ${error?.message || error}`);
+      // Unknown is not "recovered": keep what was already said about it.
+      if (marks[record.id]) problems.push({ id: record.id, alertClass: marks[record.id], unknown: true });
+      continue;
+    }
+    const alertClass = classifyLicenseLogin(status, { now: at, windowMs });
+    if (!alertClass) continue;
+    const created = Date.parse(record.createdAt || "") || 0;
+    if (alertClass === "missing" && !marks[record.id] && created && at - created < graceMs) continue;
+    // "<Harness> · <name>"; a record whose adapter is not registered yet still reads by its name.
+    const shown = engineDisplayName(record.id);
+    const name = shown && shown !== record.id ? shown : record.label || record.id;
+    problems.push({ id: record.id, name, alertClass, expiresAt: alertClass === "expiring" ? Number(status.expiresAt) || 0 : 0, command: licenseLoginCommand(record) });
+    // Not rationed, like the Claude line above: journalctl shows the state on every tick.
+    log?.warn?.(`[license-login] WARNING: ${name} (${record.id}) ${alertClass === "expiring" ? `sign-in expires ${utcStamp(Number(status.expiresAt) || at)}` : "is not signed in"}`);
+  }
+
+  const known = problems.filter((problem) => !problem.unknown);
+  const fresh = known.filter((problem) => marks[problem.id] !== problem.alertClass);
+  // What stays said: every license still in the class it was reported in. Recovered, switched-off
+  // and deleted licenses fall out here.
+  const kept = Object.fromEntries(problems.filter((problem) => marks[problem.id] === problem.alertClass).map((problem) => [problem.id, problem.alertClass]));
+  const save = (map) => {
+    const next = Object.keys(map).length ? JSON.stringify(map) : "";
+    if (next !== String(readLicenseMarks() || "")) writeLicenseMarks(next);
+  };
+  const summary = known.map(({ id, alertClass }) => ({ id, alertClass }));
+  if (!fresh.length) {
+    save(kept);
+    return { problems: summary, fresh: 0, sent: 0, notified: false };
+  }
+
+  const text = licenseAlertText({ problems: [...fresh, ...known.filter((problem) => !fresh.includes(problem))], now: at });
+  const deliver = notify || ((recipient) => dmThroughSlack(slack, recipient));
+  const recipients = await admins();
+  let sent = 0;
+  for (const userId of recipients) {
+    try {
+      await deliver({ userId, text, alertClass: "license", licenses: fresh.map((problem) => problem.id) });
+      sent += 1;
+    } catch (error) {
+      log?.warn?.(`[license-login] could not DM admin ${userId} — ${error?.message || error}`);
+    }
+  }
+  if (sent > 0) {
+    save({ ...kept, ...Object.fromEntries(fresh.map((problem) => [problem.id, problem.alertClass])) });
+    logEvent("license_login_alert", { licenses: fresh.map((problem) => problem.id), alerts: fresh.map((problem) => problem.alertClass), admins: sent }).catch(() => {});
+  } else {
+    // Nobody heard it (Slack down, no admins yet): the new ones stay due for the next tick.
+    save(kept);
+    log?.warn?.(`[license-login] no admin could be told (${recipients.length} admin(s)) — retrying on the next tick`);
+  }
+  return { problems: summary, fresh: fresh.length, sent, notified: sent > 0, recipients: recipients.length };
+}
+
 /**
  * Start the watch: first pass a minute after boot, then hourly.
  * @returns {{tick:() => Promise<object>, stop:() => void}}
@@ -228,7 +374,18 @@ export function startClaudeLoginWatch(options = {}) {
     firstDelayMs = CLAUDE_LOGIN_WATCH_FIRST_DELAY_MS,
     log = console,
   } = options;
-  const tick = () => claudeLoginWatchTick(options);
+  // Two independent halves: the gateway's own Claude login, then the added sign-in licenses. A
+  // failure in the second never costs the first its result (or the next tick).
+  const tick = async () => {
+    const claude = await claudeLoginWatchTick(options);
+    let licenses = null;
+    try {
+      licenses = await licenseLoginWatchTick(options);
+    } catch (error) {
+      log?.warn?.(`[license-login] watch tick failed: ${error?.message || error}`);
+    }
+    return { ...claude, licenses };
+  };
   const safeTick = () => {
     tick().catch((error) => log?.error?.(`[claude-login] watch tick failed: ${error?.message || error}`));
   };
@@ -239,7 +396,7 @@ export function startClaudeLoginWatch(options = {}) {
     safeTick();
   }, firstDelayMs);
   first.unref?.();
-  log?.log?.("[claude-login] login expiry watch started (hourly; DMs every admin once a day from three days out)");
+  log?.log?.("[claude-login] login expiry watch started (hourly; DMs every admin once a day from three days out; added sign-in licenses once per lapse)");
   return {
     tick,
     stop() {

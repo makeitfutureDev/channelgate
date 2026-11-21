@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## The login watch covers added sign-in licenses (2026-11-22)
+
+Engine-independent: the watch reads sign-in files and posts direct messages; no turn runs.
+
+- [x] `test/license-login-watch.test.js` (always runs): the classes (missing / expiring / healthy);
+      two licenses in trouble → one message per admin listing both with their sign-in commands and
+      no keyed license; nothing more for the following hours and days; expiring → missing is a new
+      message with that license first; a recovered, switched-off or deleted license leaves the
+      marker and is reported again on its next lapse; a license added ten minutes ago is not
+      reported until the hour has passed; an undelivered message stays due; a failed check is not a
+      recovery; and, against the real store, an unsigned ChatGPT seat and a Claude seat lapsing in
+      two days are reported once, remembered in `_meta` across a restarted watch, with no token
+      material in the text.
+- [ ] Live `LICENSE-36` added-license login watch (engine-independent). Fixture: a gateway with
+      one added ChatGPT sign-in license, switched on, added more than an hour ago and never signed
+      in; the QA admin reachable by direct message. Action: restart the gateway and wait two
+      minutes (the first pass runs one minute after boot); then wait for the next hourly pass.
+      Pass: the admin receives one direct message naming `Codex · <license name>` as not signed in
+      with its `CODEX_HOME=… codex … login --device-auth` command; `journalctl` shows
+      `[license-login] WARNING` on both passes; no second message arrives on the next pass; after
+      running the command and signing in, the next pass logs no warning.
+
 ## The run API refuses a model its license cannot serve (2026-11-22)
 
 Both engines are reachable: each harness refuses the other's models, so the live case runs once
