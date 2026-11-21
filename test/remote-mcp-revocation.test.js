@@ -28,10 +28,10 @@ const { createUsersRouter } = await import("../src/web/routes/users.js");
 const SERVER = { "composio-user": { url: "https://connect.composio.dev/mcp", headers: { "x-consumer-api-key": "ck_revocation" } } };
 
 test("a cold container turn's relay grant exists while it runs and is gone once it settles", async () => {
-  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_relay" });
+  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await setUser("U_RELAY_COLD", { name: "Relay Cold", approved: true, isAdmin: false, composioToken: "ak_user_relay" });
   const entry = await upsertChannelEntry("C_RELAY_COLD", { name: "relay-cold", type: "channel" });
-  const meta = { channelId: "C_RELAY_COLD", name: "relay-cold", type: "channel", template: "custom", engine: "claude", cleanMode: false, allowNetwork: false, memory: false };
+  const meta = { channelId: "C_RELAY_COLD", name: "relay-cold", type: "channel", template: "custom", engine: "claude", cleanMode: false, allowNetwork: false, memory: false, composioToken: "ak_channel_relay" };
   await saveChannelMeta(entry.slug, meta);
   await mkdir(effectiveWorkDir(entry.slug, meta), { recursive: true });
   clearRemoteMcpsWhere(() => true);

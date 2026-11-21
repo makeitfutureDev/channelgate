@@ -3801,11 +3801,10 @@ inbox). Record the address and the servers; never the password.
   JavaScript errors. These source fixtures do not certify live production Composio credentials.
 - [ ] Live Admin UI, **engine-independent**: no engine is invoked by these metadata reads.
   Use an isolated admin fixture with a user whose Personal Composio key reports two Gmail accounts
-  and one other app; use a channel with a different key, another inheriting the org default, a
-  no-defaults channel without a key, and a DM. Open Users → fixture user, then each channel's
+  and one other app; use a channel with a different key, a channel without a key, and a DM. Open Users → fixture user, then each channel's
   Connections tab. **Pass:** all provider-published account rows, aliases/available identities,
   status/default/type and source appear; user accounts never fall back to shared accounts; shared
-  accounts never appear in the DM; disabled org defaults do not dial Composio. Refresh reflects a
+  accounts never appear in the DM; the keyless channel does not dial Composio. Refresh reflects a
   provider-side metadata change. Save a replacement key and confirm the list uses the saved key.
   Personal mode keeps its inactive/unpublished-app caveat visible. No app authorization starts.
 - [ ] Live SDK fixture, **engine-independent**: active Enterprise license and SDK organization
@@ -11523,7 +11522,7 @@ none` for its cases and live gates. Kept as history.
 - [x] Cumulative automated regression after Composio SDK mode: `npm test` — 412/412 passing on
       merged `main`.
 - [x] Unit: Composio mode defaults to Personal; selecting SDK through the admin route does not
-      clear any saved user/channel/org token, and switching back restores the exact token paths.
+      clear any saved user/channel token, and switching back restores the exact token paths.
 - [x] Unit: SDK settings expose only key presence/last four characters; the UI sends a replacement
       key only when edited, requires an explicit clear action, and explains that mode changes retain
       all credentials.
@@ -11537,8 +11536,8 @@ none` for its cases and live gates. Kept as history.
       organization key on argv; the bridge rejects non-HTTPS/non-Composio session URLs and returns
       sanitized errors.
 - [x] Unit: personal Composio and shared channel Composio are injected simultaneously with separate
-      MCP names/headers in Claude and Codex; channel shared wins over org shared without replacing
-      personal, and either connection may exist alone.
+      MCP names/headers in Claude and Codex; the shared identity is the channel token only, never
+      replaces personal, and either connection may exist alone.
 - [x] Unit/integration: an admin can atomically keep, replace, test, and clear one per-channel Make
       toolbox URL/key pair; only official HTTPS `*.make.com` and `*.make.celonis.com`
       `/mcp/server/<id>` URLs are accepted, partial pairs fail closed, and the probe performs only
@@ -11553,8 +11552,20 @@ none` for its cases and live gates. Kept as history.
 - [x] Unit: the Admin Tools card exposes URL, masked/reveal key, Test connection, and explicit Clear
       controls, preserves a stored key when left untouched, and repaints URL/key/state from the
       authoritative save response.
-- [x] Unit: `noDefaultTokens` refuses org shared Composio while preserving personal/channel
-      Composio; clean mode removes both identities.
+- [x] Unit: there is no organization-default Composio token: a channel without its own token gets
+      no `composio-agent` (source `none`) while personal Composio is unaffected; clean mode removes
+      both identities. A stored `defaultComposioToken`/`defaultComposioTokenLabel` is purged from
+      `settings.json` at boot, the settings API ignores both fields and reports neither, the
+      reveal allowlist refuses `defaultComposioToken`, and `noDefaultTokens` is stripped from a
+      channel record on write (`test/composio-resolution.test.js`, `test/dead-fields.test.js`).
+- [ ] Live retirement check, Claude and Codex: on a deployment whose `settings.json` still holds a
+      `defaultComposioToken`, update and restart. **Pass:** the field is gone from `settings.json`;
+      Settings → Integrations shows no organization token card; in a channel WITH its own Composio
+      token ask "list your connected Composio apps" — the reply uses `composio-agent`; in a channel
+      WITHOUT one the same prompt reports no agent account (`mcp__composio-agent__*` absent) and
+      `composio-user` still works for "list my connected apps"; the Slack Settings → MCP tab and
+      the Teams MCP page show no "Fall back to organization tokens"/"inherited credentials"
+      control; App Home → Connections says composio-agent is set per channel.
 - [x] Unit: the injected operating guide frames `composio-agent` as the model's OWN account and
       `composio-user` as the requester's, resolves by pronoun app-agnostically (“verify my email” /
       “verify your email”), uses the only-connected account when there is no pronoun and asks when
@@ -11765,7 +11776,7 @@ none` for its cases and live gates. Kept as history.
 - [ ] Settings: vertical section nav (Connection / Agent defaults / Integrations / Access &
       security / System); every section stays in the DOM and ONE sticky Save persists all of them;
       dirty tracking shows "Unsaved changes" on any edit and "All changes saved" after save/boot.
-- [ ] Token fields (Slack bot/app/signing, org-default Composio, per-channel and
+- [ ] Token fields (Slack bot/app/signing, per-channel and
       per-user) pre-fill the stored token masked (first few + last 4) with an eye toggle that reveals
       the full value; leaving a field untouched and saving keeps the stored token; typing a new one
       overwrites it. Slack reconnect fires only when a Slack token is actually changed.
@@ -14051,8 +14062,7 @@ companion skill; every change is announced in the reply.
       GPT-5.6 Sol request/component uses $4/$0.40/$20; the parent run equals its priced component
       sum; entries before 2026-07-13 and Claude/provider costs are byte-for-byte unchanged; only
       `codex-auto-review` remains unpriced; a second boot changes no row.
-- [x] Unit: a DM resolves ONLY `composio-user` — the channel token and the organization default are
-      both refused (`source: "none-dm"`) in Personal mode, and SDK mode mints no channel session at
+- [x] Unit: a DM resolves ONLY `composio-user` — the channel token is refused (`source: "none-dm"`) in Personal mode, and SDK mode mints no channel session at
       all; channels/mpims keep both identities (`test/composio-resolution.test.js`,
       `test/composio-sdk-run.test.js`).
 - [x] Unit: the shared Composio server is emitted as `composio-agent` for Claude (`mcpServers`) and

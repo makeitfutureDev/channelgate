@@ -27,7 +27,8 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
   assert.match(skill, /not proof of the connected service owner's name or cross-channel sharing/is);
   assert.match(skill, /may reach the same service owner or different owners/is);
   assert.match(skill, /Matching owners never authorize substituting identities/is);
-  assert.match(skill, /not universally shared across channels/is);
+  assert.match(skill, /is channel-specific .* not shared across channels; a DM has none/is);
+  assert.doesNotMatch(skill, /organization default/i);
   assert.match(skill, /unless verified/is);
   const admin = await read("references/administration.md");
   assert.match(admin, /Routine replies need no credential details/is);

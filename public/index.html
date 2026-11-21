@@ -1136,7 +1136,7 @@
               <section class="setsec" id="set-integrations" data-sec="integrations" aria-labelledby="set-integrations-h">
                 <header class="setsec-head">
                   <h3 id="set-integrations-h">Integrations</h3>
-                  <p class="setsec-desc">Composio endpoints and org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
+                  <p class="setsec-desc">Composio mode and endpoint. A conversation's shared <code>composio-agent</code> uses its own channel token; each person's <code>composio-user</code> uses their own. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
                   <h4>Organization variables · Enterprise <em class="state secret-state"></em></h4>
@@ -1145,7 +1145,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Composio connection mode</h4>
-                  <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal, channel, or organization tokens.</p>
+                  <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal or channel tokens.</p>
                   <label class="field">
                     <span>Mode</span>
                     <select id="set-composio-mode">
@@ -1184,16 +1184,6 @@
                   <label class="field">
                     <span>Personal-mode Composio MCP URL</span>
                     <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
-                  </label>
-                </div>
-                <div class="setcard">
-                  <h4>Org-default tokens <em class="state" id="composio-personal-token-note"></em></h4>
-                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
-                  <label class="field">
-                    <span>Default Composio token <em class="state" id="default-composio-state"></em></span>
-                    <input id="set-default-composio-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-                    <input id="set-default-composio" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-composio">clear</button></div>
                   </label>
                 </div>
               </section>
@@ -1773,7 +1763,6 @@
           </label>
           <div class="ch-toggles" style="margin-top:8px">
                 <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — uncapped <code>MEMORY.md</code> + <code>memory/</code> topic files, with compact catalog injection and on-demand FTS retrieval (overrides the global default)</label>
-            <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio tokens here (channel/user tokens still apply)</label>
           </div>
         </div>
 

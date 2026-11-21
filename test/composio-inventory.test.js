@@ -4,7 +4,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { loadComposioInventory } = await import("../src/gateway/composio-inventory.js");
-const config = { mode: "personal", defaultToken: "org-secret", url: "https://connect.composio.dev/mcp", workspaceId: "T123" };
+const config = { mode: "personal", url: "https://connect.composio.dev/mcp", workspaceId: "T123" };
 
 function fixture({ apps = ["gmail", "slack"], search, pages } = {}) {
   const calls = [];
@@ -48,17 +48,18 @@ test("personal inventory uses all published applications and accounts, exposes o
   assert.equal(remote.closed(), 1);
 });
 
-test("personal scope matches runtime user-only, channel override, org fallback, no-default and DM rules", async () => {
+test("personal scope matches runtime user-only, channel-only and DM rules (no organization fallback)", async () => {
   for (const [kind, record, expected, token] of [
     ["user", {}, "none", null],
     ["channel", { composioToken: "channel-secret" }, "channel", "channel-secret"],
-    ["channel", {}, "org", "org-secret"],
-    ["channel", { noDefaultTokens: true }, "none-no-org-default", null],
+    ["channel", {}, "none", null],
+    // A stale config that still carries the retired org-default token cannot revive the fallback.
+    ["channel", { noDefaultTokens: false }, "none", null],
     ["channel", { isDM: true, composioToken: "channel-secret" }, "none-dm", null],
     ["channel", { type: "im" }, "none-dm", null],
   ]) {
     const remote = fixture({ apps: [] });
-    const result = await loadComposioInventory({ kind, id: "C123", record }, { config, connect: remote.connect });
+    const result = await loadComposioInventory({ kind, id: "C123", record }, { config: { ...config, defaultToken: "org-secret" }, connect: remote.connect });
     assert.equal(result.source, expected);
     assert.equal(result.state, token ? "ready" : "unconfigured");
     assert.equal(remote.calls.find((c) => c.method === "connect")?.args.headers["x-consumer-api-key"] ?? null, token);
@@ -76,8 +77,8 @@ test("tools/list pagination locates the publication and rejects repeated cursor"
   assert.equal(looping.closed(), 1);
 });
 
-test("truthy legacy DM and no-default flags suppress shared inventory exactly as runtime does", async () => {
-  for (const [record, source] of [[{ noDefaultTokens: "legacy-true" }, "none-no-org-default"], [{ isDM: 1, composioToken: "channel-secret" }, "none-dm"]]) {
+test("a truthy legacy DM flag suppresses shared inventory exactly as runtime does", async () => {
+  for (const [record, source] of [[{ isDM: 1, composioToken: "channel-secret" }, "none-dm"]]) {
     const result = await loadComposioInventory({ kind: "channel", id: "C123", record }, {
       config, connect: async () => assert.fail("suppressed shared credentials must never be used"),
     });
@@ -226,13 +227,13 @@ test("SDK pagination has a finite page limit even with unique cursors", async ()
 
 test("malicious account metadata cannot echo known configuration credentials", async () => {
   const remote = fixture({ apps: ["gmail"], search: () => ({ structuredContent: { toolkit_connection_statuses: [{
-    toolkit: "gmail", accounts: [{ id: "user-secret", alias: "org-secret", user_info: { email: "sdk-secret" }, status: "ACTIVE" }],
+    toolkit: "gmail", accounts: [{ id: "user-secret", alias: "sdk-secret", user_info: { email: "user-secret" }, status: "ACTIVE" }],
   }] } }) });
   const result = await loadComposioInventory({ kind: "user", record: { composioToken: "user-secret" } }, {
     config: { ...config, sdkApiKey: "sdk-secret" }, connect: remote.connect,
   });
   assert.equal(result.state, "ready");
-  assert.doesNotMatch(JSON.stringify(result), /user-secret|org-secret|sdk-secret/);
+  assert.doesNotMatch(JSON.stringify(result), /user-secret|sdk-secret/);
   assert.deepEqual(result.accounts.map(({ id, alias, account }) => ({ id, alias, account })), [{ id: "[redacted]", alias: "[redacted]", account: "[redacted]" }]);
 });
 

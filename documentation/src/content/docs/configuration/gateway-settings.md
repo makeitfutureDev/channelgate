@@ -14,7 +14,7 @@ Sign in to the admin web interface and open **Settings**. Use **Search settingsâ
 | Connection | Slack, Microsoft Teams, Google Chat, public URL, approval links |
 | Agent defaults | Engine licenses and which are switched on, the default harness, license, model and effort, failover, instructions, memory, scheduling limits |
 | Access Templates | Starting conversation settings and reusable skill assignments |
-| Integrations | Shared environment variables, Composio mode and endpoints, organization token defaults |
+| Integrations | Shared environment variables, Composio mode and endpoint |
 | License | The ChannelGate product license key, verification state, conversation message allowance |
 | Access & security | Organization grants, default conversation access, model-change policy, container runtime |
 | System | Admin authentication, run API token, reconnect and restart controls |

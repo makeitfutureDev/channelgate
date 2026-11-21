@@ -1,7 +1,7 @@
 // Read-only account metadata for the admin UI. Never creates SDK sessions, connected accounts,
 // or authorization links. Consumer SEARCH session IDs correlate read-only discovery requests.
 import { Composio } from "@composio/core";
-import { getComposioMode, getComposioSdkApiKey, getDefaultComposioToken } from "../config/settings.js";
+import { getComposioMode, getComposioSdkApiKey } from "../config/settings.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { composioIdentity } from "../ee/composio-sessions.js";
 import { connectRemoteClient } from "../mcp/remote-relay.js";
@@ -199,7 +199,7 @@ async function sdkAccounts({ kind, id, config, sdkClient, timeoutMs, totalTimeou
 /** Configuration and network clients can be injected without touching gateway state in tests. */
 export async function loadComposioInventory({ kind, id, record = {} } = {}, options = {}) {
   const config = options.config || {
-    mode: getComposioMode(), defaultToken: getDefaultComposioToken(), sdkApiKey: getComposioSdkApiKey(),
+    mode: getComposioMode(), sdkApiKey: getComposioSdkApiKey(),
     url: composioUrl(), workspaceId: process.env.CG_SLACK_TEAM_ID || "",
   };
   const mode = config.mode === "sdk" ? "sdk" : "personal";
@@ -208,7 +208,7 @@ export async function loadComposioInventory({ kind, id, record = {} } = {}, opti
   const totalTimeoutMs = Math.max(10, Math.min(60_000, options.totalTimeoutMs || 60_000));
   const isDM = Boolean(record.isDM || record.type === "im");
   let source = mode === "sdk" ? `sdk-${kind}` : "none";
-  const secrets = [...new Set([record.composioToken, config.sdkApiKey, config.defaultToken])]
+  const secrets = [...new Set([record.composioToken, config.sdkApiKey])]
     .filter((value) => typeof value === "string" && value.length);
   const scrub = (value) => {
     if (typeof value === "string") return secrets.reduce((safe, secret) => safe.split(secret).join("[redacted]"), value);
@@ -234,8 +234,7 @@ export async function loadComposioInventory({ kind, id, record = {} } = {}, opti
     }
     const resolved = resolveComposioConnections({
       clean: false, userToken: kind === "user" ? record.composioToken : "",
-      channelToken: kind === "channel" ? record.composioToken : "", defaultToken: config.defaultToken,
-      noOrg: Boolean(record.noDefaultTokens), isDM,
+      channelToken: kind === "channel" ? record.composioToken : "", isDM,
     });
     const selected = kind === "user" ? resolved.user : resolved.shared;
     source = selected.source;

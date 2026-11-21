@@ -3,8 +3,8 @@
 //   - gateway: the gateway's own control MCP server (schedules + channel admin), scoped to this
 //     channel/author via env — runs on the daemon, outside the container, so it can read/write gateway config.
 //   - composio-user: injected only when the active author has a personal token.
-//   - composio-agent: the agent's OWN account — injected independently with the channel token, or
-//     the org token as fallback (the model never learns which; to it this is simply its account).
+//   - composio-agent: the agent's OWN account — injected independently with the channel's own
+//     token (no organization fallback; never in a DM). To the model this is simply its account.
 //     Both tokens ride x-consumer-api-key headers and are never written to channel storage.
 //   - make-toolbox: injected for a complete per-channel Make URL/key pair.
 // Selected optional definitions are added by run-engine-mcp.js through the engine adapter.

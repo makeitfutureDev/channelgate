@@ -5,7 +5,7 @@ import { getDmTemplate } from "./settings.js";
 export const WORKSPACE_FIELDS = Object.freeze([
   "skills", "skillsOff", "skillTemplate", "memory", "instructions", "syncDriveFolder", "vpnService",
   "access", "manageAccess", "managers", "allowedUsers", "excludedUsers", "approvedTools", "sshUsers",
-  "allowedMcps", "allowedCodexMcps", "customMcps", "emailAccounts", "noDefaultTokens",
+  "allowedMcps", "allowedCodexMcps", "customMcps", "emailAccounts",
   "composioToken", "composioTokenLabel", "makeToolboxUrl", "makeToolboxKey", "env", "egressRawHosts",
   "profile", "adminMode", "allowBash", "autoMode", "cleanMode", "allowNetwork", "rawNetwork", "skillRuntimeSwap",
 ]);

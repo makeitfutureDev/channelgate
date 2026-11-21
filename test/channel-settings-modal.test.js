@@ -100,10 +100,8 @@ const snapshot = {
   connections: {
     composioMode: "personal",
     composioChannel: { configured: true, last4: "c123" },
-    composioOrg: { configured: true, last4: "o123" },
     makeToolboxUrl: "https://example.test/mcp",
     makeToolboxKey: { configured: true, last4: "m123" },
-    noDefaultTokens: false,
   },
   cloudMcp: {
     claude: { channel: [{ name: "github" }], organization: [{ name: "drive" }] },
@@ -861,8 +859,9 @@ test("native You and MCP pages show the scoped account list beneath Composio and
   assert.match(rendered(you), /Personal connections|viewer@example.test/);
   const refresh = elements(you).find((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID);
   assert.equal(parseActionValue(refresh.value).u, state.ownerId);
-  const mcp = buildChannelSettingsView({ ...snapshot, composioInventory: { ...inventory, source: "org" } }, { ...state, tab: "mcp" });
-  assert.match(rendered(mcp), /Organization connections/);
+  const mcp = buildChannelSettingsView({ ...snapshot, composioInventory: { ...inventory, source: "channel" } }, { ...state, tab: "mcp" });
+  assert.match(rendered(mcp), /Channel connections/);
+  assert.doesNotMatch(rendered(mcp), /organization account|Fall back to organization tokens/);
   const editing = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you", form: "composio:p" });
   assert.equal(editing.submit.text, "Save");
   assert.equal(elements(editing).some((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID), false);

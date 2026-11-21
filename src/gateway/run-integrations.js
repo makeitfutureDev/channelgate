@@ -4,7 +4,7 @@
 // must be the same environment or "it works in Slack but not over SSH" is the bug. Moved out of
 // run.js verbatim; run.js re-exports the Composio resolvers so their existing importers stay put.
 import { getComposioToken, getUser, isAdmin, isApproved } from "../config/store.js";
-import { getComposioMode, getDefaultComposioToken } from "../config/settings.js";
+import { getComposioMode } from "../config/settings.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { canManage } from "./modes.js";
@@ -16,11 +16,13 @@ import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
 
 // Composio is intentionally different from the other token-backed integrations: expose the active
 // author's identity and the gateway's shared identity at the same time instead of choosing one.
-// `composio-user` is personal-only; shared `composio` is channel-first, then org-default.
+// `composio-user` is the author's personal token only; the shared `composio-agent` is the
+// channel's own token only. There is no organization-wide default: a channel without its own
+// token has no shared identity.
 // A DM is a private, one-person conversation: there is no shared audience to act on behalf of, so
-// the shared identity (channel token AND the org default) is suppressed there and only the
-// author's personal `composio-user` is injected. Everything else keeps both identities.
-export function resolveComposioConnections({ clean = false, userToken = "", channelToken = "", defaultToken = "", noOrg = false, isDM = false } = {}) {
+// the shared identity is suppressed there and only the author's personal `composio-user` is
+// injected. Everything else keeps both identities.
+export function resolveComposioConnections({ clean = false, userToken = "", channelToken = "", isDM = false } = {}) {
   if (clean) {
     return {
       user: { token: "", source: "clean" },
@@ -33,9 +35,7 @@ export function resolveComposioConnections({ clean = false, userToken = "", chan
     user,
     shared: channelToken
       ? { token: channelToken, source: "channel" }
-      : !noOrg && defaultToken
-        ? { token: defaultToken, source: "org" }
-        : { token: "", source: noOrg ? "none-no-org-default" : "none" },
+      : { token: "", source: "none" },
   };
 }
 
@@ -51,8 +51,6 @@ export async function resolveComposioRuntime({
   authorIsApproved = false,
   userToken = "",
   channelToken = "",
-  defaultToken = "",
-  noOrg = false,
   isDM = false,
   principalTrusted = true,
   resolveSdk = resolveSdkSession,
@@ -62,8 +60,6 @@ export async function resolveComposioRuntime({
       clean,
       userToken: principalTrusted ? userToken : "",
       channelToken,
-      defaultToken,
-      noOrg,
       isDM,
     });
     return {
@@ -123,12 +119,11 @@ export async function resolveComposioRuntime({
  * its output — plus the one-line identity preamble the prompt carries.
  */
 export async function resolveRunIntegrations({ meta = {}, channelId = "", authorId = "", threadKey = "", workspaceId = "", clean = false, untrustedPrincipal = false } = {}) {
-  const noOrg = Boolean(meta.noDefaultTokens);
   const composioMode = getComposioMode();
   const effectiveWorkspaceId = String(workspaceId || process.env.CG_SLACK_TEAM_ID || "").trim();
   // The HTTP API authenticates its API key, not the caller-supplied Slack author id. Never use
   // that untrusted id to read a personal connector token or infer admin/approval state. Shared
-  // channel/org identities remain available; the user identity is intentionally absent.
+  // channel identities remain available; the user identity is intentionally absent.
   const userIdentity = await resolveRunUserIdentity({
     authorId,
     untrustedPrincipal,
@@ -150,8 +145,6 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     principalTrusted: !untrustedPrincipal,
     channelToken: meta.composioToken,
     userToken: userIdentity.composioToken,
-    defaultToken: getDefaultComposioToken(),
-    noOrg,
     isDM: Boolean(meta.isDM || meta.type === "im"),
   });
   const composioUserToken = composio.user.token;

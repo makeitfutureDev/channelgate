@@ -575,7 +575,6 @@ export function createChannelsRouter({
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
             skillRuntimeSwap: typeof body.skillRuntimeSwap === "boolean" ? body.skillRuntimeSwap : Boolean(current.skillRuntimeSwap),
-            noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
             codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",

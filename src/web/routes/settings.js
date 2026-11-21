@@ -374,7 +374,7 @@ export function createSettingsRouter({
       }
       if (typeof body.sessionKeepalive === "string") patch.sessionKeepalive = body.sessionKeepalive.trim();
       // Mode selection and credentials are deliberately independent: changing the mode never
-      // clears either the existing personal/channel/org tokens or this organization SDK key.
+      // clears either the existing personal/channel tokens or this organization SDK key.
       if ((body.composioMode === "sdk" || (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim())) && !hasComposioSdkEntitlement()) {
         return res.status(403).json({ error: "Composio SDK (Beta) requires an active Enterprise license" });
       }
@@ -427,13 +427,6 @@ export function createSettingsRouter({
         const arr = Array.isArray(body.trustedBotApps) ? body.trustedBotApps : String(body.trustedBotApps).split(/[\s,]+/);
         patch.trustedBotApps = arr.map((s) => String(s).trim()).filter(Boolean);
       }
-      // Org-default Composio / Skills tokens (write-only; the final fallback when channel + user
-      // have none). Set on a non-empty value; clear explicitly with the *Clear flags.
-      if (typeof body.defaultComposioToken === "string" && body.defaultComposioToken) patch.defaultComposioToken = body.defaultComposioToken.trim();
-      if (body.clearDefaultComposioToken === true) patch.defaultComposioToken = "";
-      // Owner labels (who the shared org-default token authenticates as). Not secret — a plain
-      // string that always round-trips; an empty string clears it.
-      if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
       // Legacy shared GitHub credential stays readable for rollback compatibility, but source
       // sync no longer consumes it. New source credentials live on each source row.
       if (typeof body.skillsGithubToken === "string" && body.skillsGithubToken.trim()) patch.skillsGithubToken = body.skillsGithubToken.trim();

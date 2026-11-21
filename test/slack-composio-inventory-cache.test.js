@@ -28,32 +28,32 @@ test("inventory cache coalesces slow reads, uses its TTL and refreshes explicitl
 });
 
 test("cache keys separate viewer/channel identities and every credential or routing rotation", async () => {
-  let config = { mode: "personal", defaultToken: "default-secret", sdkApiKey: "sdk-secret", url: "https://one.example", workspaceId: "TONE" };
+  let config = { mode: "personal", sdkApiKey: "sdk-secret", url: "https://one.example", workspaceId: "TONE" };
   const cache = createSettingsComposioCache({ config: () => config, load: async () => ready });
   const key = cache.key(input);
   assert.match(key, /^[a-f0-9]{64}$/);
-  assert.doesNotMatch(key, /private-token|default-secret|sdk-secret/);
+  assert.doesNotMatch(key, /private-token|sdk-secret/);
   await cache.load(input);
   for (const change of [
     { kind: "channel" }, { id: "UOTHER" }, { record: { composioToken: "new-token" } },
-    { record: { ...input.record, noDefaultTokens: true } }, { record: { ...input.record, isDM: true } },
+    { record: { ...input.record, isDM: true } },
     { record: { ...input.record, type: "im" } },
   ]) { assert.notEqual(cache.key({ ...input, ...change }), key); assert.equal(cache.peek({ ...input, ...change }), undefined); }
-  for (const [field, value] of Object.entries({ mode: "sdk", defaultToken: "rotated", sdkApiKey: "rotated", url: "https://two.example", workspaceId: "TTWO" })) {
+  for (const [field, value] of Object.entries({ mode: "sdk", sdkApiKey: "rotated", url: "https://two.example", workspaceId: "TTWO" })) {
     const before = config; config = { ...config, [field]: value };
     assert.notEqual(cache.key(input), key); assert.equal(cache.peek(input), undefined); config = before;
   }
 });
 
 test("in-flight invalidation and key rotation never repopulate the current identity", async () => {
-  const pending = deferred(); let calls = 0; let config = { mode: "personal", defaultToken: "before" };
+  const pending = deferred(); let calls = 0; let config = { mode: "personal", sdkApiKey: "before" };
   const cache = createSettingsComposioCache({ config: () => config, load: async () => ++calls === 1 ? pending.promise : ready });
   const old = cache.load(input);
   cache.invalidate(input);
   await cache.load(input);
   pending.resolve({ ...ready, accounts: [{ id: "stale" }] }); await old;
   assert.equal(cache.peek(input), ready);
-  config = { ...config, defaultToken: "after" };
+  config = { ...config, sdkApiKey: "after" };
   assert.equal(cache.peek(input), undefined);
 });
 

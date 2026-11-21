@@ -11,7 +11,6 @@ test("Composio resolution keeps the active user separate from the channel identi
     resolveComposioConnections({
       userToken: "user-token",
       channelToken: "channel-token",
-      defaultToken: "org-token",
     }),
     {
       user: { token: "user-token", source: "user" },
@@ -20,29 +19,31 @@ test("Composio resolution keeps the active user separate from the channel identi
   );
 });
 
-test("Composio shared identity falls back to the organization without replacing the user", () => {
+test("there is no organization-default Composio: a keyless channel has no shared identity", () => {
+  // A stale caller that still passes the retired org-default arguments cannot revive the fallback.
   assert.deepEqual(
-    resolveComposioConnections({ userToken: "user-token", defaultToken: "org-token" }),
+    resolveComposioConnections({ userToken: "user-token", defaultToken: "org-token", noOrg: false }),
     {
       user: { token: "user-token", source: "user" },
-      shared: { token: "org-token", source: "org" },
+      shared: { token: "", source: "none" },
     }
   );
+  assert.equal(resolveComposioConnections({ channelToken: "channel-token" }).shared.token, "channel-token");
 });
 
-test("Composio no-default mode keeps personal and channel tokens but blocks the organization", () => {
+test("the organization-default Composio token and the channel opt-out are retired fields", async () => {
+  const { DEAD_RECORD_FIELDS, stripDeadSettings, stripDeadFields } = await import("../src/config/dead-fields.js");
+  assert.ok(DEAD_RECORD_FIELDS.includes("noDefaultTokens"));
+  assert.deepEqual(stripDeadFields({ composioToken: "c", noDefaultTokens: true }), { composioToken: "c" });
   assert.deepEqual(
-    resolveComposioConnections({ userToken: "user-token", defaultToken: "org-token", noOrg: true }),
-    {
-      user: { token: "user-token", source: "user" },
-      shared: { token: "", source: "none-no-org-default" },
-    }
+    stripDeadSettings({ composioMode: "personal", defaultComposioToken: "org", defaultComposioTokenLabel: "owner" }),
+    { composioMode: "personal" },
   );
-
-  assert.equal(
-    resolveComposioConnections({ channelToken: "channel-token", defaultToken: "org-token", noOrg: true }).shared.token,
-    "channel-token"
-  );
+  const settings = await import("../src/config/settings.js");
+  assert.equal(typeof settings.getDefaultComposioToken, "undefined");
+  const { revealableFields, readSecret } = await import("../src/web/secrets.js");
+  assert.ok(!revealableFields("settings").includes("defaultComposioToken"));
+  await assert.rejects(readSecret({ scope: "settings", field: "defaultComposioToken" }), /not revealable/);
 });
 
 test("clean mode removes both Composio identities", () => {
@@ -51,7 +52,6 @@ test("clean mode removes both Composio identities", () => {
       clean: true,
       userToken: "user-token",
       channelToken: "channel-token",
-      defaultToken: "org-token",
     }),
     {
       user: { token: "", source: "clean" },
@@ -60,12 +60,11 @@ test("clean mode removes both Composio identities", () => {
   );
 });
 
-test("a DM gets only the personal identity — no channel token, no organization fallback", () => {
+test("a DM gets only the personal identity — no channel token", () => {
   assert.deepEqual(
     resolveComposioConnections({
       userToken: "user-token",
       channelToken: "channel-token",
-      defaultToken: "org-token",
       isDM: true,
     }),
     {
@@ -75,7 +74,7 @@ test("a DM gets only the personal identity — no channel token, no organization
   );
 
   assert.deepEqual(
-    resolveComposioConnections({ defaultToken: "org-token", isDM: true }),
+    resolveComposioConnections({ isDM: true }),
     {
       user: { token: "", source: "none" },
       shared: { token: "", source: "none-dm" },

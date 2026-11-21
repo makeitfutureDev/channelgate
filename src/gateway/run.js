@@ -1292,7 +1292,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   };
 
   // Composio exposes TWO independent identities: active author (`composio-user`) plus the agent's
-  // own account (`composio-agent`, backed by the channel token, else the org token). Personal mode resolves the existing user/channel→org tokens; SDK mode
+  // own account (`composio-agent`, backed by the channel token only). Personal mode resolves the saved user and channel tokens; SDK mode
   // resolves stable user/channel identities into per-thread sessions. Stored personal-mode tokens
   // are never mutated when SDK mode is active. Clean mode injects none.
   const {

@@ -2,6 +2,14 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Remove the organization-wide Composio token. Composio now has exactly two identities: a
+  conversation's own token (`composio-agent`) and each person's own token (`composio-user`). A
+  channel without its own token no longer borrows a gateway-wide account; it simply has no
+  `composio-agent`, and DMs keep only `composio-user`. The Settings → Integrations token card and
+  the per-channel "Fall back to organization tokens" switch (admin UI, Slack and Teams settings)
+  are gone. A saved organization token is deleted from `settings.json` on the next start. **Before
+  updating, give every channel that relied on the organization token its own token** (channel
+  Settings → MCP → Composio). Composio SDK mode is unchanged.
 - Say why a connection to an undeclared server and port fails instead of dropping it silently.
   With Network on, the egress proxy carries only HTTPS to a host and port the channel has not
   declared, so an SSH or database client through `cg-egress-connect` used to see a dead connection.

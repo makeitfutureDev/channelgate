@@ -3,13 +3,13 @@
 //
 // Composio is NOT a pick. Two stable identities may be injected at spawn time: `composio-user`
 // for the active author's token and `composio-agent` for the AGENT's own account (backed by the
-// channel token, else the org token — the model is never told which). Both are always referenced
+// channel's own token; there is no organization default). Both are always referenced
 // in the lockdown so either injected server is permitted.
 export function composioUrl() {
   return process.env.COMPOSIO_MCP_URL || "https://connect.composio.dev/mcp";
 }
 
-// Reference data for the agent's own Composio (channel token, else org token), used when generating
+// Reference data for the agent's own Composio (the channel token), used when generating
 // the lockdown. Referenced by serverName, and — because Claude Code matches every REMOTE server by
 // URL once the allowlist carries any serverUrl entry (see injectedRemoteAllowMatches) — by URL too. The name is self-describing on purpose: every tool the
 // model calls reads `mcp__composio-agent__*` / `mcp__composio-user__*`, so whose account it is acting

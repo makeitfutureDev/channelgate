@@ -42,12 +42,12 @@ test("loading, empty, partial, unavailable and unconfigured states remain honest
   assert.equal(rows(composioInventoryBlocks(ready([account("known")], { state: "partial" }))).length, 1);
 });
 
-test("source labels distinguish personal, channel, organization, SDK and direct-message identities", () => {
+test("source labels distinguish personal, channel, SDK and direct-message identities", () => {
   for (const [source, label] of [
-    ["user", "Personal connections"], ["channel", "Channel connections"], ["org", "Organization connections"],
+    ["user", "Personal connections"], ["channel", "Channel connections"],
     ["sdk-user", "Personal connections · organization Composio SDK"],
     ["sdk-channel", "Channel connections · organization Composio SDK"],
-    ["none-dm", "Direct message · personal connections only"], ["none-no-org-default", "Organization fallback disabled"],
+    ["none-dm", "Direct message · personal connections only"],
   ]) assert.match(text(composioInventoryBlocks(ready([], { source }))), new RegExp(label));
   assert.doesNotMatch(text(composioInventoryBlocks(ready([], { mode: "sdk" }))), /may omit/);
 });

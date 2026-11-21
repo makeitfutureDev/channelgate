@@ -5,11 +5,9 @@ import { escapeHtml } from "./admin-view.js";
 const SOURCES = {
   user: "Personal connections · composio-user",
   channel: "Channel connections · composio-agent",
-  org: "Organization default · composio-agent",
   "sdk-user": "Personal connections · composio-user · SDK",
   "sdk-channel": "Channel connections · composio-agent · SDK",
   "none-dm": "Direct message · personal connections only",
-  "none-no-org-default": "Organization defaults disabled",
 };
 
 export function composioInventoryMarkup(result) {

@@ -2414,7 +2414,6 @@ control-plane status.
   section.
   - Edit or Connect opens the fields in place, with the URL or label prefilled and the token box
     always empty. Remove (with a confirmation) sits inside the open form.
-  - *Fall back to organization tokens* is one tick.
   - Cloud MCP is one multi-select per engine. A cold catalog says it is loading instead of
     blocking the page.
 - **Variables:** *Channel* and *Organization* sections. Organization variables are admin-only;
@@ -5328,8 +5327,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   by pronoun across every app: “my” → `composio-user`, “your” → `composio-agent`, a named account →
   whichever has it, no pronoun → the only account with that app connected (named in the reply), ask
   when both have it; it reads each account's connected-app list before promising an action and never
-  substitutes. A **DM** is personal-only: neither the channel token nor the organization default
-  backs `composio-agent` there, and SDK mode mints no channel session for it, so a one-to-one
+  substitutes. A **DM** is personal-only: the channel token does not back `composio-agent` there, and SDK mode mints no channel session for it, so a one-to-one
   conversation can only ever act as the requester's own account (mpim/group DMs and channels are
   unchanged). Which identities a run built is also stated IN the prompt: one line, prepended next to
   the fresh-session memory catalog and the caller's provenance note, from the same predicate that
@@ -5341,13 +5339,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the configured **Make MCP** are injected only when their credentials resolve. Skills
   are never an MCP server: they come from the gateway's own catalog as files (Skills platform
   below). → TEST-PLAN: MCP injection & tokens.
-- Token resolution: Personal-mode Composio is two paths (**user only** plus **channel →
-  org-default**); SDK mode replaces both active paths with stable user/channel identities without
-  mutating saved tokens. Personal Composio tokens can be
-  set via `set_my_*_token` or the admin UI; org-default tokens and the write-only SDK key live in
-  Settings → Integrations.
-- Per-channel opt-out of the org-default token fallback (`meta.noDefaultTokens`): a sensitive channel
-  refuses the broad gateway-wide tokens (channel/user tokens still apply).
+- Token resolution: Personal-mode Composio is two independent paths (**user only** →
+  `composio-user`, **channel only** → `composio-agent`); SDK mode replaces both active paths with
+  stable user/channel identities without mutating saved tokens. Personal Composio tokens can be
+  set via `set_my_*_token` or the admin UI; the write-only SDK key lives in Settings → Integrations.
+- **Organization-default Composio token retired (2026-11-21).** There is no gateway-wide Composio
+  token any more: a conversation without its own token has no `composio-agent`, and a DM has
+  only `composio-user`. The Settings → Integrations token card, its reveal reader, the settings
+  API fields, the per-channel *Fall back to organization tokens* switch (`meta.noDefaultTokens`,
+  Slack, Teams and the admin UI) and the inventory's "organization" source are gone. A stored
+  `defaultComposioToken`/`defaultComposioTokenLabel` is purged from `settings.json` at boot, and
+  `noDefaultTokens` is stripped from a channel record on its next write.
 - **Skills Manager integration retired (2026-09-05).** The `makeitfuture-skills` MCP injection, the
   organization/channel/user Skills Manager tokens (their tools, routes, UI fields and secret
   readers), the favorites stubs and the App Home favorites fetch are gone; Skills Manager remains a
@@ -6484,8 +6486,8 @@ are retired, bullet by bullet; everything else stands.
   `approval_resolved_by_admin` audit event naming the principal (`admin UI`), the decision and the
   scope, never the command. The Overview page carries the same queue with Approve/Deny buttons and a
   scope picker. → TEST-PLAN: Modes & approvals.
-- Reveal-able token fields: every gateway token input (Slack bot/app/signing, org-default
-  Composio, per-channel and per-user tokens) shows its stored value masked (first
+- Reveal-able token fields: every gateway token input (Slack bot/app/signing, per-channel
+  and per-user tokens) shows its stored value masked (first
   few + last 4 chars) with an eye toggle (inline SVG) to reveal the full token. Token values are
   returned only to the authenticated admin session; on save a token is overwritten only when a new
   one is actually typed (an untouched masked field keeps the stored value). → TEST-PLAN: Admin UI.
@@ -6592,7 +6594,7 @@ are retired, bullet by bullet; everything else stands.
   Sections: **Connection** (Slack bot tokens + status + the daemon's public URL), **Agent
   defaults** (enabled harnesses, engine, cross-engine failover, keepalive, context window, progress
   view, mention reactions, instructions, memory, schedule limits, nudges, codex rate),
-  **Access Templates**, **Integrations** (Composio URLs + org-default tokens),
+  **Access Templates**, **Integrations** (Composio mode + URL, SDK key),
   **License**, **Access & security** (default channel access, trusted bot apps + network domains as
   chip editors), **System** (admin password, run-API token, Reconnect Slack, and a red **danger
   zone**: reset all channels' access, remove password, restart daemon, disconnect Slack).
@@ -7162,7 +7164,7 @@ are retired, bullet by bullet; everything else stands.
   `clear_channel_workdir`, `set_channel_drive_folder` / `clear_channel_drive_folder`,
   `add_channel_mcps` / `remove_channel_mcps`), the typed `/mode` command and the `/model` runtime
   picker (actor = the chat author's own id, also in the event's author column). The allowlist is
-  curated — profile, the four capability flags, cleanMode, noDefaultTokens, engine/model/effort,
+  curated — profile, the four capability flags, cleanMode, engine/model/effort,
   runtime, workDir, the Drive sync link, access/manageAccess/managers/allowedUsers, the two MCP
   allowlists, the DM template, the skill template, and skills as a COUNT — so a token, a per-channel
   environment value or any other field can never reach an audit row. Only keys that changed are

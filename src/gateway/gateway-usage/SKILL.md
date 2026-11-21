@@ -234,8 +234,8 @@ Three identities can act, and every tool name says which one:
 Personal and agent connections may reach the same service owner or different owners. Discover
 account metadata through the selected identity before making ownership claims; do not read business
 data just to identify an account. Matching owners never authorize substituting identities. The agent
-identity can be channel-specific (including SDK channel identities) or reuse an organization default
-in Personal mode; it is not universally shared across channels. Explain those possibilities when
+identity is channel-specific — the channel's own token in Personal mode, or the channel's SDK
+identity — and is not shared across channels; a DM has none. Explain those possibilities when
 asked about isolation, without claiming which applies to this run unless verified.
 
 The hyphenated names are the logical MCP server identities. A harness/tool registry may normalize

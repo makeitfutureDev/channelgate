@@ -38,7 +38,7 @@ import { recordActivity, markDone, clearDone, applyDigestDoneReaction, removeDig
 import { getActiveBackgroundJobs } from "../gateway/background.js";
 import { findAckByMessage, deleteAck } from "../config/acks.js";
 
-import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getDefaultComposioToken, getOrgAccessGrants, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
+import { resolveSlackConfig, getContextWindow, getEngine, getEnginePool, getDefaultModel, getMentionReactions, getDefaultChannelAccess, applyChannelTemplate, userNudgesEnabled, getFollowupDoneReactions, getFollowupRemindersEnabled, getComposioMode, getComposioSdkApiKey, getOrgAccessGrants, getPublicUrl, getScheduleMaxPerChannel } from "../config/settings.js";
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
@@ -93,12 +93,12 @@ import {
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
   CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
-  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
+  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
   CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_DM_MODE_ACTION_ID,
   CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId, SETTINGS_DRAFT_FIELDS,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
-  CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
+  CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
   CHANNEL_SETTINGS_HARNESSES_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, CHANNEL_SETTINGS_SKILL_PAGE_PREFIX,
   CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX, CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID,
@@ -1282,10 +1282,8 @@ function channelSettingsSnapshot(meta = {}) {
       composioSdkReady: hasComposioSdkEntitlement() && Boolean(getComposioSdkApiKey()),
       composioChannel: maskedCredential(meta.composioToken),
       composioTokenLabel: String(meta.composioTokenLabel || ""),
-      composioOrg: maskedCredential(getDefaultComposioToken()),
       makeToolboxUrl: String(meta.makeToolboxUrl || ""),
       makeToolboxKey: maskedCredential(meta.makeToolboxKey),
-      noDefaultTokens: Boolean(effective.noDefaultTokens),
     },
     cloudMcp: {
       claude: { channel: effective.allowedMcps || [], organization: organization.allowedMcps || [] },
@@ -2372,12 +2370,6 @@ async function connectAndWire(app) {
         }), { guardHash: false });
         return;
       }
-      if (actionId === CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID) {
-        const enabled = (action?.selected_options || []).some((entry) => entry.value === "fallback");
-        meta = await patchAuditedChannelSettings(entry, clicker, { noDefaultTokens: !enabled });
-        await repaint({ meta }, { notice: enabled ? "✅ Organization tokens are used when this channel has none." : "✅ This channel no longer falls back to organization tokens." });
-        return;
-      }
       if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX)) {
         // Admin-only: channelSettingsContext enforced it for every cg_channel_settings_cloud_ id.
         const engine = cloudEngineChoices(meta).find(id => id === actionId.slice(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX.length)) || "claude";
@@ -2559,15 +2551,6 @@ async function connectAndWire(app) {
           trigger_id: requireTrigger(),
           view: buildConnectionsEditorView(channelSettingsSnapshot(meta).connections, state, { channelName: entry.name }),
         });
-        return;
-      }
-
-      if (actionId === CHANNEL_SETTINGS_FALLBACK_ACTION_ID) {
-        meta = await patchAuditedChannelSettings(entry, clicker, { noDefaultTokens: !Boolean(command.enabled) });
-        const notice = meta.noDefaultTokens
-          ? "✅ Inherited organization/personal connection credentials are disabled for this channel."
-          : "✅ Inherited connection credentials are enabled for this channel.";
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice }));
         return;
       }
 
@@ -3421,9 +3404,8 @@ async function connectAndWire(app) {
         ],
       connections: async () => {
         const cTok = await getComposioToken(userId);
-        const connLine = (label, mine, fallback, note) => mine
+        const connLine = (label, mine, note) => mine
           ? `✅ *${label}* — your account`
-          : fallback ? `⚪ *${label}* — using the org default`
           : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
         const mode = getComposioMode();
         const composioLines = mode === "sdk"
@@ -3433,10 +3415,8 @@ async function connectAndWire(app) {
                 ? ["✅ *Composio personal (composio-user)* — SDK (Enterprise · Beta) identity created for you at runtime", "✅ *Composio agent (composio-agent)* — SDK (Enterprise · Beta) identity created for each channel at runtime"]
                 : ["❌ *Composio SDK (Enterprise · Beta)* — its organization API key is missing"])
           : [
-              connLine("Composio personal (composio-user)", cTok, "", "connect it with the button below"),
-              getDefaultComposioToken()
-                ? "⚪ *Composio agent (composio-agent)* — organization default (a channel token takes precedence)"
-                : "❌ *Composio agent (composio-agent)* — no organization default (a channel may still provide one)",
+              connLine("Composio personal (composio-user)", cTok, "connect it with the button below"),
+              "⚪ *Composio agent (composio-agent)* — set per channel in its Settings → MCP (none in DMs)",
             ];
         const conns = [...composioLines, "🛠 *Gateway control* — always on (schedules, channel admin, workdir)"].join("\n");
         return [

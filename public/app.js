@@ -2238,7 +2238,6 @@ function renderChannelDetail(ch) {
   manageSel.addEventListener("change", applyManageUI);
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
-  card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
   card.querySelector(".ch-skillswap").checked = !!meta.skillRuntimeSwap;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
@@ -2463,7 +2462,7 @@ function renderChannelDetail(ch) {
   modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
-    : (meta.hasComposioToken ? "" : "no token (uses org default)");
+    : (meta.hasComposioToken ? "" : "no token (no shared composio-agent here)");
   attachReveal(card.querySelector(".ch-composio"), { has: meta.hasComposioToken, last4: meta.composioTokenLast4, fetch: revealSecret("channel", "composioToken", ch.slug) });
   card.querySelector(".ch-composio-label").value = meta.composioTokenLabel || "";
   // Per-channel environment secrets. These are the ONE part of the channel card that saves
@@ -2551,7 +2550,6 @@ function renderChannelDetail(ch) {
     const composioTok = tokenValue(card.querySelector(".ch-composio"));
     const composioLabel = card.querySelector(".ch-composio-label").value;
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
-    const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
       const approvals = approvedHarnesses();
       if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness or license.");
@@ -2586,7 +2584,6 @@ function renderChannelDetail(ch) {
           cleanMode: card.querySelector(".ch-clean").checked,
           skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
           memory: card.querySelector(".ch-memory").checked,
-          noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           // Beside the license it belongs to; "" when the choice is a single license or inherited.
           licensePool: engineSelect.pool ?? "",
@@ -2611,7 +2608,7 @@ function renderChannelDetail(ch) {
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
       showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
-      if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
+      if (composioTok) void loadComposioConnections(true);
       initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [], "codex-channel": ch.meta.allowedChannelCodexMcps || [] });
       if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
       updateChecksCount(mcpsBox, mcpsCount);
@@ -3773,25 +3770,23 @@ function syncComposioModeUi() {
   if (help) {
     help.textContent = mode === "sdk"
       ? (entitled ? "Enterprise · Beta. Stable identity per Slack user/channel; separate sessions per Slack thread. Only channel managers manage shared connections." : "Enterprise · Beta. An active Enterprise license is required. Save Personal tokens mode or activate an Enterprise license to restore integrations.")
-      : "Uses the saved token on each user and channel, with the organization token as the shared fallback.";
+      : "Uses the saved token on each user (composio-user) and on each channel (composio-agent). There is no organization-wide fallback.";
   }
-  const note = document.getElementById("composio-personal-token-note");
-  if (note) note.textContent = mode === "sdk" ? "· Composio tokens retained, currently inactive" : "";
 }
 
-// The org-default "clear" buttons arm a pending delete that applies on Save (batch-save model,
+// The settings "clear" buttons arm a pending delete that applies on Save (batch-save model,
 // same as the checkbox they replaced). Toggling is purely visual until the save handler reads
 // the .armed class; disarmClearTok resets one after a successful save.
 function disarmClearTok(btn) {
   if (!btn) return;
   btn.classList.remove("armed");
   btn.textContent = "clear";
-  btn.title = "Remove this org-default token when you save";
+  btn.title = "Remove this saved token when you save";
 }
 function toggleClearTok(btn) {
   const armed = btn.classList.toggle("armed");
   btn.textContent = armed ? "clear ✓" : "clear";
-  btn.title = armed ? "This org-default token will be removed when you save" : "Remove this org-default token when you save";
+  btn.title = armed ? "This saved token will be removed when you save" : "Remove this saved token when you save";
   markSettingsDirty();
 }
 
@@ -4245,10 +4240,6 @@ function readSettingsForm() {
     composioSdkPolicy: readComposioPolicy(document.getElementById("composio-sdk-policy")),
     ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
     ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
-    ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
-    ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
-    // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
-    defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
     accessGrants: orgGrantsEditor?.getValues() || {},
     composioMcpUrl: document.getElementById("set-composio").value,
     publicUrl: document.getElementById("set-public-url").value,
@@ -4449,9 +4440,6 @@ function paintSettings(s) {
   document.getElementById("teams-create-command").textContent = s.teams?.messagingEndpoint
     ? `teams app create --name "ChannelGate" --endpoint "${teamsEndpoint}"`
     : 'teams app create --name "ChannelGate" --endpoint "https://<public-url>/api/teams/messages"';
-  document.getElementById("default-composio-state").textContent = tokenState(s.hasDefaultComposioToken, s.defaultComposioTokenLast4);
-  attachReveal(document.getElementById("set-default-composio"), { has: s.hasDefaultComposioToken, last4: "", fetch: revealSecret("settings", "defaultComposioToken") });
-  document.getElementById("set-default-composio-label").value = s.defaultComposioTokenLabel || "";
   document.getElementById("set-ctxwindow").value = s.contextWindow || "";
   // The gateway default: harness → license → "if it fails, also use" (settings `engine` + `enginePool`).
   if (ENGINE_MANIFESTS.length) {
@@ -4759,7 +4747,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -4925,7 +4913,7 @@ function bindSettings() {
           connectSlack: slackTokenChanged,
         }),
       });
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.

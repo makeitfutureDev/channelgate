@@ -1062,11 +1062,6 @@ export function getComposioSdkPolicy() {
   return normalizeComposioSdkPolicy(getSettings().composioSdkPolicy);
 }
 
-// Organization default for the shared Composio identity, after the channel token.
-export function getDefaultComposioToken() {
-  const v = getSettings().defaultComposioToken;
-  return typeof v === "string" ? v : "";
-}
 // Skills platform (src/gateway/skills). A GitHub token for private skill repositories and API
 // rate limits — daemon-side only, never in a channel folder or an MCP config; write-only via the
 // admin API. The sync interval in minutes (0 = off) and the always-on context estimate above
@@ -1313,9 +1308,6 @@ export function settingsForApi() {
     googleChatMentionReactions: getMentionReactions("googlechat"),
     trustedBotApps: getTrustedBotApps(),
     defaultChannelAccess: getDefaultChannelAccess(),
-    hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
-    defaultComposioTokenLast4: last4(getDefaultComposioToken()),
-    defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
     hasSkillsGithubToken: Boolean(getSkillsGithubToken()),
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
     hasSkillsPublishGithubToken: Boolean(getSkillsPublishGithubToken()),

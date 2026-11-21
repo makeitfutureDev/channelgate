@@ -142,7 +142,7 @@ catalog, including edge cases and links to regression coverage.
 - **User and guest access:** select approved-member access, admins only or locked access,
   with separate use/manage controls and channel guest grants. DMs require admin or approved status.
 - **Scoped MCP access:** grant external tool servers per channel and select optional engine
-  integrations. A channel can opt out of inherited organization tokens.
+  integrations. Composio is per channel (`composio-agent`) and per person (`composio-user`).
 - **Channel environment secrets:** configure credentials for tools such as provider CLIs through
   write-only settings. Names are validated, rotations retire warm sessions, and known values are
   redacted from replies and job output. Runtime access and limits are documented below.
