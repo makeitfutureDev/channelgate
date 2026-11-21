@@ -48,8 +48,15 @@ personal chat. Navigation and saves stay inside the popup; its launcher never co
 Controls belong to the person who requested them; other members open their own `/settings`.
 Each opening has separate drafts and confirmations and expires after 15 minutes. Close the window
 with Teams' close control; unapplied inputs are not saved.
-Engine/model/effort save together with Apply to channel or Apply to thread. Other settings keep
-their explicit controls; changing tabs discards unsaved drafts. Runtime, channel credentials,
+General, Variables, MCPs, Skills and Automations collect edits as pending changes; each section
+ends with one Save area: **Apply to channel** (the whole conversation), **Apply to thread** (only
+the thread the window was opened from) and **Discard**. Apply saves that section only; pending
+changes in other sections stay until applied, discarded or the window expires. Access settings
+and skill templates are channel-only. A thread can override variables (hidden placeholders on
+fixed hosts only, paused while other work runs in the container), replace or disconnect its
+Composio/Make connection, and ADD shared skills or (admins) Cloud MCPs — never remove the
+channel's. Thread automations are only loops running in that thread. Resume is read-only.
+VPN, email accounts, personal connections and personal/organization variables save at once. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
 values are never shown or prefilled. Personal and organization variable metadata and eligible
