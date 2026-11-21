@@ -242,6 +242,35 @@ test("pickers get one shape: harness, then a license step only when there is a c
   assert.deepEqual(pool.harnessSelection("codex", { engine: "codex", licensePool: "any" }), { engine: "codex", licensePool: "any" });
   assert.deepEqual(pool.harnessSelection("codex", { engine: "claude" }), { engine: "codex", licensePool: "" });
   assert.deepEqual(pool.harnessSelection("codex", { engine: a.id, licensePool: [b.id], approvedEngines: [a.id] }), { engine: a.id, licensePool: "" });
+
+  // A surface with no license step behind the pick (a typed word, a shortcut, the switch card):
+  // the harness comes with its other SUBSCRIPTION licenses, in order — never a license billed per
+  // use, which nobody chose by typing a harness name.
+  const metered = store.createLicense(apiInput({ kind: "codex-api", label: "Metered Codex" }));
+  const typed = (meta) => pool.harnessSelection("codex", meta, { noLicenseStep: true });
+  assert.deepEqual(pool.selectableLicenses("codex", {}), ["codex", a.id, b.id, metered.id]);
+  assert.deepEqual(typed({ engine: "claude" }), { engine: "codex", licensePool: [a.id, b.id] });
+  assert.deepEqual(pool.harnessSelection("codex", { engine: "claude" }), { engine: "codex", licensePool: "" }, "a surface that asks next still stores nothing more");
+  // The channel's allow list bounds it, and one usable license leaves nothing to move to.
+  assert.deepEqual(typed({ engine: "claude", approvedEngines: ["harness:claude", "codex", b.id, metered.id] }), { engine: "codex", licensePool: [b.id] });
+  assert.deepEqual(typed({ engine: "claude", approvedEngines: ["harness:claude", "codex"] }), { engine: "codex", licensePool: "" });
+  assert.deepEqual(typed({ engine: "claude", approvedEngines: ["harness:claude", metered.id, a.id] }), { engine: a.id, licensePool: "" }, "the first usable license, and no per-use license beside it");
+  // A conversation that already chose its licenses for the harness keeps exactly that — a single
+  // license included.
+  assert.deepEqual(typed({ engine: a.id, licensePool: [b.id] }), { engine: a.id, licensePool: [b.id] });
+  assert.deepEqual(typed({ engine: "codex", licensePool: "" }), { engine: "codex", licensePool: "" });
+  assert.deepEqual(typed({ engine: "codex", licensePool: "any" }), { engine: "codex", licensePool: "any" });
+  assert.deepEqual(pool.harnessSelection("claude", { engine: "codex" }, { noLicenseStep: true }), { engine: "claude", licensePool: "" }, "one license: nothing to add");
+
+  // A pick that names an engine id (a model shortcut, the switch card): the id is fixed, and only
+  // a harness's own sign-in brings the harness's other sign-ins with it.
+  assert.deepEqual(pool.impliedLicensePool("codex", { engine: "claude" }), [a.id, b.id]);
+  assert.deepEqual(pool.impliedLicensePool("codex", { engine: a.id, licensePool: "" }), [a.id, b.id], "the conversation runs another license: the named sign-in, then the rest");
+  assert.equal(pool.impliedLicensePool("codex", { engine: "codex", licensePool: "" }), "", "the conversation's own choice for this very license stands");
+  assert.equal(pool.impliedLicensePool("codex", { engine: "codex", licensePool: "any" }), "any");
+  assert.equal(pool.impliedLicensePool(a.id, { engine: "claude" }), "", "a named license is that license alone");
+  assert.equal(pool.impliedLicensePool(metered.id, { engine: "claude" }), "");
+  assert.equal(pool.impliedLicensePool("claude", { engine: "codex" }), "");
   saveSettings({ engine: b.id, enginePool: [a.id] });
   assert.deepEqual(pool.harnessSelection("codex", {}), { engine: b.id, licensePool: [a.id] }, "no channel choice: the gateway default's");
   assert.deepEqual(pool.harnessSelection("claude", {}), { engine: "claude", licensePool: "" });

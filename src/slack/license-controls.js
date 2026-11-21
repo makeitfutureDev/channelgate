@@ -72,9 +72,11 @@ export function licenseChoices({ engine = "", pool = "", meta = {} } = {}) {
 // Harness dropdown) is a bare harness pick, so the license and pool this conversation already
 // chose for that harness keep applying (license-pool.js harnessSelection). Any other engine id
 // names exactly one license, with nothing to move to. `meta` is the conversation's effective meta.
-export function namedSelection(name, meta = {}) {
+// `noLicenseStep`: nothing asks which license after this pick (a typed word), so a harness this
+// conversation has no selection for comes with its other subscription licenses usable here.
+export function namedSelection(name, meta = {}, { noLicenseStep = false } = {}) {
   if (isHarnessId(name)) {
-    const selection = harnessSelection(name, meta);
+    const selection = harnessSelection(name, meta, { noLicenseStep });
     // No usable license: keep the harness's own id so the selectability checks say why.
     if (selection.engine) return selection;
   }

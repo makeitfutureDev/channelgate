@@ -17,7 +17,7 @@ const {
   saveSettings, getEngine, getEngineFallback, isEngineEnabled, getEnabledEngines,
   getEngineEnabledMap, settingsForApi,
 } = await import("../src/config/settings.js");
-const { engineSwitchHint, engineIdAlternation } = await import("../src/slack/message-pipeline.js");
+const { engineSwitchHint, engineIdAlternation, engineIdOfWord } = await import("../src/slack/message-pipeline.js");
 
 const LIVE_LIMIT_MESSAGE =
   "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th, 2026 6:35 AM.";
@@ -177,6 +177,16 @@ test("an engine id that is a prefix of another still selects the harness the use
   assert.equal(anchored("qwen ship it", ids)[1], "qwen", "the shorter id still matches on its own");
   assert.equal(anchored("claude: hi", ids)[1], "claude");
   assert.equal(anchored("please use qwen-eu", ids), null, "an anchored match still means the message STARTS with the id");
+
+  // An id marked as spoken is also matched with spaces for its hyphen, and read back as the id.
+  const spoken = (text) => new RegExp(`^(${engineIdAlternation(ids, { spoken: (id) => id === "codex-eu" })})\\b[\\s:,.;\u2013\u2014-]*([\\s\\S]*)$`, "i").exec(text);
+  const said = spoken("Codex  EU review the diff");
+  assert.equal(engineIdOfWord(said[1]), "codex-eu");
+  assert.equal(said[2], "review the diff");
+  assert.equal(engineIdOfWord(spoken("codex-eu: hi")[1]), "codex-eu");
+  assert.equal(engineIdOfWord(spoken("codex europe is large")[1]), "codex", "a longer word is not the license");
+  assert.equal(engineIdOfWord(spoken("codex\neu rules")[1]), "codex", "a line break ends the harness word");
+  assert.equal(engineIdOfWord(spoken("qwen eu ship it")[1]), "qwen", "only the ids marked as spoken");
 });
 
 test("an uncovered limit failure tells the user how to switch harness by hand", () => {

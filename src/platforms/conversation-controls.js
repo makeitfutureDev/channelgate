@@ -126,8 +126,10 @@ export function createConversationControls() {
         }
         const parts = arg.split(/\s+/);
         // No harness word: the session stays on its selection and only the model changes. A harness
-        // word is a bare harness pick (the conversation's own licenses for it); a license id pins
-        // that one license.
+        // word is a bare harness pick: the conversation's own licenses for it, or — where the
+        // conversation runs on the other harness — the harness's own license with its other
+        // sign-ins to move to, because a typed word is never asked which license. A license id
+        // pins that one license.
         let selected = { engine, licensePool: describeLicenseSelection({ engine, pool }).pool };
         if (isHarnessId(parts[0])) {
           const wanted = parts.shift();
@@ -140,7 +142,7 @@ export function createConversationControls() {
           // harness word names where it already is, not a request to trade its license for the
           // conversation's default one.
           const keepsPin = !picked && rawEngine && harnessOf(rawEngine) === wanted && selectableLicenses(wanted, meta).includes(rawEngine);
-          try { selected = picked ? resolveLicensePick({ harness: wanted, meta, license: picked.license, also: picked.also }) : keepsPin ? { engine: rawEngine, licensePool: describeLicenseSelection({ engine: rawEngine, pool: rawPool }).pool } : harnessSelection(wanted, meta); }
+          try { selected = picked ? resolveLicensePick({ harness: wanted, meta, license: picked.license, also: picked.also }) : keepsPin ? { engine: rawEngine, licensePool: describeLicenseSelection({ engine: rawEngine, pool: rawPool }).pool } : harnessSelection(wanted, meta, { noLicenseStep: true }); }
           catch (error) { return await respond(error.message); }
         } else if (isEngineId(parts[0])) selected = { engine: parts.shift(), licensePool: '' };
         const selectedEngine = selected.engine;

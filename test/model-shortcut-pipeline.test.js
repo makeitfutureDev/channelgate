@@ -144,7 +144,9 @@ test("queued shortcut tasks retain their own runtime selections and durable snap
         for (let tries = 0; runQueue.count(key) < step + 2 && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 10));
         assert.equal(runQueue.count(key), step + 2);
         const stored = listActiveRuns().find(row => row.id === `${key}::${root}${step + 1}`);
-        assert.deepEqual(stored.runtimeOverrides, { engine: name === "sol" ? "codex" : "claude",
+        // The licenses the task may move to are part of its own selection (none here: each
+        // harness has one license), so a recovered task runs on what it was queued with.
+        assert.deepEqual(stored.runtimeOverrides, { engine: name === "sol" ? "codex" : "claude", licensePool: "",
           model: name === "sol" ? "gpt-6.1-sol" : "claude-opus-5-5", effort });
       }
     } finally {

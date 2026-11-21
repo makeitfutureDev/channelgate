@@ -10,10 +10,10 @@ import { assertEngineSelectable } from "../engines/selection.js";
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
 import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
-import { engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
-import { HARNESS_IDS } from "../engines/license-state.js";
+import { adapterFor, engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
+import { HARNESS_IDS, isLicenseShapedId } from "../engines/license-state.js";
 import { namedSelection, selectionLabel } from "./license-controls.js";
-import { selectableLicenses } from "../gateway/license-pool.js";
+import { impliedLicensePool, selectableLicenses } from "../gateway/license-pool.js";
 import { channelEngineRefusal } from "../gateway/channel-engines.js";
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
@@ -277,9 +277,19 @@ export function fallbackContextFetcher({ threadContext = "", threadClean = false
 // (`qwen` / `qwen-eu`), and JavaScript alternation is first-match, not longest-match: in id order
 // "qwen-eu build the thing" would match `qwen`, silently running an EU-pinned request on the other
 // provider's account and leaving "eu" glued to the front of the prompt.
-export function engineIdAlternation(ids = ENGINE_IDS) {
-  return [...ids].sort((a, b) => b.length - a.length).join("|");
+// `spoken(id)`: this id may also be written with spaces where it has hyphens ("codex eu" for
+// `codex-eu`) — the way a person says a license's name. engineIdOfWord() turns the match back
+// into the id.
+export function engineIdAlternation(ids = ENGINE_IDS, { spoken = () => false } = {}) {
+  return [...ids].sort((a, b) => b.length - a.length).map((id) => (spoken(id) ? id.replaceAll("-", "(?:-|[ \\t]+)") : id)).join("|");
 }
+export const engineIdOfWord = (word) => String(word || "").toLowerCase().replace(/\s+/g, "-");
+// A shipped license whose NAME is its id written with a space ("Codex EU" for `codex-eu`) is also
+// recognised that way, but only while it is switched on: where it is off, "codex eu rules" stays
+// the word `codex` and a task that starts with "eu". An id that is not its name read aloud
+// (`codex-channel`, an administrator-added license's opaque id) is never something to say.
+const spokenEngineId = (id) => id.includes("-") && !isLicenseShapedId(id) && isEngineEnabled(id)
+  && String(adapterFor(id)?.label || "").trim().toLowerCase().replace(/\s+/g, "-") === id;
 
 // The words offered are the other HARNESSES — a license of the same harness is moved to
 // automatically when the selection names it, and is never something to type. `engines` narrows
@@ -955,8 +965,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const { forkKey, requestTs } = await createForkThread(client, {
             channelId: event.channel, slug: entry.slug, sourceThreadTs: threadKey, authorId: event.user, botUserId,
             title: task, activityTitle: forkTitle, sourceUrl, handoffNote, engine: childEngine,
-            // A shortcut names one license; otherwise the fork keeps the source's license selection.
-            licensePool: forkTarget ? "" : await forkLicensePool({ slug: entry.slug, sourceThreadTs: threadKey, engine: childEngine, meta }),
+            // A shortcut names its license (with the harness's other sign-ins when that is the
+            // harness's own sign-in); otherwise the fork keeps the source's license selection.
+            licensePool: forkTarget ? impliedLicensePool(forkTarget.engine, effectiveMeta(meta)) : await forkLicensePool({ slug: entry.slug, sourceThreadTs: threadKey, engine: childEngine, meta }),
             model: forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey),
             effort: forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey), clean: sourceClean,
           });
@@ -1245,9 +1256,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       await assertEngineSelectable(target.engine, { meta });
       if (await answeredRefusedPick(target.engine)) return;
       // Each accepted task keeps its selection even if later queued messages change the pins.
-      shortcutRuntimeOverrides = { engine: target.engine, model: target.model, effort: shortcut.effort || "" };
+      // A shortcut on a harness's own sign-in asks for the model, not for that one account: the
+      // harness's other sign-ins that can serve the model may answer when it cannot. A shortcut
+      // on any other license names that license alone.
+      const shortcutPool = impliedLicensePool(target.engine, effectiveMeta(meta));
+      shortcutRuntimeOverrides = { engine: target.engine, licensePool: shortcutPool, model: target.model, effort: shortcut.effort || "" };
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
-      await setThreadEngine(entry.slug, threadKey, target.engine);
+      await setThreadEngine(entry.slug, threadKey, target.engine, { licensePool: shortcutPool });
       await setThreadModel(entry.slug, threadKey, target.model);
       // Effort is model-specific. A prior thread pin must not leak into a new shortcut.
       await setThreadEffort(entry.slug, threadKey, shortcut.effort || "");
@@ -1265,7 +1280,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       await assertEngineSelectable(engineChoice, { meta });
       if (await answeredRefusedPick(engineChoice)) return;
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
-      await setThreadEngine(entry.slug, threadKey, engineChoice);
+      // The card offers a harness, so its other sign-ins come with it (license-pool.js).
+      await setThreadEngine(entry.slug, threadKey, engineChoice, { licensePool: impliedLicensePool(engineChoice, effectiveMeta(meta)) });
       if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
       if (!effortBelongsToEngine(await getThreadEffort(entry.slug, threadKey), engineChoice)) await setThreadEffort(entry.slug, threadKey, "");
     }
@@ -1276,27 +1292,30 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // It sticks until changed; the rest of the message is the task.
     if (!syntheticFork && !shortcut && files.length === 0) {
       const trimmed = prompt.trim();
-      const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
+      const engineWords = engineIdAlternation(ENGINE_IDS, { spoken: spokenEngineId });
+      const anchored = new RegExp(`^(${engineWords})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
       // "ok "/"please "), so a long message that merely mentions switching ("explain how to
       // switch to codex in a script") doesn't flip the thread or get mangled.
       let phrase = null;
       if (!anchored) {
-        const m = new RegExp(`\\b(?:switch(?:ing)?\\s+to|use|using|try(?:\\s+again)?(?:\\s+with)?|retry(?:\\s+with)?|run\\s+(?:it|this|that)?\\s*(?:with|on|in))\\s+(${engineIdAlternation()})\\b`, "i").exec(trimmed);
+        const m = new RegExp(`\\b(?:switch(?:ing)?\\s+to|use|using|try(?:\\s+again)?(?:\\s+with)?|retry(?:\\s+with)?|run\\s+(?:it|this|that)?\\s*(?:with|on|in))\\s+(${engineWords})\\b`, "i").exec(trimmed);
         if (m && m.index <= 12) phrase = m;
       }
       if (anchored || phrase) {
-        // A harness word pins this conversation's selection for that harness (license + pool);
-        // a license id pins exactly that license.
+        // A harness word pins this conversation's selection for that harness (license + pool) —
+        // or, where the conversation runs on the other harness, the harness's own license with
+        // its other sign-ins to move to: nothing here asks which license, and the person named
+        // the harness. A license id pins exactly that license.
         // …and a harness word in a thread somebody already pinned to a usable license of that
         // harness names where the thread already is: its license and pool stay, instead of being
         // traded for the conversation's default license of the harness.
-        const word = (anchored ? anchored[1] : phrase[1]).toLowerCase();
+        const word = engineIdOfWord(anchored ? anchored[1] : phrase[1]);
         const pinnedLicense = HARNESS_IDS.includes(word) ? await getThreadEngine(entry.slug, threadKey) : "";
         const keepsPin = Boolean(pinnedLicense) && harnessOf(pinnedLicense) === word && selectableLicenses(word, effectiveMeta(meta)).includes(pinnedLicense);
         const picked = keepsPin
           ? { engine: pinnedLicense, licensePool: await getThreadLicensePool(entry.slug, threadKey) }
-          : namedSelection(word, effectiveMeta(meta));
+          : namedSelection(word, effectiveMeta(meta), { noLicenseStep: true });
         const eng = picked.engine;
         if (!engineChoice) {
           await assertEngineSelectable(eng, { meta });

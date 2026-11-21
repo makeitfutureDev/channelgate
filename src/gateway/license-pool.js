@@ -119,18 +119,48 @@ export function resolveLicensePick({ harness, meta = {}, license = "", also = []
   return { engine: license, licensePool: normalizeLicensePool(rest, license) };
 }
 
+// A license that is a subscription sign-in (a plan with usage windows) rather than a key billed
+// per use — the engine's own declaration, the one the Subscriptions page reads.
+const isSubscriptionLicense = (id) => Boolean(adapterFor(id)?.subscriptionUsage?.provider);
+
+// What a harness pick with NO license step carries beside `first`: the harness's other
+// SUBSCRIPTION licenses usable here, as an ordered list. Never "any": the person named a harness,
+// so the turn may move to another plan of it, but a license billed per use (an API key, a cloud
+// provider, a custom server — possibly serving other models) is something to choose by name or
+// with Any license, never something a typed word implies.
+const impliedPool = (first, usable) => {
+  const rest = usable.filter((id) => id !== first && isSubscriptionLicense(id));
+  return rest.length ? rest : "";
+};
+
 // A bare harness pick ("codex" typed at the start of a message, a harness button): the selection
 // this conversation already has for that harness when its own default is on it — the license and
-// pool somebody chose keep applying — else the harness's own license and nothing more. "Any" is
-// never implied.
-export function harnessSelection(harness, meta = {}) {
+// pool somebody chose keep applying — else the harness's own license. What goes with that license
+// depends on the surface: one with a license step right behind the pick (the /model wizard, a
+// Settings window) stores nothing more and asks; one with no such step passes `noLicenseStep`, and the
+// pick carries the harness's other subscription licenses (impliedPool). The person asked for the
+// harness, not for one account of it: without this a usage limit on the harness's own sign-in
+// ended the turn while another approved sign-in of the same harness sat idle.
+export function harnessSelection(harness, meta = {}, { noLicenseStep = false } = {}) {
   const usable = selectableLicenses(harness, meta);
   const inherited = isEngineId(meta?.engine) ? { engine: meta.engine, pool: meta.licensePool } : { engine: getEngine(), pool: getEnginePool() };
   if (harnessOf(inherited.engine) === harness && usable.includes(inherited.engine)) {
     const stored = describeLicenseSelection(inherited).pool;
     return { engine: inherited.engine, licensePool: stored === LICENSE_POOL_ANY ? LICENSE_POOL_ANY : normalizeLicensePool(stored.filter((id) => usable.includes(id)), inherited.engine) };
   }
-  return { engine: primaryLicenseOf(harness, meta), licensePool: "" };
+  const engine = primaryLicenseOf(harness, meta);
+  return { engine, licensePool: noLicenseStep ? impliedPool(engine, usable) : "" };
+}
+
+// The pool that goes with a pick that names an ENGINE ID and has no license step: a model shortcut,
+// the harness-switch card. The id is fixed by the pick; this decides only what the turn may move to.
+// A harness's own id is the harness — the conversation's pool for it when its default is that very
+// license, else its other subscription licenses. Any other id names that one license, and nothing
+// more (a license chosen for where its data is processed must not be traded for another account).
+export function impliedLicensePool(engine, meta = {}) {
+  if (!isHarnessId(engine)) return "";
+  const own = harnessSelection(engine, meta, { noLicenseStep: true });
+  return own.engine === engine ? own.licensePool : impliedPool(engine, selectableLicenses(engine, meta));
 }
 
 // One line for a summary: "Codex", "Codex · Work ChatGPT", "Codex · any license",
