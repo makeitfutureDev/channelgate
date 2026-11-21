@@ -4296,7 +4296,6 @@ function readSettingsForm() {
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
-    modelChangeAccess: document.getElementById("set-model-change-access").value,
     modelShortcuts: collectModelShortcuts(),
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
@@ -4465,7 +4464,6 @@ function paintSettings(s) {
   for (const engine of ["claude", "codex"]) {
     syncDefaultEffort(document.getElementById(`set-default-${engine}-model`), document.getElementById(`set-default-${engine}-effort`), engine, s[`default${engine === "claude" ? "Claude" : "Codex"}Effort`]);
   }
-  document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";

@@ -47,7 +47,6 @@ import {
   normalizeTrustProxy,
   AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
-  MODEL_CHANGE_ACCESS_MODES,
   ENGINE_FALLBACK_MODES,
   DEFAULT_CODEX_RATES,
   DRIVE_SYNC_CONFLICTS,
@@ -491,7 +490,6 @@ export function createSettingsRouter({
         try { patch.enginePool = normalizeLicensePool(body.enginePool, patch.engine || getEngine()); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       } else if (patch.engine && patch.engine !== getEngine()) patch.enginePool = "";
-      if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
       if (body.modelShortcuts !== undefined) {
         const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)
           ? Object.entries(body.modelShortcuts) : null;

@@ -481,19 +481,6 @@ export function getModelShortcuts() {
   return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
 
-// Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
-// Everyone reaching this gate has already passed the channel's normal authorization policy, so
-// "users" means every authorized channel user (approved members plus explicit guest grants).
-// DMs deliberately stay outside this policy: approved users can customize their own DM runtime.
-export const MODEL_CHANGE_ACCESS_MODES = ["admins", "users"];
-export function getModelChangeAccess() {
-  const v = getSettings().modelChangeAccess;
-  return MODEL_CHANGE_ACCESS_MODES.includes(v) ? v : "admins";
-}
-export function canChangeChannelRuntime(isAdminUser = false) {
-  return Boolean(isAdminUser) || getModelChangeAccess() === "users";
-}
-
 // Cross-engine failover: when the engine driving a turn fails with an authentication or
 // usage/spend-limit error BEFORE doing any work, transparently answer with the other enabled
 // harness (a fresh turn on that engine) until the failed one recovers. Direction-agnostic —
@@ -1392,7 +1379,6 @@ export function settingsForApi() {
       models: [...VOICE_CALL_MODELS],
       voices: [...VOICE_CALL_VOICES],
     },
-    modelChangeAccess: getModelChangeAccess(),
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
     enginePool: getEnginePool(),

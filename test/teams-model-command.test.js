@@ -128,16 +128,14 @@ test('invalid, incomplete, disabled, tampered and foreign submissions never muta
   assert.equal(f.sent.length, 2);
 });
 
-test('runtime policy is checked on open and again on Apply; personal chats can switch', async () => {
-  const denied = fixture({ isAdmin: false }); await denied.native.onCommand(denied.args);
-  assert.match(JSON.stringify(denied.sent[0].card), /restricted to administrators/);
-  assert.equal(denied.sent[0].card.actions.length, 0);
-  const revoked = fixture(); await revoked.native.onCommand(revoked.args);
-  await revoked.load('codex');
-  revoked.context.userIsAdmin = false;
-  assert.match(JSON.stringify((await revoked.submit({ engine: 'codex', model: 'gpt-6-sol', effort: 'high' })).body), /Action could not be completed/);
-  assert.match(JSON.stringify((await revoked.load('claude')).body), /Action could not be completed/);
-  assert.equal(await getThreadEngine(revoked.args.entry.slug, revoked.args.sessionKey), '');
+test('a member who is not an administrator opens the card and applies a runtime; personal chats too', async () => {
+  const member = fixture({ isAdmin: false }); await member.native.onCommand(member.args);
+  assert.doesNotMatch(JSON.stringify(member.sent[0].card), /restricted to administrators/);
+  assert.ok(member.sent[0].card.body.find(row => row.id === 'engine'));
+  assert.deepEqual(member.sent[0].card.actions.map(item => item.verb), ['model.save']);
+  await member.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
+  assert.equal(await getThreadEngine(member.args.entry.slug, member.args.sessionKey), 'codex');
+  assert.equal(await getThreadModel(member.args.entry.slug, member.args.sessionKey), 'gpt-6-sol');
   const dm = fixture({ isAdmin: false, isDM: true }); await dm.native.onCommand(dm.args);
   await dm.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
   assert.equal(await getThreadModel(dm.args.entry.slug, dm.args.sessionKey), 'gpt-6-sol');

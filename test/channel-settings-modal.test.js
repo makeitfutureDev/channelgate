@@ -308,10 +308,10 @@ test("Agent edits the channel default and the thread pin in place, one row of dr
     [CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID, { scope: "thread", field: "model" }],
   ]) assert.deepEqual(runtimeSelectTarget(actionId), expected);
   assert.equal(runtimeSelectTarget(CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID), null);
-  // A member under a runtime-change policy reads the values instead.
-  const locked = buildChannelSettingsView(snapshot, state, { tab: "agent", canEditRuntime: false });
-  assert.equal(locked.blocks.some((block) => String(block.block_id || "").startsWith("cg_runtime_")), false);
-  assert.match(rendered(locked), /limits engine changes to admins/);
+  // No option turns the pickers off: every participant who may open Settings gets them.
+  const member = buildChannelSettingsView(snapshot, state, { tab: "agent" });
+  assert.equal(member.blocks.some((block) => String(block.block_id || "").startsWith("cg_runtime_")), true);
+  assert.doesNotMatch(rendered(member), /limits engine changes to admins/);
 });
 
 test("Agent shows only the channel row until Settings is opened from a thread", () => {
@@ -570,16 +570,13 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
     // that scope reaches every conversation in the deployment.
-    // The runtime pickers follow the gateway's model-change policy (default: admins only), the
-    // same rule `/model` applies — a member gets them only under the "users" policy.
+    // Nothing here gates the runtime pickers: any participant may pick the harness, license, model
+    // and effort. What a member cannot do is change which harnesses the channel approves.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: false, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
+      canEnableAdmin: false, canApproveHarnesses: false, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
       canManageCustomMcp: false, canEditAccess: false,
     });
-    saveSettings({ modelChangeAccess: "users" });
-    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, false).canEditRuntime, true);
-    saveSettings({ modelChangeAccess: "admins" });
-    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditRuntime, true);
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canApproveHarnesses, true);
     assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);
   }
   await store.setUser(args.userId, { approved: false });

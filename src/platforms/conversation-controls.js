@@ -5,7 +5,7 @@ import { clearSession, getSessionEngine } from '../gateway/sessions.js';
 import { resolveThreadEngine, getThreadEngine, getThreadModel, getThreadEffort, getThreadLicensePool, setThreadRuntimeOverrides, setThreadEffort } from '../gateway/thread-engine.js';
 import { harnessOf, isEngineId, modelBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine } from '../engines/registry.js';
 import { harnessLabel, isHarnessId } from '../engines/license-state.js';
-import { canChangeChannelRuntime, getDefaultModel, getEngine, getEnginePool } from '../config/settings.js';
+import { getDefaultModel, getEngine, getEnginePool } from '../config/settings.js';
 import { describeLicenseSelection, describeSelectionText, harnessSelection, licensePicker, resolveLicensePick, selectableHarnesses, selectableLicenses } from '../gateway/license-pool.js';
 import { licenseListText, readLicenseChoice } from './license-choice.js';
 
@@ -88,7 +88,6 @@ export function createConversationControls() {
             : `License selection: ${described()}. ${nothingToChoose}`);
           return await respond(`Effort: ${effort || 'engine default'}. Available: ${effortsForModel(engine, model).join(', ')}.`);
         }
-        if (!message.isDM && !canChangeChannelRuntime(authorIsAdmin)) return await respond('Runtime changes in this conversation are restricted to administrators.');
         if (jobCount || lane.clearing) return await respond(busy);
         if (command === 'effort') {
           const selected = arg === 'default' ? '' : arg.toLowerCase();

@@ -1,7 +1,7 @@
 // Native Teams controls hold conversation/session authority server-side. Card data carries only
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
-import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
+import { getPublicUrl, getDefaultModel, getMentionReactions } from '../../config/settings.js';
 import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
 import { SESSION_RUNTIME_SAVED } from '../conversation-controls.js';
@@ -67,9 +67,6 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   async function modelCard(state, stateId, { harness: requested = state.loadedHarness, pick = null, draft = null, notice = '' } = {}) {
     const { thread: current } = await modelRuntime(state);
     const summary = text(`Current harness: ${describeSelectionText({ engine: current.engine, pool: current.pool, meta: state.meta }) || current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
-    if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
-      return card('Session model', [summary, text('Runtime changes in this conversation are restricted to administrators.')]);
-    }
     const offered = value => current.harnesses.some(item => item.value === value);
     const harness = [requested, harnessOf(current.engine)].find(offered) || current.harnesses[0]?.value;
     if (!harness) return card('Session model', [summary, text('No harness has a license this conversation can use.')]);
@@ -351,7 +348,6 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return scopes.thread;
     };
     if (interaction.action === 'model.load') {
-      if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
       const { engine: harness, model: draftModel, effort } = interaction.data;
       await offeredHarness(harness);
       // A license step left over from another harness says nothing about this one.
@@ -359,7 +355,6 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return repaintModel(await modelCard(state, interaction.data.stateId, { harness, pick, draft: { model: String(draftModel || ''), effort: String(effort || '') } }));
     }
     if (interaction.action === 'model.save') {
-      if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
       if (!state.loadedHarness || !state.loadedEngine || typeof interaction.data.engine !== 'string') throw new Error('Reopen /model.');
       const harness = interaction.data.engine;
       // Apply must name the harness whose licenses and models the card shows. A changed Harness

@@ -234,7 +234,7 @@ for (const engine of ["claude", "codex"]) for (const effort of ["", "low"]) {
 }
 
 test("fork shortcut failures create no child thread or engine turn", async () => {
-  saveSettings({ engine: "codex", modelChangeAccess: "users", engineEnabled: { claude: true, codex: true } });
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true } });
   const user = "U_FORK_MODEL_GUARDS";
   const channel = "C_FORK_MODEL_GUARDS";
   await setUser(user, { name: "Fork User", approved: true, isAdmin: false });
@@ -253,8 +253,7 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "invalid" } } }, text: ":branch New task", expected: /enabled engine and valid model/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } }, engineEnabled: { claude: true, codex: false } }, text: ":branch New task", expected: /enabled engine and valid model/ },
     { settings: { modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } }, engineEnabled: { claude: true, codex: true } }, text: ":branch New task", expected: /could not read the source thread/ },
-    { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } }, modelChangeAccess: "admins" }, text: ":branch New task", expected: /Only admins/ },
-    { settings: { modelChangeAccess: "users" }, text: ":branch", expected: /Use `\/fork/ },
+    { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } } }, text: ":branch", expected: /Use `\/fork/ },
   ];
   let ts = 2;
   for (const scenario of cases) {
@@ -271,7 +270,7 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
 });
 
 test("a fork onto a license outside the channel's allow list is answered before any child thread exists", async () => {
-  saveSettings({ engine: "codex", modelChangeAccess: "users", engineEnabled: { claude: true, codex: true }, modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } } });
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true }, modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } } });
   const user = "U_FORK_ALLOW_LIST";
   const channel = "C_FORK_ALLOW_LIST";
   await setUser(user, { name: "Fork User", approved: true, isAdmin: false });
@@ -293,7 +292,7 @@ test("a fork onto a license outside the channel's allow list is answered before 
   assert.equal(client.posted.at(-1).thread_ts, event.ts);
   assert.equal(runtime.calls.spawn.length, before);
   assert.equal(await getSession(entry.slug, event.ts), sourceId);
-  saveSettings({ modelShortcuts: {}, modelChangeAccess: "admins" });
+  saveSettings({ modelShortcuts: {} });
 });
 
 for (const [sourceEngine, childEngine] of [["claude", "codex"], ["codex", "claude"], ["codex-eu", "codex"], ["codex", "codex-eu"]]) {
@@ -359,7 +358,7 @@ for (const [sourceEngine, childEngine] of [["claude", "codex"], ["codex", "claud
 }
 
 test("another-engine fork respects clean mode and a dedicated channel Codex login", async () => {
-  saveSettings({ engine: "codex", modelChangeAccess: "users", engineEnabled: { claude: true, codex: true }, modelShortcuts: { other: { engine: "claude", model: "claude-opus-5-5" } } });
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true }, modelShortcuts: { other: { engine: "claude", model: "claude-opus-5-5" } } });
   const user = "U_FORK_CLEAN_HANDOFF";
   const channel = "D_FORK_CLEAN_HANDOFF";
   await setUser(user, { name: "Fork User", approved: true });

@@ -129,10 +129,12 @@ test('/license any, a named list in the order typed, an unknown name, and defaul
   assert.deepEqual(await pin(slug), { engine: '', licensePool: '' });
 });
 
-test('/license keeps the same guards as /model', async () => {
+test('/license is open to a member who is not an administrator, within the licenses that are switched on', async () => {
   const { work, spare } = severalLicenses();
   const slug = nextSlug(), meta = { engine: 'codex' };
-  assert.equal(await command(slug, '/license any', meta, { authorIsAdmin: false }), 'Runtime changes in this conversation are restricted to administrators.');
+  assert.doesNotMatch(await command(slug, '/license any', meta, { authorIsAdmin: false }), /restricted to administrators/);
+  assert.deepEqual(await pin(slug), { engine: 'codex', licensePool: 'any' });
+  await command(slug, '/license default', meta, { authorIsAdmin: false });
   assert.deepEqual(await pin(slug), { engine: '', licensePool: '' });
   // Reading the list is open to everyone, as bare /model is.
   assert.match(await command(slug, '/license', meta, { authorIsAdmin: false }), /^License selection: Codex · Default sign-in\./);
