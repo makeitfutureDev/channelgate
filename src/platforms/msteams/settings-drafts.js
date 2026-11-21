@@ -97,13 +97,13 @@ function pendingRows(ctx, section, ui) {
 
 function variableLine(row, scope) {
   const where = { channel: 'Channel', thread: 'This thread', hidden: 'Hidden in this thread', personal: 'Personal', organization: 'Organization' }[scope];
-  if (scope === 'hidden') return `${where} · ${row.name} · the channel value is not used in this thread`;
+  if (scope === 'hidden') return `${where} · ${row.name} · not injected in this thread from any scope`;
   return `${where} · ${row.name} · ${row.last4 ? `••••${row.last4}` : 'set'} · ${row.protected ? 'Hidden' : 'Readable'}${row.hosts.length ? ` · Used on: ${row.hosts.join(', ').slice(0, 500)}` : ''}${row.setBy ? ` · Set by ${String(row.setBy).slice(0, 60)}` : ''}`;
 }
 
 async function renderVariables(ctx, ui) {
   const thread = ctx.sessionKey ? getThreadSettings(ctx.entry.slug, ctx.sessionKey, 'secrets') : {};
-  const body = [ui.heading('Variables'),
+  const body = [ui.heading('Variables'), ...(thread.unreadable ? [ui.text('This thread’s saved variables could not be read, so runs in this thread are refused. Stage Follow channel and Apply to thread to reset them.')] : []),
     ui.text('Values are write-only and never shown. Stage changes below, then Apply to channel (the whole conversation) or Apply to thread (this thread only).'),
     ...(ctx.sessionKey ? [ui.text('Thread variables are always hidden behind the egress proxy and need a fixed destination: a known credential name or "Used on hosts". They work only while this thread is the only work in the conversation’s container, and never on a host or legacy-bridge run.')] : [])];
   body.push(...pendingRows(ctx, 'secrets', ui));
@@ -155,7 +155,8 @@ async function renderMcp(ctx, ui) {
   const sdk = getComposioMode() === 'sdk';
   const body = [ui.heading('MCP connections'),
     ui.text(`Channel — Composio (${getComposioMode()}): ${channel.composio} · Make MCP: ${channel.make}${ctx.sessionKey ? `\nThis thread — Composio: ${own.composio} · Make MCP: ${own.make}` : ''}`),
-    ...(sdk ? [ui.text('Composio runs in SDK mode: saved Composio tokens are inactive until it is switched back to Personal mode.')] : [])];
+    ...(sdk ? [ui.text('Composio runs in SDK mode: saved Composio tokens are inactive until it is switched back to Personal mode, and a thread cannot have its own Composio account.')] : []),
+    ...(thread.unreadable ? [ui.text('This thread’s saved connections could not be read, so runs in this thread are refused. Stage Follow channel and Apply to thread to reset them.')] : [])];
   body.push(...pendingRows(ctx, 'mcp', ui));
   body.push(ui.text('Tokens are never shown. Leave a field blank to keep what is saved. Add the change, then Apply to channel or Apply to thread.'),
     ui.input('composioToken', 'New Composio token', ''), ui.input('composioTokenLabel', 'Composio account label (blank keeps it)', ''),
@@ -310,6 +311,7 @@ function channelSecretsPatch(current, ops, ownerId) {
 }
 
 function threadSecrets(current, ops, { channelEnv, ownerId }) {
+  if (current.unreadable && !ops.some(op => op.op === 'follow')) throw new Error('This thread’s saved variables could not be read. Stage Follow channel and apply it to the thread to reset them first.');
   let env = normalizeChannelEnv(current.env);
   const removed = new Set(current.removed || []);
   for (const op of ops) {
@@ -372,8 +374,15 @@ function channelMcpPatch(current, ops, cloud) {
   return patch;
 }
 
-function threadMcp(current, ops, cloud, { channelMeta }) {
-  let next = { ...current };
+function threadMcp(current, ops, cloud, { channelMeta, isAdmin }) {
+  let next = current.unreadable ? {} : { ...current };
+  if (getComposioMode() === 'sdk' && ops.some(op => (op.op === 'connections' && (op.composioToken || op.composioTokenLabel !== undefined)) || (op.op === 'disconnect' && op.connection === 'composio'))) {
+    throw new Error('Composio runs in SDK mode, where a thread cannot have its own Composio account. Use Apply to channel, or switch Composio back to Personal mode.');
+  }
+  // Clearing the thread's Cloud MCP additions is a Cloud MCP change: administrators only.
+  if (ops.some(op => op.op === 'follow') && !isAdmin && THREAD_MCP_SELECTION_FIELDS.some(field => next[field]?.length)) {
+    throw new Error('This thread has Cloud MCP additions, which only administrators can remove. Ask an administrator to apply Follow channel.');
+  }
   const channelActive = (op) => [...(getOrgAccessGrants()[op.field] || []), ...(channelMeta[op.field] || [])].some(item => keyFor(op.engine, item) === op.key);
   for (const op of ops) {
     if (op.op === 'follow') { next = {}; continue; }
@@ -470,7 +479,7 @@ async function applyThread(page, ctx, draft) {
     }
     const latest = await ctx.authorize();
     if (cloud.length && !latest.userIsAdmin) throw new Error('Only administrators can manage Cloud MCP.');
-    next = threadMcp(current, draft.ops, cloud, { channelMeta: latest.meta });
+    next = threadMcp(current, draft.ops, cloud, { channelMeta: latest.meta, isAdmin: latest.userIsAdmin });
   } else {
     skillOpsFor(ctx, fresh, draft.ops, 'thread');
     const channelActive = new Set([...channelSkillGrants(effectiveMeta(fresh.meta)), ...(getOrgAccessGrants().skills || [])].map(name => name.toLowerCase()));

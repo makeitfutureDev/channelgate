@@ -6241,14 +6241,21 @@ are retired, bullet by bullet; everything else stands.
   work is — another thread's turn or job, a memory review, any SSH session or an attached editor
   pauses it (403 `thread-not-live` / `another-thread-active`). Outside a proxy-mode container (the
   legacy bridge, a `/sudo` host run) it is withheld and its name is not filled from another scope;
-  the per-attempt note lists it as withheld. A thread can also hide an inherited channel variable.
+  the per-attempt note lists it as withheld. A thread can also hide a variable: it is then
+  injected from NO scope in that thread (no personal or organization value stands in). A stored
+  variables or connections row that can no longer be read fails closed: turns and background
+  jobs in that thread are refused with the remedy (Follow channel resets it) instead of running
+  with the conversation's values.
   The proxy re-reads the thread's store on every swap, so a removal (or a deleted row) revokes the
   placeholder at once; values are redacted from replies, streams and job output and never appear in
   a card, listing, log or grant row. **MCP connections:** the thread may replace or disconnect the
-  conversation's Composio (`composio-agent`) and Make connections; Cloud MCP selections and **skills**
+  conversation's Composio (`composio-agent`) and Make connections (in Composio SDK mode a thread
+  cannot have its own account: refused on write, and a stored thread choice withholds the
+  conversation's session there); Cloud MCP selections and **skills**
   are ADDITIONS on a thread grant tier that joins the run's effective grants only (per-run overlay
   and MCP config, so sibling threads never see them), filtered like the shared tiers (no personal
-  skill, directly or by `requires:`). A thread never removes a channel or organization grant.
+  skill, directly or by `requires:`). A thread never removes a channel or organization grant, and
+  only an administrator can clear a thread's Cloud MCP additions (Follow channel included).
   **Background work** inherits exactly the thread that launched it: the run capability signs a
   `settingsThreadKey` claim (only a prefix of the run's own key), background agents, their
   continuations and shell jobs record it, resolve the thread's settings at their OWN spawn and

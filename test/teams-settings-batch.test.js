@@ -310,3 +310,26 @@ test('General: a manager demoted after the card rendered saves neither access no
   assert.equal(meta.engine, 'claude');
   assert.equal(meta.allowNetwork, false);
 });
+
+test('Follow channel on MCPs cannot clear a thread’s Cloud MCP additions without an administrator', async () => {
+  const f = await fixture({ admin: false });
+  setThreadSettings(f.entry.slug, SESSION, 'mcp', { allowedMcps: [{ name: 'admin-added', match: 'admin-added', namespace: 'admin-added' }] });
+  await f.go('mcp');
+  await f.run('settings.draft.follow', { page: 'mcp' });
+  assert.match(notSaved(await f.run('settings.draft.apply', { page: 'mcp', scope: 'thread' })), /only administrators can remove/);
+  assert.equal(getThreadSettings(f.entry.slug, SESSION, 'mcp').allowedMcps.length, 1);
+});
+
+test('in Composio SDK mode a thread cannot pick its own Composio account', async () => {
+  const { saveSettings, getComposioMode } = await import('../src/config/settings.js');
+  const f = await fixture();
+  const before = getComposioMode();
+  try {
+    saveSettings({ composioMode: 'sdk' });
+    assert.equal(getComposioMode(), 'sdk');
+    await f.go('mcp');
+    await f.run('settings.draft.disconnect', { connection: 'composio' });
+    assert.match(notSaved(await f.run('settings.draft.apply', { page: 'mcp', scope: 'thread' })), /SDK mode/);
+    assert.deepEqual(getThreadSettings(f.entry.slug, SESSION, 'mcp'), {});
+  } finally { saveSettings({ composioMode: before }); }
+});

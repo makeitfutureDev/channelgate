@@ -193,3 +193,13 @@ test("a host job approved later keeps its source thread: the thread's variable i
   const forged = await jobs.startApproved({ id: "approval-forged", decidedBy: "U-admin", action: { ...requests[0].durableAction, settingsThreadKey: "T-sibling" } });
   assert.match(forged.error, /does not belong to that thread/);
 });
+
+test("a run and a background job in a thread with an unreadable variables row are refused", async () => {
+  const f = await fixture("claude", "unreadable");
+  getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?) ON CONFLICT(slug, thread_key, kind) DO UPDATE SET value = excluded.value").run(f.slug, "T-broken", "settings_secrets", "{not json");
+  const start = backend.calls.spawn.length;
+  await assert.rejects(runMessage({ channelId: f.channelId, authorId: f.authorId, threadKey: "T-broken", origin: "slack_foreground", preferCold: true, text: "x" }), /could not be read/);
+  assert.equal(backend.calls.spawn.slice(start).filter(promptOf).length, 0, "no engine was spawned");
+  const jobs = new BackgroundJobs({ resolveTarget: (slug, meta) => fakeTarget(backend, slug, meta) });
+  assert.match((await jobs.start({ channelId: f.channelId, authorId: f.authorId, threadKey: "T-broken", command: "true" })).error, /could not be read/);
+});

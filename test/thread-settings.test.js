@@ -73,7 +73,7 @@ test("thread MCP connections validate Make pairs, labels and token length", () =
   assert.throws(() => settings.validateThreadSection("mcp", { makeToolboxUrl: "http://127.0.0.1/mcp", makeToolboxKey: "make-thread-key" }));
   assert.throws(() => settings.validateThreadSection("mcp", { allowedMcps: [{ notAnIdentity: true }] }), /Invalid thread MCP selection/);
   assert.deepEqual(settings.threadConnectionMeta({ composioToken: "channel-token", makeToolboxUrl: "u", makeToolboxKey: "k" }, { composioToken: "" }),
-    { composioToken: "", composioTokenLabel: "", makeToolboxUrl: "u", makeToolboxKey: "k" });
+    { composioToken: "", composioTokenLabel: "", makeToolboxUrl: "u", makeToolboxKey: "k", threadComposioOverride: true });
 });
 
 test("a section is written whole with compare-and-swap, emits a value-free change, and a broken row applies nothing", async () => {
@@ -247,4 +247,49 @@ test("thread skills join the run's effective grants only, and never a personal s
   assert.throws(() => settings.assertThreadSkillGrantable("needsMine", { channelId: "C1", lookupSkill }), /requires the personal skill/);
   assert.throws(() => settings.assertThreadSkillGrantable("absent", { channelId: "C1", lookupSkill }), /no longer available/);
   assert.throws(() => settings.assertThreadSkillGrantable("scoped", { channelId: "C1", lookupSkill: () => ({ slug: "scoped", visibility: "org", channelScope: "C2" }) }), /another conversation/);
+});
+
+test("an unreadable variables or connections row refuses runs instead of falling back to the channel", async () => {
+  const { slug } = await channel({ GITHUB_TOKEN: local(GH_CHANNEL) });
+  const put = (key, kind, value) => getDb().prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?) ON CONFLICT(slug, thread_key, kind) DO UPDATE SET value = excluded.value").run(slug, key, kind, value);
+  for (const [key, kind, value] of [
+    ["T-u1", "settings_secrets", "{not json"], ["T-u2", "settings_secrets", "null"], ["T-u3", "settings_secrets", JSON.stringify({ env: { GITHUB_TOKEN: "not-an-object" } })],
+    ["T-u4", "settings_secrets", JSON.stringify({ removed: ["bad name"] })], ["T-u5", "settings_mcp", "[]"],
+  ]) {
+    put(key, kind, value);
+    assert.equal(settings.getThreadSettings(slug, key, kind.slice("settings_".length)).unreadable, true, key);
+    assert.throws(() => settings.threadSettingsForRun(slug, key), /could not be read/, key);
+  }
+  await assert.rejects(grants.resolveEgressRunEnv({ meta: { env: {} }, channelId: "C1", target: activeTarget("C1"), thread: { key: "T-u1", ...settings.getThreadSettings(slug, "T-u1", "secrets") } }), /could not be read/);
+  // Skills are additions only: an unreadable row just adds nothing.
+  put("T-u6", "settings_skills", "{not json");
+  assert.deepEqual(settings.threadSettingsForRun(slug, "T-u6").skills, {});
+  // Follow channel (an empty write) resets it.
+  settings.setThreadSettings(slug, "T-u1", "secrets", {});
+  assert.deepEqual(settings.getThreadSettings(slug, "T-u1", "secrets"), {});
+});
+
+test("a name hidden in a thread is injected from no scope there", async () => {
+  const { patchUserEnv } = await import("../src/config/scoped-env.js");
+  await patchUserEnv("U_HIDE_OWNER", { set: { name: "GITHUB_TOKEN", value: "ghp_personal_value_hidden_test_0001" }, actor: "U_HIDE_OWNER" });
+  const { channelId, slug } = await channel({ GITHUB_TOKEN: local(GH_CHANNEL) });
+  settings.setThreadSettings(slug, "T-hide-all", "secrets", { removed: ["GITHUB_TOKEN"] });
+  const meta = { channelId, env: { GITHUB_TOKEN: local(GH_CHANNEL) } };
+  for (const target of [activeTarget(channelId), bridgeTarget(channelId)]) {
+    const out = await grants.resolveEgressRunEnv({ meta, channelId, authorId: "U_HIDE_OWNER", target, thread: { key: "T-hide-all", ...settings.getThreadSettings(slug, "T-hide-all", "secrets") } });
+    assert.equal(out.env.GITHUB_TOKEN, undefined, "neither the channel's nor the author's personal value");
+  }
+});
+
+test("Composio SDK mode withholds the conversation's session for a thread that chose its own", async () => {
+  const { resolveComposioRuntime } = await import("../src/gateway/run-integrations.js");
+  const asked = [];
+  const resolveSdk = async (request) => { asked.push(request.kind); return { mode: "sdk", url: `https://sdk.example/${request.kind}` }; };
+  const out = await resolveComposioRuntime({ mode: "sdk", channelId: "C1", authorId: "U1", threadComposioOverride: true, principalTrusted: false, resolveSdk });
+  assert.deepEqual(asked, [], "no channel session is minted for that thread");
+  assert.equal(out.shared.source, "none-thread");
+  assert.equal(out.shared.endpoint, null);
+  const meta = settings.threadConnectionMeta({ composioToken: "channel-token" }, { composioToken: "" });
+  assert.equal(meta.threadComposioOverride, true);
+  assert.equal(settings.threadConnectionMeta({ composioToken: "channel-token" }, {}).threadComposioOverride, undefined);
 });

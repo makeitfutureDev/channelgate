@@ -171,13 +171,22 @@ function readRow(slug, threadKey, section) {
 // NAMES stay (a name without a fixed destination is then withheld at run time, and the channel's
 // value is not used in its place); a malformed connection reads as disconnected; additions that do
 // not validate are left out (narrower). Writers always use the strict path.
+// A variables or connections row whose names cannot all be recovered is UNREADABLE: runs in the
+// thread refuse (threadSettingsForRun) until someone resets it with Follow channel, because nothing
+// else would tell which of the conversation's values the thread meant to replace or hide.
+export const UNREADABLE = Object.freeze({ unreadable: true });
 function failClosed(section, raw) {
-  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
   if (section === "secrets") {
+    if (!value) return { ...UNREADABLE };
     const env = normalizeChannelEnv(value.env);
-    const removed = Array.isArray(value.removed) ? [...new Set(value.removed.filter((name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(name) && !env[name]))].sort() : [];
+    const rawNames = value.env && typeof value.env === "object" && !Array.isArray(value.env) ? Object.keys(value.env) : value.env === undefined ? [] : null;
+    const removedOk = value.removed === undefined || (Array.isArray(value.removed) && value.removed.every((name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(name)));
+    if (!rawNames || rawNames.some((name) => !env[name]) || !removedOk) return { ...UNREADABLE };
+    const removed = [...new Set(value.removed || [])].filter((name) => !env[name]).sort();
     return { ...(Object.keys(env).length ? { env } : {}), ...(removed.length ? { removed } : {}) };
   }
+  if (!value) return section === "mcp" ? { ...UNREADABLE } : {};
   if (section === "skills") {
     const skills = sanitizeSkillGrantNames(value.skills).slice(0, MAX_THREAD_SKILLS);
     return skills.length ? { skills } : {};
@@ -205,11 +214,21 @@ export function getThreadSettings(slug, threadKey, section) {
   if (!raw) return {};
   let parsed;
   try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  // A row that is not a JSON object is unreadable, never "no overrides".
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return failClosed(section, null);
   try { return validateThreadSection(section, parsed); } catch { return failClosed(section, parsed); }
 }
 
 export function threadSettingsForRun(slug, threadKey) {
-  return Object.fromEntries(THREAD_SETTINGS_SECTIONS.map((section) => [section, getThreadSettings(slug, threadKey, section)]));
+  const out = Object.fromEntries(THREAD_SETTINGS_SECTIONS.map((section) => [section, getThreadSettings(slug, threadKey, section)]));
+  assertThreadSettingsReadable(out.secrets, out.mcp);
+  return out;
+}
+
+export function assertThreadSettingsReadable(...sections) {
+  if (sections.some((section) => section?.unreadable)) {
+    throw new Error("This thread's own settings could not be read, so nothing was run with the conversation's in their place. Open /settings in this thread and use Follow channel on Variables or MCPs to reset them.");
+  }
 }
 
 export function threadSectionFingerprint(slug, threadKey, section) {
@@ -253,6 +272,9 @@ export function threadConnectionMeta(meta = {}, mcp = {}) {
   if (Object.hasOwn(mcp, "composioToken")) {
     out.composioToken = mcp.composioToken;
     out.composioTokenLabel = mcp.composioTokenLabel || "";
+    // Read by run-integrations.js: in Composio SDK mode the thread's choice withholds the
+    // conversation's session instead of being ignored.
+    out.threadComposioOverride = true;
   }
   if (Object.hasOwn(mcp, "makeToolboxUrl")) {
     out.makeToolboxUrl = mcp.makeToolboxUrl;

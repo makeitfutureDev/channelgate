@@ -411,11 +411,12 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
     threadNames.length ? (deps.resolveChannelEnv || resolveChannelEnv)({ env: threadEntries }) : {},
   ]);
-  const channel = { ...channelResolved };
-  for (const name of threadRemoved) delete channel[name];
+  if (thread?.unreadable) throw new Error("This thread's own variables could not be read.");
+  const channel = channelResolved;
   const merged = mergeRunEnv({ org, user, channel });
-  // A thread's names are decided below, never by the scopes it overrides.
-  for (const name of threadNames) { delete merged.env[name]; delete merged.scopes[name]; }
+  // A thread's names are decided below, never by the scopes it overrides; a name the thread HID is
+  // not injected from any scope there (no personal or organization value stands in for it).
+  for (const name of [...threadNames, ...threadRemoved]) { delete merged.env[name]; delete merged.scopes[name]; }
   const threadReal = safeSpawnEnv(threadValues);
   const real = safeSpawnEnv(merged.env);
   const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel)), ...Object.values(threadReal)])];

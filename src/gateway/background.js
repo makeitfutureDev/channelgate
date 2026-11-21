@@ -34,7 +34,7 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 // A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
 import { resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
-import { getThreadSettings } from "./thread-settings.js";
+import { assertThreadSettingsReadable, getThreadSettings } from "./thread-settings.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
@@ -516,6 +516,7 @@ export class BackgroundJobs {
     // The launching thread's own variables apply too, resolved HERE from its store (a removal since
     // the launch is honoured): placeholders only in a proxy-mode container, withheld anywhere else.
     const threadSecrets = getThreadSettings(entry.slug, settingsKey, "secrets");
+    try { assertThreadSettingsReadable(threadSecrets); } catch (error) { logStream?.end(); return { ok: false, error: error.message }; }
     const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target,
       thread: { key: settingsKey, env: threadSecrets.env, removed: threadSecrets.removed } });
     const jobEnv = safeSpawnEnv(jobRunEnv.env);
