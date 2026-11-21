@@ -6,6 +6,8 @@
 // every message so config changes in the admin UI take effect on the next turn.
 import { mkdir, writeFile, cp, access, readdir, realpath, readlink, rename, symlink, lstat, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -386,6 +388,138 @@ function legacyChannelContent(content, meta) {
   return t;
 }
 
+// ── Project folders: the gateway-assembled CLAUDE.md ───────────────────────────────────────────
+// A custom work folder that is a git repository keeps its project guide in a TRACKED AGENTS.md.
+// The channel's own standing rules must never be written into that file: they would sit there as
+// an uncommitted tail, travel with `git commit -a`, and a whole-file replace once overwrote the
+// entire guide with two bullets. So when the repository does not track CLAUDE.md, the gateway owns
+// CLAUDE.md as an UNTRACKED, git-excluded file:
+//   [project block: a copy of AGENTS.md + AGENTS.local.md, refreshed when they change]
+//   [the channel's OWN instructions]                       ← update_channel_instructions edits only this
+// and links AGENTS.override.md to it, which Codex reads INSTEAD of AGENTS.md — so both engines get
+// the guide, the private deployment rules and the channel's rules, and the tracked AGENTS.md is
+// never touched. A repository that tracks its own CLAUDE.md keeps the legacy behavior.
+const PROJECT_START = "<!-- PROJECT-INSTRUCTIONS:START -->";
+const PROJECT_END = "<!-- PROJECT-INSTRUCTIONS:END -->";
+const PROJECT_OVERRIDE = "AGENTS.override.md";
+const PROJECT_LOCAL = "AGENTS.local.md";
+const PROJECT_NOTE = `> ⚙️ Gateway-assembled file, not tracked by git. Between these markers: a copy of this repository's
+> AGENTS.md (its contributor guide) and AGENTS.local.md (private deployment rules, when present),
+> refreshed by the gateway — edit those files, never this block. Below the end marker: this
+> channel's own standing instructions (\`update_channel_instructions\` edits only that part).`;
+const execFileP = promisify(execFile);
+const PROJECT_GIT_TIMEOUT_MS = 5_000;
+
+export function projectInstructionsBlock(guide = "", local = "") {
+  const parts = [PROJECT_NOTE, String(guide).trim()];
+  if (String(local).trim()) parts.push(String(local).trim());
+  return `${PROJECT_START}\n${parts.join("\n\n")}\n${PROJECT_END}`;
+}
+
+// Same self-repairing split as splitGatewayBlock, for the project block.
+export function splitProjectBlock(content) {
+  const i = content.indexOf(PROJECT_START);
+  const j = content.indexOf(PROJECT_END);
+  if (i !== -1 && j !== -1 && j > i) {
+    const rest = content.slice(0, i) + content.slice(j + PROJECT_END.length);
+    return { found: true, block: content.slice(i, j + PROJECT_END.length), rest: rest.replace(/\n{3,}/g, "\n\n") };
+  }
+  if (i === -1 && j === -1) return { found: false, block: "", rest: content };
+  const rest = content.split("\n").filter((l) => l.trim() !== PROJECT_START && l.trim() !== PROJECT_END).join("\n");
+  return { found: false, block: "", rest };
+}
+
+async function isRealDirectory(p) {
+  try {
+    return (await lstat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Does the repository at `cwd` track `name`? The folder is agent-writable, so git runs with every
+// repository-configurable command disabled (fsmonitor, hooks) and no prompts. `false` = untracked
+// or not a repository; `null` = could not tell (git missing or failing).
+async function trackedInGit(cwd, name) {
+  try {
+    await execFileP("git", ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-files", "--error-unmatch", "--", name], {
+      cwd, timeout: PROJECT_GIT_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+    });
+    return true;
+  } catch (error) {
+    if (typeof error?.code === "number" && error.code === 1) return false;
+    return /not a git repository/i.test(String(error?.stderr || "")) ? false : null;
+  }
+}
+
+// The project layout applies to a custom folder that is the ROOT of a git repository (a real .git
+// directory — never a .git file or link, which could point the exclude write elsewhere), whose
+// AGENTS.md is a real file, whose CLAUDE.md is untracked and either absent, the old mirror link to
+// AGENTS.md, or already gateway-assembled, and whose AGENTS.override.md is absent or our link.
+export async function projectInstructionsLayout(cwd) {
+  const agents = path.join(cwd, "AGENTS.md");
+  const claude = path.join(cwd, "CLAUDE.md");
+  const override = path.join(cwd, PROJECT_OVERRIDE);
+  if (!(await isRealDirectory(path.join(cwd, ".git")))) return false;
+  if ((await pathKind(agents)) !== "file") return false;
+  const claudeKind = await pathKind(claude);
+  if (claudeKind === "link") {
+    let target = "";
+    try {
+      target = await readlink(claude);
+    } catch {
+      return false;
+    }
+    if (target !== LEGACY_MIRROR_TARGET) return false;
+  } else if (claudeKind === "file") {
+    const cur = (await readNoFollow(claude)) ?? "";
+    if (!cur.includes(PROJECT_START)) return false; // the project's own CLAUDE.md
+  }
+  const overrideKind = await pathKind(override);
+  if (overrideKind === "file") return false;
+  if (overrideKind === "link") {
+    try {
+      if ((await readlink(override)) !== "CLAUDE.md") return false;
+    } catch {
+      return false;
+    }
+  }
+  return (await trackedInGit(cwd, "CLAUDE.md")) === false;
+}
+
+// Keep the two gateway-owned names out of `git status` / `git add -A` even in a repository whose
+// .gitignore does not list them — the assembled file carries AGENTS.local.md, which must never be
+// committed. Only ever .git/info/exclude of a real .git directory with a real info directory.
+async function excludeProjectInstructionFiles(cwd) {
+  const gitDir = path.join(cwd, ".git");
+  const infoDir = path.join(gitDir, "info");
+  if (!(await isRealDirectory(gitDir))) return;
+  if ((await pathKind(infoDir)) === null) await mkdir(infoDir).catch(() => {});
+  if (!(await isRealDirectory(infoDir))) return;
+  const file = path.join(infoDir, "exclude");
+  const cur = (await readNoFollow(file)) ?? "";
+  const lines = cur.split("\n").map((l) => l.trim());
+  const missing = ["/CLAUDE.md", `/${PROJECT_OVERRIDE}`].filter((entry) => !lines.includes(entry));
+  if (!missing.length) return;
+  await writeNoFollow(file, `${cur.replace(/\n*$/, cur ? "\n" : "")}${missing.join("\n")}\n`);
+}
+
+// Build or refresh the assembled CLAUDE.md and its AGENTS.override.md link. The channel's own
+// section is preserved verbatim; on first assembly it starts empty (anything a channel had
+// appended to AGENTS.md stays visible inside the copied guide until someone moves it).
+async function ensureProjectInstructions(cwd) {
+  const claude = path.join(cwd, "CLAUDE.md");
+  const override = path.join(cwd, PROJECT_OVERRIDE);
+  const guide = (await readNoFollow(path.join(cwd, "AGENTS.md"))) ?? "";
+  const local = (await pathKind(path.join(cwd, PROJECT_LOCAL))) === "file" ? ((await readNoFollow(path.join(cwd, PROJECT_LOCAL))) ?? "") : "";
+  const cur = (await pathKind(claude)) === "file" ? ((await readNoFollow(claude)) ?? "") : "";
+  const own = splitProjectBlock(cur).rest.trim();
+  const want = `${projectInstructionsBlock(guide, local)}\n${own ? `\n${own}\n` : ""}`;
+  await excludeProjectInstructionFiles(cwd);
+  if (cur !== want) await writeNoFollow(claude, want); // rename replaces the old mirror link node
+  await ensureMirrorSymlink(override, "CLAUDE.md", claude);
+}
+
 // Ensure CLAUDE.md (read by Claude) exists with AGENTS.md symlinked to it (read by Codex), so the
 // same instructions reach both engines. For gateway-owned default folders the file is:
 //   [gateway-managed block: global instructions + Slack guide + memory note]  ← refreshed on change
@@ -435,6 +569,10 @@ async function ensureInstructionFiles(cwd, slug, meta) {
     const want = `${gatewayInstructionsBlock(meta)}\n\n${own.replace(/\s+$/, "")}\n`;
     if (cur !== want) await writeNoFollow(claude, want);
     await ensureMirrorSymlink(agents, "CLAUDE.md", claude);
+  } else if (await projectInstructionsLayout(cwd)) {
+    // Custom folder that is a git repository with a tracked AGENTS.md and no tracked CLAUDE.md:
+    // the gateway-assembled CLAUDE.md (see ensureProjectInstructions) — AGENTS.md is never written.
+    await ensureProjectInstructions(cwd);
   } else {
     // Custom project folder: respect whichever instruction file the project already has as the
     // real one and symlink the other to it. If neither exists, create CLAUDE.md (real) — matching
@@ -487,7 +625,10 @@ export async function channelInstructionsSnapshot(slug, meta) {
     if (target === LEGACY_MIRROR_TARGET && (await pathKind(agents)) === "file") file = agents;
   }
   const cur = (await readNoFollow(file)) ?? "";
-  const fingerprint = createHash("sha256").update(JSON.stringify([file, cur])).digest("hex");
+  // A gateway-assembled project file refreshes its copied guide whenever AGENTS.md changes (every
+  // landed commit); only the channel's own section is what a pending approval reviewed.
+  const project = splitProjectBlock(cur);
+  const fingerprint = createHash("sha256").update(JSON.stringify([file, project.found ? project.rest.trim() : cur])).digest("hex");
   return { cwd, file, cur, fingerprint };
 }
 
@@ -525,8 +666,20 @@ async function writeChannelInstructions(slug, meta, { text, replace = false, exp
     const own = splitGatewayBlock(cur).rest.trim();
     const combined = replace || !own ? addition : `${own}\n\n${addition}`;
     next = `${block}\n\n${combined}\n`;
+  } else if (splitProjectBlock(cur).found) {
+    // Gateway-assembled project CLAUDE.md: the project block stays; only the channel's own section
+    // is appended to or replaced.
+    const { block, rest } = splitProjectBlock(cur);
+    const own = rest.trim();
+    const combined = replace || !own ? addition : `${own}\n\n${addition}`;
+    next = `${block}\n\n${combined}\n`;
   } else {
-    // Custom project folder: never inject a managed block — just edit the file's own content.
+    // Custom folder: the file's own content. When git TRACKS that file it is the project's own
+    // (a contributor guide), so a replace would rewrite the whole project file — it once replaced a
+    // 746-line guide with two bullets. Append only there; replace stays for channel-owned files.
+    if (replace && cur.trim() && (await trackedInGit(cwd, path.basename(file))) !== false) {
+      throw new Error("This conversation's instructions live in the project's own tracked instruction file, so they can only be appended to here. Remove or change a rule by editing that file.");
+    }
     next = replace || !cur.trim() ? `${addition}\n` : `${cur.replace(/\s+$/, "")}\n\n${addition}\n`;
   }
   await mkdir(cwd, { recursive: true });

@@ -6624,6 +6624,28 @@ are retired, bullet by bullet; everything else stands.
   absolute path, validated) can be set via the admin UI folder picker or the `set_channel_workdir` MCP
   tool; an existing project's `CLAUDE.md`/`AGENTS.md` is respected and only the missing symlink is
   added and never namespaced. → TEST-PLAN: Working folders; ChannelGate rename.
+- **Repository work folders: the gateway-assembled `CLAUDE.md`** (2026-11-21). When a custom work
+  folder is the root of a git repository (a real `.git` directory) with a real `AGENTS.md`, and git
+  does not track `CLAUDE.md` (absent, the old `CLAUDE.md → AGENTS.md` mirror link, or already
+  assembled), the gateway owns `CLAUDE.md` as an untracked file: a `<!-- PROJECT-INSTRUCTIONS -->`
+  block holding a copy of `AGENTS.md` and, when present, `AGENTS.local.md` (refreshed on every run
+  when either changes), then the channel's own standing instructions. `AGENTS.override.md` links to
+  it, so Codex (which reads the override instead of `AGENTS.md`) and Claude (which is handed
+  `CLAUDE.md`) get the same guide, private deployment rules and channel rules. Both names are added
+  to `.git/info/exclude`, so the assembled file — which carries the private rules — never shows in
+  `git status` or rides `git add -A`. `update_channel_instructions` appends to or replaces only the
+  channel's section, and the tracked `AGENTS.md` is never written: before this a whole-file replace
+  overwrote a 746-line contributor guide with two bullets. Its approval fingerprint covers only the
+  channel's section, so a guide change landing while a card is pending does not void it. A
+  repository that tracks its own `CLAUDE.md` keeps the legacy behavior, and there a replace is
+  refused whenever the target file is tracked by git (append still works); git runs with fsmonitor
+  and hooks disabled because the folder is agent-writable. Rules a channel had already appended to
+  `AGENTS.md` are not moved automatically — they stay visible inside the copied guide. This
+  repository no longer tracks `CLAUDE.md` (`.gitignore` lists `/CLAUDE.md`, `/CLAUDE.local.md`,
+  `/AGENTS.override.md`, `/AGENTS.local.md`), and `AGENTS.md` tells both engines to read
+  `AGENTS.local.md` first when it exists. Code: `src/gateway/folders.js`
+  (`projectInstructionsLayout`, `ensureProjectInstructions`, `writeChannelInstructions`).
+  → TEST-PLAN: Repository work folders.
 - Per-channel agent instructions: the channel's `CLAUDE.md` (canonical, `AGENTS.md` symlinked so
   Codex reads the same file) IS the channel's own standing instructions — persistent, never
   regenerated. The gateway contributes one managed block on top (`<!-- GATEWAY-INSTRUCTIONS -->`:
@@ -7623,7 +7645,8 @@ unlaunchable servers fail-closed. Claude discovery is unchanged.
 
 Development branches integrate into `beta`, with CI on both `beta` and `main`. Stable promotion
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
-confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
+confirmation for the exact release candidate. `AGENTS.md` (assembled into an untracked `CLAUDE.md` by a
+gateway, or linked to it by hand for a local Claude Code session) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
 
 ### Recovered Codex reconnect notices
