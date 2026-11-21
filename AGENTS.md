@@ -1,8 +1,12 @@
 # ChannelGate — AGENTS.md
 
-Canonical instruction file for Claude Code, Codex and contributors. `CLAUDE.md` symlinks to this
-file — edit here only. A deployment may add private rules in a gitignored `AGENTS.local.md` (see
-Contributor workflow).
+Canonical instruction file for Claude Code, Codex and contributors — edit here only. `CLAUDE.md` is
+not tracked: for a local Claude Code session link it to this file (`ln -s AGENTS.md CLAUDE.md`); in
+a ChannelGate channel whose work folder is this repository the gateway assembles it (this guide,
+then `AGENTS.local.md`, then the channel's own rules) and links `AGENTS.override.md` to it for
+Codex. A deployment may add private rules in a gitignored `AGENTS.local.md`: **when that file
+exists, read it before starting any task — it is binding alongside this one** (see Contributor
+workflow).
 
 ## What this is
 

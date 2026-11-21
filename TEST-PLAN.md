@@ -13782,6 +13782,25 @@ companion skill; every change is announced in the reply.
       `delete_skill`; `set_skill_scope` refuses a member — again with zero approval requests. The
       admin's `decide_skill_proposal` still posts one admin-tier card and then tombstones the
       skill. Every write result carries "Mention this skill change in your reply".
+- [x] Automated (Repository work folders, `test/folders-generator-paths.test.js`): a git repository
+      folder with a committed `AGENTS.md`, an untracked `AGENTS.local.md` and the old untracked
+      `CLAUDE.md → AGENTS.md` link gets a real `CLAUDE.md` holding both files in the project block,
+      `AGENTS.override.md → CLAUDE.md`, and both names in `.git/info/exclude`; appends land below
+      the block, a replace keeps the block and drops only earlier channel rules, `AGENTS.md` is
+      byte-identical afterwards and neither gateway file shows in `git status`; a changed guide is
+      re-copied on the next run with the channel's rules intact. A repository that TRACKS its
+      `CLAUDE.md` link keeps it, gets no override, refuses a replace ("can only be appended") with
+      the guide intact, and still accepts an append. `test/instruction-approvals.test.js` keeps
+      replace working for a non-repository channel-owned file; `test/agent-context-qa-policy.test.js`
+      pins the `.gitignore` entries and the "read `AGENTS.local.md` first" line.
+- [ ] Live `REPO-INSTR-01` (Claude; Codex once its usage limit resets): on Xavier
+      `#channelgate-development` (work folder = this repository) after a restart, ask "quote the
+      last line of your project guide and your channel rules". Pass when the answer quotes the
+      current `AGENTS.md` ending and the four channel bullets, `git status` in the shared checkout
+      shows no `AGENTS.md`, `CLAUDE.md` or `AGENTS.override.md` change, and an admin's
+      `update_channel_instructions` replace of one bullet changes only the channel section of
+      `CLAUDE.md`. For Codex, the same question must quote the channel bullets (read through
+      `AGENTS.override.md`).
 - [x] Automated, both engines (`test/mcp-control-plane-approval.test.js` "a channel's members decide
       edits proposed for its own skills"): a member sees in `list_skill_proposals` only the edit and
       feedback proposed for this channel's skills; approves the edit (revision 2, the file landed,

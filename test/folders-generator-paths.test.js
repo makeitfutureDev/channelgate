@@ -245,6 +245,81 @@ test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and
   assert.equal(existsSync(path.join(skillsDir, "hand-made")), false, "unselected local skills are archived outside discovery");
 });
 
+// ── A repository work folder: the gateway-assembled CLAUDE.md ─────────────────
+// On 2026-11-20 a whole-file "replace" of a repository channel's instructions overwrote the
+// tracked 746-line AGENTS.md with two bullets, because the channel's rules lived as an uncommitted
+// tail of that tracked file. A repository folder whose CLAUDE.md is untracked now gets an
+// untracked, git-excluded CLAUDE.md the gateway assembles (guide + AGENTS.local.md + the channel's
+// own section) and an AGENTS.override.md link for Codex; the tracked AGENTS.md is never written.
+const { execFileSync } = await import("node:child_process");
+const gitIn = (cwd, ...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
+function repoFixture(prefix, { trackClaudeLink = false } = {}) {
+  const repo = mkdtempSync(path.join(fixtureRoot, prefix));
+  gitIn(repo, "init", "-q");
+  writeFileSync(path.join(repo, "AGENTS.md"), "# Project guide\n\nAlways run the tests.\n");
+  if (trackClaudeLink) symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md"));
+  gitIn(repo, "add", "-A");
+  gitIn(repo, "commit", "-q", "-m", "init");
+  return repo;
+}
+const { symlinkSync } = await import("node:fs");
+
+test("a repository folder gets an untracked assembled CLAUDE.md; the tracked guide is never written", async () => {
+  const { ensureChannelFolder, splitProjectBlock } = await import("../src/gateway/folders.js");
+  const repo = repoFixture("cg-repo-");
+  writeFileSync(path.join(repo, "AGENTS.local.md"), "# Private\n\nPush as the deploy account.\n");
+  symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md")); // the old mirror link, untracked
+  const slug = "repo-project-probe";
+  const meta = { name: "Repo project", workDir: repo, allowedMcps: [] };
+  await ensureChannelFolder(slug, meta);
+
+  const claude = path.join(repo, "CLAUDE.md");
+  const guideBefore = readFileSync(path.join(repo, "AGENTS.md"), "utf8");
+  assert.equal(lstatSync(claude).isFile(), true, "CLAUDE.md is now a real, gateway-assembled file");
+  let content = readFileSync(claude, "utf8");
+  assert.equal(splitProjectBlock(content).found, true);
+  assert.match(content, /Always run the tests\./, "carries the tracked guide");
+  assert.match(content, /Push as the deploy account\./, "and the private AGENTS.local.md");
+  assert.equal(readlinkSync(path.join(repo, "AGENTS.override.md")), "CLAUDE.md", "Codex reads the same file");
+  assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8"), /^\/CLAUDE\.md$/m);
+  assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8"), /^\/AGENTS\.override\.md$/m);
+
+  await updateChannelInstructions(slug, meta, { text: "- Rule one." });
+  await updateChannelInstructions(slug, meta, { text: "- Rule two." });
+  content = readFileSync(claude, "utf8");
+  assert.match(content, /<!-- PROJECT-INSTRUCTIONS:END -->\n\n- Rule one\.\n\n- Rule two\.\n$/);
+  await updateChannelInstructions(slug, meta, { text: "- Only rule.", replace: true });
+  content = readFileSync(claude, "utf8");
+  assert.equal(splitProjectBlock(content).found, true, "replace keeps the project block");
+  assert.match(content, /Always run the tests\./);
+  assert.doesNotMatch(content, /Rule one/);
+  assert.match(content, /- Only rule\.\n$/);
+  assert.equal(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), guideBefore, "the tracked guide is untouched");
+  const status = gitIn(repo, "status", "--porcelain");
+  assert.doesNotMatch(status, /CLAUDE\.md|AGENTS\.override\.md|AGENTS\.md$/m, "the assembled files stay out of git status and the guide is unmodified");
+
+  // A landed change to the guide is picked up on the next run; the channel's rules survive it.
+  writeFileSync(path.join(repo, "AGENTS.md"), "# Project guide\n\nAlways run the FULL tests.\n");
+  await ensureChannelFolder(slug, meta);
+  content = readFileSync(claude, "utf8");
+  assert.match(content, /Always run the FULL tests\./);
+  assert.match(content, /- Only rule\.\n$/);
+});
+
+test("a repository that tracks CLAUDE.md keeps its own files, and its tracked guide refuses a whole-file replace", async () => {
+  const { ensureChannelFolder } = await import("../src/gateway/folders.js");
+  const repo = repoFixture("cg-repo-tracked-", { trackClaudeLink: true });
+  const slug = "repo-tracked-probe";
+  const meta = { name: "Repo tracked", workDir: repo, allowedMcps: [] };
+  await ensureChannelFolder(slug, meta);
+  assert.equal(lstatSync(path.join(repo, "CLAUDE.md")).isSymbolicLink(), true, "the project's tracked link is left alone");
+  assert.equal(existsSync(path.join(repo, "AGENTS.override.md")), false);
+  await assert.rejects(updateChannelInstructions(slug, meta, { text: "- Wipe it.", replace: true }), /can only be appended/);
+  assert.equal(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), "# Project guide\n\nAlways run the tests.\n", "the guide survives");
+  await updateChannelInstructions(slug, meta, { text: "- Appended rule." });
+  assert.match(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), /Always run the tests\.\n\n- Appended rule\.\n$/, "append still works there");
+});
+
 // ── What the ENGINE is told about its own channel ─────────────────────────────
 // Live QA (both engines): asked whether it was allowed on the network, a run answered that
 // "nothing in my system context, channel instructions, or session config mentions it either way"

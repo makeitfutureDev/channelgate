@@ -57,6 +57,13 @@
 - Show skill requests **waiting for approval** on the Activity Skills page: each conversation lists
   the requests made in it that an organization admin has not decided yet, to every member of that
   conversation; "Only me" lists your own. The conversation picker shows how many are waiting.
+- A channel whose work folder is a git repository no longer writes its standing instructions into
+  the project's tracked `AGENTS.md`. The gateway assembles an untracked, git-excluded `CLAUDE.md`
+  (the project's `AGENTS.md`, its private `AGENTS.local.md`, then the channel's own rules) and links
+  `AGENTS.override.md` to it for Codex, so both engines read the same rules and a "replace" can
+  never overwrite the project's guide again. Where a repository tracks its own instruction file, a
+  replace is refused and only appends are allowed. This repository stops tracking `CLAUDE.md`; link
+  it to `AGENTS.md` for a local Claude Code session.
 - Agents working in a git repository now clean up completely after landing a task: the worktree,
   the local branch, and the branch on GitHub (or another remote) if it was pushed, then prune stale
   remote references. Unmerged branches are still never deleted.
