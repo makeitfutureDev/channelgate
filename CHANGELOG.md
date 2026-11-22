@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- `claude` in an SSH session now runs on the channel's own Claude license. A channel set to a
+  Claude license you added — a second Claude account, a custom server, an API key or a cloud
+  route — got the gateway's own Claude login in its terminal, a different account than the
+  channel's turns. The terminal now uses the channel's license. Nothing of that license is stored
+  in the container: the session holds a placeholder the gateway swaps on that license's own
+  server, so it needs the egress proxy, and Claude Code shows it as an API token rather than a
+  plan. Channels on the gateway's own Claude login, and Codex channels, are unchanged.
 - `codex` in an SSH session now runs on an API-key, cloud or custom-server license. Such a license
   was refused in a terminal, and a channel set to one got the gateway's ChatGPT sign-in there
   instead — a different account than the channel's own turns. The terminal now uses the channel's
