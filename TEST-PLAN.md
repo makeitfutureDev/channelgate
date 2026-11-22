@@ -78,6 +78,11 @@ node --test test/googlechat-edits.test.js test/googlechat-reactions.test.js
   runs once; batch updates act per message; no topic = inert and never read as a new message; the
   learned own id survives a restart and then enables edits.
 
+Validation (this candidate): `test/googlechat-edits.test.js` 14/14; Google Chat files + platform
+reaction settings + inbox retention 150 passed, 1 skipped; `npm test` **5,687 tests, 5,609
+passed, 0 failed, 78 skipped**; `npm run check:static` clean. No live Google Chat run: every LIVE
+case below is unexecuted.
+
 Live fixtures: the Google Chat reaction fixtures below (Setup step 8 complete, `reactions N/M
 spaces` with no error, the named threaded space and the DM, approved author A, approved non-admin
 B, unapproved D, each of whom has messaged the app once so their `users/…` id is recorded). A
