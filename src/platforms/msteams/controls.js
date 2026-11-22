@@ -6,6 +6,7 @@ import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } fro
 import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
 import { SESSION_RUNTIME_SAVED, createConversationControls } from '../conversation-controls.js';
 import { createTeamsQueueControls } from './queue-controls.js';
+import { createTeamsBackgroundControls } from './background-controls.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, parentRelative, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -39,6 +40,7 @@ const listingPage = value => Math.min(Math.max(0, Math.floor(Number(value)) || 0
 export function createTeamsControls({ connector, conversation = createConversationControls(), now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
   const states = new Map();
   const queue = createTeamsQueueControls({ connector, conversation, log });
+  const background = createTeamsBackgroundControls({ connector, log });
   const consent = createTeamsFileConsent({ connector, now, authorizeWorkspace: ({ message, entry }) => authorize({ channelId: message.conversationId, ownerId: message.userId, slug: entry.slug }, { connector }) });
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
@@ -241,6 +243,7 @@ export function createTeamsControls({ connector, conversation = createConversati
   async function onCommand(args) {
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
+    if (await background.command(args)) return true;
     if (message.text.trim().toLowerCase() === '/help') {
       if (args.replyCard) {
         try {
@@ -300,6 +303,7 @@ export function createTeamsControls({ connector, conversation = createConversati
     }
     if (interaction.action.startsWith('menu.')) return openMenu(interaction, signal);
     if (queue.isAction(interaction.action)) return queue.onAction(interaction, { respond: response });
+    if (background.isAction(interaction.action)) return background.onAction(interaction, { respond: response });
     prune(); let state = states.get(interaction.data.stateId);
     if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
       const restored = inspectTeamsFileLauncher(interaction.data.stateId, connector.botId, now());

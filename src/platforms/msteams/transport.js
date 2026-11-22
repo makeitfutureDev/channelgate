@@ -377,7 +377,7 @@ export async function startTeams({
     acceptActivity: ({ activity, serviceUrl: sourceUrl }) => {
       const inbound = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
       const isControl = inbound && (inbound.trigger === "reaction" ? ["stop", "ack"].includes(inbound.reactionAction)
-        : /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile)(?:\s|$)/i.test(inbound.text));
+        : /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i.test(inbound.text));
       const selectedInbox = isControl ? controlInbox : botInbox;
       const conversationId = inbound ? queueKey(inbound)
         : splitConversationId(activity.conversation.id).conversationId;

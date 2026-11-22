@@ -7,6 +7,7 @@ import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // a turn into the SAME Slack thread (same threadKey → same Claude session resumes with full
 // context) and post the continuation. This is a local reimplementation of the interactive
 // harness's <task-notification> auto-continue.
+import { backgroundStartedCard } from "./background-status.js";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -717,11 +718,11 @@ export class BackgroundJobs {
     if (!client) return;
     const what = rec.kind === "agent" ? "🤖 Background agent" : "⚙️ Background job";
     try {
-      // The "Check status" button is a Block Kit surface. postNotice drops `blocks` on any platform
-      // without Block Kit, so the plain `text` still delivers there — a job that starts silently is
-      // exactly what this notice exists to prevent. Re-authoring the control as a Chat card /
-      // Adaptive Card is per-platform work tracked separately.
+      // The "Check status" button is Block Kit on Slack and an Adaptive Card on Teams; postNotice
+      // sends whichever the surface renders, and the plain `text` everywhere else — a job that
+      // starts silently is exactly what this notice exists to prevent.
       await postNotice(client, {
+        card: backgroundStartedCard(rec),
         conversationId: rec.channelId,
         threadKey: rec.threadKey,
         text: `${what} *${rec.label}* started (id ${rec.id}) — the result will be posted in this thread when it finishes.`,

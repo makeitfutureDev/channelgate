@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams: a background job's or agent's "started" notice now has a **Check status** button, as in
+  Slack. It shows the job's elapsed time and recent output to whoever clicks (members, approved
+  users and guests of that conversation only), and keeps answering from the job's log after it
+  finishes. `/jobs` lists the conversation's running background work, each with its own status
+  button.
 - Teams: a message sent while its session is busy now gets **Steer conversation** and **Cancel
   request** buttons, like Slack's busy-thread card. It is still queued and runs on its own; Steer
   interrupts your own running request and answers the queued message next (the interrupted
