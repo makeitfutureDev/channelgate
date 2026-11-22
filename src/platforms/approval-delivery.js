@@ -17,12 +17,15 @@ export function approvalDeliveryFor(conversationId) {
     requiresLinks: false,
     supportsPrivateLinks: adapter.id !== "msteams" && !(nativeCards && connector.postCard),
     capabilities: adapter.capabilities,
-    async post({ threadKey, id, title, target, scopes, authorId, approvalType }) {
+    async post({ threadKey, id, title, target, scopes, authorId, approvalType, approveText = "", denyText = "" }) {
       const text = `Approval requested: ${title}`;
+      // Cards v2 buttons carry the request's own labels ("Create 3 forks" / "Cancel"); the Teams
+      // card keeps its established Approve / Deny wording.
+      const labels = adapter.capabilities.richCards === 'cards-v2' ? { approveText: approveText || "Approve", denyText: denyText || "Deny" } : {};
       if (nativeCards && connector.postCard) {
         try {
           return await connector.postCard({ conversationId, threadKey,
-            card: render(approvalCard({ id, title, details: target, scopes, authorId, approvalType })), text });
+            card: render(approvalCard({ id, title, details: target, scopes, authorId, approvalType, ...labels })), text });
         } catch { /* Teams stays in the source thread; other surfaces can use private links. */ }
       }
       if (nativeCards && connector.postCard) {

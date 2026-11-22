@@ -1,5 +1,6 @@
 import { THREAD_FORK_ACTION, executeThreadForkApproval } from "./gateway/thread-fork-approvals.js";
 import { runThreadForkBatch } from "./slack/thread-fork-batch.js";
+import { runApprovedThreadForks } from "./platforms/thread-fork-dispatch.js";
 // Entry point. Boots the gateway: load env, ensure the runtime root, start the admin web
 // server, and (if Slack tokens are present) start the Socket Mode gateway. Built up across
 // slices — Slice 1 wires the root + web server; Slack is wired in Slice 4.
@@ -369,7 +370,7 @@ async function main() {
   const secretHostContinuation = createSecretHostContinuation({ slack });
   secretHostContinuation.start();
   setDurableApprovalExecutor((record) => record.action?.kind === THREAD_FORK_ACTION
-    ? executeThreadForkApproval(record, { runBatch: saved => runThreadForkBatch(saved, { slack }) })
+    ? executeThreadForkApproval(record, { runBatch: saved => runApprovedThreadForks(saved, { runSlack: slackSaved => runThreadForkBatch(slackSaved, { slack }) }) })
     : record.action?.kind === INSTRUCTION_ACTION
     ? executeInstructionApproval(record)
     : record.action?.kind === SECRET_HOST_ACTION
