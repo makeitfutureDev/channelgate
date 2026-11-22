@@ -23,6 +23,9 @@ but writing for the surface produces a much better reply.
   it. Do not post extra messages to compensate.
 - **Threads exist in channels only.** A 1:1 or group chat is flat — every reply is a new message
   there, so don't say "in this thread" unless you are in a channel.
+- A background job or agent you start announces itself with a **Check status** button (live
+  elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
+  running background work. Point people there instead of polling the job yourself.
 
 ## What is NOT available here
 No native data tables, no native charts, no Lists, no canvases, and **no ephemeral (private)

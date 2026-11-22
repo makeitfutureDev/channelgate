@@ -1,5 +1,33 @@
 # ChannelGate — Test Plan
 
+## Teams background job status (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/teams-background-status.test.js test/teams-controls.test.js test/web-hardening.test.js
+```
+
+- Status is reported only for a job of the clicked conversation (running, finished through its
+  log, "no longer running here" for a foreign, unknown or path-like id); `postNotice` sends the card
+  only to `adaptive-cards` surfaces and keeps the text fallback; the started notice passes the card;
+  Check status answers an admitted member in the invoke response with Refresh, refuses a stranger and
+  an unregistered conversation, never reveals another conversation's job, and answers a legacy
+  Submit click privately; `/jobs` lists only this conversation's jobs, refuses a stranger, ignores
+  `/jobs <text>`, and says when nothing runs.
+
+Live acceptance (engine-independent mechanism, run once each with the channel on Claude and on
+Codex because the job is started by the engine):
+
+1. Fixture: a Teams channel with the bot, Worker mode, an approved member A and an unapproved
+   member U. A asks "@bot run `for i in $(seq 1 90); do echo tick $i; sleep 2; done` in the
+   background". Pass: a card "⚙️ Background job … is running" with **Check status** appears.
+2. A clicks **Check status** after ~20 s. Pass: only A sees "still running — under a minute / 1m
+   elapsed" with recent `tick` lines and a **Refresh** button; the card others see is unchanged.
+3. A sends "@bot /jobs". Pass: one entry with the job's label, elapsed time and id, and a status
+   button. U sends "@bot /jobs" and clicks the card. Pass: "not authorized" both times, no output.
+4. After the job's result is posted, A clicks **Check status** again. Pass: "This job already
+   finished" with the last `tick 90` lines.
 ## Teams queued-message Steer / Cancel (2026-11-22)
 
 Automated (scratch SQLite, signed Bot Framework envelopes, stubbed engine):

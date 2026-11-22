@@ -1,5 +1,28 @@
 # ChannelGate — Features
 
+## Teams: background job status (2026-11-22)
+
+Slack's background job notice has a **Check status** button; on Teams the same notice was plain
+text, so the only way to know whether a job was alive was to wait or ask the agent.
+
+- `postNotice` takes an optional Adaptive `card` (`src/platforms/notify.js`): a surface whose
+  `richCards` capability is `adaptive-cards` gets the card with the text as its fallback; every
+  other surface gets the text, Slack keeps its Block Kit `blocks`. The background job's started
+  notice passes `backgroundStartedCard(rec)` (`src/gateway/background-status.js`), whose button
+  carries only the job id.
+- **Check status** (`bgjob.status`, `src/platforms/msteams/background-controls.js`) admits the
+  clicker by the same rule as Slack's button and `/status` — admin, approved, or an explicit guest
+  of THAT conversation, read from Teams' verified envelope — and reports a job only when it belongs
+  to that conversation: running (elapsed, cap, last six output lines), finishing (result being
+  posted), finished (the last 600 characters of its log), or "no longer running here" for an
+  unknown, malformed or foreign id. The answer is the click's own invoke response, so only the
+  clicker sees it; a running job's card offers **Refresh**. A legacy Submit client gets the same
+  text in a private chat (the room only if a private chat cannot be opened, like Slack's fallback).
+- **`/jobs`** (Teams control lane, same admission) lists the conversation's running background
+  jobs and agents, newest first (up to ten, with a status button for the first five); a text list
+  without card support; "No background jobs are running in this conversation." when idle.
+- `/help` lists `/jobs`; the Teams operating manual describes both. Engine-independent: the status reads the
+  job registry and logs, not an engine. → TEST-PLAN: Teams background job status.
 ## Teams: steer or cancel a queued message (2026-11-22)
 
 Slack asks what to do with a message sent while its thread is busy (Steer / Queue / Cancel). Teams
