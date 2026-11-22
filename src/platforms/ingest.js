@@ -82,7 +82,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
   const bankUsage = createUsageBank();
   const STEERED_TEXT = "↪️ Interrupted to answer your newer message, which runs next in this session.";
 
-  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null, queuedEvent = null } = {}) {
+  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null, queuedEvent = null, onWorking = null } = {}) {
     if (message.platform !== adapter.id) throw new Error(`${adapter.id} ingest received a ${message.platform} message`);
     if (serviceUrl) connector.rememberServiceUrl?.(message.rawConversationId, serviceUrl);
 
@@ -188,6 +188,9 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
     if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
+    // The surface's durable intake remembers the visible working message, so a restart can replace
+    // it with the interruption notice instead of leaving it spinning.
+    const noteWorking = (placeholder) => { try { onWorking?.(placeholder); } catch (error) { log.warn?.(`[${adapter.id}] working message not recorded: ${error?.message || error}`); } };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
     // These surfaces have no typing indicator the daemon can drive for minutes, and no streaming.
     // A placeholder message is the only honest "I'm working on it" available — and it is also the
@@ -203,6 +206,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         signal,
       });
       rememberReply(placeholder);
+      noteWorking(placeholder);
     } catch (err) {
       log.warn?.(`[${adapter.id}] placeholder post failed: ${err?.message || err}`);
     }
@@ -252,6 +256,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         signal.throwIfAborted();
         placeholder = await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text: '_⏳ Agent is working…_', signal });
         rememberReply(placeholder);
+        noteWorking(placeholder);
         progress = createConversationProgress({ connector, message, placeholder, adapter, log });
       }
       signal.throwIfAborted();

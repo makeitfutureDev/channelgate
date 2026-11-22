@@ -170,7 +170,9 @@ test("queued Teams activities recover raw attachments and resolver closures afte
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0].message.attachments.length, 2);
   for (const file of delivered[0].message.attachments) assert.equal(typeof file.download, "function");
-  assert.deepEqual(delivered[0].context, { serviceUrl: SERVICE });
+  const { onWorking, ...context } = delivered[0].context;
+  assert.deepEqual(context, { serviceUrl: SERVICE });
+  assert.equal(typeof onWorking, "function", "the turn can record its visible working message on its own row");
 });
 
 test("ambiguous running Teams work receives a routed interruption notice and never reruns", async t => {
