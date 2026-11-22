@@ -181,6 +181,62 @@ receives no interaction event for an edit, so on Chat the edited message was nev
   the edit trigger stays inactive and says so once in the log. → TEST-PLAN: Google Chat edit
   trigger.
 
+## Google Chat: steer or cancel a queued message (2026-11-22)
+
+Teams gained Slack's busy-thread choice as an Adaptive Card; Google Chat still answered a message
+queued behind running work with a bare "Queued in this session (position N)" line, leaving `/stop`
+(which drops the whole session's work) as the only control.
+
+- The queued message's notice keeps that line as its text and now carries a Cards v2 card,
+  *Waiting behind work in this session*, with **Steer conversation** and **Cancel request**
+  (`src/platforms/googlechat/queue-controls.js`) and a hint line that `/stop` still works when the
+  buttons do not respond (Pub/Sub-only connections deliver no clicks). The card is shared, so an
+  admitted admin can answer it; without card support the plain line is posted as before.
+- The decision is the one Teams uses, now shared: `src/platforms/queue-choice.js` (who may answer,
+  cancel, steer, audit) and `src/platforms/queued-events.js` (the durable row operations
+  `queuedEvent` / `cancelQueuedEvent` / `queuedAhead` / `prioritizeQueuedEvent`, installed on the
+  Teams and Google Chat connectors over each transport's OWN intake namespace). The card data is the
+  lane word `chat` plus the waiting row's id (the Chat message name, or a reaction's event id); every
+  click re-reads the row and requires it is still queued, that it belongs to the space Google's
+  verified click envelope names, and that the clicker sent it or is a current admin the
+  conversation admits. Because the row is the record, the buttons answer correctly after a restart.
+- Clicks take the existing card path (HTTP endpoint → verified event → control inbox →
+  `controls.onCard`). A settled answer (cancelled, steering, already started) replaces the shared
+  card with its outcome line and no buttons; a refusal is a private message (`privateMessageViewer`)
+  to the clicker only; a sender whose steer must wait ("another person's message is waiting ahead",
+  "the running work belongs to another person", "being cleared") gets a private card that keeps both
+  buttons. A steer aborts the sender's own run with `STEERED` through the live lanes the ingest owns
+  (boot.js shares one set), so the interrupted answer reads "↪️ Interrupted to answer your newer
+  message…"; it never interrupts or jumps another person's work. When a queued message starts on its
+  own its card reads "▶️ Your queued message has started." (process-local, as on Teams).
+- Every answer is audited as `googlechat_queue_choice`. `/help` and the Google Chat operating manual
+  describe the buttons. Teams behaviour is unchanged (its module now renders the shared decision).
+- Engine-independent in mechanism (the steer aborts the turn's signal for Claude and Codex alike);
+  live acceptance covers both. → TEST-PLAN: Google Chat queued-message Steer / Cancel.
+
+## Google Chat: background job status (2026-11-22)
+
+- `postNotice` also takes `chatCard`, a Cards v2 card sent where `richCards` is `cards-v2` (the
+  Adaptive `card` still goes only to `adaptive-cards`, the text everywhere else and with every card).
+  The background job's started notice passes `backgroundStartedChatCard(rec)`
+  (`src/gateway/background-status.js`): a header naming the job and a **Check status** button whose
+  only value is the job id.
+- **Check status** (`bgjob.status`, `src/platforms/googlechat/background-controls.js`) admits the
+  clicker with the gate Teams and Slack use, now shared as `backgroundAccessEntry` (admin, approved,
+  or an explicit guest of THAT conversation, read from Google's verified click envelope), and reports
+  a job only for that conversation (running with elapsed time, cap and recent output; finishing;
+  finished from its log; otherwise "no longer running here"). The answer is a private Cards v2
+  message only the clicker sees; **Refresh** on it repaints that private card in place. A refused
+  clicker gets a private "not authorized" line. Card text is HTML-escaped; only the status line's own
+  bold becomes `<b>`.
+- **`/jobs`** joins the Google Chat control lane (`GOOGLE_CHAT_CONTROL_COMMAND`) and lists the
+  conversation's running jobs and agents (up to ten, a status button for the first five) as a
+  private card to the sender, or as a text list when no private card can be addressed; "No
+  background jobs are running in this conversation." when idle. `/help` lists it and describes the
+  button.
+- Engine-independent: the status reads the job registry and logs, not an engine. → TEST-PLAN:
+  Google Chat background job status.
+
 ## Teams: read earlier messages and fetch their files (2026-11-22)
 
 A Teams run sees only the message addressed to it. Slack runs read their channel with

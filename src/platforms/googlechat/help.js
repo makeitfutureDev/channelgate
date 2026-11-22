@@ -23,6 +23,7 @@ const TOPICS = [
     '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
     '`/sendfile <path>` — Open a workspace file for download.',
     '`/status` — See the harness, model, effort and active/queued requests.',
+    '`/jobs` — List running background jobs.',
     '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
     '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
     '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
@@ -30,7 +31,7 @@ const TOPICS = [
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
-    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
     'In a threaded space, send `/stop`, `/status` or `/clear` in the request’s thread. In a group chat or a space without threads, quote my reply (or your request) when you send it.',
   ] },
   { title: 'Files & voice notes', rows: [
@@ -68,6 +69,7 @@ const TOPICS = [
     'Reminders send a nudge; scheduled tasks wake the agent to do work.',
     'Ask `list schedules` or `delete schedule <id>`. In **Schedules**, see next runs, pause or resume recurring schedules, cancel reminders, or stop loops.',
     'Ask me to `run it in the background`. When this conversation’s mode permits it, the job keeps running after the turn and reports back here when finished.',
+    'A started job shows a **Check status** button; its elapsed time and recent output are shown only to you. `/jobs` lists the running ones.',
   ] },
   { title: 'Reply controls', rows: [
     'The reply menu opens **Files**, **Variables** and **Settings** for this conversation.',
@@ -86,7 +88,7 @@ export const GOOGLE_CHAT_HELP_TEXT = [
 // emoji section headers and a command/description split so the guide scans like a menu.
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
-  '/status': 'monitoring', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+  '/status': 'monitoring', '/jobs': 'pending_actions', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
 };
 const QUICK_ICONS = ['person', 'groups', 'forum'];
 const HEADERS = {

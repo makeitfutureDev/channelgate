@@ -8,6 +8,8 @@ import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, creat
 import { createGoogleChatConnector } from "./connector.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { makeInbound } from "../inbound.js";
+import { attachQueuedEventControls } from "../queued-events.js";
+import { GOOGLE_CHAT_QUEUE_LANE } from "./queue-controls.js";
 import { getDb, fromJson, metaGet, metaSet } from "../../db/index.js";
 import { getUsers } from "../../config/store.js";
 import { logEvent } from "../../util/logger.js";
@@ -82,6 +84,9 @@ export async function startGoogleChat({
     const message = event.edit ? { ...normalized, trigger: 'edit' } : normalized;
     return threadKey === undefined ? message : { ...message, threadKey };
   };
+  // The durable id a message or reaction was accepted under (see onEvent / onReactionEvent). A
+  // steer rotates row contents together with their ids, so the payload always names its own row.
+  const queuedEventId = payload => String(payload.event.type === 'reaction' ? payload.event.reaction?.id || '' : payload.event.message?.name || '');
   const queueKey = payload => {
     if (payload.event.type === 'card') {
       const card = normalizeCardEvent(payload.event);
@@ -93,6 +98,8 @@ export async function startGoogleChat({
   const inboxOptions = {
     conversationKey: queueKey,
     handle: async payload => {
+      // A queued message's Steer / Cancel card retires once its message starts on its own.
+      if (payload.event.type !== 'card') connector.queuedEventStarted?.({ kind: GOOGLE_CHAT_QUEUE_LANE, eventId: queuedEventId(payload) });
       if (payload.event.type === 'card') {
         const card = normalizeCardEvent(payload.event);
         if (card) await onCard?.(card);
@@ -127,7 +134,7 @@ export async function startGoogleChat({
     handle: async ({ payload, eventId, position }) => {
       const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(namespace, eventId);
       const message = payload.event.type === 'reaction' ? await resolvedReaction(payload, { quiet: true }) : inboundFor(payload);
-      if (message && isQueued()) await onMessage(message, { queuedNoticeOnly: true, position, isQueued });
+      if (message && isQueued()) await onMessage(message, { queuedNoticeOnly: true, position, isQueued, queuedEvent: { kind: GOOGLE_CHAT_QUEUE_LANE, eventId } });
     },
     // Queue notices have no engine effects; an interrupted, obsolete position can be omitted.
     log,
@@ -161,6 +168,10 @@ export async function startGoogleChat({
       return { allowed: true, cancelled };
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   };
+
+  // The busy-thread Steer / Cancel card names one waiting row of THIS subscription's message lane.
+  attachQueuedEventControls(connector, { namespaces: { [GOOGLE_CHAT_QUEUE_LANE]: namespace },
+    authorOf: row => inboundFor(fromJson(row.data, {})).userId || '' });
 
   // ── Reactions (Google Workspace Events) ───────────────────────────────────────────────────
   const reactionsEnabled = Boolean(reactionTopic);

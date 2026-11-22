@@ -184,7 +184,10 @@ short-circuit that.
   mention the bot before a typed command; configured registered slash-command events also work.
   Credential entry uses private browser forms; no value is shown or prefilled. Cards render on
   both connections, but their **buttons act only with the HTTP endpoint connection** (Setup step
-  9); dialogs are never used. Stop/status use a separate durable control queue.
+  9); dialogs are never used. Stop/status use a separate durable control queue. A request queued
+  behind busy work gets a **Steer conversation** / **Cancel request** card (its sender or an
+  admitted admin); a background job's started notice carries **Check status**, answered privately,
+  and `/jobs` lists the conversation's running jobs privately.
 - **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
   as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
   message stops that session's active and queued work, including a turn already running (its

@@ -32,7 +32,8 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   const controls = createGoogleChatControls({ connector, log });
   connector.shareFile = controls.shareFile;
   connector.recordUser = controls.recordUser;
-  const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
+  // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
+  const ingest = createIngest({ connector, log, onCommand: controls.onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
   return startGoogleChat({
     ...config,
     capabilities,

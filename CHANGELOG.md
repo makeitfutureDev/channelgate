@@ -50,6 +50,15 @@
   so this needs the **Reaction events topic** and its administrator approval; existing
   subscriptions are updated in place when the gateway restarts. The app's own Chat id is now
   remembered across restarts.
+- Google Chat: a message sent while its session is busy now gets **Steer conversation** and
+  **Cancel request** buttons under its "Queued in this session" line, as on Teams and Slack. Steer
+  interrupts your own running request and answers the queued message next; Cancel drops only that
+  message. Only the sender, or a current admin the conversation admits, can use them; a steer never
+  interrupts or jumps ahead of another person's work, and refusals are shown only to the person who
+  clicked. The buttons need the HTTP endpoint connection and still answer after a gateway restart.
+- Google Chat: a background job's or agent's "started" notice now has a **Check status** button
+  whose answer (elapsed time, recent output, or the finished job's last lines) only the clicker
+  sees, and `/jobs` privately lists the conversation's running background work.
 - Teams: an agent can read the earlier messages of the channel, channel thread or group chat it is
   answering in (`conversation_history`, like Google Chat) and fetch a file posted on one of them
   (`conversation_download_file`), so "catch me up" and "use the spreadsheet I posted earlier" work

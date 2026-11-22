@@ -266,6 +266,83 @@ picking the app from the list (typed text alone is not a mention).
   listing `google.workspace.chat.message.v1.updated` too; status `reactions N/M spaces` with no
   error; 🤖 / 🛑 reactions still act.
 
+## Google Chat background job status (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/googlechat-background-status.test.js test/teams-background-status.test.js \
+  test/googlechat-controls.test.js test/platform-googlechat.test.js
+```
+
+- `googlechat-background-status`: `postNotice` sends `chatCard` only to `cards-v2`, the Adaptive
+  card only to `adaptive-cards`, text elsewhere and for private notices; the started notice passes
+  both cards; Check status answers an admitted member with a private, escaped status card and
+  Refresh (which repaints the private card), refuses a stranger and an unregistered space privately,
+  never reveals another conversation's job; `/jobs` lists only this conversation's jobs privately,
+  refuses a stranger, ignores `/jobs <text>`, falls back to text without a `users/…` name, says when
+  nothing runs; `/jobs` is a control-lane command and in `/help`.
+- The Teams background tests run unchanged over the shared `backgroundAccessEntry`.
+
+Live acceptance (HTTP endpoint connection; the job is started by the engine, so the Check status
+case runs once with the channel on Claude and once on Codex):
+
+1. **GCHAT-JOBS-CLAUDE-01 / GCHAT-JOBS-CODEX-01 — Check status.** Fixture: a Worker-mode space
+   with approved member A and unapproved member U. A asks "@app run `for i in $(seq 1 90); do echo
+   tick $i; sleep 2; done` in the background". Pass: the started notice shows a card *⚙️ Background
+   job: …* with **Check status**. After ~20 s A clicks it: a private card only A sees says "still
+   running — … elapsed" with recent `tick` lines and **Refresh**; Refresh repaints that card. After
+   the result posts, Check status says "This job already finished" with the last `tick 90` lines.
+2. **GCHAT-JOBS-LIST-01 (engine-independent) — /jobs and refusal.** While a job runs A sends "@app
+   /jobs": a private card lists the job's label, elapsed time and id with a status button. U sends
+   "@app /jobs" and clicks **Check status**: nothing about the job is shown to U.
+
+## Google Chat queued-message Steer / Cancel (2026-11-22)
+
+Automated (scratch SQLite, the real Google Chat transport and durable intake, stubbed engine and
+recording Chat connector):
+
+```sh
+node --test test/googlechat-queue-controls.test.js test/teams-queue-controls.test.js \
+  test/googlechat-controls.test.js test/platform-googlechat.test.js test/platform-ingest.test.js
+```
+
+- `googlechat-queue-controls`: a queued message gets ONE shared Cards v2 card under its "Queued in
+  this session (position 1)." text (no second plain notice) whose values are only `cgAction`, an
+  empty `stateId`, the lane `chat` and the row id; Cancel drops only that row, the engine never sees
+  it and the clicked card loses its buttons; Steer interrupts the sender's run with `STEERED`, the
+  interrupted answer says why, the steered message runs before an older queued one, which keeps its
+  place; a stranger's click is refused privately (`ephemeralTo` its `users/…`), a click from another
+  space is refused, the sender's steer behind another person's run is answered with a private card
+  that keeps both buttons, an admitted admin may cancel (audited `admin: true`); forged lanes and
+  path-shaped ids are refused and a running row is "already started"; the card reads "started" when
+  its message starts; a fresh controls instance (restart) still cancels from the durable row.
+- The Teams queue tests run unchanged over the shared `queue-choice.js` / `queued-events.js`.
+
+Live acceptance (Google Chat test space with the app on the **HTTP endpoint** connection — buttons
+do not act over Pub/Sub alone; the engine-specific cases run once with the space's channel on
+Claude and once on Codex):
+
+1. **GCHAT-QUEUE-CLAUDE-01 / GCHAT-QUEUE-CODEX-01 — Cancel (steps 1–2 form one case).** Fixture: a threaded space with the
+   app, approved members A and B, admin C. A sends "@app count slowly from 1 to 60, one number per
+   line, pausing between numbers", then in the same thread "@app what is 2+2?". Pass: under
+   "Queued in this session (position 1)." a card *Waiting behind work in this session* shows
+   **Steer conversation** and **Cancel request**. A clicks **Cancel request**: the message becomes
+   "🚫 Queued message cancelled…" with no buttons, the count finishes, no "4" answer appears.
+2. **Steer (same case).** A starts the long count again, sends
+   "@app what is 3+3?" in the thread and clicks **Steer conversation**. Pass: the count's message
+   becomes "↪️ Interrupted to answer your newer message…", the card reads "↪️ Steering…", the next
+   answer is "6" in the same thread and its footer names the expected engine.
+3. **GCHAT-QUEUE-AUTHORITY-01 (engine-independent) — authority.** B clicks A's queue card: only B sees "This
+   choice belongs to the person who sent that message." (a private message), A's card is
+   unchanged. B starts a long turn, A queues a message and clicks Steer: only A sees a private
+   "still queued" card ("The running work belongs to another person…") with both buttons; B's turn
+   continues and A's message runs after it. C clicks **Cancel request** on another queued message of
+   A's: it is cancelled and `googlechat_queue_choice` with `admin: true` is in Observability.
+4. **GCHAT-QUEUE-RESTART-01 (engine-independent) — restart.** With a message queued, restart the gateway,
+   then click its card. Pass: the click answers from the durable row (cancel works, or "already
+   started" once it ran).
+
 ## Teams history and earlier files (2026-11-22)
 
 Automated:
