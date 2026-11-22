@@ -135,11 +135,13 @@ test("a sign-in license is verified against the plan its own credential reports"
 
 test("an API license is verified by asking its endpoint, and a rejected key is not ready", async () => {
   reset();
-  const record = store.createLicense(apiInput());
+  // The vendor's own API: there a 401 on the model list IS a verdict on the key. (A compatible
+  // server's is not — engine-licenses-lifecycle.test.js.)
+  const record = store.createLicense(apiInput({ baseUrl: "https://api.anthropic.com", models: [] }));
   const calls = [];
   const rejected = await store.verifyLicense(record.id, { fetchImpl: async (url, init) => { calls.push({ url: String(url), init }); return new Response('{"error":{"message":"invalid x-api-key"}}', { status: 401, headers: { "content-type": "application/json" } }); } });
   assert.ok(calls.length >= 1);
-  assert.ok(calls.every((call) => new URL(call.url).hostname === "llm.example.com"), "the key is sent to the license's own endpoint only");
+  assert.ok(calls.every((call) => new URL(call.url).hostname === "api.anthropic.com"), "the key is sent to the license's own endpoint only");
   assert.equal(rejected.status.ready, false);
   assert.equal(store.getLicenseRecord(record.id).verification.ok, false);
   assert.equal((await registry.requireAdapter(record.id).selectionReadiness()).ready, false);

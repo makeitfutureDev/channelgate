@@ -166,6 +166,89 @@ test("a license that is not signed in is stepped over without ending the turn", 
   assert.match(result.content, /using Working seat/);
 });
 
+// The FIRST license of a selection can be the one that is signed out — in a container that is the
+// backend's credential gate, which ends a turn before anything spawns. A selection with another
+// license of the same harness hands the turn to it; that gate is still never a reason to cross to
+// the other harness, and with no pool it fails closed exactly as before.
+const withSignedOut = async (engineId, run) => {
+  backend.credentialError = (target, engine) => (engine === engineId ? "This channel runs in a container, but Codex is not signed in." : "");
+  try { return await run(); } finally { delete backend.credentialError; }
+};
+
+test("a signed-out first license hands the turn to the next selected license instead of ending it", async () => {
+  fresh();
+  const second = signedInLicense("Spare seat");
+  await setUser("U_LIC_GATE", { name: "Lic Gate", approved: true, isAdmin: false });
+  const entry = await channel("D_LIC_GATE", "lic-gate", { licensePool: [second.id] });
+  const before = backend.calls.spawn.length;
+
+  const result = await withSignedOut("codex", () => turn("D_LIC_GATE", "U_LIC_GATE", "hello", "2012.010"));
+
+  assert.equal(result.engine, second.id);
+  assert.equal(result.licenseSwitched, true);
+  assert.match(result.content, /Codex has no usable sign-in right now — using Spare seat/);
+  assert.match(result.content, /Codex stub reply/);
+  assert.equal(await getSessionEngine(entry.slug, "2012.010"), second.id);
+  const homes = codexHomes().slice(before);
+  assert.ok(homes.length && homes.every((home) => home.endsWith(`.cg-licenses/${second.id}`)), `the signed-out license never started (${homes.join(", ")})`);
+});
+
+test("a signed-out license with no other selected license still fails closed, and never crosses to the other harness", async () => {
+  fresh();
+  signedInLicense("Not selected");
+  await setUser("U_LIC_GATE1", { name: "Lic Gate One", approved: true, isAdmin: false });
+  const entry = await channel("D_LIC_GATE1", "lic-gate-one");
+  const before = backend.calls.spawn.length;
+
+  await assert.rejects(withSignedOut("codex", () => turn("D_LIC_GATE1", "U_LIC_GATE1", "hello", "2013.010")), (error) => {
+    assert.match(error.message, /Codex is not signed in/);
+    assert.equal(error.details.runtimeCredential, true);
+    assert.equal(error.details.providerError, undefined);
+    assert.equal(error.details.alsoFailed, undefined);
+    return true;
+  });
+  assert.equal(backend.calls.spawn.length, before, "nothing started: not the unselected license, not Claude");
+  assert.equal(await getSessionEngine(entry.slug, "2013.010"), "");
+});
+
+test("when the selection's other licenses cannot answer either, the first license's sign-in message stays the error", async () => {
+  fresh();
+  const second = signedInLicense("Limited spare");
+  await setUser("U_LIC_GATE2", { name: "Lic Gate Two", approved: true, isAdmin: false });
+  await channel("D_LIC_GATE2", "lic-gate-two", { licensePool: [second.id] });
+  const before = backend.calls.spawn.length;
+
+  await assert.rejects(withSignedOut("codex", () => turn("D_LIC_GATE2", "U_LIC_GATE2", "CODEX_STUB_LIMIT_ALL_LICENSES", "2014.010")), (error) => {
+    assert.match(error.message, /Codex is not signed in.* — Limited spare could not answer either: /);
+    assert.equal(error.details.runtimeCredential, true);
+    assert.equal(error.details.providerError, undefined, "a missing sign-in is never reclassified as a provider outage");
+    assert.deepEqual(error.details.alsoFailed, [second.id]);
+    return true;
+  });
+  const homes = codexHomes().slice(before);
+  assert.ok(homes.length && homes.every((home) => home.endsWith(`.cg-licenses/${second.id}`)), "only the selected spare was tried");
+  assert.ok(backend.calls.spawn.slice(before).every((call) => call.env?.CODEX_HOME), "Claude was never started for a sign-in problem");
+});
+
+test("a switched-off license with nothing else approved here refuses the turn instead of starting on a key that is no longer sent", async () => {
+  fresh();
+  const only = signedInLicense("Only seat");
+  await setUser("U_LIC_DIS", { name: "Lic Disabled", approved: true, isAdmin: false });
+  await channel("D_LIC_DIS", "lic-disabled", { engine: only.id, approvedEngines: [only.id] });
+  saveSettings({ engineEnabled: { claude: true, codex: true, [only.id]: false } });
+  const before = backend.calls.spawn.length;
+
+  const refused = await turn("D_LIC_DIS", "U_LIC_DIS", "hello", "2015.010");
+  assert.equal(refused.engineRefused, true);
+  assert.match(refused.content, /Only seat is disabled in gateway Settings and nothing else is approved to run here/);
+  assert.equal(backend.calls.spawn.length, before, "nothing was started");
+
+  // Switched back on, the same conversation runs on it again.
+  saveSettings({ engineEnabled: { claude: true, codex: true, [only.id]: true } });
+  const again = await turn("D_LIC_DIS", "U_LIC_DIS", "hello", "2015.020");
+  assert.equal(again.engine, only.id);
+});
+
 test("a channel locked to one harness keeps its pool and never crosses", async () => {
   fresh();
   const second = signedInLicense("Locked seat");

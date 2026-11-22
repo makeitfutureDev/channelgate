@@ -143,9 +143,70 @@ test("a custom server that refuses its model list is not called a rejected key",
   const missing = await store.verifyLicense(lic.id, { fetchImpl: async () => json({ error: "not found" }, 404) });
   assert.equal(missing.verification.ok, true);
   assert.equal(missing.verification.verified, false);
-  const rejected = await store.verifyLicense(lic.id, { fetchImpl: async () => json({ error: "bad key" }, 401) });
-  assert.equal(rejected.verification.ok, false, "a 401 is still a rejected key");
-  assert.ok(!JSON.stringify([refused, missing, rejected]).includes(API_KEY));
+  // A 401 there is no verdict either: a rejection would take the license out of every selection
+  // until its credential is edited, with nothing to lift it, on the word of a route turns never use.
+  const unauthorized = await store.verifyLicense(lic.id, { fetchImpl: async () => json({ error: "bad key" }, 401) });
+  assert.equal(unauthorized.verification.ok, true, "HTTP 401 on a compatible server's list does not lock the license out");
+  assert.equal(unauthorized.verification.verified, false);
+  assert.match(unauthorized.verification.detail, /refused its model list \(HTTP 401\).*first turn/);
+  assert.equal(unauthorized.status.ready, true);
+  assert.equal((await registry.requireAdapter(lic.id).selectionReadiness()).ready, true);
+  assert.ok(!JSON.stringify([refused, missing, unauthorized]).includes(API_KEY));
+
+  // The vendor's own API makes the promise a compatible server does not: its 401 is the key.
+  const vendor = store.createLicense(custom({ label: "Vendor key", baseUrl: "https://api.anthropic.com", models: [] }));
+  const rejected = await store.verifyLicense(vendor.id, { fetchImpl: async () => json({ error: "bad key" }, 401) });
+  assert.equal(rejected.verification.ok, false, "a 401 from the vendor is still a rejected key");
+  assert.equal(rejected.verification.verified, true);
+  assert.equal(rejected.status.ready, false);
+});
+
+test("a check says the key was accepted only when the answer proves it", async () => {
+  reset();
+  const lic = store.createLicense(custom());
+  const sentKey = (init) => ["authorization", "x-api-key", "api-key"].some((name) => new Headers(init?.headers || {}).has(name));
+
+  // A sign-in page, a proxy's landing page: 200, and no test of anything.
+  const page = await store.verifyLicense(lic.id, { fetchImpl: async () => new Response("<html>Sign in</html>", { status: 200, headers: { "content-type": "text/html" } }) });
+  assert.deepEqual([page.verification.ok, page.verification.verified], [true, false]);
+  assert.match(page.verification.detail, /not a model list/);
+  const health = await store.verifyLicense(lic.id, { fetchImpl: async () => json({ status: "ok" }) });
+  assert.deepEqual([health.verification.ok, health.verification.verified], [true, false]);
+
+  // A list anyone can read does not test this key. The second request carries no credential.
+  const calls = [];
+  const open = await store.verifyLicense(lic.id, { fetchImpl: async (url, init) => { calls.push(sentKey(init)); return json({ data: [{ id: "glm-4.6" }, { id: "llama3.1:70b" }] }); } });
+  assert.deepEqual(calls, [true, false], "asked once with the key and once without it");
+  assert.deepEqual([open.verification.ok, open.verification.verified], [true, false]);
+  assert.match(open.verification.detail, /lists its 2 models without a key/);
+  assert.equal(open.status.ready, true);
+
+  // A list only the key opens is the proof.
+  const keyed = await store.verifyLicense(lic.id, { fetchImpl: async (url, init) => (sentKey(init) ? json({ data: [{ id: "glm-4.6" }] }) : json({ error: "no key" }, 401)) });
+  assert.deepEqual([keyed.verification.ok, keyed.verification.verified], [true, true]);
+  assert.match(keyed.verification.detail, /accepted this key and lists 1 model\./);
+  // …and an unreachable second request never turns into a false "public".
+  const flaky = await store.verifyLicense(lic.id, { fetchImpl: async (url, init) => { if (!sentKey(init)) throw new Error("socket hang up"); return json({ data: [{ id: "glm-4.6" }] }); } });
+  assert.equal(flaky.verification.verified, true);
+
+  // The vendor's own list is never public, so it is asked once.
+  const vendor = store.createLicense(custom({ label: "Vendor key", baseUrl: "https://api.anthropic.com", models: [] }));
+  let asked = 0;
+  const direct = await store.verifyLicense(vendor.id, { fetchImpl: async () => { asked += 1; return json({ data: [{ id: "claude-sonnet-4-5" }] }); } });
+  assert.equal(asked, 1);
+  assert.equal(direct.verification.verified, true);
+  assert.ok(!JSON.stringify([page, health, open, keyed, flaky, direct]).includes(API_KEY));
+});
+
+test("a blank server address means the vendor's own API, for Claude Code as for Codex", () => {
+  reset();
+  const claude = store.createLicense(custom({ label: "Anthropic key", baseUrl: "", models: [] }));
+  assert.equal(store.getLicenseRecord(claude.id).baseUrl, "https://api.anthropic.com");
+  const codex = store.createLicense({ kind: "codex-api", label: "OpenAI key", type: "api", baseUrl: "", apiKey: API_KEY, models: [] });
+  assert.equal(store.getLicenseRecord(codex.id).baseUrl, "https://api.openai.com/v1");
+  // Blank only: an address that was typed and is unusable is refused, never replaced by the vendor's.
+  assert.throws(() => store.createLicense(custom({ label: "Typo", baseUrl: "http://llm.example.com" })), /https/);
+  assert.throws(() => store.createLicense(custom({ label: "Typo 2", baseUrl: "llm.example.com" })), /https/);
 });
 
 test("a check reports the settings version it moved, and a stale page is told so before its values are judged", async () => {

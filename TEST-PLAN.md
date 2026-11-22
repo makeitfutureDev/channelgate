@@ -1,5 +1,85 @@
 # ChannelGate — Test Plan
 
+## Engine licenses: review fixes (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/engine-licenses-failover.test.js test/engine-licenses-lifecycle.test.js \
+  test/engine-licenses-providers.test.js test/engine-licenses.test.js test/nested-claude-login.test.js \
+  test/runtime-integration-run.test.js test/pinned-provider-guidance.test.js
+```
+
+- [x] `test/engine-licenses-failover.test.js` "a signed-out first license hands the turn to the
+      next selected license instead of ending it": the backend reports no sign-in for the first
+      license, the selection has a second → answered by the second with the "has no usable sign-in
+      right now — using …" note, the session is stamped with the second, the first never spawns.
+- [x] "… with no other selected license still fails closed, and never crosses to the other
+      harness": `runtimeCredential`, no `providerError`, nothing spawned (not an unselected
+      license, not the other harness), no session row left.
+- [x] "when the selection's other licenses cannot answer either, the first license's sign-in
+      message stays the error": message ends "— <license> could not answer either: …",
+      `details.alsoFailed` lists what was tried, the other harness never starts.
+- [x] "a switched-off license with nothing else approved here refuses the turn …": `engineRefused`
+      with the reason, nothing spawned; switched back on, the conversation runs on it again.
+- [x] `test/runtime-integration-run.test.js` "a missing engine credential fails the turn closed
+      before anything starts, and never fails over" and `test/pinned-provider-guidance.test.js`
+      run unchanged (no pool → the earlier behavior exactly).
+- [x] `test/engine-licenses-lifecycle.test.js` "a custom server that refuses its model list is not
+      called a rejected key": 401 and 403 on a compatible server → usable, unverified; the same
+      401 on the vendor's own API → rejected, not ready.
+- [x] "a check says the key was accepted only when the answer proves it": an HTML 200 and a JSON
+      200 that is not a list → unverified; a list also served without the key → unverified, with
+      the second request carrying no credential header; a list refused without the key →
+      verified; a failing anonymous request → verified; the vendor's API is asked once.
+- [x] "a blank server address means the vendor's own API, for Claude Code as for Codex"; and
+      `test/engine-licenses.test.js` "an API license is verified by asking its endpoint, and a
+      rejected key is not ready" (now against the vendor's address).
+- [x] `test/engine-licenses-providers.test.js` "a channel's placeholder stops answering once its
+      license is switched off or taken off the channel's approved list": the same placeholder
+      resolves to the key, then to nothing (grant still present) while the license is off or not
+      approved for that channel, to the key again when restored, and is revoked once the license
+      is deleted.
+- [x] `test/nested-claude-login.test.js` "nested Claude drops Vertex and Foundry routing with
+      their tokens, so it never calls the parent's cloud with no credential".
+- [ ] Live `LICENSE-42` a signed-out first license moves to the next one (run once per harness).
+      Fixture: the egress proxy mode. **Codex:** channel `cg-testing-codex-auto` on the default
+      ChatGPT sign-in; two added ChatGPT sign-in licenses, `QA signed out` (added, never signed
+      in) and `QA seat` (signed in), both switched on. **Claude:** channel
+      `cg-testing-claude-auto`; added Claude sign-in licenses `QA Claude signed out` (never signed
+      in) and `QA Claude seat` (signed in). Actions, per harness: (1) with `/model` set the
+      channel's license to the signed-out one and add the signed-in one as a further license;
+      send `Reply with the word alpha.` — pass: the answer is `alpha`, preceded by
+      "⚠️ <signed-out license> has no usable sign-in right now — using <signed-in license>.", and
+      the footer names the signed-in license. (2) Remove the further license (selection = the
+      signed-out license only) and send the same message — pass: the turn fails with that
+      license's own sign-in remedy, and neither another license nor the other harness answers
+      (gateway cross-harness failover left ON for this step). (3) Restore the channel's default
+      license.
+- [ ] Live `LICENSE-43` key check verdicts (engine-independent: the check is the daemon's own
+      request and starts no engine; do it once with a Claude Code license and once with a Codex
+      license because the two kinds carry different headers). Fixture: the QA compatible server
+      and a valid key for it. Actions in Settings → Engines: (1) add a custom-server license with
+      the valid key, Verify — pass: either "Verified: the server accepted this key and lists N
+      model(s)" or, when that server lists models without a key or refuses its list, an
+      "unverified … verified by the first turn that uses it" line; never "Key rejected". (2) Set
+      the channel to it and send `Reply with the word alpha.` — pass: `alpha`. (3) Add a license
+      on the vendor's own API (address left BLANK) with a deliberately wrong key, Verify — pass:
+      the form accepts the blank address for both harnesses and the badge is "Key rejected".
+      (4) Delete the wrong-key license.
+- [ ] Live `LICENSE-44` switching a license off stops its key (run once per harness; the Claude
+      case uses `claude`, the Codex case `codex`). Fixture: SSH access with the QA admin's key
+      granted on the harness's QA channel; the channel set to an added API or custom-server
+      license with a valid key, switched on. Actions: (1) open an SSH session and run
+      `claude -p "Reply with the word alpha."` (or `codex exec "Reply with the word alpha."`) —
+      pass: `alpha`. (2) Keep the session open; in Settings → Engines switch the license off.
+      Run the same command again — pass: the provider refuses it (an authentication error),
+      without reconnecting. (3) Send `Reply with the word beta.` in the channel — pass: the reply
+      says the license is disabled in gateway Settings (or another approved license answers and
+      the footer names it); the disabled license's provider usage page shows no new request.
+      (4) Switch the license on again and rerun the command in the SAME session — pass: it
+      answers again.
+
 ## Google Chat earlier files and fresh-session thread context (2026-11-22)
 
 Root causes: Google Chat history named an earlier file but no tool could fetch it (the shared

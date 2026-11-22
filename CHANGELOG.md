@@ -2,6 +2,29 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Licenses: a selection whose first license is signed out now continues on its next license.
+  A conversation set to several licenses of one harness ended with the first license's sign-in
+  error when that one had no login, although another selected license could have answered. It now
+  moves on and says so ("… has no usable sign-in right now — using …"). A missing sign-in still
+  never moves a conversation to the other harness, and with one license selected it fails with
+  the sign-in remedy as before.
+- Licenses: the key check on a custom server is now honest in both directions. A server that
+  refuses its model list (HTTP 401 or 403) no longer marks the license "Key rejected" and blocks
+  it — many compatible servers do not offer that list; the license stays usable and its first
+  turn is the check. And "the server accepted this key" is shown only when the server returned a
+  model list it would not give without the key; a web page, a health answer or a public list is
+  reported as "not tested". The vendors' own APIs still reject a wrong key on the spot. If one of
+  your custom-server licenses was marked rejected by an earlier check, press Verify once.
+- Licenses: switching a license off (or removing it from a channel's approved list) now stops its
+  key immediately, including in a process, SSH session or background job that was already running
+  on it; switching it back on restores it. A conversation set to a switched-off license with
+  nothing else approved to run there says so instead of starting.
+- Licenses: a Claude Code API license accepts a blank server address (the vendor's own API), as
+  the Codex one already did. A stored address that is not valid is never replaced by the vendor's
+  address, so a custom server's key cannot be sent to the vendor by mistake.
+- Licenses: `claude` started inside a turn that runs on a Vertex or Azure Claude license no longer
+  calls that cloud without a credential; it uses the gateway's own Claude sign-in like every other
+  nested `claude`.
 - Google Chat: an agent can fetch a file posted on an earlier message of the space it is answering
   in (`conversation_download_file`, as on Teams), so "use the PDF I posted above" works without
   reposting. The file must be uploaded into Chat; a file shared from Google Drive is refused with a

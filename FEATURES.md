@@ -1,5 +1,62 @@
 # ChannelGate — Features
 
+## Engine licenses: review fixes — signed-out first license, honest key checks, switched-off keys (2026-11-22)
+
+A review of the harness/license implementation (two harnesses, each run on a sign-in or on a
+server address plus key) found six defects. All are fixed; nothing about how a license is added,
+selected or billed changed.
+
+- **A signed-out first license hands the turn to the selection's next license.** The backend's
+  credential gate (`assertRuntimeCredentials`, and the Claude relay gate before it) ended the turn
+  on the selection's FIRST license even when the conversation had selected more licenses of the
+  same harness — the default Claude sign-in in a container and every ChatGPT sign-in license
+  failed this way, while a signed-out license later in the pool was already stepped over. The gate
+  now holds its error when `licensePoolCandidates` has another license for this selection, brings
+  the environment up and walks that pool (`runFallbackEngine(…, poolEngines)`), announcing
+  "⚠️ _<license> has no usable sign-in right now — using <next>._". The classification is
+  unchanged: the error is still `runtimeCredential`, never `providerError`, and **never** a reason
+  to cross to the other harness. With no pool the turn fails closed before anything starts, as
+  before; when no pooled license can answer, the first license's own configuration message is the
+  error, extended with "— <licenses> could not answer either: <why>" (`details.alsoFailed`).
+- **A custom server's refused model list no longer locks the license.** `verifyProviderLicense`
+  (`src/engines/license-adapters.js`) treated a 401 on the model-list address as "the server
+  rejected this key", which blocks the license (`providerStatus`) with no override. Many compatible
+  servers do not serve that address or guard it differently, so for a custom server that is not
+  the vendor's own API a 401/403 there is now **inconclusive**: `{ ok: true, verified: false }`,
+  "verified by the first turn that uses it". The vendor's own API and the cloud kinds keep the
+  rejected verdict. A license an earlier check marked rejected clears on the next **Verify**.
+- **"The server accepted this key" is said only when the answer proves it.** Any HTTP 200 used to
+  count. The answer must now be a JSON model list (`data`, `models`, `modelSummaries` or a bare
+  array); anything else is "not a model list, so the key was not tested". For a custom server
+  that is not the vendor's API the list is requested once more without the credential headers
+  (`authorization`, `x-api-key`, `api-key`): a server that lists its models to anyone has not
+  tested the key and is reported unverified. A failed anonymous request counts as "not public".
+- **A switched-off license stops answering everywhere at once.** A channel that had used a
+  provider license keeps a placeholder for its key; the egress proxy re-resolved it on every
+  request by checking only that the license still exists, so switching the license off (or taking
+  it off the channel's approved list) did not stop a process that was already running, an SSH
+  session or a background job. `cachedRelayToken` (`src/gateway/egress/grants.js`) now asks
+  `isEngineEnabled` and `isChannelEngineApproved` for the channel on every swap: not usable → no
+  swap, the request leaves with the placeholder and the server refuses it. The grant is not
+  revoked, so switching the license back on restores it; a deleted license still revokes. A
+  conversation set to a switched-off administrator-added license with nothing else approved to
+  run there is refused before it starts ("<license> is disabled in gateway Settings and nothing
+  else is approved to run here") instead of starting on a key that is no longer sent.
+- **A blank server address means the vendor's own API for both harnesses.** `claude-api` had no
+  default address, so a Claude license with the address left blank was refused while the Codex
+  twin was accepted. It now defaults to `https://api.anthropic.com`. Record normalization keeps a
+  stored address that fails validation EMPTY instead of replacing it with the vendor default, so
+  a custom server's key can never be sent to the vendor because its address was mistyped or
+  damaged.
+- **Nested `claude` in a Vertex or Azure Claude turn drops the cloud routing with its token.** The
+  nested-CLI wrapper (`renderClaudeWrapper`, `src/runtimes/container/vscode.js`) cleared the
+  Bedrock switches but left `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY` and their
+  project, region and resource names in place after removing the token, so a nested `claude`
+  called the parent's cloud with no credential. Both families are now unset before the Anthropic
+  relay is loaded.
+- Not changed, and still an open product decision: the shipped provider entries beyond the two
+  harness defaults and the Bedrock / Vertex / Azure license kinds remain as they were.
+
 ## Google Chat: earlier files and thread context on a fresh session (2026-11-22)
 
 Two Google Chat parity gaps with Slack closed (`docs/GOOGLE-CHAT-PARITY.md`).

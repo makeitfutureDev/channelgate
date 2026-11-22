@@ -24,7 +24,7 @@ import { getChannelEntry, getChannelMeta, getChannelsIndex } from "../../config/
 import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
-import { getContainerRuntime, getPerplexityResearchConfig, refreshEngineLicenses } from "../../config/settings.js";
+import { getContainerRuntime, getPerplexityResearchConfig, isEngineEnabled, refreshEngineLicenses } from "../../config/settings.js";
 import { LICENSE_KINDS, isProviderKind, licenseCredentialStored, licenseLoginHome, licenseOfRelaySecret, licenseRecord, licenseRelaySecretName } from "../../engines/license-state.js";
 import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
@@ -195,9 +195,21 @@ async function licenseRelayToken(license, secretName, deps) {
   return String(relay?.token || "");
 }
 
+// May this channel's placeholder for a license still be swapped? A placeholder outlives the turn
+// that minted it (it sits in the channel's HOME volume and in any process still running there), so
+// what an administrator decided SINCE is asked at every swap: a license switched off in Settings,
+// or taken off the channel's approved list, stops answering on its server at the next request —
+// the same moment a removed license does. Nothing is revoked: switching it back on restores it.
+async function licenseUsableIn(licenseId, channelId, deps) {
+  if (deps.licenseUsable) return Boolean(await deps.licenseUsable(licenseId, channelId));
+  if (!isEngineEnabled(licenseId)) return false;
+  const meta = channelId ? await channelMetaFor(channelId, deps) : null;
+  return (await import("../channel-engines.js")).isChannelEngineApproved(meta || {}, licenseId);
+}
+
 async function cachedRelayToken(secretName, deps, channelId = "") {
   const license = licenseOfRelaySecret(secretName);
-  if (license) return licenseRelayToken(license, secretName, deps);
+  if (license) return (await licenseUsableIn(license.id, channelId, deps)) ? licenseRelayToken(license, secretName, deps) : "";
   if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) {
     const extra = await import("../../engines/bedrock.js");
     // Recheck the dedicated file/provider before consulting a cached token: deletion, expiry,

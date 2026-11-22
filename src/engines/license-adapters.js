@@ -676,6 +676,9 @@ function verifyRequest(record, credential) {
   return { url: `${endpoint}/models${query}`, headers: record.authScheme === "api-key" ? { "api-key": credential } : bearer };
 }
 
+// The request headers that carry the credential in verifyRequest's answer.
+const VERIFY_CREDENTIAL_HEADERS = new Set(["authorization", "x-api-key", "api-key"]);
+
 export async function verifyProviderLicense(record, { fetchImpl, timeoutMs = 15_000, credentialValue = null } = {}) {
   const problem = providerLicenseProblem(record);
   if (problem) return { ok: false, verified: false, detail: `Not configured — ${problem}.` };
@@ -699,13 +702,35 @@ export async function verifyProviderLicense(record, { fetchImpl, timeoutMs = 15_
   } catch (error) {
     return { ok: false, verified: false, detail: `The server could not be reached: ${redactSecretValues(String(error?.message || error), secrets).slice(0, 200)}` };
   }
+  // A compatible server that is not the vendor's own (and not a cloud with its own API) gives no
+  // promise about what its model list means: it may be public, sit behind a different check than
+  // turns, or not exist. Only what the answer actually proves is reported.
+  const thirdParty = kind.provider === "custom" && !licenseIsVendorApi(record);
   if (response.ok) {
-    let count = 0;
+    // "Accepted" needs evidence: a model list, not merely a 200. A sign-in page, a proxy's landing
+    // page and a health document all answer 200 and test nothing.
+    let list = null;
     try {
       const body = await response.json();
-      const list = [body?.data, body?.modelSummaries, body?.models].find(Array.isArray);
-      count = list ? list.length : 0;
-    } catch { /* a 200 without a JSON list still proves the credential was accepted */ }
+      list = [body?.data, body?.modelSummaries, body?.models, body].find(Array.isArray) || null;
+    } catch { list = null; }
+    if (!list) {
+      return { ok: true, verified: false, detail: "The server answered its model-list address with something that is not a model list (HTTP 200), so the key was not tested; it is verified by the first turn that uses it. If turns fail, check the address." };
+    }
+    // …and a list anyone can read says nothing about THIS key (several routers publish theirs).
+    // Asked once more without the credential — nothing secret rides that request.
+    if (thirdParty) {
+      let open = false;
+      try {
+        const anonymous = await fetchImpl(request.url, { headers: { accept: "application/json", ...Object.fromEntries(Object.entries(request.headers).filter(([name]) => !VERIFY_CREDENTIAL_HEADERS.has(name))) }, signal: AbortSignal.timeout(timeoutMs) });
+        open = anonymous.ok === true;
+        try { await anonymous.body?.cancel?.(); } catch { /* nothing to release */ }
+      } catch { open = false; }
+      if (open) {
+        return { ok: true, verified: false, detail: `The server lists its ${list.length} model${list.length === 1 ? "" : "s"} without a key, so the list does not test this one; it is verified by the first turn that uses it.` };
+      }
+    }
+    const count = list.length;
     return { ok: true, verified: true, detail: count ? `Verified: the server accepted this key and lists ${count} model${count === 1 ? "" : "s"}.` : "Verified: the server accepted this key." };
   }
   if (response.status === 401 || response.status === 403) {
@@ -718,11 +743,13 @@ export async function verifyProviderLicense(record, { fetchImpl, timeoutMs = 15_
         return { ok: true, verified: false, detail: "Amazon recognized this key but its policy does not allow listing models, so it is verified by the first turn that uses it." };
       }
     }
-    // A compatible server that is not the vendor's own answers 403 for a route it does not
-    // serve as readily as for a key it does not accept, so only its 401 is a verdict on the key.
-    // Treating that 403 as a rejection left a working license permanently "not ready".
-    if (kind.provider === "custom" && response.status === 403 && !licenseIsVendorApi(record)) {
-      return { ok: true, verified: false, detail: `The server refused its model list (HTTP 403), which does not say whether the key works for turns; it is verified by the first turn that uses it.` };
+    // A compatible server answers 401/403 for a route it does not serve, or protects differently
+    // from turns, as readily as for a key it does not accept. A rejection takes the license out of
+    // every selection until its credential is edited, and nothing can lift it — so here it is not
+    // a verdict: the license stays usable and the first turn, whose sign-in failure is reported
+    // and hands the turn to the next license, is the check.
+    if (thirdParty) {
+      return { ok: true, verified: false, detail: `The server refused its model list (HTTP ${response.status}), which does not say whether the key works for turns; it is verified by the first turn that uses it.${response.status === 401 ? " If turns cannot sign in, correct the key or how it is sent." : ""}` };
     }
     return { ok: false, verified: true, detail: `The server rejected this key (HTTP ${response.status}).` };
   }
