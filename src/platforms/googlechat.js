@@ -75,6 +75,9 @@ export const googleChatAdapter = validatePlatformAdapter({
     broadcast: true, // <users/all>
     proactivePost: true,
     proactiveDm: true, // spaces.findDirectMessage / spaces.setup
+    // spaces.get + the complete spaces.members.list roster (platforms/googlechat/agent-directory.js):
+    // spaces join the agent directory and agent mail; DMs and group chats never do.
+    agentDirectory: true,
   },
   // Reference files that describe capabilities this surface does not have. Shipping them would
   // teach the agent to reach for tools that are not registered here.

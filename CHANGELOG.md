@@ -13,6 +13,15 @@
   there receive both the personal and the shared Composio connection like in Slack. Set the Teams
   tenant ID in Settings → Microsoft Teams. Slack identities and the accounts connected to them are
   unchanged.
+- Google Chat: spaces now appear in the agent directory, and agents in two Google Chat spaces can
+  talk to each other. `search_agents` in a space lists the other spaces whose agents can help
+  (never DMs or group chats, and only spaces everyone in the conversation already belongs to).
+  "Ask the Sales Team agent …" posts the usual approval card in your thread; after you approve, the
+  question opens a new thread in that space, its agent answers there, and the answer comes back
+  into your thread as a new turn, as on Slack. You can also type `@app ask #"Sales Team" <question>`
+  to send your own words without a card. Both spaces must be on Google Chat and you must be a member
+  of both; a Slack or Teams channel cannot be reached from Google Chat (or the other way round).
+  `/stop` in the other space's thread stops its agent's turn.
 - Licenses: a selection whose first license is signed out now continues on its next license.
   A conversation set to several licenses of one harness ended with the first license's sign-in
   error when that one had no login, although another selected license could have answered. It now

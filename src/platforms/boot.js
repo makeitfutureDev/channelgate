@@ -32,6 +32,9 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   const controls = createGoogleChatControls({ connector, log });
   connector.shareFile = controls.shareFile;
   connector.recordUser = controls.recordUser;
+  // The same lanes serialize the daemon-driven turns of agent mail (gateway/agent-mail.js) with the
+  // people writing in that thread, and let /stop reach them.
+  connector.conversationLanes = controls.conversation;
   // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
   const ingest = createIngest({ connector, log, onCommand: controls.onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
   return startGoogleChat({

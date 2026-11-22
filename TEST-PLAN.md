@@ -84,6 +84,90 @@ set; once with the channel on Claude, once on Codex):
    gets no connect tools for the shared identity.
 4. The same prompts in a Slack channel still use `slack:<team>:…` identities and the accounts
    connected before this change.
+
+## Google Chat agent directory and agent mail (2026-11-22)
+
+Automated (scratch SQLite; the REAL Google Chat connector, formatter, provider, ingest lanes,
+approval delivery and membership proof — only the Chat REST client and the engine are fakes):
+
+```sh
+node --test test/googlechat-agent-mail.test.js test/agent-mail.test.js test/agent-mail-tools.test.js \
+  test/agent-directory.test.js test/agent-directory-refresh.test.js test/agent-directory-tools.test.js \
+  test/agent-directory-slack-boot.test.js test/platform-ingest.test.js test/platform-approvals.test.js
+```
+
+- `googlechat-agent-mail`: the capability and a validated provider on the connector (none without
+  the roster call); space kinds (discoverable → public `channel`, private or missing access
+  settings → `group`, group chat `mpim`, DM `im`, unknown kind / another space's response → null,
+  https-only links, external users → shared); rosters (joined humans only, `users/NNN` → the one
+  recorded gateway user, ambiguous/unknown kept raw, `users/app` listed, a Google Group member,
+  a malformed member or a truncated roster → null); the REST roster paging (`showGroups=true`,
+  truncated and cyclic pages → null, path-shaped names refused); `search_agents` from a Chat space
+  lists Chat spaces only (no group chat, no Slack channel) and hides a space once a source reader is
+  not in it; `liveMembership` by recorded `users/NNN`; a complete Chat ↔ Chat exchange (opener
+  opens a new thread with the Markdown persona and the requester's name, `<users/all>` defanged;
+  target run in that thread as `agent:<slug>` with no Slack workspace id and no progress card; the
+  working placeholder edited into "💬 **#Sales Team agent:** …"; the reply copied home under that
+  persona and the origin turn's answer edited into its own placeholder, everything at home in the
+  asking thread; the continuation names the requester without `<@…>`); the thread's ingest lane is
+  held (another person's message would queue) and the requester's `/stop` ends the turn with
+  notices in both threads and the working message edited; refusals (non-member target, Google
+  Group target → unverifiable, Slack target → `cross_platform`, Teams → `unsupported`, same-named
+  Slack channel does not shadow the space; reply addresses: Chat thread yes, another space's thread
+  no, a DM's own session yes, a flat group-chat session no); the typed directive on the non-Slack
+  ingest (quoted `#"Sales Team"`, curly quotes, slug; confirmation, named refusal, usage hint, no
+  engine turn); for Claude and Codex MCP contexts, `send_agent_message` in a Chat space posts the
+  durable Cards v2 confirmation in the asking thread, sends nothing before the click and sends with
+  the verified identity and thread on it.
+- The Slack agent-mail and directory suites run unchanged (70/70 before this change, same after).
+
+Live acceptance — fixtures: Google Chat spaces **GC-A** (source, Worker, threaded) and **GC-B**
+(target, threaded, named "Sales Team"), both private, the QA tester and the app members of both;
+**GC-C**, a registered space (the app was mentioned there once) the tester is NOT in; a group chat **GC-G** with the tester and the app; the
+tester's DM with the app; one Slack test channel **S** registered with the same gateway. Record
+the candidate commit, space names (`gchat:spaces/…`), thread names, engine/model and every
+message for each case. A space's channel runs once on Claude and once on Codex for the
+engine-specific cases.
+
+1. **GCHAT-AGENTS-DIR-CLAUDE-01 / GCHAT-AGENTS-DIR-CODEX-01 — discovery.** In GC-B ask "@app
+   describe this agent: sales pipeline and forecasts; examples: 'What is the Q4 pipeline?'". In
+   GC-A ask "@app Is there an existing specialist agent that knows our sales pipeline? List the
+   agents and their skills." Pass: `search_agents` returns GC-B with its description and an
+   `https://chat.google.com/…` link; no DM, group chat, Slack channel or GC-C appears; nothing is
+   posted in GC-B. Then add a second person to GC-A who is not in GC-B and ask again: GC-B is no
+   longer listed.
+2. **GCHAT-AGENTMAIL-CLAUDE-01 / GCHAT-AGENTMAIL-CODEX-01 — a full exchange.** In GC-B save the
+   memory fact "Q4 pipeline: 12 open deals, €340k weighted". In a GC-A thread ask "@app Ask the
+   Sales Team agent what the Q4 pipeline is and summarize it for me." Pass: a Cards v2 approval
+   card appears in that thread naming "Sales Team" and the exact text, and nothing is posted in
+   GC-B before **Approve**; after the tester's Approve, GC-B gets ONE new thread
+   "💬 #GC-A agent (for <tester name>): …", a working message there turns into
+   "💬 #Sales Team agent: …12 open deals…" with the stats footer; the GC-A thread then shows
+   "💬 #Sales Team agent: …" followed by a working message that turns into "💬 #GC-A agent: …" — a
+   summary crediting the Sales Team agent; `agent_message_sent/delivered/answered/completed`
+   events exist. No message lands at GC-A's top level.
+3. **GCHAT-AGENTMAIL-DIRECTIVE-01 (engine-independent: no engine composes or sends it).** In a
+   GC-A thread type `@app ask #"Sales Team" what is the Q4 pipeline?`. Pass: no card, an
+   immediate "💬 Asked the Sales Team agent — its replies land here." in that thread, the same new
+   GC-B thread and return trip as case 2. `@app ask #"Sales Team"` alone answers with the usage
+   hint; `@app ask Petru to review this` is answered by the model as an ordinary prompt.
+4. **GCHAT-AGENTMAIL-ACCESS-01 (engine-independent: every check refuses before any engine
+   turn).** Using the directive from GC-A: (a) `ask #<GC-C name> hi` → "You must be a current member
+   of …", nothing in GC-C; (b) `ask <S's channel id> hi` → "… is on Slack and this conversation is
+   on Google Chat …", nothing in S; (c) from GC-G `@app ask #"Sales Team" hi` → "Agent messages
+   can only be sent from a real conversation thread …"; (d) add a Google Group to GC-B and repeat
+   case 3 → "could not verify membership; nothing was sent", then remove the group; (e) from the
+   DM with the app `ask #"Sales Team" hi` → sent, and the reply arrives in the DM at top level.
+5. **GCHAT-AGENTMAIL-STOP-01 (engine-independent: the session lane, not the engine, stops the
+   turn).** Put a slow instruction in GC-B's memory ("when asked for the checklist, count slowly
+   to 60, one number per line"), send `@app ask #"Sales Team" run the checklist` from a GC-A
+   thread. While GC-B's working message ticks, a second GC-B member (not an admin) writes
+   "@app /stop" in the new GC-B thread, then the tester does. Pass: the second member is told
+   "Only the run author or an administrator may stop or clear another person's active or queued
+   work." and the turn continues; after the tester's /stop both threads say "…could not answer:
+   stopped in its thread", GC-B's working message reads "This turn ended without an answer", and a
+   later "@app hello" in that GC-B thread is answered normally.
+
 ## Engine licenses: review fixes (2026-11-22)
 
 Automated:

@@ -205,6 +205,27 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
       return out;
     },
 
+    // The COMPLETE membership roster of a space, for proofs that need every reader (the agent
+    // directory's audience check, agent mail's requester check). Unlike listMembers it keeps the
+    // raw state/type and Google Group memberships (showGroups), and answers null when the roster
+    // is longer than `maxPages` pages: a truncated roster proves nothing.
+    async listMemberships(space, { pageSize = 1000, maxPages = 10 } = {}) {
+      const parent = requireName(space, isSpaceName, "space");
+      const out = [];
+      const tokens = new Set();
+      let pageToken = "";
+      for (let page = 0; page < maxPages; page += 1) {
+        const res = await call(`${parent}/members`, { query: { pageSize, showGroups: true, pageToken: pageToken || null } });
+        if (res?.memberships != null && !Array.isArray(res.memberships)) return null;
+        for (const m of res?.memberships || []) out.push(m);
+        pageToken = res?.nextPageToken || "";
+        if (!pageToken) return out;
+        if (tokens.has(pageToken)) return null;
+        tokens.add(pageToken);
+      }
+      return null;
+    },
+
     // Inbound attachment bytes. Only the bot path (attachmentDataRef.resourceName → media.download)
     // is implemented: `downloadUri` is minted for USER OAuth tokens and answers 401 to a service
     // account, and a Drive-picker share without a resourceName needs a Drive scope we deliberately

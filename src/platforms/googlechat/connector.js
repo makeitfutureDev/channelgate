@@ -6,6 +6,7 @@ import { replyMenuCard } from "./reply-menu.js";
 import { validateChatCard, routeCardActions } from "./cards.js";
 import { buildNameDirectory } from "../format/mentions.js";
 import { normalizeName } from "../../slack/directory.js";
+import { createGoogleChatAgentDirectory } from "./agent-directory.js";
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
 export const HISTORY_SCOPE_REMEDY = "Reading earlier Google Chat messages needs app authentication with administrator "
@@ -41,8 +42,12 @@ export function toSpaceName(conversationId) {
 // scope (lazily: an unapproved scope must never break the messaging transport). Without it the
 // conversation_history tool answers with the remedy instead of reading, and a historical file is
 // reachable only on messages the bot client itself can read.
-export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", actionEndpoint = "", historyApi = null, log = console } = {}) {
+// `loadUsers` feeds the agent directory's users/NNN → gateway identity mapping (agent-directory.js).
+export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", actionEndpoint = "", historyApi = null, loadUsers, log = console } = {}) {
   const chat = api || createChatApi({ auth });
+  // Live space metadata and complete rosters for discovery and agent mail; a client without the
+  // roster call (an older test double) simply has no provider, which every consumer fails closed on.
+  const agentDirectory = chat.getSpace && chat.listMemberships ? createGoogleChatAgentDirectory({ api: chat, loadUsers }) : null;
   const endpoint = () => String((typeof actionEndpoint === 'function' ? actionEndpoint() : actionEndpoint) || '');
   const cardsFor = card => card ? [{ cardId: 'channelgate', card: validateChatCard(routeCardActions(card, endpoint())) }] : [];
   const footerCards = (footer, menu) => footer || menu?.conversationId ? cardsFor(replyMenuCard({ footer, menu })) : [];
@@ -207,6 +212,7 @@ export function createGoogleChatConnector({ auth, capabilities, api = null, botU
     ready: () => true,
     api: chat, // Chat-only surfaces use the same validated REST client.
     botUserId,
+    ...(agentDirectory ? { agentDirectory } : {}),
 
     async post({ conversationId, threadKey, text, footer = "", menu = null, ephemeralTo = "", buttons = null } = {}) {
       const space = toSpaceName(conversationId);
