@@ -165,7 +165,9 @@ export function createAdapterRegistry(adapters) {
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
     // structuredClone throws on those. The UI has no use for where a transcript lives on disk —
     // nor for where a license keeps its credential (`ownCredential`).
-    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, claudeRunAccess, ...manifest }) => structuredClone(manifest)),
+    // Any other method an adapter carries is behaviour too, and is dropped rather than thrown on:
+    // one license with a method this list did not know took the whole settings page down.
+    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, claudeRunAccess, terminalAccess, terminalRouting, ...manifest }) => structuredClone(withoutMethods(manifest))),
   });
 }
 
@@ -191,6 +193,11 @@ export function commandHealth(cli, options = {}) {
   if (!shared) return probeCommand(cli, options);
   if (!shared.has(cli)) shared.set(cli, probeCommand(cli, options));
   return shared.get(cli);
+}
+
+// The serializable part of an adapter: its facts, without any method.
+function withoutMethods(manifest) {
+  return Object.fromEntries(Object.entries(manifest).filter(([, value]) => typeof value !== "function"));
 }
 
 function probeCommand(cli, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {

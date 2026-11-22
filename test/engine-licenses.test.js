@@ -470,3 +470,30 @@ test("a health check starts each CLI once, however many licenses run on it", asy
   assert.equal(started.filter((cli) => cli === "codex").length, 2);
   reset();
 });
+
+// A Codex API license made every reader of the engine manifest throw (the settings page, the
+// model picker): its adapter gained a method — how a terminal is routed to it — that the manifest
+// tried to copy as data.
+test("the engine manifest is data for every kind of license, whatever methods its adapter carries", () => {
+  reset();
+  const made = [
+    store.createLicense({ kind: "codex-login", label: "Manifest ChatGPT", type: "business" }),
+    store.createLicense({ kind: "claude-login", label: "Manifest Claude", type: "subscription" }),
+    store.createLicense(apiInput({ label: "Manifest Claude server" })),
+    store.createLicense(apiInput({ kind: "codex-api", label: "Manifest Codex server" })),
+    store.createLicense({ kind: "claude-aws", label: "Manifest Claude Bedrock", type: "api", region: "eu-central-1", apiKey: "bedrock-fixture-manifest-0001" }),
+    store.createLicense({ kind: "codex-aws", label: "Manifest Codex Bedrock", type: "api", region: "eu-central-1", apiKey: "bedrock-fixture-manifest-0002", models: ["openai.gpt-oss-120b"] }),
+  ];
+  const manifest = registry.engineUiManifest();
+  for (const record of made) assert.ok(manifest.some((entry) => entry.id === record.id), `${record.kind} is listed`);
+  assert.doesNotThrow(() => JSON.stringify(manifest));
+  // An adapter method the manifest was never told about is dropped, not thrown on.
+  for (const id of registry.ENGINE_IDS) {
+    const adapter = registry.adapterFor(id);
+    const methods = Object.keys(adapter).filter((name) => typeof adapter[name] === "function");
+    const entry = manifest.find((item) => item.id === id);
+    for (const name of methods) assert.equal(Object.hasOwn(entry, name), false, `${id}.${name} is behaviour, not manifest data`);
+  }
+  assert.ok(typeof registry.adapterFor(made[3].id).terminalRouting === "function" && typeof registry.adapterFor(made[2].id).terminalAccess === "function");
+  reset();
+});
