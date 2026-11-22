@@ -180,7 +180,9 @@ optional field exists only to short-circuit that.
 - **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
   as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
   message stops that session's active and queued work, including a turn already running (its
-  author or an admin); ✅ acknowledges a tracked reminder. The reactor's `users/…` id maps to the
+  author or an admin); ✅ acknowledges a tracked reminder, or on any other message marks that
+  conversation done in the reactor's Activity (the starter) or dismisses it from their list (another
+  participant). The reactor's `users/…` id maps to the
   gateway user whose messages Google has delivered before (unknown or ambiguous ids never act) and
   then passes the ordinary authorization gate. A Stop older than 10 minutes, a start older than an
   hour, a Tick older than a day, a removed reaction and a redelivered event never act; reacted text
@@ -386,8 +388,10 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
   Stop sign cancels the selected session’s active and queued requests, with author/admin checks.
   Tick button acknowledges a tracked reminder from its original or second-notice message; removing
-  it does not reopen the reminder. A tick on ordinary content reports no pending reminder.
-  Teams personal follow-up dismissal is not available. All actions require authorized reactors and
+  it does not reopen the reminder. A tick on any other message of a session is the reactor's
+  personal follow-up dismissal: the session's starter marks its Activity entry done, another
+  participant dismisses it from their own Activity list, and anyone else is told there is nothing
+  to mark; a new message in the session brings it back. All actions require authorized reactors and
   delivered reaction events. Group/channel delivery uses configured Graph events and Microsoft
   permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
   remain available as typed commands.

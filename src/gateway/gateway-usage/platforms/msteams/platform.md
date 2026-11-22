@@ -125,8 +125,9 @@ A message sent while its session is busy is queued and runs on its own; its queu
 **Steer conversation** (interrupt the sender's own running request and answer this one next) and
 **Cancel request** (drop only this message). Only the sender or an admitted admin can use them. **Tick button**
 (`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.
-Removing the tick does not reopen that reminder. A tick on an ordinary message has no tracked
-reminder to close. Teams personal follow-up dismissal is not available.
+Removing the tick does not reopen that reminder. A tick on any other message of a session is the
+reactor's personal "done": the person who started the session marks its Activity entry done, any
+other participant dismisses it from their own Activity list; a new message brings it back.
 
 Group/channel reaction delivery requires the configured all-message Graph events and Microsoft
 permissions. In personal chat, delivered Bot Framework reaction activities use the same controls.

@@ -1,5 +1,26 @@
 # ChannelGate — Test Plan
 
+## Tick dismissal on Teams and Google Chat (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/platform-tick-dismissal.test.js test/googlechat-reactions.test.js test/teams-reaction-actions.test.js
+```
+
+- The session's starter's ✅ marks the Activity entry done; another participant's ✅ hides it from
+  their own list only (the starter's stays); a bystander is told there is nothing to mark; a
+  tracked reminder on the reacted message is closed first and the conversation stays open.
+
+Live acceptance (engine-independent; run once per surface):
+
+1. Teams channel with reaction events: A asks "@bot summarize our Q3 goals"; B replies in the
+   thread "@bot add the hiring goal". Open Activity as A and as B: the conversation is listed for both.
+2. B reacts ✅ to the bot's answer. Pass: "Dismissed from your Activity"; it disappears from B's
+   Activity and stays in A's.
+3. A reacts ✅. Pass: "Marked done in your Activity"; A's Activity shows it under Done.
+4. A posts "@bot one more thing". Pass: the conversation is back in A's active list.
+5. Repeat 1–3 in a Google Chat space with reaction events (Setup step 8).
 ## Teams restart recovery presentation (2026-11-22)
 
 Automated:

@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams and Google Chat: ✅ on a message that carries no tracked reminder now marks that
+  conversation done in your Activity (if you started it) or dismisses it from your own Activity list
+  (if you only took part), instead of answering that there was nothing to acknowledge. A new message
+  in the conversation brings it back. A tracked reminder is still closed first.
 - Teams: a request cut off by a gateway restart no longer leaves its "Agent is working…" message
   spinning beside a separate warning. That message becomes the interruption notice, which now has
   a **Run again** button for the person who asked (for 24 hours). The gateway still never reruns
