@@ -24,15 +24,15 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | File sending | `share_file` / `/sendfile` private controls | `mcp/tools/teams-native.js` |
 | Schedules, background results, notices | Shared `postNotice` / `postDirectMessage` | `platforms/notify.js` |
 | Conversation history reads | `conversation_history` (current thread or whole space, public messages only) on the admin-approved `chat.app.messages.readonly` app scope | `mcp/tools/conversation-history.js`, `platforms/googlechat/connector.js` |
+| Re-download a historical file | `conversation_download_file`: the named message of this space (bot client, then the app scope), its upload fetched by `attachmentDataRef.resourceName` through `media.download` into this thread's `uploads/` under the intake cap; Drive-picker shares refused | `mcp/tools/conversation-history.js`, `platforms/googlechat/connector.js` |
+| Thread hydration on a fresh session | A reply that starts a thread's first session gets the last 20 earlier public messages (each shortened, 8,000 characters total, untrusted framing) when the app scope is approved; a refusal, failure or 5 s timeout leaves the turn unchanged | `platforms/thread-hydration.js`, `platforms/ingest.js` |
 | Activity dashboard | Listed with completion saved in Activity | `web/activity.js` |
 
 ## Remaining gaps
 
 | Slack feature | Google Chat gap | Next slice |
 | --- | --- | --- |
-| Thread hydration on a fresh session | Slack's run starts with the thread in context; Chat relies on the agent calling `conversation_history` | Prepend the current thread (bounded) on a fresh session when the scope is approved |
 | Busy-thread Steer / Queue / Cancel choice | Chat queues and offers `/stop`; no explicit steer | Port the Teams busy-message Steer / Cancel card (`platforms/msteams/queue-controls.js`) to Cards v2 |
-| Re-download a historical file | History names earlier files but cannot fetch them | `media.download` by the attachment's resource name, scoped to this space, into the confined sink |
 | Background job status button | Results post back; no status control | Card button or `/status` listing for the conversation's jobs |
 | Tables and headings | Degraded although Google now documents both for Markdown mode | Flip `markdownTables` / `markdownHeadings` after the live probe below shows they render |
 | Agent directory, agent mail, thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |

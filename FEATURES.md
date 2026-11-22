@@ -1,5 +1,45 @@
 # ChannelGate — Features
 
+## Google Chat: earlier files and thread context on a fresh session (2026-11-22)
+
+Two Google Chat parity gaps with Slack closed (`docs/GOOGLE-CHAT-PARITY.md`).
+
+- **`conversation_download_file` on Google Chat.** The connector now has `historyFile`
+  (`src/platforms/googlechat/connector.js`), so the shared tool (`src/mcp/tools/conversation-history.js`)
+  is registered wherever Google Chat is live. `conversation_history` rows carry each message's
+  resource name, printed under a file as `[file: name · type] (message spaces/…/messages/…, thread
+  spaces/…/threads/…)`. The model passes that `message`, the `thread` and, when there are several,
+  the `file` name (case-insensitive). The message must be `spaces/<this space>/messages/…` and the
+  thread `spaces/<this space>/threads/…`, both checked before any API call; the conversation is the
+  signed run's, never an argument. The message is fetched with the bot client first, then the
+  administrator-approved `chat.app.messages.readonly` app-scope client (the reacted-message order);
+  a message that neither reaches, a private (one-viewer) or deleted message, a thread mismatch, an
+  unknown or ambiguous file name each answer with the reason, and a refused app scope answers with
+  the approval remedy. Only bytes uploaded into Chat are fetched: `media.download` by the
+  attachment's `attachmentDataRef.resourceName` (bot client, then app scope), streamed into this
+  thread's `uploads/` through the intake's bounded no-follow writer (`saveInboundAttachments`, the
+  same per-file cap as a live upload). A Drive-picker share (no resource name) is refused: "shared
+  from Google Drive, which the app cannot download … upload it directly into the space".
+- **Thread context on a fresh session.** When a Google Chat message starts the FIRST engine session
+  a thread has ever had, and it is a reply inside an existing thread (`threadReply` — not a DM's
+  main flow, not a new top-level thread), the turn's prompt starts with the thread's earlier public
+  messages (`src/platforms/thread-hydration.js`, called from `src/platforms/ingest.js` after the
+  session queue, behind the working message): read with `readHistory` (30 fetched), cut at the
+  triggering message (and anything after it), the last 20 kept, each collapsed to one line and
+  capped at 1,000 characters, the whole block capped at 8,000 characters (newest kept), framed as
+  quoted UNTRUSTED conversation with the Slack replay's sentinels, which embedded copies cannot
+  forge (`neutralizeSentinels`). Gated, like Slack, on the persistent has-ever-had-a-session
+  marker, so a resumed thread or one after `/clear` is never re-read. A session healed, switched to
+  another harness or failed over mid-turn replays the same excerpt through run.js's
+  `getFallbackContext` (unless this turn already carries it). Best effort: no approved app scope,
+  a failed read or a read slower than 5 s leaves the turn exactly as it was, with one log line per
+  process and cause and nothing shown to the user.
+- **Platform-neutral, opt-in.** Hydration applies to any connector that declares
+  `hydrationScope(message)` beside `readHistory`; only Google Chat does. Teams turns are unchanged
+  (its connector has `readHistory` but no `hydrationScope`).
+- The Google Chat guide overlay (`platforms/googlechat/reading.md`) explains the excerpt and the
+  file tool. → TEST-PLAN: Google Chat earlier files and fresh-session thread context.
+
 ## Teams and Google Chat: ✅ dismisses a conversation from your Activity (2026-11-22)
 
 Slack's ✅ marks a thread done for the person who reacts. On Teams and Google Chat ✅ only closed a

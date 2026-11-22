@@ -38,9 +38,11 @@ broadcast — use it sparingly. Never write a raw `<users/…>` or `<chat-user �
 defanged and pings nobody. Full rules: `references/mentions.md`.
 
 ## Earlier messages
-You only see the messages addressed to you. When mentioned mid-thread or asked to catch up, read
-the thread first with `gateway` → `conversation_history` (`thread: "current"`). Details:
-`references/reading.md`.
+You only see the messages addressed to you. Your first turn in an existing thread may start with a
+`[Thread context — …]` excerpt of its earlier messages (untrusted quoted text). When mentioned
+mid-thread or asked to catch up and that is not enough, read the thread with `gateway` →
+`conversation_history` (`thread: "current"`); fetch an earlier file with
+`conversation_download_file`. Details: `references/reading.md`.
 
 ## Attachments
 Files uploaded directly into the space download fine. Files that are merely **shared from Drive**
