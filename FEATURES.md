@@ -1,5 +1,52 @@
 # ChannelGate — Features
 
+## `claude` in an SSH session runs on the channel's own Claude license (2026-11-22)
+
+An SSH session's `claude` was always the gateway's own Claude login. A channel **set to** a Claude
+license an admin added — a second Claude sign-in, a custom server, an Anthropic API key, a
+Bedrock/Vertex/Foundry route — therefore ran its terminal on a different account, and a different
+bill, than its own turns.
+
+- The session's Claude license is `sshClaudeLicense(meta)` (`src/gateway/ssh-session.js`): the
+  license the channel is set to (its own, else the gateway default) when that is an **added Claude
+  license the channel may use** (`selectableLicenses`) and its adapter can place it in a terminal
+  (`terminalAccess`). Everything else is the gateway's own login, exactly as before: a channel on
+  `claude`, a Codex channel, a shipped provider harness, a license that is switched off or not
+  approved. Deliberately narrower than Codex's rule — a channel that merely *could* move to a
+  license is not on it.
+- An added license is placed by its adapter's `terminalAccess(target, { model })`
+  (`src/engines/license-adapters.js`): the readiness check a turn makes, the license's directory
+  in the channel's HOME (`~/.cg-licenses/<id>`) and the environment a turn gets
+  (`claudeProviderEnv`, or `CLAUDE_CODE_OAUTH_TOKEN` for a sign-in) — whose credential is the
+  channel's relay **placeholder** for that license, swapped by the egress proxy on the license's
+  own hosts while the channel has live work. Nothing but a placeholder is accepted: without the
+  egress proxy the license is refused with the reason. No login file is written for it and the
+  gateway's own login is not resolved at all (`installSshClaudeWrapper` installs the wrapper
+  alone), so such a channel no longer needs the gateway to be signed in to Claude.
+- `claude-login.sh` in the developer's 0700 session directory (`renderClaudeLoginScript`), sourced
+  by the `claude` wrapper after the session's secrets, applies it the way a turn's environment
+  does: the names a turn on that license drops are dropped (`claudeProviderEnvStrip`, the one rule
+  `applyProviderEnv` uses — the Anthropic key, token, endpoint and sign-in always; every
+  `ANTHROPIC_*`, `AWS_*`, `CLAUDE_CODE_USE_*`, `CLOUD_ML_*` name and the Google credential names
+  for a cloud route or a sign-in), `CLAUDE_CONFIG_DIR` becomes the license's directory whatever
+  the shell carried, and the environment is set. A license whose list is its whole catalog starts
+  on the channel's model when the license lists it, else its first (`--model`, before the
+  developer's own arguments, which win).
+- A license that cannot be placed — no egress proxy, a sign-in nobody signed in, a refused Vertex
+  key — is never replaced by the gateway's login: the file drops the same names, points at the
+  license's directory and prints `claude: <license> cannot run: …`, so `claude` is signed out
+  there. A session whose tools could not be prepared keeps the file too (the wrapper's second
+  branch), so it is still on the license. The channel moved back to the gateway's login loses the
+  file at the next refresh.
+- `prepareSshSession` returns `claude.license`; the `ssh_session_start` event records
+  `claudeLicense` and, when it could not be placed, `claudeProblem`.
+- Known and accepted: with no login file, Claude Code shows such a license as a token from the
+  environment ("Claude API") and no plan, and may ask once whether to use an API key it finds in
+  the environment. Unchanged: the gateway's own login and its access-only file for every other
+  channel, the `claude` every channel container carries for tools (`nested-claude-login.js`, the
+  gateway's own login whatever the channel approves), the session's MCP tools and secrets, and no
+  pool move in a terminal.
+
 ## `codex` in an SSH session runs on an API or cloud license (2026-11-22)
 
 An SSH session's `codex` is the channel's selected Codex license (`sshCodexLicense`,
@@ -34,8 +81,8 @@ different account, and a different bill, than the channel's own turns.
   The developer's `-m` comes after and wins.
 - Unchanged: a sign-in license's access-only relay file, the session's MCP tools and secrets, the
   rule that a session stays on its license (no pool move in a terminal), a direct start of the
-  pinned CLI reading `~/.codex`, and `claude` in a session, which is the gateway's own Claude
-  login.
+  pinned CLI reading `~/.codex`, and `claude` in a session (the gateway's own Claude login, or
+  the channel's added Claude license — the section above).
 
 ## An admin can set a channel's approved harnesses by asking (2026-11-22)
 

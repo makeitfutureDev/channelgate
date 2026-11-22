@@ -40,6 +40,20 @@ export function canUseClaudeWarmPool(runtime = {}) {
 // would race the provider's own token for precedence, and a relayed CLAUDE_CODE_OAUTH_TOKEN would
 // send the OPERATOR's Anthropic credential to a third-party host.
 const ANTHROPIC_CREDENTIAL_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"];
+// What a cloud route or another account's sign-in must not inherit either: every routing family,
+// by prefix, and the three Google names that are not a family.
+const PROVIDER_ROUTE_PREFIXES = ["ANTHROPIC_", "AWS_", "CLAUDE_CODE_USE_", "CLAUDE_CODE_SKIP_", "CLOUD_ML_", "VERTEX_REGION_"];
+const PROVIDER_ROUTE_NAMES = ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"];
+const isAtomicRoute = (providerEnv) => ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"].some((name) => providerEnv?.[name] === "1") || Boolean(providerEnv?.CLAUDE_CODE_OAUTH_TOKEN);
+
+// The names and name prefixes a run on `providerEnv` drops before that environment is applied —
+// one rule for a turn's child env (below) and for the `claude` of an SSH session
+// (gateway/ssh-session.js). Without a `providerEnv` (a license that could not be placed) it is
+// the widest set: such a `claude` is signed out, never on something inherited.
+export function claudeProviderEnvStrip(providerEnv = null) {
+  const atomic = !providerEnv || isAtomicRoute(providerEnv);
+  return { names: [...ANTHROPIC_CREDENTIAL_NAMES, ...(atomic ? PROVIDER_ROUTE_NAMES : [])], prefixes: atomic ? [...PROVIDER_ROUTE_PREFIXES] : [] };
+}
 
 // `providerEnv` redirects this CLI at an Anthropic-COMPATIBLE endpoint. Gateway-owned and applied
 // dead last — after the channel secrets, after HOME, after the login relay — and it clears the
@@ -51,10 +65,9 @@ function applyProviderEnv(env, providerEnv) {
   // credential only to that cloud's endpoint; neither an inherited Anthropic login nor a channel's
   // AWS profile, Google region pin or another route's switch may displace or redirect it. The
   // provider adapter adds back its reviewed pins after this cleanup.
-  const cloudRoute = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"].some((name) => providerEnv[name] === "1");
-  if (cloudRoute || providerEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+  if (isAtomicRoute(providerEnv)) {
     for (const name of Object.keys(env)) {
-      if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_|CLAUDE_CODE_SKIP_|CLOUD_ML_|VERTEX_REGION_|GOOGLE_APPLICATION_CREDENTIALS$|GOOGLE_CLOUD_PROJECT$|GCLOUD_PROJECT$)/.test(name)) delete env[name];
+      if (PROVIDER_ROUTE_NAMES.includes(name) || PROVIDER_ROUTE_PREFIXES.some((prefix) => name.startsWith(prefix))) delete env[name];
     }
   }
   for (const [name, value] of Object.entries(providerEnv)) {

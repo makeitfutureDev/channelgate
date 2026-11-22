@@ -243,9 +243,26 @@ session gets:
   is useless outside the container. `claude -r <session id>` resumes a native session stored in
   the shared channel history, including ordinary conversations created by the other role.
   Host `/sudo` history stays separate; it is never copied back into shared channel history.
+- **Unless the channel is set to another Claude license.** When the channel's own license (or,
+  for a channel that names none, the gateway default) is a Claude license an admin added — a
+  second Claude sign-in, a custom server, an Anthropic API key, a Bedrock/Vertex/Foundry route —
+  and the channel may use it, `claude` in a session is THAT license, as the channel's turns are:
+  it runs in the license's own directory (`~/.cg-licenses/<id>`), with the provider settings a
+  turn gets and the channel's placeholder as its credential. Nothing of that license is written
+  into the box — no login file, no key, no token — so `/status` shows a token from the
+  environment ("Claude API") rather than a plan, and Claude Code may ask once whether to use
+  the key it finds in the environment. Keys, endpoints and cloud settings your shell or secrets
+  carry are dropped first, exactly as for a turn on that license. A license with its own model
+  list starts on the channel's model when the license lists it, else its first; your own
+  `--model` wins. It needs the egress proxy (only the proxy can turn the placeholder into the
+  credential) and, for a sign-in, a signed-in license: when it cannot be placed `claude` prints
+  why and is signed out in that license's directory — the gateway's own login never stands in.
+  Every other channel — one on the gateway's Claude login, a Codex channel, a channel on a
+  shipped provider harness — keeps the gateway's own login above, unchanged.
 
 Codex over SSH uses the same selected license as a channel turn (above); the `ssh_session_start`
-event records it as `codexLicense`, with `codexProblem` when it is not signed in. "show SSH access" in the
+event records it as `codexLicense`, with `codexProblem` when it is not signed in — and Claude's as
+`claudeLicense` (`claude` for the gateway's own login), with `claudeProblem`. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.
@@ -365,7 +382,7 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
-| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-login.sh` (which license's directory `codex` runs in, and for an API/cloud license its provider settings and the channel's placeholder — never a key), `codex-args.sh` + `codex-secrets.json` (the capability only) |
+| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, `claude-login.sh` (only in a channel set to an added Claude license: that license's directory, provider settings and the channel's placeholder — never a key or a token), Codex's `codex-login.sh` (which license's directory `codex` runs in, and for an API/cloud license its provider settings and the channel's placeholder — never a key), `codex-args.sh` + `codex-secrets.json` (the capability only) |
 | `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the container's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 

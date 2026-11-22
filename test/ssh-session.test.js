@@ -65,7 +65,7 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   const t = target();
   const { execs, deps, resolveCalls } = fakes();
   const result = await session.prepareSshSession({ target: t, entry, meta: { allowedMcps: [] }, user, cliBin: "podman", log: { warn() {} } }, deps);
-  assert.deepEqual(result.claude, { relayed: true, source: "operator", reason: "", account: true });
+  assert.deepEqual(result.claude, { relayed: true, source: "operator", reason: "", account: true, license: "claude" });
   assert.equal(result.toolset, SSH_TOOLSET);
   assert.deepEqual(result.problems, []);
   assert.deepEqual(result.mcpServers.sort(), ["composio-agent", "composio-user", "gateway"]);
@@ -959,4 +959,251 @@ test("sshCodexLicense: the channel's selected Codex license, else its Codex sign
   // The channel-account sign-in exists only where the channel connected one.
   assert.equal(pick({ engine: "codex-channel" }), "codex");
   resetLicenses();
+});
+
+// ── `claude` on the channel's own Claude license (2026-11-22) ─────────────────────────────────
+// A channel set to an added Claude license — a second sign-in, a custom server, a cloud route —
+// got the gateway's own Claude login in its terminal: a different account, and a different bill,
+// than the channel's turns. Every other channel keeps the gateway's own login, unchanged.
+const { renderClaudeWrapper } = await import("../src/runtimes/container/vscode.js");
+const { claudeProviderEnvStrip } = await import("../src/engines/claude.js");
+const SSH_CLAUDE_KEY = "sk-fixture-ssh-claude-license-0005";
+const SSH_CLAUDE_ACCESS = "fixture-ssh-claude-seat-access-0006";
+const claudeApiLicense = (extra = {}) => engineLicenses.createLicense({ kind: "claude-api", label: "Team Claude server", type: "api", baseUrl: "https://llm.example.com/v1", apiKey: SSH_CLAUDE_KEY, authScheme: "bearer", models: ["team-large", "team-small"], ...extra });
+function signInClaudeLicense(id) {
+  mkdirSync(licenseLoginHome(id), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(licenseLoginHome(id), ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: SSH_CLAUDE_ACCESS, refreshToken: "fixture-claude-refresh", expiresAt: Date.now() + 6 * 3600_000, refreshTokenExpiresAt: Date.now() + 20 * 86400_000, subscriptionType: "pro" } }), { mode: 0o600 });
+}
+const CLAUDE_PROBE = ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_CODE_USE_BEDROCK", "AWS_REGION", "AWS_PROFILE", "AWS_BEARER_TOKEN_BEDROCK", "CG_SESSION_ENV"];
+// What the generated `claude` wrapper hands the CLI in this developer's session: the probed
+// environment and its argv, one per line. The nested-login file and the editor token are absent.
+function runClaude(t, { env = {}, args = [] } = {}) {
+  const fakeCli = path.join(scratch, "fake-claude-cli.sh");
+  writeFileSync(fakeCli, `#!/bin/sh\nfor n in ${CLAUDE_PROBE.join(" ")}; do eval "v=\\\${$n-<unset>}"; printf "%s=%s\\n" "$n" "$v"; done\nfor a in "$@"; do printf "arg=%s\\n" "$a"; done\n`, { mode: 0o700 });
+  const wrapper = path.join(scratch, `claude-wrapper-${t.slug}.sh`);
+  writeFileSync(wrapper, renderClaudeWrapper({ tokenFile: path.join(scratch, "absent-claude-token"), usersDir: session.sshUsersDir(t), loginEnvFile: path.join(scratch, "absent-login.env"), claudeBin: fakeCli }), { mode: 0o700 });
+  return spawnSync("sh", [wrapper, ...args], { encoding: "utf8", cwd: scratch, env: { PATH: process.env.PATH, HOME: scratch, CG_SSH_USER: user.id, ...env } });
+}
+// The gateway's own Claude login must not even be asked for when the session's license is another.
+const noOwnLogin = (deps) => ({ ...deps, installRelay: async () => { throw new Error("the gateway's own Claude login was resolved"); } });
+
+test("claude over SSH on an added API license: the license's server and the channel's placeholder, in the license's directory — never the key, never the gateway's login", async () => {
+  resetLicenses();
+  const api = claudeApiLicense();
+  const { entry: e } = await egressChannel("C_SSH_CLAUDE_API");
+  const { deps, execs } = egressDeps();
+  const { t, writes } = licenseSessionTarget("ssh-claude-license-api", e.channelId, { engine: api.id });
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, noOwnLogin(deps));
+  assert.deepEqual(result.claude, { relayed: true, source: api.id, reason: "", account: false, license: api.id });
+  assert.deepEqual(result.problems, []);
+
+  // No login file of any account: not the gateway's access-only file, nothing in the HOME volume.
+  const home = licenseContainerDir(api.id);
+  assert.ok(!execs.some((x) => String(x.args.at(-1)).includes(".credentials.json")), "no credentials file is written for a license that is not the gateway's own login");
+  assert.deepEqual(writes.map((spec) => spec.file).filter((file) => file.startsWith(home)), [], "and nothing is written into the license's directory in the HOME volume");
+  assert.ok(execs.some((x) => String(x.args.at(-1)).includes("/home/agent/.local/bin/claude")), "the wrapper is installed without a relay");
+  assert.ok(execs.some((x) => x.args.at(-1) === `${home}/.claude.json`), "first-run onboarding is seeded in the license's own directory");
+  assert.equal(existsSync(path.join(t.artifactDir, "vscode", "claude-token")), false, "no token file of the gateway's login is written");
+
+  const script = readFileSync(sessionFile(t, "claude-login.sh"), "utf8");
+  const placeholder = /ANTHROPIC_AUTH_TOKEN='(cgph_[A-Za-z0-9_-]+)'/.exec(script)?.[1];
+  assert.ok(placeholder, "the credential is the channel's placeholder");
+  for (const name of readdirSync(session.sshUserDir(t, user.id))) {
+    const body = readFileSync(sessionFile(t, name), "utf8");
+    assert.doesNotMatch(body, new RegExp(SSH_CLAUDE_KEY), `${name} holds no key`);
+    assert.doesNotMatch(body, new RegExp(relay.token), `${name} holds nothing of the gateway's own login`);
+  }
+  assert.doesNotMatch(readFileSync(sessionFile(t, "env"), "utf8"), /CLAUDE_CODE_OAUTH_TOKEN/);
+
+  // What the CLI is started with: a turn's flags, the license's directory, server and placeholder,
+  // and a model the server lists. Keys and logins the shell carried are not sent to that server;
+  // the session's other secrets still apply.
+  const run = runClaude(t, { env: { ANTHROPIC_API_KEY: "sk-developers-own", CLAUDE_CODE_OAUTH_TOKEN: "developers-own-sign-in", CLAUDE_CONFIG_DIR: "/home/agent/.claude" }, args: ["--version"] });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stderr, "");
+  const out = run.stdout;
+  assert.match(out, new RegExp(`^CLAUDE_CONFIG_DIR=${home}$`, "m"));
+  assert.match(out, /^ANTHROPIC_BASE_URL=https:\/\/llm\.example\.com\/v1$/m);
+  assert.match(out, new RegExp(`^ANTHROPIC_AUTH_TOKEN=${placeholder}$`, "m"));
+  assert.match(out, /^ANTHROPIC_API_KEY=<unset>$/m);
+  assert.match(out, /^CLAUDE_CODE_OAUTH_TOKEN=<unset>$/m);
+  assert.match(out, new RegExp(`^CG_SESSION_ENV=${sessionFile(t, "env")}$`, "m"), "the session's secrets are sourced as before");
+  assert.match(out, /^arg=--strict-mcp-config$/m);
+  assert.match(out, /^arg=--model\narg=team-large$/m);
+  assert.ok(out.indexOf("arg=team-large") < out.indexOf("arg=--version"), "the developer's own arguments come last and win");
+
+  // The channel's own model, when the license lists it, is the one a turn would use.
+  const small = licenseSessionTarget("ssh-claude-license-api-model", e.channelId, { engine: api.id, model: "team-small" });
+  await session.prepareSshSession({ target: small.t, entry: e, meta: small.t.meta, user, cliBin: "podman", log: { warn() {} } }, noOwnLogin(deps));
+  assert.match(runClaude(small.t).stdout, /^arg=--model\narg=team-small$/m);
+
+  // A session whose tools could not be prepared is still on the license — not on the gateway's login.
+  const broken = licenseSessionTarget("ssh-claude-license-api-broken", e.channelId, { engine: api.id });
+  const third = await session.prepareSshSession({ target: broken.t, entry: e, meta: broken.t.meta, user, cliBin: "podman", log: { warn() {} } },
+    { ...noOwnLogin(deps), buildLockdown: async () => { throw new Error("no lockdown"); } });
+  assert.match(third.problems[0], /^lockdown: /);
+  assert.equal(third.claude.license, api.id);
+  assert.deepEqual(readdirSync(session.sshUserDir(broken.t, user.id)).sort(), ["claude-login.sh", "codex-login.sh"]);
+  const plain = runClaude(broken.t, { args: ["--version"] }).stdout;
+  assert.match(plain, new RegExp(`^CLAUDE_CONFIG_DIR=${home}$`, "m"));
+  assert.match(plain, /^ANTHROPIC_AUTH_TOKEN=cgph_/m);
+  assert.doesNotMatch(plain, /arg=--settings/);
+  resetLicenses();
+});
+
+test("claude over SSH on an added Claude sign-in or a cloud route: that license's placeholder and nothing a developer's shell carried", async () => {
+  resetLicenses();
+  const seat = engineLicenses.createLicense({ kind: "claude-login", label: "Second Claude seat", type: "subscription" });
+  signInClaudeLicense(seat.id);
+  const { entry: e } = await egressChannel("C_SSH_CLAUDE_SEAT");
+  const { deps, execs } = egressDeps();
+  // The gateway default is the seat; the channel names no license of its own.
+  saveGatewaySettings({ engine: seat.id });
+  const { t } = licenseSessionTarget("ssh-claude-license-seat", e.channelId);
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, noOwnLogin(deps));
+  assert.deepEqual(result.claude, { relayed: true, source: seat.id, reason: "", account: false, license: seat.id });
+  const script = readFileSync(sessionFile(t, "claude-login.sh"), "utf8");
+  assert.doesNotMatch(script, new RegExp(`${SSH_CLAUDE_ACCESS}|fixture-claude-refresh`), "the seat's real token never reaches the session");
+  assert.ok(!execs.some((x) => String(x.input).includes(SSH_CLAUDE_ACCESS) || String(x.args.at(-1)).includes(".credentials.json")), "and no login file is written into the container");
+  const out = runClaude(t, { env: { ANTHROPIC_API_KEY: "sk-developers-own", ANTHROPIC_BASE_URL: "https://elsewhere.example.com", ANTHROPIC_MODEL: "elsewhere-model", AWS_PROFILE: "developer", CLAUDE_CODE_USE_BEDROCK: "1" } }).stdout;
+  assert.match(out, new RegExp(`^CLAUDE_CONFIG_DIR=${licenseContainerDir(seat.id)}$`, "m"));
+  assert.match(out, /^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-cgph_[A-Za-z0-9_-]+$/m, "the seat's placeholder, in the shape of a sign-in token");
+  for (const name of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "AWS_PROFILE", "CLAUDE_CODE_USE_BEDROCK"]) {
+    assert.match(out, new RegExp(`^${name}=<unset>$`, "m"), `${name} from the shell would send the seat's sign-in somewhere else`);
+  }
+  assert.doesNotMatch(out, /arg=--model/, "a sign-in keeps the CLI's own default model");
+  saveGatewaySettings({ engine: "claude" });
+
+  // A cloud route: the provider's own variables are replaced, not inherited.
+  const aws = engineLicenses.createLicense({ kind: "claude-aws", label: "Team Claude Bedrock", type: "api", region: "eu-central-1", apiKey: "bedrock-fixture-ssh-claude-0007" });
+  const cloud = licenseSessionTarget("ssh-claude-license-aws", e.channelId, { engine: aws.id });
+  const second = await session.prepareSshSession({ target: cloud.t, entry: e, meta: cloud.t.meta, user, cliBin: "podman", log: { warn() {} } }, noOwnLogin(deps));
+  assert.equal(second.claude.license, aws.id);
+  assert.equal(second.claude.relayed, true, second.claude.reason);
+  const routed = runClaude(cloud.t, { env: { AWS_PROFILE: "developer", AWS_REGION: "us-east-1", ANTHROPIC_BASE_URL: "https://elsewhere.example.com" } }).stdout;
+  assert.match(routed, /^CLAUDE_CODE_USE_BEDROCK=1$/m);
+  assert.match(routed, /^AWS_REGION=eu-central-1$/m);
+  assert.match(routed, /^AWS_BEARER_TOKEN_BEDROCK=cgph_[A-Za-z0-9_-]+$/m);
+  assert.match(routed, /^AWS_PROFILE=<unset>$/m, "the developer's AWS identity is not this license's");
+  assert.match(routed, /^ANTHROPIC_BASE_URL=<unset>$/m);
+  assert.doesNotMatch(readFileSync(sessionFile(cloud.t, "claude-login.sh"), "utf8"), /bedrock-fixture-ssh-claude-0007/);
+  resetLicenses();
+});
+
+test("claude over SSH on a license that cannot be placed: said plainly, signed out in its own directory — never the gateway's login, never a key", async () => {
+  resetLicenses();
+  const api = claudeApiLicense();
+  const seat = engineLicenses.createLicense({ kind: "claude-login", label: "Unsigned Claude seat", type: "subscription" }); // never signed in
+  const { entry: e } = await egressChannel("C_SSH_CLAUDE_OFF");
+  const { deps } = egressDeps();
+
+  // Without the egress proxy only the real key would work, so nothing is handed over.
+  const bridged = licenseSessionTarget("ssh-claude-license-bridge", e.channelId, { engine: api.id });
+  bridged.t.container = { ...bridged.t.container, egress: null };
+  const warned = [];
+  const first = await session.prepareSshSession({ target: bridged.t, entry: e, meta: bridged.t.meta, user, cliBin: "podman", log: { warn: (line) => warned.push(line) } }, noOwnLogin(deps));
+  assert.equal(first.claude.relayed, false);
+  assert.equal(first.claude.license, api.id);
+  assert.match(first.claude.reason, /Team Claude server cannot run: Team Claude server requires the egress proxy.* — claude in this session is not signed in$/);
+  assert.ok(warned.some((line) => line.includes("Team Claude server cannot run")));
+  const told = runClaude(bridged.t, { env: { ANTHROPIC_API_KEY: "sk-developers-own" } });
+  assert.match(told.stderr, /^claude: Team Claude server cannot run: /);
+  assert.match(told.stdout, new RegExp(`^CLAUDE_CONFIG_DIR=${licenseContainerDir(api.id)}$`, "m"));
+  for (const name of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"]) {
+    assert.match(told.stdout, new RegExp(`^${name}=<unset>$`, "m"), `${name}: signed out there, not on anything else`);
+  }
+  assert.doesNotMatch(told.stdout, /arg=--model/);
+  for (const name of readdirSync(session.sshUserDir(bridged.t, user.id))) {
+    assert.doesNotMatch(readFileSync(sessionFile(bridged.t, name), "utf8"), new RegExp(`${SSH_CLAUDE_KEY}|${relay.token}`), `${name} holds no key and no login`);
+  }
+
+  // A sign-in license nobody signed in: the same answer, with the remedy.
+  const unsigned = licenseSessionTarget("ssh-claude-license-unsigned", e.channelId, { engine: seat.id });
+  const second = await session.prepareSshSession({ target: unsigned.t, entry: e, meta: unsigned.t.meta, user, cliBin: "podman", log: { warn() {} } }, noOwnLogin(deps));
+  assert.equal(second.claude.relayed, false);
+  assert.match(second.claude.reason, /Unsigned Claude seat cannot run: Not signed in/);
+  const signedOut = runClaude(unsigned.t);
+  assert.match(signedOut.stderr, /^claude: Unsigned Claude seat cannot run: Not signed in/);
+  assert.match(signedOut.stdout, new RegExp(`^CLAUDE_CONFIG_DIR=${licenseContainerDir(seat.id)}$`, "m"));
+  assert.match(signedOut.stdout, /^CLAUDE_CODE_OAUTH_TOKEN=<unset>$/m);
+  // Codex in the same session is unaffected.
+  assert.equal(second.codex.license, "codex");
+  resetLicenses();
+});
+
+test("claude over SSH stays the gateway's own login everywhere else, and a channel moved back to it loses the license file", async () => {
+  resetLicenses();
+  const api = claudeApiLicense();
+  const { entry: e } = await egressChannel("C_SSH_CLAUDE_SAME");
+  const { deps, execs } = egressDeps();
+
+  // On the license first…
+  const { t } = licenseSessionTarget("ssh-claude-license-back", e.channelId, { engine: api.id });
+  await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(existsSync(sessionFile(t, "claude-login.sh")), true);
+  // …then the channel is set back to Claude and the session refreshed (same target, new record).
+  execs.length = 0;
+  const back = await session.prepareSshSession({ target: { ...t, meta: { channelId: e.channelId, engine: "claude" } }, entry: e, meta: { channelId: e.channelId, engine: "claude" }, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.deepEqual(back.claude, { relayed: true, source: "", reason: "", account: true, license: "claude" });
+  assert.equal(existsSync(sessionFile(t, "claude-login.sh")), false, "the license's file is gone");
+  assert.ok(execs.some((x) => String(x.args.at(-1)).includes(".credentials.json")), "the gateway's access-only login file is written, as before");
+  const out = runClaude(t, { args: ["--version"] }).stdout;
+  assert.match(out, /^CLAUDE_CONFIG_DIR=\/home\/agent\/\.claude$/m);
+  assert.match(out, /^ANTHROPIC_AUTH_TOKEN=<unset>$/m);
+  assert.doesNotMatch(out, /arg=--model/);
+
+  // A Codex channel, and a channel that may not use the license it names: the gateway's own login.
+  for (const meta of [{ engine: "codex" }, { engine: api.id, approvedEngines: ["claude"] }, {}]) {
+    const other = licenseSessionTarget(`ssh-claude-license-same-${Object.keys(meta).length}${meta.engine === "codex" ? "c" : ""}`, e.channelId, meta);
+    const result = await session.prepareSshSession({ target: other.t, entry: e, meta: other.t.meta, user, cliBin: "podman", log: { warn() {} } }, deps);
+    assert.equal(result.claude.license, "claude");
+    assert.equal(result.claude.account, true);
+    assert.equal(existsSync(sessionFile(other.t, "claude-login.sh")), false);
+  }
+  resetLicenses();
+});
+
+test("sshClaudeLicense: an added Claude license only when the channel is set to it and may use it; the gateway's own login otherwise", () => {
+  resetLicenses();
+  const api = claudeApiLicense();
+  const seat = engineLicenses.createLicense({ kind: "claude-login", label: "Seat", type: "subscription" });
+  const codexSeat = engineLicenses.createLicense({ kind: "codex-login", label: "Codex seat" });
+  const pick = (meta, gatewayEngine = "claude") => session.sshClaudeLicense(meta, { gatewayEngine });
+  assert.equal(pick({}), "claude");
+  assert.equal(pick({ engine: "claude" }, api.id), "claude", "the channel's own choice beats the gateway default");
+  assert.equal(pick({ engine: api.id }), api.id);
+  assert.equal(pick({ engine: seat.id }), seat.id);
+  assert.equal(pick({}, seat.id), seat.id, "the gateway default license, for a channel that names none");
+  assert.equal(pick({ engine: api.id, approvedEngines: [api.id] }), api.id);
+  assert.equal(pick({ engine: api.id, approvedEngines: ["claude"] }), "claude", "a license the channel may not use is never the session's");
+  assert.equal(pick({ engine: "codex" }, api.id), "claude", "a Codex channel: `claude` there is the tool every container carries");
+  assert.equal(pick({ engine: codexSeat.id }), "claude");
+  assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), api.id] }), "claude", "a license the channel could move to is not the one it is set to");
+  // A license switched off is not usable, whatever a stored record names.
+  saveGatewaySettings({ engineEnabled: { claude: true, codex: true, [api.id]: false } });
+  assert.equal(pick({ engine: api.id }), "claude");
+  resetLicenses();
+});
+
+test("the terminal drops exactly the names a turn on the same license drops", () => {
+  // A server reached with a key: only the four names that authenticate or redirect the CLI.
+  const keyed = claudeProviderEnvStrip({ ANTHROPIC_BASE_URL: "https://llm.example.com/v1", ANTHROPIC_AUTH_TOKEN: "x" });
+  assert.deepEqual([...keyed.names].sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"]);
+  assert.deepEqual(keyed.prefixes, []);
+  // A cloud route, a sign-in, and a license that could not be placed at all: every routing name.
+  for (const env of [{ CLAUDE_CODE_USE_BEDROCK: "1" }, { CLAUDE_CODE_USE_VERTEX: "1" }, { CLAUDE_CODE_USE_FOUNDRY: "1" }, { CLAUDE_CODE_OAUTH_TOKEN: "x" }, null]) {
+    const strip = claudeProviderEnvStrip(env);
+    assert.ok(["ANTHROPIC_", "AWS_", "CLAUDE_CODE_USE_", "CLOUD_ML_"].every((prefix) => strip.prefixes.includes(prefix)), JSON.stringify(env));
+    assert.ok(strip.names.includes("GOOGLE_APPLICATION_CREDENTIALS") && strip.names.includes("ANTHROPIC_API_KEY"));
+  }
+  // The script that applies them: quoting survives, an invalid name is never emitted, and the
+  // license's directory wins over one the environment named.
+  const script = session.renderClaudeLoginScript({ home: "/home/agent/.cg-licenses/x", env: { ANTHROPIC_BASE_URL: "https://it's.example.com", CLAUDE_CONFIG_DIR: "/elsewhere", "BAD NAME": "x", EMPTY: "" }, unset: ["ANTHROPIC_API_KEY", "bad;name"], unsetPrefixes: ["AWS_", "x y"], model: "it's", notice: "" });
+  const file = path.join(scratch, "claude-login-render.sh");
+  writeFileSync(file, script);
+  const probe = execFileSync("sh", ["-c", `. '${file}'; printf '%s|%s|%s|%s|%s\\n' "$ANTHROPIC_BASE_URL" "$CLAUDE_CONFIG_DIR" "\${ANTHROPIC_API_KEY-<unset>}" "\${AWS_PROFILE-<unset>}" "$*"`], {
+    encoding: "utf8", env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: "k", AWS_PROFILE: "p" },
+  });
+  assert.equal(probe, "https://it's.example.com|/home/agent/.cg-licenses/x|<unset>|<unset>|--model it's\n");
+  assert.doesNotMatch(script, /BAD NAME|bad;name|x y|EMPTY/);
 });

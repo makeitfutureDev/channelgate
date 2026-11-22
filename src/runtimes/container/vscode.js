@@ -55,7 +55,9 @@ function run(bin, args, { input = "", env = process.env, stdio = null } = {}) {
 //  • an SSH session (CG_SSH_USER set by sshd from the developer's key line, and that developer's
 //    prepared files present under `usersDir`): the developer's channel secrets are sourced, and
 //    Claude starts exactly like a chat turn — the channel lockdown, the per-session MCP payload
-//    and nothing else (gateway/ssh-session.js). The login is the access-only credentials file the
+//    and nothing else (gateway/ssh-session.js). In a channel set to an added Claude license the
+//    developer's claude-login.sh is sourced after the secrets: that license's directory and its
+//    placeholder, or the reason it could not be placed. Otherwise the login is the access-only credentials file the
 //    gateway wrote, so no token rides the environment and Claude shows the account itself.
 //  • an editor attach or any other shell: the relayed login from the token file — the channel's
 //    relay PLACEHOLDER when the egress proxy is the container's network (container-secrets P3),
@@ -71,8 +73,16 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
     `d=${quote(usersDir)}/"\${CG_SSH_USER:-}"`,
     'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/env" ] && [ -r "$d/mcp.json" ] && [ -r "$d/settings.json" ]; then',
     '  set -a; . "$d/env"; set +a',
+    // After the secrets, so another license never inherits a key or an endpoint from them.
+    '  if [ -r "$d/claude-login.sh" ]; then . "$d/claude-login.sh"; fi',
     '  note=""; [ -r "$d/session.md" ] && note="$d/session.md"',
     `  exec ${binary} --setting-sources "" --settings "$d/settings.json" --mcp-config "$d/mcp.json" --strict-mcp-config \${note:+--append-system-prompt-file "$note"} "$@"`,
+    "fi",
+    // A session whose tools were not prepared is still on the channel's license — or signed out
+    // with the reason — never on the gateway's own login below.
+    'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/claude-login.sh" ]; then',
+    '  . "$d/claude-login.sh"',
+    `  exec ${binary} "$@"`,
     "fi",
   ] : [];
   return [
@@ -192,6 +202,14 @@ export async function installVscodeClaudeRelay(target, cliBin, {
   try { await runCommand(cliBin, ["exec", target.container.name, "node", "-e", CLAUDE_ONBOARDING_SEED, CLAUDE_ONBOARDING_FILE]); }
   catch { /* never block an attach on Claude's first-run flag */ }
   return { source: relay.source, expiresAt: relay.expiresAt, tokenFile, relay };
+}
+
+// The wrapper alone, for an SSH session whose `claude` is NOT the gateway's own login (a channel
+// set to an added Claude license — gateway/ssh-session.js sshClaudeLicense): no token is resolved
+// and none is written; the session's claude-login.sh carries that license's placeholder instead.
+export async function installSshClaudeWrapper(target, cliBin, { runCommand = run, usersDir = sshUsersDirOf(target) } = {}) {
+  const wrapper = renderClaudeWrapper({ tokenFile: path.join(target.artifactDir, VSCODE_AUTH_DIR, "claude-token"), usersDir });
+  await runCommand(cliBin, ["exec", "-i", target.container.name, "sh", "-c", "umask 077; mkdir -p /home/agent/.local/bin; cat > /home/agent/.local/bin/claude; chmod 700 /home/agent/.local/bin/claude"], { input: wrapper });
 }
 
 export function clearVscodeClaudeRelay(target) {

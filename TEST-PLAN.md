@@ -1,5 +1,60 @@
 # ChannelGate — Test Plan
 
+## `claude` in an SSH session runs on the channel's own Claude license (2026-11-22)
+
+- [x] `test/ssh-session.test.js` "claude over SSH on an added API license: …" (always runs): a
+      channel set to a custom-server Claude license, with the gateway's own login made to throw if
+      resolved → `claude.license` is that license; no `.credentials.json` and no editor token file
+      is written, onboarding is seeded in the license's directory; `claude-login.sh` and every
+      session file hold a `cgph_…` placeholder and neither the key nor the gateway's token; the
+      generated wrapper starts the CLI with a turn's flags, the license's `CLAUDE_CONFIG_DIR`,
+      `ANTHROPIC_BASE_URL` and placeholder, `--model` = the first listed model before the
+      developer's arguments, and with an inherited `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`
+      / `CLAUDE_CONFIG_DIR` gone; the channel's model is used when the license lists it; with the
+      lockdown failing only `claude-login.sh` and `codex-login.sh` remain and the plain CLI still
+      runs on the license.
+- [x] "… on an added Claude sign-in or a cloud route …" (always runs): the gateway default is a
+      signed-in seat and the channel names none → `CLAUDE_CODE_OAUTH_TOKEN` is
+      `sk-ant-oat01-cgph_…`, the seat's access and refresh tokens are in no file and no exec, an
+      inherited key, endpoint, model, AWS profile and Bedrock switch are unset, no `--model`; a
+      Bedrock license → `CLAUDE_CODE_USE_BEDROCK=1`, the license's region, a placeholder bearer,
+      the developer's `AWS_PROFILE` and `ANTHROPIC_BASE_URL` unset.
+- [x] "… a license that cannot be placed …" (always runs): no egress proxy → `relayed:false`,
+      "requires the egress proxy … — claude in this session is not signed in", logged; the wrapper
+      prints `claude: Team Claude server cannot run: …` and runs in the license's directory with
+      no credential variable at all; an unsigned seat → "Not signed in" the same way; Codex in the
+      session is unaffected.
+- [x] "… stays the gateway's own login everywhere else …" (always runs): the channel set back to
+      `claude` and refreshed → `claude-login.sh` removed, the access-only login file written,
+      `CLAUDE_CONFIG_DIR=/home/agent/.claude`; a Codex channel, a channel that may not use the
+      license it names and a channel that names none → the gateway's own login, no file.
+- [x] "sshClaudeLicense: …" and "the terminal drops exactly the names a turn on the same license
+      drops" (always run): the selection rule, a switched-off license, and
+      `claudeProviderEnvStrip` / `renderClaudeLoginScript` (quoting, invalid names never emitted,
+      the license's directory over an inherited one). `test/nested-claude-login.test.js` and
+      `test/vscode-container.test.js` run unchanged against the extended wrapper.
+- [ ] Live `LICENSE-40` an added Claude license in a terminal (Claude only: the session's
+      `claude`). Fixture: SSH access set up (`docs/SSH-ACCESS.md`) with the QA admin's key granted
+      on `cg-testing-claude-auto`; one added Claude license `QA Claude API` (an Anthropic API key,
+      or the QA custom server) with a valid key, switched on; the egress proxy mode. Actions:
+      (1) as the QA admin set the channel's license to `QA Claude API` with `/model`; send
+      `Reply with the word alpha.` and note the footer's license. (2) Open an SSH session in the
+      channel and run `claude -p "Reply with the word beta."` — pass: it answers `beta` without
+      asking to sign in. (3) In the same shell run
+      `env | grep -c -e ANTHROPIC_ -e CLAUDE_CODE_OAUTH_TOKEN` — pass: `0` (the shell itself
+      carries none). The `d=` line of `$(command -v claude)` names the session directory; read
+      `<that directory>/$CG_SSH_USER/claude-login.sh` — pass: the only credential-shaped value is
+      a `cgph_…` placeholder, `grep -r` for the key's last four characters (shown in Settings →
+      Engines) over that directory finds nothing, `ls ~/.cg-licenses/*/.credentials.json` finds
+      nothing, and the provider's usage page shows the request under the `QA Claude API` key.
+      (4) Start `claude` interactively and run `/status` — record what it shows (expected: a
+      token from the environment, no plan; an "use this API key?" question at most once).
+      (5) Switch the channel back to the default Claude sign-in, reconnect, run `claude` and
+      `/status` — pass: the gateway's account and plan, and no `claude-login.sh` in the session
+      directory. (6) Operator only, on a scratch gateway in the legacy bridge mode: reconnect with
+      the channel on `QA Claude API` — pass: `claude` prints
+      `claude: QA Claude API cannot run: … requires the egress proxy …` and asks to sign in.
+
 ## `codex` in an SSH session runs on an API or cloud license (2026-11-22)
 
 - [x] `test/ssh-session.test.js` "Codex over SSH on an API license: the license's routing and the
@@ -22,6 +77,10 @@
       without an approved list; the gateway default applies to a channel that names none; a Claude
       channel prefers a sign-in and falls to an API license only when it is the one Codex license
       it may use. The earlier sign-in cases run unchanged except the two that expected a refusal.
+- [x] `test/engine-licenses.test.js` "the engine manifest is data for every kind of license,
+      whatever methods its adapter carries" (always runs; added after this change broke it): one
+      license of each kind, API and cloud Codex licenses included → `engineUiManifest()` lists
+      them all, serializes, and carries no adapter method (`terminalRouting`, `terminalAccess`).
 - [ ] Live `LICENSE-39` an API license in a terminal (Codex only: the session's `codex`). Fixture:
       SSH access set up (`docs/SSH-ACCESS.md`) with the QA admin's key granted on
       `cg-testing-codex-auto`; one added Codex API license `QA API` on `api.openai.com` (or the QA

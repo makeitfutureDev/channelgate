@@ -247,6 +247,23 @@ function claudeLoginLicense(claude, record) {
       }, access.secrets, ctx.runtime);
     },
     claudeRunAccess,
+    // An interactive `claude` on this license in a channel's container — an SSH session
+    // (gateway/ssh-session.js). → { configDir, env } — the environment a turn gets, whose sign-in
+    // is the channel's PLACEHOLDER for this license — or { problem }. Never a live token: a
+    // target the placeholder cannot serve is a problem, not a reason to hand a terminal the login.
+    async terminalAccess(resolved) {
+      if (!isIsolatedTarget(resolved)) return { problem: `${record.label} runs in a terminal only inside a channel container` };
+      const { target, configDir: runDir } = claudeLicenseTargetFor(resolved, id);
+      const current = status();
+      if (!current.ready) return { problem: `${record.label} cannot run: ${current.detail}` };
+      const { containerExtraClaudeCredential } = await import("../gateway/egress/grants.js");
+      const relay = await resolveExtraClaudeToken({ configDir: configDir() });
+      const credential = containerExtraClaudeCredential({ target, relay, secretName: licenseRelaySecretName(id), label: record.label });
+      if (credential.placeholder !== true || !credential.token) {
+        return { problem: `${record.label} cannot run: ${credential.error || "its sign-in can only be relayed by the egress proxy"}` };
+      }
+      return { configDir: runDir, env: { CLAUDE_CODE_OAUTH_TOKEN: credential.token, CLAUDE_CONFIG_DIR: runDir }, model: "" };
+    },
     interrupt: () => false,
     credentialState: () => {
       const auth = extraClaudeCredentialState({ configDir: configDir() });
@@ -429,6 +446,30 @@ function claudeProviderLicense(claude, record) {
     modelListClosed: Boolean(own.length) || !vendor,
     sessionState: sessionDirs(base, id),
     ...providerAdapterFacts(record, status, "claude"),
+    // An interactive `claude` on this license in a channel's container — an SSH session
+    // (gateway/ssh-session.js). → { configDir, env, model } — the provider environment a turn
+    // gets, with the channel's PLACEHOLDER for this license, which the egress proxy swaps on the
+    // license's own hosts while the channel has live work — or { problem }. Never the key.
+    // `model` is the channel's, when this license serves it; a license whose list is its whole
+    // catalog otherwise starts on its first listed model, as its turn does.
+    async terminalAccess(resolved, { model: asked = "" } = {}) {
+      const current = status();
+      if (!current.ready) return { problem: `${record.label} cannot run: ${current.detail}` };
+      if (!isIsolatedTarget(resolved)) return { problem: `${record.label} runs in a terminal only inside a channel container` };
+      const { target, configDir } = claudeLicenseTargetFor(resolved, id);
+      const grants = await import("../gateway/egress/grants.js");
+      const credential = grants.containerLicenseApiCredential({ target, record });
+      if (credential.placeholder !== true || !credential.token) {
+        return { problem: `${record.label} cannot run: ${credential.error || "its credential can only be relayed by the egress proxy"}` };
+      }
+      // As before a turn: a service-account key Google refuses is named now, not as a 401 later.
+      if (LICENSE_KINDS[record.kind].credential === "service-account") {
+        const live = await grants.licenseCredentialValue(record);
+        if (!live.value) return { problem: `${record.label} cannot run: ${live.error || "its credential could not be resolved"}` };
+      }
+      const model = String(asked || "") || own[0]?.value || "";
+      return { configDir, env: claudeProviderEnv(record, credential.token, configDir, model), model };
+    },
     async run(ctx) {
       requirePluginRuntime(ctx.runtime.pluginRuntime, id);
       const { target, configDir } = claudeLicenseTarget(ctx, id);
