@@ -30,7 +30,7 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | Slack feature | Google Chat gap | Next slice |
 | --- | --- | --- |
 | Thread hydration on a fresh session | Slack's run starts with the thread in context; Chat relies on the agent calling `conversation_history` | Prepend the current thread (bounded) on a fresh session when the scope is approved |
-| Busy-thread Steer / Queue / Cancel choice | Chat queues and offers `/stop`; no explicit steer | Reuse the shared queue-choice work being built for Teams once it lands |
+| Busy-thread Steer / Queue / Cancel choice | Chat queues and offers `/stop`; no explicit steer | Port the Teams busy-message Steer / Cancel card (`platforms/msteams/queue-controls.js`) to Cards v2 |
 | Re-download a historical file | History names earlier files but cannot fetch them | `media.download` by the attachment's resource name, scoped to this space, into the confined sink |
 | Edited-message trigger | An edited message that adds a mention is not re-read | Handle `MESSAGE_UPDATED` with duplicate suppression |
 | Background job status button | Results post back; no status control | Card button or `/status` listing for the conversation's jobs |
