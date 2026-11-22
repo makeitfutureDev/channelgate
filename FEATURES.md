@@ -114,6 +114,62 @@ selected or billed changed.
 - Not changed, and still an open product decision: the shipped provider entries beyond the two
   harness defaults and the Bedrock / Vertex / Azure license kinds remain as they were.
 
+## Google Chat: agent directory and agent mail (2026-11-22)
+
+Two Slack-only rows of `docs/GOOGLE-CHAT-PARITY.md` closed: Google Chat spaces join the agent
+directory, and agent mail (`send_agent_message`, `continue_agent_conversation`, the typed
+`ask #space …` directive) runs between two Google Chat spaces.
+
+- **Directory provider.** `src/platforms/googlechat/agent-directory.js` is Google Chat's half of the
+  connector's `agentDirectory` seam (`capabilities.agentDirectory: true`). `describeConversation`
+  reads `spaces.get`: a space is `channel` only when its access state is `DISCOVERABLE`, otherwise
+  (including a response without access settings) `group`, i.e. private; group chats are `mpim`, DMs
+  `im`, an unknown kind or a response for another space is `null`; the purpose is the space
+  description, the topic its guidelines, the link `spaceUri` (https only), and
+  `externalUserAllowed` makes it `shared`. `conversationMembers` reads the COMPLETE
+  `spaces.members.list` roster (new `listMemberships`: `showGroups=true`, up to 10 pages of 1,000,
+  `null` when truncated or a page token repeats): joined human members only, a Google Group member
+  makes the roster unprovable (`null`), and each `users/NNN` maps to the one gateway user whose
+  record carries it (`googleChatUserName`, recorded on every message) — ambiguous or unknown stay
+  `users/NNN`, never a guess. The app itself is listed as `users/app` (the API omits app
+  memberships), so a DM with the app reads as two members like a Slack IM.
+- **Directory behaviour.** The shared audience rules apply unchanged: from a Chat space
+  `search_agents` lists eligible Google Chat spaces only (never DMs, group chats, or another
+  platform's channels — the verifier refuses a different platform), with the space link and
+  description; nightly reconciliation now refreshes Chat space metadata too.
+- **Agent mail on Google Chat.** `src/gateway/agent-mail.js` keeps Slack's path for a natively
+  streaming surface (read as `capabilities.nativeStreaming`, never a platform id) and runs every
+  other surface the way its ingest runs a turn: the opener is Markdown through the platform
+  formatter (`💬 **#Marketing agent** (for Ana Pop): …`, mention and broadcast markup defanged, no
+  directory so the model's text pings nobody), posted top-level so it opens a new Chat thread whose
+  thread name becomes the target session; each hop shows the ingest's working placeholder with its
+  heartbeat (`createConversationProgress`) and ends with the persona-labeled answer edited into it
+  (`src/platforms/answer-delivery.js`, the reply path ingest already used, now shared); the other
+  agent's words and continuations are posted through the connector with the same Markdown persona;
+  notices and failures land in the right thread through the connector's own thread scoping. Each
+  hop holds the thread's OWN ingest session lane (`connector.conversationLanes`, wired in
+  `src/platforms/boot.js`), so a person writing in that thread queues behind it and the requester's
+  (or an admin's) `/stop` there stops it ("stopped in its thread" in both threads; the working
+  message is edited to "This turn ended without an answer"). Chat runs carry no Slack workspace id
+  and no progress-report card; the continuation names the requester by name, not `<@…>`.
+- **Where it can start.** A thread in a Google Chat space, or a one-to-one DM with the app (its
+  session is the DM, and the reply lands at top level there); a flat group chat session has no
+  reply address and is refused (`replyAddressable`).
+- **One platform only.** Both conversations must be on the same platform, because a person's
+  identity differs per platform and membership could not be proven on the other side: a named
+  target on another platform is refused with `cross_platform`, a platform without the directory
+  capability (Teams today) with `unsupported`. A target name resolves among the source platform's
+  conversations first, so a same-named Slack channel neither shadows nor ambiguates a Chat space.
+  Teams plugs in by declaring `agentDirectory` with a provider and exposing its ingest lanes.
+- **The confirmation card** is the existing durable control-plane card, delivered as Google Chat
+  Cards v2 in the asking thread by `src/platforms/approval-delivery.js`; nothing is sent before the
+  click. The typed directive `@app ask #sales-team <text>` (a name with spaces quoted:
+  `ask #"Sales Team" …`, also `#“…”`) is handled in `src/platforms/ingest.js` for any surface with
+  the capability: no card, no engine turn, the confirmation or the named refusal in the thread.
+- Guide: Google Chat overlays for `references/agent-directory.md` and `references/agent-mail.md`
+  describe spaces, quoting, the one-platform rule, DMs vs group chats and the Google Group limit.
+  → TEST-PLAN: Google Chat agent directory and agent mail.
+
 ## Google Chat: earlier files and thread context on a fresh session (2026-11-22)
 
 Two Google Chat parity gaps with Slack closed (`docs/GOOGLE-CHAT-PARITY.md`).
@@ -2841,7 +2897,8 @@ Task progress remain visible; older agent streams without optional task-type met
   archived and Lean agents are excluded. Private destinations cannot appear in public/shared
   sources; other results require the whole current source roster to belong to the destination.
   A one-to-one bot DM uses its requester's access. Admin status never substitutes for membership.
-  Slack supplies the membership interface; unsupported/disconnected platforms fail closed.
+  Slack and Google Chat supply the membership interface (a source and its results are always on
+  the same platform); unsupported/disconnected platforms fail closed.
 
 ## Channel-to-channel agent mail
 
@@ -2874,7 +2931,8 @@ Task progress remain visible; older agent streams without optional task-type met
   (admins do not skip membership). Nothing else gates it — every registered channel's agent
   answers, a channel hidden from the directory still answers when named, and the other readers of
   the asking thread are the requester's responsibility, as for anything they paste. The check reads
-  live Slack rosters through the agent directory's membership interface and fails closed when it
+  live Slack or Google Chat rosters through the agent directory's membership interface (both
+  conversations on the same platform) and fails closed when it
   cannot read them; it runs when the tool is called, right before the target turn spawns, and
   before the reply is re-injected, and a lapsed check withholds the reply and says so. Targets must
   be live channels (not DMs, not disabled or archived).

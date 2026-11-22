@@ -30,13 +30,15 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | Thread hydration on a fresh session | A reply that starts a thread's first session gets the last 20 earlier public messages (each shortened, 8,000 characters total, untrusted framing) when the app scope is approved; a refusal, failure or 5 s timeout leaves the turn unchanged | `platforms/thread-hydration.js`, `platforms/ingest.js` |
 | Activity dashboard | Listed with completion saved in Activity | `web/activity.js` |
 | Composio SDK identities (Enterprise) | An author is `googlechat:<project>:user:users/<id>` (the immutable account resource the transport records, never the e-mail) and a space `googlechat:<project>:channel:spaces/<id>`, the project being the service-account key's `project_id`; both identities in spaces, only the author's in DMs, none for an author whose `users/<id>` is not yet recorded; inventory, admin pages and Activity connections use the same identity | `ee/composio-sessions.js`, `gateway/composio-workspace.js`, `gateway/run-integrations.js` |
+| Agent directory | `search_agents` lists Google Chat spaces (never DMs or group chats, never another platform's channels) from `spaces.get` metadata and the complete `spaces.members.list` roster; `users/NNN` maps to the recorded gateway user; a Google Group member or a truncated roster fails closed | `platforms/googlechat/agent-directory.js`, `gateway/agent-directory.js` |
+| Agent mail (`send_agent_message`, `continue_agent_conversation`, `ask #space …`) | Chat ↔ Chat only (a person's identity differs per platform, so cross-platform targets are refused); Cards v2 confirmation in the asking thread; the opener opens a new thread in the target space; each hop runs in that thread's ingest lane with the working-message heartbeat; `/stop` there stops it; sends from a space thread or the DM with the app | `gateway/agent-mail.js`, `platforms/answer-delivery.js`, `platforms/ingest.js` |
 
 ## Remaining gaps
 
 | Slack feature | Google Chat gap | Next slice |
 | --- | --- | --- |
 | Tables and headings | Degraded although Google now documents both for Markdown mode | Flip `markdownTables` / `markdownHeadings` after the live probe below shows they render |
-| Agent directory, agent mail, thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |
+| Thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |
 | Dialogs | Unavailable in the Pub/Sub connection mode | Requires the HTTP endpoint mode for every interaction |
 
 ## Platform boundaries

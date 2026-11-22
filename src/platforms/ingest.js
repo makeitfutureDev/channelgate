@@ -1,6 +1,5 @@
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { recordPlatformThreadMessage, recordPlatformThreadOutcome } from "../gateway/platform-threads.js";
-import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { autoApproveUser } from "../gateway/user-auto-approval.js";
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
 // Text controls, per-session serialization and conservative progress edits use the same gateway
@@ -17,7 +16,7 @@ export { createConversationProgress } from "./conversation-progress.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { logEvent } from "../util/logger.js";
 import { platformOr, platformSupports } from "./registry.js";
-import { postFormatted } from "./connector.js";
+import { deliverConversationAnswer as deliver } from "./answer-delivery.js";
 import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js";
 import { saveInboundAttachments } from "./attachments.js";
 import path from "node:path";
@@ -25,6 +24,7 @@ import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 import { acknowledgeReaction } from "./reaction-controls.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 import { hydrateFreshThread, threadContextFetcher } from "./thread-hydration.js";
+import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -189,6 +189,27 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
     if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
+    // Ask directive: "@app ask #space <message>" hands the exact text to THAT conversation's agent
+    // (gateway/agent-mail.js), as Slack's typed form does — on a surface that can prove membership
+    // of both conversations. The person typed it, so there is no approval card; the daemon re-checks
+    // their live access, and the reply comes back into this session as a new turn.
+    if (!message.attachments.length && message.trigger !== "reaction" && platformSupports(adapter.id, "agentDirectory")) {
+      const ask = parseAskDirective(message.text);
+      if (ask) {
+        const mail = activeAgentMail();
+        if (!mail) { await reply("Agent messaging is not available on this gateway right now."); return { command: true }; }
+        if (!ask.message) { await reply("Use `ask #space <your question or request>` (quote a name with spaces: `ask #\"Sales Team\" …`)."); return { command: true }; }
+        try {
+          const sent = await mail.send({ channelId: message.conversationId, slug: entry.slug, createdBy: message.userId, threadKey: sessionKey, to: ask.to, message: ask.message, origin: `${adapter.id}_foreground` });
+          await reply(`💬 Asked the ${sent.to?.name || sent.to?.slug || ask.to} agent — its replies land here.`);
+        } catch (error) {
+          if (!(error instanceof AgentMailError)) throw error;
+          await logEvent("agent_message_refused", { channel: message.conversationId, author: message.userId, slug: entry.slug, to: ask.to, reason: error.message, directive: true, platform: adapter.id }).catch(() => {});
+          await reply(`🚫 Not sent: ${error.message}`);
+        }
+        return { command: true };
+      }
+    }
     // The surface's durable intake remembers the visible working message, so a restart can replace
     // it with the interruption notice instead of leaving it spinning.
     const noteWorking = (placeholder) => { try { onWorking?.(placeholder); } catch (error) { log.warn?.(`[${adapter.id}] working message not recorded: ${error?.message || error}`); } };
@@ -315,61 +336,4 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     return { result };
     } });
   };
-}
-
-// One answer, formatted for the surface, replacing the placeholder where the surface allows it.
-// A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
-// are posted after it, so the "Working on it…" line never survives next to the real answer.
-async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "", menu = null, { resolveNames = true } = {}) {
-  const adapter = platformOr(connector.platform);
-  const directory = resolveNames ? await connector.directory?.(message.rawConversationId).catch(() => null) : null;
-  const formatted = adapter.formatOutbound(text, {
-    directory, capabilities: adapter.capabilities,
-    // A completed foreground reply addresses its authenticated requester. Notices and DMs do
-    // not add a notification tag; the surface formatter owns the native mention representation.
-    requester: footer && !message.isDM && message.userId && userReplyMentionsEnabled(await getUser(message.userId))
-      ? { id: message.userId, name: message.userName || message.userId } : null,
-  });
-  const chunks = formatted.chunks.length ? formatted.chunks : [{ text, mentions: [] }];
-
-  if (placeholder?.messageId && adapter.capabilities.messageEdit) {
-    try {
-      await connector.edit({
-        conversationId: placeholder.conversationId || message.rawConversationId,
-        messageId: placeholder.messageId,
-        text: chunks[0].text,
-        mentions: chunks[0].mentions || [],
-        ...(chunks.length === 1 && footer ? { footer } : {}),
-        ...(chunks.length === 1 && menu ? { menu } : {}),
-      });
-      for (const [index, chunk] of chunks.slice(1).entries()) {
-        rememberReply(await connector.post({
-          conversationId: message.rawConversationId,
-          threadKey: placeholder.threadKey || message.threadKey,
-          text: chunk.text,
-          mentions: chunk.mentions || [],
-          ...(index === chunks.length - 2 && footer ? { footer } : {}),
-          ...(index === chunks.length - 2 && menu ? { menu } : {}),
-        }));
-      }
-      return;
-    } catch (err) {
-      // The placeholder may have been deleted, or the edit budget exhausted. Falling through to a
-      // fresh post is the difference between a visible answer and a silent one.
-    }
-  }
-  await postFormatted(connector, {
-    conversationId: message.rawConversationId,
-    threadKey: placeholder?.threadKey || message.threadKey,
-    formatted: { chunks },
-    footer,
-    menu,
-    onPosted: rememberReply,
-  });
-  // A failed edit can leave the working activity visible beside a freshly posted answer.
-  // Remove it only after successful delivery, so a post failure never erases the only message.
-  if ((adapter.id === "msteams" || connector.progressStyle === "working") && placeholder?.messageId && typeof connector.remove === "function") {
-    await connector.remove({ conversationId: placeholder.conversationId || message.rawConversationId,
-      messageId: placeholder.messageId }).catch(err => console.warn(`[${adapter.id}] working message cleanup failed: ${err?.message || err}`));
-  }
 }
