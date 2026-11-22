@@ -53,6 +53,7 @@ import { getDefaultModel, getEngine } from "../config/settings.js";
 import { isChannelCodex, isDedicatedCodex } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
 import { selectableLicenses } from "./license-pool.js";
+import { isChannelEngineApproved } from "./channel-engines.js";
 import { listEngineMcps, codexMcpPolicyFor } from "./mcp-discovery.js";
 import { readDaemonClaudeAccount } from "./claude-token-relay.js";
 import { buildSettings } from "./folders.js";
@@ -294,17 +295,21 @@ export function sshCodexModel(license, meta = {}) {
 
 // ── Which Claude license the terminal's `claude` is ────────────────────────────────────────────
 // The gateway's own Claude login, as it has always been (the relayed token and the access-only
-// login file below) — except in a channel that is SET to an added Claude license it may use: its
-// own engine, else the gateway default. That channel's turns run on another account or another
-// server, and so does its terminal. Deliberately narrower than Codex's rule: every channel
-// container already carries a `claude` on the gateway's own login for any engine's tools to call
-// (gateway/nested-claude-login.js), so a session never has less than that. A license that can be
-// selected but not placed in a terminal (a shipped provider harness) keeps the gateway's own too.
+// login file below), in every channel that may use it — except a channel that is SET to an added
+// Claude license it may use: its own engine, else the gateway default. That channel's turns run on
+// another account or another server, and so does its terminal. A license that can be selected but
+// not placed in a terminal (a shipped provider harness) keeps the gateway's own too.
+// A channel whose approved list leaves the gateway's own login out never gets it: its terminal is
+// an added Claude license it may use (a sign-in before a keyed one, as for Codex), else "" — no
+// Claude license at all, and `claude` there is signed out and says why.
 export function sshClaudeLicense(meta = {}, { gatewayEngine = getEngine() } = {}) {
+  const placeable = selectableLicenses("claude", meta).filter((id) => id !== "claude" && typeof adapterFor(id)?.terminalAccess === "function");
   const selected = [meta?.engine, gatewayEngine].find((id) => isEngineId(id)) || "";
-  if (selected === "claude" || typeof adapterFor(selected)?.terminalAccess !== "function") return "claude";
-  return selectableLicenses("claude", meta).includes(selected) ? selected : "claude";
+  if (placeable.includes(selected)) return selected;
+  if (isChannelEngineApproved(meta, "claude")) return "claude";
+  return placeable.find(isSignInLicense) || placeable[0] || "";
 }
+export const SSH_NO_CLAUDE_LICENSE = "no Claude license is usable in this channel — claude in this session is not signed in";
 
 // claude-login.sh, in the developer's 0700 dir and sourced by the `claude` wrapper after the
 // session's secrets — written only when the session's license is not the gateway's own login:
@@ -467,6 +472,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   runCommand = null,
   installRelay = installVscodeClaudeRelay,
   installClaudeWrapper = installSshClaudeWrapper,
+  clearEditorToken = clearVscodeClaudeRelay,
   resolveIntegrations = resolveRunIntegrations,
   buildMcpRuntime = buildEngineMcpRuntime,
   resolveEnv = resolveEgressRunEnv,
@@ -507,6 +513,19 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     const relayed = await installRelay(target, cliBin, { usersDir, channelId: entry.channelId, ...(runCommand ? { runCommand } : {}) });
     relay = relayed.relay?.token ? containerClaudeCredential({ target, relay: relayed.relay, channelId: entry.channelId }) : (relayed.relay || {});
     claude = { relayed: true, source: relayed.source || "", reason: "", account: false, license: "claude" };
+  } else if (!claudeLicense) {
+    // No Claude license this channel may use: the wrapper alone, a claude-login.sh that drops
+    // every credential name and says why, and nothing of the gateway's own login an earlier
+    // session left — the editor token file and the access-only login file are both its.
+    await installClaudeWrapper(target, cliBin, { usersDir, ...(runCommand ? { runCommand } : {}) });
+    claudeSeat.reason = SSH_NO_CLAUDE_LICENSE;
+    claude = { relayed: false, source: "", reason: SSH_NO_CLAUDE_LICENSE, account: false, license: "" };
+    log?.warn?.(`[ssh] ${slug}/${user.id}: ${SSH_NO_CLAUDE_LICENSE}`);
+    try { clearEditorToken(target); } catch { /* nothing to remove */ }
+    try {
+      await exec(["exec", target.container.name, "sh", "-c", `rm -f ${CLAUDE_CREDENTIALS_FILE} ${CLAUDE_CREDENTIALS_FILE}.cg-tmp`]);
+      await exec(["exec", target.container.name, "node", "-e", CLAUDE_ACCOUNT_SEED, CLAUDE_ONBOARDING_FILE, "-"]);
+    } catch { /* the egress proxy refuses whatever is left */ }
   } else {
     await installClaudeWrapper(target, cliBin, { usersDir, ...(runCommand ? { runCommand } : {}) });
     claudeSeat.home = licenseContainerDir(claudeLicense, target.container?.home);

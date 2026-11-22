@@ -1,5 +1,83 @@
 # ChannelGate — Test Plan
 
+## A channel that does not approve Claude has no `claude` login (2026-11-23)
+
+Automated:
+
+```sh
+node --test test/nested-claude-login.test.js test/ssh-session.test.js test/vscode-container.test.js \
+  test/egress-grants.test.js
+```
+
+- [x] `test/nested-claude-login.test.js` "a channel that does not approve Claude gets no nested
+      login: nothing resolved, only the reason" (always runs): lists `["harness:codex"]`,
+      `["codex"]`, an empty list and a malformed one → the token resolver is never called, the
+      result is `false`, the login file holds the notice and no credential name or `cgph_`
+      placeholder, the launcher is still written; no list, `["claude"]`, `["harness:claude"]` and
+      `["codex","claude"]` → the placeholder as before.
+- [x] "claude in a channel that does not approve it starts signed out and says why, whatever it
+      inherited" (always runs): the generated launcher run with that file, an editor token file
+      present and a parent environment carrying an endpoint, a bearer, an API key, an OAuth
+      placeholder and Bedrock routing → the CLI receives none of them and stderr is exactly the
+      `claude: Claude Code is not approved in this channel…` line.
+- [x] "the proxy stops answering for the gateway's Claude login the moment a channel stops
+      approving it, and resumes after" (always runs): a placeholder minted while approved resolves
+      to the live token; under `["harness:codex"]`, `["codex"]` and `[]` the same placeholder
+      resolves to nothing (warm relay cache included); under `["harness:claude"]`,
+      `["codex","claude"]` and no list it resolves again on `api.anthropic.com` — never revoked;
+      another channel's placeholder is unaffected.
+- [x] "the gateway's API-key Claude login pauses the same way and is revoked only when the key is
+      gone" (always runs): both API-key names resolve to nothing while not approved and to the
+      key once approved; the existing case still proves removal of the key revokes.
+- [x] `test/ssh-session.test.js` "sshClaudeLicense: …" (always runs): a Codex-only list → `""`
+      whatever the gateway default; an approved added license → that license, a sign-in before a
+      keyed one, the channel's own first; `claude` in the list → the gateway's own; a switched-off
+      added license never stands in.
+- [x] "claude over SSH in a channel that approves no Claude license: signed out with the reason,
+      and nothing of the gateway's login left behind" (always runs): the gateway's login is never
+      resolved; `claude` is `{ relayed:false, license:"" }` with the reason, logged; the editor
+      token file is removed, the access-only login file and the account record are removed and
+      none is written; `claude-login.sh` unsets the credential names and exports nothing; the
+      launcher passes no key, token or endpoint the shell carried and prints the reason; Codex in
+      the session is unaffected; after Claude is approved again a refresh restores the gateway's
+      login and removes the file.
+- [x] `test/vscode-container.test.js` "launcher in a channel that does not approve Claude …"
+      (always runs): one exec (the launcher), no login resolved, no token file during the attach,
+      an earlier one removed, no refresh timer, the fact logged; approved again → signed in.
+- [ ] Live `LICENSE-41` a Codex-only channel has no `claude` (Codex: the turn that calls `claude`;
+      Claude: the control channel). Fixture: the egress proxy mode; the gateway's Claude and Codex
+      sign-ins both working; an Enterprise license (Approved harnesses); `cg-testing-codex-auto`
+      on Codex and `cg-testing-claude-auto` on Claude, neither with an Approved harnesses list at
+      the start; SSH access set up with the QA admin's key granted on `cg-testing-codex-auto`.
+      Actions: (1) Control — as the QA approved member in `cg-testing-codex-auto` send
+      `Run these exact commands and paste their full output and exit codes:
+      claude -p "Reply with the word alpha." ; cp ~/.claude/channelgate-login.env /tmp/cg-qa-old-login.env`
+      — pass: the output is `alpha` (the copy holds only the channel's placeholder; it is the
+      "left behind" login for step 4). (2) As the QA admin run `/harnesses harness:codex` in
+      `cg-testing-codex-auto` — pass: the reply names Codex only. (3) In the SAME thread as (1)
+      (a resumed session) and in a NEW thread, as the member, send
+      `Run this exact command and paste its full output and exit code: claude -p "Reply with the
+      word alpha."` — pass in both: no `alpha`; the output contains `claude: Claude Code is not
+      approved in this channel, so claude is not signed in here.` and the CLI reports that it is
+      not signed in, never an answer. (4) In the new thread send
+      `Run these exact commands and paste their full output and exit codes:
+      cat ~/.claude/channelgate-login.env ; ( set -a; . /tmp/cg-qa-old-login.env; set +a;
+      /usr/local/bin/claude -p "Reply with the word beta." )` — pass: the file is the one notice
+      line with no `cgph_` value, and the second command, which bypasses the launcher with the
+      placeholder from before the change, gets an authentication error (401) from the proxy path
+      and prints no `beta`. (5) Open an SSH session in the channel and run
+      `claude -p "Reply with the word gamma."` — pass: it prints `claude: no Claude license is
+      usable in this channel — claude in this session is not signed in` and no `gamma`;
+      `ls ~/.claude/.credentials.json` finds nothing; `codex exec "Reply with the word delta."`
+      answers `delta`; the daemon's `ssh_session_start` event has an empty `claudeLicense` and a
+      `claudeProblem`. (6) In `cg-testing-claude-auto` (no list) as the member send
+      `Reply with the word epsilon.` — pass: `epsilon`, footer on Claude. (7) As the QA admin run
+      `/harnesses all` in `cg-testing-codex-auto`, then send the step-3 message again in the
+      thread from (1) — pass: `alpha` again, with no gateway restart; finally send
+      `Run: rm -f /tmp/cg-qa-old-login.env`. Record for each step the message link and the pasted
+      output. Any answer (`alpha`, `beta`, `gamma`) produced while the list excludes Claude is a
+      FAIL of the whole case.
+
 ## Google Chat Composio SDK identities (2026-11-22)
 
 Automated:

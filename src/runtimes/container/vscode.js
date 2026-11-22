@@ -4,6 +4,7 @@ import path from "node:path";
 import { createEditorLease } from "./editor-lease.js";
 import { resolveContainerClaudeToken } from "../../gateway/claude-token-relay.js";
 import { containerClaudeCredential } from "../../gateway/egress/grants.js";
+import { isChannelEngineApproved } from "../../gateway/channel-engines.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR } from "./image-paths.js";
 
 export const VSCODE_AUTH_DIR = "vscode";
@@ -221,6 +222,8 @@ export function clearVscodeClaudeRelay(target) {
   rmSync(path.join(target.artifactDir, VSCODE_AUTH_DIR, "claude-token"), { force: true });
 }
 
+export const VSCODE_CLAUDE_NOT_APPROVED = "Claude Code is not approved in this channel — claude in the editor terminal is not signed in.";
+
 export async function launchVscodeContainer(target, {
   cliBin,
   codeBin = "code",
@@ -235,16 +238,27 @@ export async function launchVscodeContainer(target, {
   let stopping = false;
   let refreshing = Promise.resolve();
   try {
-    const auth = await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand });
-    const refresh = () => {
-      refreshing = refreshing.then(async () => {
-        if (stopping) return;
-        try { await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand }); }
-        catch (error) { log.warn?.(`[vscode] Claude login refresh failed: ${error?.message || error}`); }
-      });
-    };
-    timer = setInterval(refresh, refreshMs);
-    timer.unref?.();
+    // The editor's `claude` is the gateway's own login, so a channel whose approved harnesses leave
+    // it out gets the wrapper alone: nothing is resolved, nothing is written, and the egress proxy
+    // would refuse the placeholder anyway (gateway/egress/grants.js gatewayClaudeApprovedIn).
+    const approved = isChannelEngineApproved(target?.meta || {}, "claude");
+    let auth = null;
+    if (approved) {
+      auth = await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand });
+      const refresh = () => {
+        refreshing = refreshing.then(async () => {
+          if (stopping) return;
+          try { await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand }); }
+          catch (error) { log.warn?.(`[vscode] Claude login refresh failed: ${error?.message || error}`); }
+        });
+      };
+      timer = setInterval(refresh, refreshMs);
+      timer.unref?.();
+    } else {
+      clearVscodeClaudeRelay(target);
+      await installSshClaudeWrapper(target, cliBin, { runCommand });
+      log.warn?.(`[vscode] ${VSCODE_CLAUDE_NOT_APPROVED}`);
+    }
     const uri = vscodeAttachedContainerUri(target.container.name, target.workDir);
     await runCommand(codeBin, ["--wait", "--folder-uri", uri]);
     return { uri, auth };

@@ -578,7 +578,9 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   login fails closed with the remedy named when Claude is the selected engine; a missing optional
   child login does not block Codex or Qwen. Before every proxy-mode container turn,
   `nested-claude-login.js` prepares a private HOME env file containing only channel-bound relay
-  placeholders and the nested CLI launcher. Qwen's main CLI bypasses that launcher; nested
+  placeholders and the nested CLI launcher — in a channel whose approved harnesses leave the
+  license `claude` out, only a line saying so, and the proxy refuses that login's placeholder for
+  the channel (`gatewayClaudeApprovedIn`), as an SSH session and the editor attach do. Qwen's main CLI bypasses that launcher; nested
   `claude` clears inherited provider settings before loading the Anthropic relay. API-key child
   logins also use destination-bound relay grants. A new consumer
   asks the resolver; it never adds a second notion of "the login". The ONE login file the gateway

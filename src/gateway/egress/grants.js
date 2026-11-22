@@ -207,9 +207,23 @@ async function licenseUsableIn(licenseId, channelId, deps) {
   return (await import("../channel-engines.js")).isChannelEngineApproved(meta || {}, licenseId);
 }
 
+// The gateway's own Claude login is the license `claude`, and its placeholder is in every channel
+// container whatever that channel runs on (gateway/nested-claude-login.js, the editor token file,
+// an SSH session's login file). So the channel's approved list is asked at every swap, exactly as
+// for an added license: a channel whose administrator approved other harnesses or licenses only
+// gets no answer from Anthropic on this login — from a turn's tool, a terminal or a file an
+// earlier session left behind. Switching the engine off in Settings is not asked: the gateway's
+// own helpers (the memory reviewer) follow the approved list alone.
+async function gatewayClaudeApprovedIn(channelId, deps) {
+  if (deps.gatewayClaudeApproved) return Boolean(await deps.gatewayClaudeApproved(channelId));
+  const meta = channelId ? await channelMetaFor(channelId, deps) : null;
+  return (await import("../channel-engines.js")).isChannelEngineApproved(meta || {}, "claude");
+}
+
 async function cachedRelayToken(secretName, deps, channelId = "") {
   const license = licenseOfRelaySecret(secretName);
   if (license) return (await licenseUsableIn(license.id, channelId, deps)) ? licenseRelayToken(license, secretName, deps) : "";
+  if (secretName === RELAY_SECRET_NAME && !(await gatewayClaudeApprovedIn(channelId, deps))) return "";
   if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) {
     const extra = await import("../../engines/bedrock.js");
     // Recheck the dedicated file/provider before consulting a cached token: deletion, expiry,
@@ -292,7 +306,8 @@ export async function resolveGrantMaterial(row, deps = {}) {
     if (CLAUDE_API_RELAY_NAMES.includes(name)) {
       const env = deps.env || process.env;
       const value = hasCanonicalClaudeApiEndpoint(env) ? String(env[name] || "") : "";
-      return { value, entry: null, exists: Boolean(value) };
+      // The same login in its API-key form: paused, not revoked, while the channel excludes it.
+      return { value: value && (await gatewayClaudeApprovedIn(row.channelId, deps)) ? value : "", entry: null, exists: Boolean(value) };
     }
     return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }

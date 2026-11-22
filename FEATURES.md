@@ -1,5 +1,58 @@
 # ChannelGate — Features
 
+## A channel that does not approve Claude has no `claude` login (2026-11-23)
+
+Every channel container carries a `claude` on the gateway's own Claude login, whatever engine the
+channel runs on, so a Codex or Qwen turn can delegate to it. That login is the license `claude`,
+and until now a channel's **Approved harnesses** list was not asked: in a channel approved for
+Codex only, a tool could still run `claude -p …` on the gateway's Claude subscription. Now the
+list decides, at three places.
+
+- **The egress proxy refuses the login for that channel** (`gatewayClaudeApprovedIn`,
+  `src/gateway/egress/grants.js`). The channel's list is read at every swap, exactly as it already
+  was for an added license: while it leaves `claude` out, the channel's relay placeholder for the
+  gateway's Claude login — the sign-in form and the API-key form — resolves to nothing, so the
+  request reaches Anthropic with the placeholder and is rejected (401). This is the enforcement:
+  it also covers a placeholder an earlier turn, an editor attach or an SSH session left in a
+  file or a running process. The grant is paused, not revoked: approving Claude again makes the
+  same placeholder work on the next request, with no restart and no new turn. Other channels on
+  the same login are unaffected. Switching Claude off in Settings is deliberately not asked here —
+  the gateway's own helpers follow the approved list alone, as the memory reviewer already does.
+- **The login is not loaded** (`installNestedClaudeLogin`, `src/gateway/nested-claude-login.js`).
+  Before a turn in such a channel the gateway's login is not resolved or refreshed, and the
+  protected login file in the channel HOME holds one line instead of a placeholder. The `claude`
+  launcher, unchanged, still drops every credential and provider setting the calling process
+  carried, sources that line and so prints
+  `claude: Claude Code is not approved in this channel, so claude is not signed in here. An
+  administrator can change Approved harnesses in the channel settings.` on stderr; the CLI then
+  starts signed out. An editor token file an earlier attach left cannot stand in (the launcher
+  ignores it while the login file exists).
+- **A terminal follows the same list** (`sshClaudeLicense`, `src/gateway/ssh-session.js`). Over
+  SSH, `claude` is the added Claude license the channel is set to, else the gateway's own login
+  when the channel approves it, else an added Claude license the channel may use (a sign-in
+  before a keyed one), else none: the session then gets the launcher alone, a `claude-login.sh`
+  that drops every credential name and prints `claude: no Claude license is usable in this
+  channel — claude in this session is not signed in`, and the access-only login file, the
+  operator's account record and the editor token file an earlier session left are removed.
+  `prepareSshSession` returns `claude.license: ""` and the `ssh_session_start` event records an
+  empty `claudeLicense` with `claudeProblem`. The operator's editor attach
+  (`npm run vscode -- <channel>`) installs the launcher alone and logs the same fact instead of
+  resolving the login.
+
+What is unchanged, and what this does not do:
+
+- A channel with no Approved harnesses list, or one that names `claude` or `harness:claude`,
+  behaves exactly as before.
+- `claude` is signed out, not removed: the CLI stays in the image, and a person who signs in to
+  their own Anthropic account inside the container uses their own account, not a gateway license.
+- In a channel that approves only an ADDED Claude license, a `claude` a tool starts inside a turn
+  is signed out as well (the nested login has only ever been the gateway's own); the channel's
+  turns and its terminal run on the added license.
+- Legacy bridge mode (`containerEgressMode = "bridge"`) and host `/sudo` threads have no proxy
+  and never had this protected login; nothing changes there.
+- Not built: the Codex twin. A Claude-only channel whose HOME still holds an access-only Codex
+  login from before the list changed can still have that placeholder swapped.
+
 ## Google Chat: Composio SDK identities (2026-11-22)
 
 Composio SDK mode (Enterprise) now names Google Chat authors and spaces, on the seam the Teams slice
@@ -483,8 +536,8 @@ bill, than its own turns.
   environment ("Claude API") and no plan, and may ask once whether to use an API key it finds in
   the environment. Unchanged: the gateway's own login and its access-only file for every other
   channel, the `claude` every channel container carries for tools (`nested-claude-login.js`, the
-  gateway's own login whatever the channel approves), the session's MCP tools and secrets, and no
-  pool move in a terminal.
+  gateway's own login — since 2026-11-23 only where the channel approves it, see the top section),
+  the session's MCP tools and secrets, and no pool move in a terminal.
 
 ## `codex` in an SSH session runs on an API or cloud license (2026-11-22)
 
@@ -3627,7 +3680,9 @@ control-plane status.
   without switching its thread. Fresh, resumed, background-agent, scheduled and API turns use the
   same setup. The channel HOME retains only a channel-bound egress placeholder; OAuth refresh
   tokens and real API keys stay on the daemon. Missing authentication clears the managed login
-  without preventing another configured engine from starting.
+  without preventing another configured engine from starting. A channel whose Approved harnesses
+  leave the gateway's Claude out gets no login at all: the file says why and the proxy refuses
+  that login's placeholder there (2026-11-23, top section).
 - Qwen's main process keeps its own provider endpoint and credential. A nested `claude` launcher
   clears the inherited provider settings and nested-session guard, then loads the Anthropic relay.
   SSH/editor launchers preserve the same HOME fallback. API-key installations also use protected

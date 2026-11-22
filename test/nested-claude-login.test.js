@@ -177,3 +177,93 @@ test("Qwen's main container process bypasses the Anthropic launcher and keeps it
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, "fake-qwen-key");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
 });
+
+// ── A channel whose approved harnesses leave the gateway's own Claude out ─────────────────────────
+const { NESTED_CLAUDE_NOT_APPROVED } = await import("../src/gateway/nested-claude-login.js");
+const { containerClaudeCredential } = await import("../src/gateway/egress/grants.js");
+
+test("a channel that does not approve Claude gets no nested login: nothing resolved, only the reason", async () => {
+  for (const approvedEngines of [["harness:codex"], ["codex"], [], "claude"]) {
+    const t = target("C_NESTED_OFF");
+    t.meta.approvedEngines = approvedEngines;
+    assert.equal(await installNestedClaudeLogin(t, {
+      resolveToken: async () => assert.fail("the gateway's login must not be resolved for this channel"),
+      env: { ANTHROPIC_API_KEY: "fake-api-key" },
+    }), false);
+    assert.equal(t.writes[0].file, CLAUDE_NESTED_LOGIN_FILE);
+    assert.ok(t.writes[0].body.includes(NESTED_CLAUDE_NOT_APPROVED));
+    assert.ok(!/cgph_|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|fake-api-key/.test(t.writes[0].body), "no credential name or placeholder is written");
+    assert.equal(t.writes[1].file, "/home/agent/.local/bin/claude", "the launcher still replaces whatever an earlier turn installed");
+  }
+  for (const approvedEngines of [null, ["claude"], ["harness:claude"], ["codex", "claude"]]) {
+    const t = target("C_NESTED_ON");
+    if (approvedEngines) t.meta.approvedEngines = approvedEngines;
+    assert.equal(await installNestedClaudeLogin(t, { resolveToken: async () => oauth }), true);
+    assert.match(t.writes[0].body, /CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-cgph_r/);
+  }
+});
+
+test("claude in a channel that does not approve it starts signed out and says why, whatever it inherited", async () => {
+  const t = target("C_NESTED_OFF_RUN");
+  t.meta.approvedEngines = ["harness:codex"];
+  await installNestedClaudeLogin(t, { resolveToken: async () => oauth });
+  const dir = tempDir("cg-nested-off-");
+  const loginEnvFile = path.join(dir, "login.env");
+  const wrapper = path.join(dir, "claude");
+  const binary = path.join(dir, "actual-claude");
+  const stderrFile = path.join(dir, "stderr");
+  const editorToken = path.join(dir, "editor-token");
+  writeFileSync(loginEnvFile, t.writes[0].body);
+  writeFileSync(editorToken, "sk-ant-oat01-cgph_r_left_by_an_editor");
+  const names = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "AWS_BEARER_TOKEN_BEDROCK"];
+  writeFileSync(binary, `#!/usr/bin/env node
+console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map(name => [name, process.env[name] || ""]))));
+`);
+  chmodSync(binary, 0o700);
+  writeFileSync(wrapper, renderClaudeWrapper({ loginEnvFile, tokenFile: editorToken, claudeBin: binary }));
+  chmodSync(wrapper, 0o700);
+  const stdout = execFileSync("sh", ["-c", `"$1" -p hello 2>"$2"`, "sh", wrapper, stderrFile], { encoding: "utf8", env: {
+    ...process.env, ANTHROPIC_BASE_URL: "https://parent.invalid", ANTHROPIC_AUTH_TOKEN: "parent-auth", ANTHROPIC_API_KEY: "parent-key",
+    CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-cgph_r_parent", CLAUDE_CODE_USE_BEDROCK: "1", AWS_BEARER_TOKEN_BEDROCK: "cgph_r_parent_bedrock",
+  } });
+  assert.deepEqual(JSON.parse(stdout), Object.fromEntries(names.map((name) => [name, ""])),
+    "neither the parent's credential, nor an editor's token file, nor the gateway's login reaches it");
+  assert.equal(readFileSync(stderrFile, "utf8"), `claude: ${NESTED_CLAUDE_NOT_APPROVED}\n`);
+});
+
+test("the proxy stops answering for the gateway's Claude login the moment a channel stops approving it, and resumes after", async () => {
+  __resetGrantCaches();
+  const t = target("C_NESTED_PAUSE");
+  let approvedEngines = null;
+  const deps = { relayToken: async () => ({ token: "fake-live-access-token" }), metaFor: async (id) => ({ channelId: id, approvedEngines }) };
+  // Minted while the channel still approved Claude: this placeholder is now in files and processes.
+  const core = corePlaceholder(containerClaudeCredential({ target: t, relay: oauth, channelId: "C_NESTED_PAUSE" }).token);
+  assert.equal((await resolveEgressGrant(core, deps)).value, "fake-live-access-token");
+  for (const policy of [["harness:codex"], ["codex"], []]) {
+    approvedEngines = policy;
+    assert.equal(await resolveEgressGrant(core, deps), null, `refused under ${JSON.stringify(policy)} — warm relay cache included`);
+  }
+  for (const policy of [["harness:claude"], ["codex", "claude"], null]) {
+    approvedEngines = policy;
+    const grant = await resolveEgressGrant(core, deps);
+    assert.equal(grant?.value, "fake-live-access-token", "paused, never revoked: approving again needs no new placeholder");
+    assert.deepEqual(grant.hosts, ["api.anthropic.com"]);
+  }
+  // Another channel on the same login is untouched by this channel's list.
+  const other = corePlaceholder(containerClaudeCredential({ target: target("C_NESTED_OTHER"), relay: oauth, channelId: "C_NESTED_OTHER" }).token);
+  approvedEngines = ["harness:codex"];
+  assert.equal((await resolveEgressGrant(other, { ...deps, metaFor: async (id) => ({ channelId: id }) })).value, "fake-live-access-token");
+});
+
+test("the gateway's API-key Claude login pauses the same way and is revoked only when the key is gone", async () => {
+  __resetGrantCaches();
+  const source = { ANTHROPIC_API_KEY: "fake-api-key", ANTHROPIC_AUTH_TOKEN: "fake-bearer" };
+  const t = target("C_NESTED_API_PAUSE");
+  const env = nestedClaudeLoginEnv({ target: t, relay: { source: "api-key" }, env: source });
+  assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
+  for (const [name, value] of Object.entries(env)) {
+    const core = corePlaceholder(value);
+    assert.equal(await resolveEgressGrant(core, { env: source, metaFor: async () => ({ approvedEngines: ["harness:codex"] }) }), null);
+    assert.equal((await resolveEgressGrant(core, { env: source, metaFor: async () => ({ approvedEngines: ["claude"] }) })).value, source[name]);
+  }
+});

@@ -1179,9 +1179,65 @@ test("sshClaudeLicense: an added Claude license only when the channel is set to 
   assert.equal(pick({ engine: "codex" }, api.id), "claude", "a Codex channel: `claude` there is the tool every container carries");
   assert.equal(pick({ engine: codexSeat.id }), "claude");
   assert.equal(pick({ engine: "claude", approvedEngines: [harnessPolicyEntry("claude"), api.id] }), "claude", "a license the channel could move to is not the one it is set to");
+  // A channel that does not approve the gateway's own Claude login never gets it in a terminal:
+  // an added Claude license it may use (a sign-in before a keyed one), else none at all.
+  const codexOnly = [harnessPolicyEntry("codex")];
+  assert.equal(pick({ engine: "codex", approvedEngines: codexOnly }), "");
+  assert.equal(pick({ engine: "codex", approvedEngines: ["codex"] }), "");
+  assert.equal(pick({ engine: "codex", approvedEngines: codexOnly }, api.id), "", "the gateway default does not approve anything");
+  assert.equal(pick({ engine: "codex", approvedEngines: [...codexOnly, api.id] }), api.id);
+  assert.equal(pick({ engine: "codex", approvedEngines: [...codexOnly, api.id, seat.id] }), seat.id, "a sign-in before a keyed license");
+  assert.equal(pick({ engine: api.id, approvedEngines: [api.id, seat.id] }), api.id, "the one the channel is set to first");
+  assert.equal(pick({ engine: "codex", approvedEngines: [...codexOnly, "claude"] }), "claude");
+  assert.equal(pick({ engine: "codex", approvedEngines: [] }), "", "a malformed list approves nothing");
   // A license switched off is not usable, whatever a stored record names.
   saveGatewaySettings({ engineEnabled: { claude: true, codex: true, [api.id]: false } });
   assert.equal(pick({ engine: api.id }), "claude");
+  assert.equal(pick({ engine: "codex", approvedEngines: [...codexOnly, api.id] }), "", "…and never stands in for a login the channel may not use");
+  resetLicenses();
+});
+
+test("claude over SSH in a channel that approves no Claude license: signed out with the reason, and nothing of the gateway's login left behind", async () => {
+  resetLicenses();
+  const { entry: e } = await egressChannel("C_SSH_CLAUDE_NONE");
+  const { deps, execs } = egressDeps();
+  const meta = { engine: "codex", approvedEngines: [harnessPolicyEntry("codex")] };
+  const { t } = licenseSessionTarget("ssh-claude-none", e.channelId, meta);
+  // What an editor lease or an earlier session (while Claude was still approved) left behind.
+  const editorToken = path.join(t.artifactDir, "vscode", "claude-token");
+  mkdirSync(path.dirname(editorToken), { recursive: true });
+  writeFileSync(editorToken, "sk-ant-oat01-cgph_r_left_behind");
+  const warned = [];
+  const result = await session.prepareSshSession({ target: t, entry: e, meta: t.meta, user, cliBin: "podman", log: { warn: (line) => warned.push(line) } }, noOwnLogin(deps));
+  assert.deepEqual(result.claude, { relayed: false, source: "", reason: session.SSH_NO_CLAUDE_LICENSE, account: false, license: "" });
+  assert.ok(warned.some((line) => line.includes(session.SSH_NO_CLAUDE_LICENSE)));
+  assert.equal(existsSync(editorToken), false, "the editor's token file is removed");
+  const shell = execs.map((x) => String(x.args.at(-1)));
+  assert.ok(shell.some((line) => line.startsWith("rm -f ") && line.includes(".credentials.json")), "an earlier session's access-only login file is removed");
+  assert.ok(!shell.some((line) => line.includes("cat > ") && line.includes(".credentials.json")), "and none is written");
+  assert.ok(execs.some((x) => x.args.at(-1) === "-" && x.args.includes("node")), "the operator's account record is removed with it");
+
+  const login = readFileSync(sessionFile(t, "claude-login.sh"), "utf8");
+  assert.match(login, /^unset .*\bCLAUDE_CODE_OAUTH_TOKEN\b/m);
+  assert.doesNotMatch(login, /cgph_|export /, "no placeholder, nothing exported");
+  for (const name of readdirSync(session.sshUserDir(t, user.id))) {
+    assert.doesNotMatch(readFileSync(sessionFile(t, name), "utf8"), new RegExp(`${relay.token}|CLAUDE_CODE_OAUTH_TOKEN=`), `${name} holds no Claude login`);
+  }
+  const ran = runClaude(t, { args: ["-p", "hi"], env: { ANTHROPIC_API_KEY: "sk-developers-own", CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-cgph_r_inherited", ANTHROPIC_BASE_URL: "https://elsewhere.invalid" } });
+  assert.equal(ran.stderr, `claude: ${session.SSH_NO_CLAUDE_LICENSE}\n`);
+  for (const name of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"]) {
+    assert.match(ran.stdout, new RegExp(`^${name}=<unset>$`, "m"), `${name}: nothing the shell carried stands in`);
+  }
+  assert.doesNotMatch(ran.stdout, /arg=--model/);
+  // Codex in the same session is the channel's, untouched.
+  assert.equal(result.codex.license, "codex");
+
+  // The administrator approves Claude again and the session refreshes: the gateway's own login is back.
+  const again = { channelId: e.channelId, engine: "codex" };
+  const back = await session.prepareSshSession({ target: { ...t, meta: again }, entry: e, meta: again, user, cliBin: "podman", log: { warn() {} } }, deps);
+  assert.equal(back.claude.license, "claude");
+  assert.equal(back.claude.relayed, true);
+  assert.equal(existsSync(sessionFile(t, "claude-login.sh")), false);
   resetLicenses();
 });
 
