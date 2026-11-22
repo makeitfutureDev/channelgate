@@ -2,6 +2,14 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Any engine license can now be limited to one conversation. In Settings → Engine licenses, a
+  license's form has "Available in": every conversation, or one channel or DM. This is how a
+  customer's own account in one channel is set up now, and it works for every kind of license on
+  both harnesses — a Claude or ChatGPT sign-in, an API key or custom server, Bedrock, Vertex AI,
+  Azure. A limited license runs only in that conversation (and in code channels opened from it),
+  is not offered anywhere else, and cannot be the gateway default. Limiting a license needs
+  Enterprise. Existing licenses are unchanged, and the channel-account Codex sign-in that channel
+  members start from a channel's settings keeps working as before.
 - Approved harnesses now also decide whether `claude` works inside a channel's container. Before,
   a channel approved for Codex only could still have a tool or a terminal run `claude` on the
   gateway's own Claude sign-in. Now that login is not loaded there, the network proxy refuses it

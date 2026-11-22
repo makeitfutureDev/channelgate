@@ -204,7 +204,10 @@ async function licenseUsableIn(licenseId, channelId, deps) {
   if (deps.licenseUsable) return Boolean(await deps.licenseUsable(licenseId, channelId));
   if (!isEngineEnabled(licenseId)) return false;
   const meta = channelId ? await channelMetaFor(channelId, deps) : null;
-  return (await import("../channel-engines.js")).isChannelEngineApproved(meta || {}, licenseId);
+  // The grant's own channel is the conversation asked about: a license limited to one conversation
+  // (engines/license-state.js) is swapped there and in the code channels opened from it, never in
+  // a container of any other channel that still holds its placeholder.
+  return (await import("../channel-engines.js")).isChannelEngineApproved({ ...(meta || {}), channelId: meta?.channelId || channelId || "" }, licenseId);
 }
 
 // The gateway's own Claude login is the license `claude`, and its placeholder is in every channel

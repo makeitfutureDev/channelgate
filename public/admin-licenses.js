@@ -47,12 +47,21 @@ export function policyAdmits(policy, manifest) {
   return policy.includes(manifest.id) || policy.includes(harnessPolicyEntry(harnessOf(manifest)));
 }
 
-// `env` is where a picker stands: { manifests, enabled, codexAuthSource, policy }.
+// Mirrors licenseFitsConversation (src/gateway/channel-engines.js): a license an administrator
+// limited to one conversation is offered there (and in the code channels opened from it) and
+// nowhere else — never in a template, a gateway default or another conversation.
+export const fitsConversation = (env, m) => !m?.limitedToChannel || list(env?.channelIds).includes(m.limitedToChannel);
+
+// `env` is where a picker stands: { manifests, enabled, codexAuthSource, policy, channelIds }.
 //   enabled          the engineEnabled map (a license missing from it counts as on)
 //   codexAuthSource  "channel" when this conversation signed in its own Codex account
 //   policy           the conversation's approvedEngines (null = no lock)
+//   channelIds       the conversation the picker is for: its id and, for a code channel, the id
+//                    of the channel it was opened from (absent = no conversation: a template, the
+//                    gateway default)
 const usableHere = (env, m) => env?.enabled?.[m.id] !== false
   && (!m.channelScoped || env?.codexAuthSource === "channel")
+  && fitsConversation(env, m)
   && policyAdmits(env?.policy, m);
 
 // Every license of `harness` a conversation may run on: switched on, admitted by the lock, and
@@ -461,6 +470,7 @@ export function mountLicensesManager({
   blocked = () => "",
   reload = async () => {},
   versionMoved = () => {},
+  conversations = async () => [],
 }) {
   // root        where the groups are drawn
   // state()     { manifests, enabled } — the engine manifest and the engineEnabled map
@@ -469,6 +479,7 @@ export function mountLicensesManager({
   // blocked()   a reason the page cannot be reloaded right now (unsaved edits), or ""
   // reload()    repaint Settings from the daemon and call load() again
   // versionMoved({ from, to })  a request of this panel moved the settings version by that step
+  // conversations()  [{ id, label }] — what a license can be limited to (channels and DMs)
   const doc = root.ownerDocument;
   const make = (tag, className, text) => {
     const el = doc.createElement(tag);
@@ -495,6 +506,13 @@ export function mountLicensesManager({
   let removed = []; // the shipped licenses an administrator removed: [{ id, harness, label }]
   let loadError = "";
   let loads = 0;
+  let places = []; // [{ id, label }] the conversations a license can be limited to
+  const placeLabel = (id) => places.find((place) => place.id === id)?.label || "";
+  // What a row and a form call a limit. A stored limit that names no conversation is still a
+  // limit: the license runs nowhere until one is chosen.
+  const BROKEN_LIMIT = "\u0000";
+  const limitText = (license) => !license?.channelLimited ? ""
+    : license.channelId ? `Only in ${placeLabel(license.channelId) || license.channelId}` : "Limited — choose a conversation";
   // Panels that outlive a repaint: a form being typed into, a sign-in waiting on its code.
   let form = null;   // { harness, el }
   let panel = null;  // { id, el }
@@ -524,6 +542,10 @@ export function mountLicensesManager({
       licenses = list(body.licenses);
       removed = list(body.removed);
       loadError = "";
+      // Names only matter when a license is limited or a form is open; a list that cannot be
+      // loaded leaves the ids, which still say that the license is limited.
+      if (licenses.some((license) => license.channelLimited)) places = list(await Promise.resolve().then(conversations).catch(() => places));
+      if (ticket !== loads) return;
     } catch (error) {
       if (ticket !== loads) return;
       loadError = `The license list could not be loaded: ${error.message}`;
@@ -736,6 +758,20 @@ export function mountLicensesManager({
 
     const typeSelect = make("select", "lic-type-select");
 
+    // Where the license may run: everywhere its harness can, or one conversation only (a
+    // customer's own account for the customer's channel). Any kind can be limited.
+    const limitSelect = make("select", "lic-channel");
+    const limitWas = license?.channelLimited ? license.channelId || BROKEN_LIMIT : "";
+    const paintLimit = () => {
+      const picked = limitSelect.options.length ? limitSelect.value : limitWas;
+      limitSelect.replaceChildren(option("", "Every conversation"), ...places.map((place) => option(place.id, place.label)));
+      if (limitWas === BROKEN_LIMIT) limitSelect.append(option(BROKEN_LIMIT, "A conversation that no longer resolves — choose one"));
+      else if (picked && !places.some((place) => place.id === picked)) limitSelect.append(option(picked, picked));
+      limitSelect.value = picked;
+    };
+    paintLimit();
+    Promise.resolve().then(conversations).then((rows) => { places = list(rows); paintLimit(); }).catch(() => {});
+
     const urlInput = make("input", "lic-base-url");
     urlInput.type = "url";
     urlInput.autocomplete = "off";
@@ -856,6 +892,8 @@ export function mountLicensesManager({
       const kind = kindSelect.value;
       const body = { label: nameInput.value, type: typeSelect.value };
       if (!license) body.kind = kind;
+      // Sent only when it was changed: an untouched limit is never rewritten by an edit.
+      if (limitSelect.value !== limitWas && limitSelect.value !== BROKEN_LIMIT) body.channelId = limitSelect.value;
       // A credential leaves its box before the request does; it is in this one body and nowhere else.
       const typedKey = keyInput.value;
       const typedAccount = accountInput.value;
@@ -896,6 +934,7 @@ export function mountLicensesManager({
       kindField,
       field("Name", nameInput, "How this license is listed in every picker."),
       field("Type", typeSelect),
+      field("Available in", limitSelect, "Every conversation, or one conversation only: a license limited to one runs there (and in the code channels opened from it), is offered nowhere else and can never be the gateway default. Limiting a license needs Enterprise."),
       apiFields,
       defaults,
       actions,
@@ -919,7 +958,7 @@ export function mountLicensesManager({
     input.checked = on;
     // The last license left on cannot be switched off — the daemon would have nothing to run, and
     // the API refuses that state anyway.
-    input.disabled = on && !manifest.channelScoped && onCount === 1;
+    input.disabled = on && !manifest.channelScoped && !manifest.limitedToChannel && onCount === 1;
     input.title = input.disabled ? "At least one license must stay switched on" : "";
     input.addEventListener("change", () => setEnabled(id, input.checked));
     const nameEl = make("span", "lic-name", record?.label || licenseLabelOf(manifest));
@@ -930,7 +969,7 @@ export function mountLicensesManager({
     if (note) toggle.append(make("em", "state", note));
     // A provider license says where it runs as well as how it is billed: "Amazon Bedrock · API".
     const kindLabel = record && kindTraits(record.kind, catalog).provider ? record.kindLabel || "" : "";
-    const typeText = record ? [kindLabel, record.typeLabel || record.type || ""].filter(Boolean).join(" · ") : "Built-in";
+    const typeText = record ? [kindLabel, record.typeLabel || record.type || "", limitText(record)].filter(Boolean).join(" · ") : "Built-in";
     row.append(toggle, make("span", "lic-type", typeText));
 
     let badge = null;
@@ -990,7 +1029,8 @@ export function mountLicensesManager({
   function paint() {
     const { manifests, enabled } = state();
     if (!list(manifests).length) return;
-    const onCount = manifests.filter((m) => !m.channelScoped && enabled?.[m.id] !== false).length;
+    // What the whole gateway can run on: not a channel's own sign-in, not a license limited to one conversation.
+    const onCount = manifests.filter((m) => !m.channelScoped && !m.limitedToChannel && enabled?.[m.id] !== false).length;
     const atMax = catalog?.max != null && licenses.length >= catalog.max;
     const groups = harnessList(manifests).map((h) => {
       const group = make("div", "lic-group");

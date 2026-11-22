@@ -1,5 +1,83 @@
 # ChannelGate — Test Plan
 
+## Engine licenses limited to one conversation (2026-11-23)
+
+Automated:
+
+```sh
+node --test test/engine-licenses-channel-limit.test.js test/engine-licenses.test.js \
+  test/engine-licenses-lifecycle.test.js test/engine-licenses-web.test.js \
+  test/engine-licenses-providers.test.js test/channel-engines.test.js test/channel-engines-web.test.js
+```
+
+- [x] `test/engine-licenses-channel-limit.test.js` "a stored limit is one conversation id, and a
+      broken one limits the license to nowhere".
+- [x] "every kind of license, on both harnesses, runs only in the conversation it is limited to":
+      a ChatGPT sign-in, a Claude sign-in, an OpenAI key, a custom server, Bedrock and Azure —
+      approved, offered, pooled and pickable in the conversation, none of it anywhere else or in a
+      record without a conversation id; an unlimited license of the same kind is unaffected.
+- [x] "a code channel opened from the limited conversation may use the license; a linked workspace
+      may not" — and the approved-harness list still applies on top.
+- [x] "a refusal names the reason: limited elsewhere, or limited here without Enterprise".
+- [x] "without the Enterprise entitlement a limit cannot be set and a limited license runs nowhere
+      — clearing it is the way out".
+- [x] "a limited license is never the gateway default, never in its pool, and never 'the last
+      license left'": limiting the default license hands the default back, the Settings save
+      refuses both by name, every gateway-wide license off is refused while a limited one is on.
+- [x] "the last gateway-wide license cannot be limited, and a limited one can always be deleted".
+- [x] "a conversation default naming a license limited elsewhere follows the gateway default; a
+      thread pin is refused by name".
+- [x] "the admin API adds, lists, moves and clears a limit, and refuses a conversation it does not
+      know" (four kinds; the listing never carries a key).
+- [x] "a conversation's settings accept its own limited license and refuse another conversation's".
+- [x] "a limited license's key is swapped only for containers of its own conversation".
+- [x] "the dashboard pickers offer a limited license only where it belongs" (the page and the
+      server agree).
+- [x] Page test (needs `CG_BROWSER_MODULE`): "the admin UI: 'Available in' limits a license, and
+      only that conversation's picker offers it" — the form lists the conversations by name, an
+      untouched form sends no `channelId`, a chosen one is stored and the row reads "Only in …",
+      the gateway default picker and the other conversation's picker no longer offer the license.
+- [ ] Live `LICENSE-45` a sign-in license limited to one channel (run once per harness).
+      Fixture: an Enterprise deployment. **Codex:** channels `cg-testing-codex-auto` (home) and
+      `cg-testing-codex-bash` (other), an added ChatGPT sign-in license `QA customer seat`,
+      signed in. **Claude:** `cg-testing-claude-auto` (home) and `cg-testing-claude-bash`
+      (other), an added Claude sign-in license `QA customer Claude`, signed in. Actions, per
+      harness: (1) Settings → Engine licenses → edit the license → "Available in" = the home
+      channel, Save — pass: the row reads "Only in #<home channel>". (2) In the home channel,
+      `/model` → pick the license; send `Reply with the word alpha.` — pass: `alpha`, the footer
+      names the license. (3) In the other channel open `/model` and the channel's Settings — pass:
+      the license is not offered in either. (4) Settings → Engines → default license picker —
+      pass: the license is not offered. (5) Edit the license → "Available in" = Every
+      conversation, Save — pass: the other channel's `/model` offers it again.
+- [ ] Live `LICENSE-46` a key or custom-server license limited to one channel (run once per
+      harness; the Claude case uses a Claude Code custom-server or API-key license and `claude`,
+      the Codex case a Codex one and `codex`). Fixture: the home and other channels of
+      `LICENSE-45`, the proxy egress mode, SSH access with the QA admin's key granted on both
+      channels, an added API-key or custom-server license with a valid key. Actions: (1) leave
+      the license unlimited, set BOTH channels to it and send `Reply with the word alpha.` in each
+      — pass: `alpha` in both. (2) Limit the license to the home channel. Send
+      `Reply with the word beta.` in the other channel — pass: answered on the gateway default
+      (the footer names it), not on the limited license. (3) In a thread of the other channel
+      that was pinned to the license before step 2 (`/model` → "just this thread"), send the same
+      message — pass: the reply says the license "is limited to another conversation and cannot
+      be used in this one". (4) Send `Reply with the word gamma.` in the home channel — pass:
+      `gamma`, the footer names the limited license; open a code channel from the home channel
+      and repeat there — pass: answered on the limited license. (5) Remove the limit and restore
+      both channels' defaults.
+- [ ] Live `LICENSE-47` what a limited license can never be (engine-independent: Settings and the
+      daemon's own checks, no engine starts; do it once with a Claude Code license and once with a
+      Codex license). Fixture: one added license per harness, unlimited, switched on, plus the
+      home channel of `LICENSE-45`. Actions: (1) make the license the gateway default
+      (Settings → Engines), then limit it to the home channel — pass: saved; the default shown in
+      Settings → Engines is the harness's own sign-in again. (2) With a request tool send
+      `PUT /api/settings {"engine":"<license id>"}` using the admin session — pass: 400, "is
+      limited to one conversation and cannot be the gateway default". (3) Switch every other
+      license off in Settings → Engines and save — pass: refused, "at least one engine must stay
+      enabled". (4) On a deployment WITHOUT an Enterprise key (or after clearing the key on a QA
+      instance): open the license form and set "Available in" to a channel — pass: refused with
+      "requires an active Enterprise license"; an already limited license is not offered in its
+      channel, and setting it back to "Every conversation" saves.
+
 ## A channel that does not approve Claude has no `claude` login (2026-11-23)
 
 Automated:

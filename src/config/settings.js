@@ -8,8 +8,8 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
-import { ENGINE_IDS, adapterOr, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
-import { setBuiltinLicenseState } from "../engines/license-state.js";
+import { ENGINE_IDS, adapterOr, isGatewayWideLicense, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
+import { licenseChannelOf, setBuiltinLicenseState } from "../engines/license-state.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -447,7 +447,9 @@ export function isEngineEnabled(engine) {
   // Never lock every harness out — but the rescue restores the DEFAULT harnesses only. An opt-in
   // engine must never be switched on by a fallback, and a deployment that deliberately runs ONLY
   // an opt-in harness must not have the others silently restored underneath it.
-  if (!ENGINES.some(e => !adapterOr(e).channelScoped && on(e))) return !engineIsOptIn(id);
+  // A license limited to one conversation is not "something the gateway can run", so it neither
+  // prevents the rescue nor is touched by it: it stays exactly as its own switch says.
+  if (!ENGINES.some(e => isGatewayWideLicense(e) && on(e))) return licenseChannelOf(id) ? on(id) : !engineIsOptIn(id);
   return on(id);
 }
 export function getEnabledEngines() {
@@ -460,10 +462,11 @@ export function getEngineEnabledMap() {
 
 export function getEngine() {
   const v = getSettings().engine;
-  const configured = ENGINES.includes(v) && !adapterOr(v).channelScoped ? v : "claude";
+  // A license limited to one conversation is never the gateway default, whatever is stored.
+  const configured = ENGINES.includes(v) && isGatewayWideLicense(v) ? v : "claude";
   // A disabled harness must not stay the gateway default just because it's the stored value —
   // resolve to the first enabled one instead of spawning a CLI the admin turned off.
-  return isEngineEnabled(configured) ? configured : getEnabledEngines().find(id => !adapterOr(id).channelScoped) || configured;
+  return isEngineEnabled(configured) ? configured : getEnabledEngines().find(isGatewayWideLicense) || configured;
 }
 
 // The licenses the gateway default may move to when the default license fails: "" (none), "any",
