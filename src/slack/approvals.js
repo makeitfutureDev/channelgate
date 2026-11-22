@@ -317,7 +317,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
           const ts = await postApprovalCard(client, {
             channelId: existing.channelId,
             threadTs: cardThread(existing.action?.threadKey || threadKey),
-            approval: { id: existing.id, title: existing.toolName, target: existing.target, authorId: existing.authorId, approvalType: existing.approvalType, scopes: approvalScopesFor({ approvalType: existing.approvalType, durable: true }) },
+            approval: { id: existing.id, title: existing.toolName, target: existing.target, authorId: existing.authorId, approvalType: existing.approvalType, scopes: approvalScopesFor({ approvalType: existing.approvalType, durable: true }), approveText: existing.approveText || "", denyText: existing.denyText || "" },
             text: `Approval requested: ${existing.toolName}`,
             blocks: approvalBlocks(existing.id, existing.toolName, existing.target, existing.authorId, {
               approvalType: existing.approvalType,
@@ -370,7 +370,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       const ts = await postApprovalCard(client, {
         channelId,
         threadTs: cardThread(threadKey),
-        approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }) },
+        approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }), approveText, denyText },
         text: `Approval requested: ${toolName}`,
         blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText, durable: true, requiredTier }),
         context: { approvalId: id, toolName, slug },

@@ -23,6 +23,8 @@ import { resolveSession, resetSession, getSession, getSessionEngine, saveSession
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { platformLabel } from "../platforms/registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine, sameHarness, harnessOf } from "../engines/registry.js";
@@ -423,8 +425,8 @@ export function isForkUnavailable(err) {
   return /thread\/fork failed|invalid paginated history lineage|missing source rollout|source rollout (is not paginated|belongs to another thread)|cannot fork[^\n]*(session|thread)|--fork-session[^\n]*(not found|no conversation)/.test(hay);
 }
 
-export function forkFallbackNote(engine) {
-  return `⚠️ _${engineLabel(engine)} could not fork the source thread's native session — continuing from the Slack history copy in a fresh session._\n\n`;
+export function forkFallbackNote(engine, surface = "Slack") {
+  return `⚠️ _${engineLabel(engine)} could not fork the source thread's native session — continuing from the ${surface} history copy in a fresh session._\n\n`;
 }
 
 export function parseDurationMs(value, fallback = 10 * 60 * 1000) {
@@ -2393,7 +2395,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           // source thread's Slack history (the pipeline builds every fork that way); drop the native
           // source and run the same turn as a fresh session on the SAME harness, saying so in the
           // thread. Without this the person got a dead-end error and a blank retry.
-          const note = forkFallbackNote(engine);
+          const note = forkFallbackNote(engine, platformLabel(platformOfConversation(channelId)) || "Slack");
           console.warn(`[gateway] ${engine} could not fork session ${forkSourceSessionId} in ${entry.slug} (${redactSecretValues(err.message, outputSecrets)}) — continuing from the Slack history copy`);
           await logEvent("run_fork_fallback", { channel: channelId, author: authorId, slug: entry.slug, threadKey, origin, engine, sourceSessionId: forkSourceSessionId, error: redactSecretValues(err.message, outputSecrets) });
           forkSourceSessionId = "";

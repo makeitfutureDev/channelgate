@@ -35,15 +35,15 @@ export function modelSettingsCard({ catalog = [], current = {}, actionData = {} 
   if (catalog.length > 50) body.push(block("Model list truncated to 50 choices. Use settings to view the complete catalog."));
   return card("Model settings", body, [action("Save", "model.save", actionData)]);
 }
-export function approvalCard({ id, title = "Approval requested", details = "", target = "", approvalType = "", scopes = ["once"], actionData = {} } = {}) {
+export function approvalCard({ id, title = "Approval requested", details = "", target = "", approvalType = "", scopes = ["once"], actionData = {}, approveText = "Approve", denyText = "Deny" } = {}) {
   const allowed = scopes.map(item => typeof item === "string" ? item : item.value).filter(scope => SCOPES.has(scope));
   if (!id || !allowed.length) throw new Error("Approval requires an id and supported scopes");
   const body = [block(details || target || approvalType || "Review this request before approving.")];
   if (allowed.length > 1) body.push({ type: "Input.ChoiceSet", id: "scope", label: "Approval scope", choices: allowed.map(value => ({ title: value, value })), value: allowed[0], isRequired: true });
   body.push({ type: "Input.Text", id: "comment", label: "Optional changes requested (a comment refuses the current action)", isMultiline: true, maxLength: 4000 });
   const data = { ...actionData, id: String(id), ...(allowed.length === 1 ? { scope: allowed[0] } : {}) };
-  return card(title, body, [action("Approve", "approval.respond", { ...data, decision: "approve" }),
-    action("Deny", "approval.respond", { ...data, decision: "deny" }, "none"),
+  return card(title, body, [action(approveText || "Approve", "approval.respond", { ...data, decision: "approve" }),
+    action(denyText || "Deny", "approval.respond", { ...data, decision: "deny" }, "none"),
     action("Request changes", "approval.respond", { ...data, decision: "deny" })]);
 }
 export function settingsCard({ title = "Settings", description = "Choose a setting.", items = [], actionData = {} } = {}) {

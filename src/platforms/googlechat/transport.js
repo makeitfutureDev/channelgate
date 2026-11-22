@@ -4,7 +4,7 @@ import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth, CHAT_REACTION_EVENT_SCOPES } from "./auth.js";
 import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
 import { createPubSubPuller } from "./pubsub.js";
-import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND } from "./events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND, GOOGLE_CHAT_QUEUED_COMMAND } from "./events.js";
 import { createGoogleChatConnector } from "./connector.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { makeInbound } from "../inbound.js";
@@ -73,15 +73,20 @@ export async function startGoogleChat({
   const seenThreads = createSeenThreads();
   const namespace = `googlechat:${subscription}`;
   const controlNamespace = `googlechat-controls:${subscription}`;
-  const isControl = event => event.type === 'card'
+  const isControl = event => {
     // Stop and Tick bypass the session queue like /stop, so they reach a turn while it runs.
-    || (event.type === 'reaction' && event.action !== 'engage')
-    || GOOGLE_CHAT_CONTROL_COMMAND.test(messageCommandText(event.message, { appCommand: event.appCommand }));
+    if (event.type === 'card' || (event.type === 'reaction' && event.action !== 'engage')) return true;
+    // A fork's opening request is a request in its new thread, whatever its text says.
+    if (event.fork) return false;
+    const text = messageCommandText(event.message, { appCommand: event.appCommand });
+    return GOOGLE_CHAT_CONTROL_COMMAND.test(text) && !GOOGLE_CHAT_QUEUED_COMMAND.test(text);
+  };
   const inboundFor = ({ event, botId, threadKey }) => {
     if (event.type === 'reaction') return reactionInbound({ event, botId, threadKey });
     const normalized = normalizeMessage(event, { botUserId: botId, api });
-    // An edit that newly mentions the app runs like a mention, labelled as an edit.
-    const message = event.edit ? { ...normalized, trigger: 'edit' } : normalized;
+    // An edit that newly mentions the app runs like a mention, labelled as an edit. A fork's
+    // opening request is addressed to the app by construction (only the daemon writes one).
+    const message = event.edit ? { ...normalized, trigger: 'edit' } : event.fork ? { ...normalized, mentionsBot: true } : normalized;
     return threadKey === undefined ? message : { ...message, threadKey };
   };
   // The durable id a message or reaction was accepted under (see onEvent / onReactionEvent). A
@@ -104,6 +109,7 @@ export async function startGoogleChat({
         const card = normalizeCardEvent(payload.event);
         if (card) await onCard?.(card);
       } else if (payload.event.type === 'reaction') await handleReaction(payload);
+      else if (payload.event.fork) await onMessage(inboundFor(payload), { fork: payload.event.fork });
       else await onMessage(inboundFor(payload));
     },
     interrupted: async payload => {
@@ -122,10 +128,45 @@ export async function startGoogleChat({
     },
     log,
   };
+  // Sessions a thread fork is copying (src/platforms/googlechat/thread-forks.js): their queued
+  // messages wait in SQLite, holding no run slot, until the copy is taken. Control commands
+  // (/stop, /status, card clicks) have their own lane and are never held.
+  const sessionHolds = new Map();
   const inbox = deps.inbox || (deps.createInbox || createDurableInbox)({
     ...inboxOptions, namespace,
     queuedNamespace: payload => isControl(payload.event) ? controlNamespace : null,
+    isReady: key => !sessionHolds.has(key),
   });
+  connector.holdSession = ({ conversationId, sessionKey }) => {
+    const key = JSON.stringify([conversationId, sessionKey]);
+    sessionHolds.set(key, (sessionHolds.get(key) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (sessionHolds.get(key) || 1) - 1;
+      if (left > 0) sessionHolds.set(key, left); else sessionHolds.delete(key);
+      inbox.wake?.();
+    };
+  };
+  // A fork's opening request, authored by its requester in the fork's new thread, enters the same
+  // durable intake as a typed message: the same session queue, run slots and restart handling (an
+  // interrupted one is announced, never replayed). Only daemon code reaches this; a Chat event can
+  // never carry `fork`, because parseChatEvent builds every event from named fields.
+  connector.startForkTurn = ({ space, spaceName = '', threadKey, messageId, sender = {}, text, fork }) => {
+    if (!isSpaceName(space) || !isThreadName(threadKey) || !threadKey.startsWith(`${space}/threads/`)
+      || !isMessageName(messageId) || !messageId.startsWith(`${space}/messages/`) || !sender.email || !fork?.id) {
+      throw new Error('A fork turn needs its space, new thread, request message and requester.');
+    }
+    const event = { type: 'message', fork,
+      space: { name: space, displayName: spaceName || space, spaceType: 'SPACE' },
+      message: { name: messageId, text: String(text || ''), argumentText: String(text || ''), thread: { name: threadKey }, threadReply: false,
+        createTime: new Date().toISOString(), annotations: [],
+        sender: { name: /^users\/[A-Za-z0-9_-]+$/.test(String(sender.name || '')) ? sender.name : '', email: sender.email, displayName: sender.displayName || sender.email, type: 'HUMAN' } } };
+    const accepted = acceptMessage({ event, id: messageId, threadKey });
+    if (!accepted?.accepted) throw new Error('The fork\'s opening request could not be queued.');
+    return accepted;
+  };
   const controlInbox = deps.controlInbox || (deps.createInbox || createDurableInbox)({
     ...inboxOptions, namespace: controlNamespace, concurrencyGroup: "platform-controls",
   });

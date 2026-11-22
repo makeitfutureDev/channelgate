@@ -5,12 +5,20 @@ import { effectiveWorkDir } from "./folders.js";
 import { getSession, getSessionEngine, getSessionRuntime } from "./sessions.js";
 import { getThreadSudo } from "./thread-engine.js";
 import { engineSupports } from "../engines/registry.js";
-import { isSlackTs } from "../slack/thread-keys.js";
 import { platformOfConversation } from "../platforms/ids.js";
-import { platformSupports } from "../platforms/registry.js";
+import { capabilitiesFor, platformOr, platformSupports } from "../platforms/registry.js";
+import { liveConnector } from "../platforms/live.js";
+import { RUN_ORIGINS } from "../engines/contract.js";
 import { isCodeChannelMeta } from "./code-channels.js";
 
 export const THREAD_FORK_ACTION = "thread_forks";
+// The one origin a fork proposal may come from: the surface's own watched, authenticated
+// foreground turn (`slack_foreground`, `googlechat_foreground`). Schedules, background agents,
+// API runs, continuations and recovery never propose forks.
+export function threadForkOrigin(platform) {
+  const origin = `${platform}_foreground`;
+  return RUN_ORIGINS.includes(origin) ? origin : "";
+}
 export function describeThreadForks(forks) {
   return `Create ${forks.length} separate threads in this conversation, inheriting the source context. Start one response in each.\n\n` +
     forks.map((fork, i) => `${i + 1}. ${fork.title}\n${fork.prompt}`).join("\n\n");
@@ -31,9 +39,23 @@ export function normalizeThreadForks(forks) {
 
 export async function threadForkTarget(action) {
   const { channelId, slug, authorId, threadKey } = action;
-  if (!isSlackTs(threadKey) || !platformSupports(platformOfConversation(channelId), "threadForks")) throw new Error("Fork proposals need an ordinary Slack thread.");
+  const platform = platformOfConversation(channelId), adapter = platformOr(platform);
+  // A surface with threads in only some conversations (Google Chat: named threaded spaces, never
+  // DMs or group chats) answers WHY a conversation cannot fork once it knows the conversation.
+  const mixedThreading = capabilitiesFor(platform).mixedThreading === true;
+  const ordinaryThread = () => Boolean(adapter.validDeliveryThread?.(threadKey, channelId));
+  if (!platformSupports(platform, "threadForks") || (!mixedThreading && !ordinaryThread())) throw new Error(`Fork proposals need an ordinary ${adapter.label} thread.`);
   const entry = await getChannelEntry(channelId), meta = await getChannelMeta(slug);
   if (!entry || entry.slug !== slug || !meta || (meta.channelId && meta.channelId !== channelId)) throw new Error("The source conversation no longer matches this proposal.");
+  if (mixedThreading) {
+    if (entry.isDM || entry.type !== "channel") throw new Error(`${adapter.label} direct messages and group chats have no threads to fork into. Use a named space that has threads.`);
+    if (!ordinaryThread()) throw new Error(`Fork proposals need an ordinary ${adapter.label} thread.`);
+    // Whether the space itself is threaded is a live fact of the space, asked of its transport.
+    const connector = liveConnector(platform);
+    if (typeof connector?.threadForkRefusal !== "function") throw new Error(`${adapter.label} is not connected, so forks cannot be created right now.`);
+    const refusal = await connector.threadForkRefusal(channelId);
+    if (refusal) throw new Error(refusal);
+  }
   const admin = await isAdmin(authorId);
   if (!isAuthorized(meta, authorId, Boolean(entry.isDM), { isAdminUser: admin, isApprovedUser: await isApproved(authorId) })) throw new Error("The requester is no longer authorized in this conversation.");
   if (isCodeChannelMeta(meta)) throw new Error("Code channels have one session; propose forks in an ordinary conversation.");
@@ -52,7 +74,8 @@ export async function threadForkTarget(action) {
 }
 
 export async function prepareThreadForkApproval(ctx, { forks } = {}) {
-  if (ctx.principalTrusted !== true || ctx.toolset !== "full" || ctx.origin !== "slack_foreground") throw new Error("Fork proposals are available only in a person's foreground Slack turn.");
+  const platform = platformOfConversation(ctx.channelId);
+  if (ctx.principalTrusted !== true || ctx.toolset !== "full" || !ctx.origin || ctx.origin !== threadForkOrigin(platform)) throw new Error(`Fork proposals are available only in a person's foreground ${platformOr(platform).label} turn.`);
   const action = { kind: THREAD_FORK_ACTION, channelId: ctx.channelId, slug: ctx.slug, authorId: ctx.createdBy, threadKey: ctx.threadKey, forks: normalizeThreadForks(forks) };
   const target = await threadForkTarget(action);
   return { ...action, sourceSessionId: target.sourceSessionId, sourceEngine: target.sourceEngine, sourceScope: target.sourceScope, workDir: target.workDir };

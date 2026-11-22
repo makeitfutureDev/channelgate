@@ -17082,6 +17082,78 @@ Regression: `thread-fork-approvals.test.js`, `thread-fork-batch.test.js`, `slack
 
 Live acceptance (pending, run separately with Claude and Codex in an authorized Slack Auto fixture): complete a source turn containing a unique context marker; ask “Propose forks for pricing, onboarding and support, each asking about our marker.” Verify one card shows all titles/prompts and Create 3 forks/Cancel. Before approval, no child roots exist. Cancel once, then propose again and approve as requester: exactly three roots, independent Activity rows owned by requester, matching parent backlinks and a parent index. Every child recalls the marker and continues independently. Repeat the pending request and double-click: one execution. While a long source turn is active, approve a proposal; no children start until it settles, and all use the same source. Verify another member cannot approve; revoked requester, sudo, session clear or lane change refuse. Use an isolated fake Slack transport to fail one create after another succeeds: preserve successful links, identify failure, and never blindly retry an uncertain POST. Restart a pending proposal and approve it; separately interrupt execution and verify no automatic duplicate roots. Live results must be recorded for each engine; regression fakes do not establish live acceptance.
 
+
+## Google Chat thread forks (`propose_thread_forks`, `/fork`)
+
+Automated: `node --test test/googlechat-thread-forks.test.js` (11) runs the real Google Chat
+transport (durable intake, session holds, control lane), the shared ingest, approval backend and
+fork runner against a recording Chat fake and held fake engine turns. It covers: tool registration
+only for a trusted full-toolset `googlechat_foreground` turn (kept in DMs so the call can refuse;
+Slack registration unchanged, Teams/schedule/untrusted/agent-message never); `/fork` routed as a
+registered command that still waits in the session queue, and listed by `/help`; one Cards v2
+card in the source thread with **Create 2 forks** / **Cancel** even in Auto mode, deduplicated;
+no child before approval; approval returns at once and the row is consumed; each child is a new
+top-level post `↪️ Ana Fork: {title}`, its request runs as the requester in the new thread with
+`forkSourceSessionId` = the source session, origin `googlechat_foreground` and a history fallback;
+index `Created 2/2 forks:` with chat.google.com links; journaled per-child rows; Activity rows
+owned by the requester; a second click executes nothing; the batch waits for a running source
+turn, and a later source message runs only after BOTH children copied; `/stop` before the copy
+cancels with no roots; a failed root keeps the other links, names the failure and is never
+retried; refusals for an unthreaded space, a group chat, a Slack origin, a revoked requester and a
+disconnected transport (also at execution); another member cannot approve, an admin can; `/fork`
+text beginning `/clear` runs as a request; `/fork` in a DM is refused with no root; a queued
+`/fork` waits for the running turn; a child queued across a restart still runs once. Run with
+`test/thread-fork-approvals.test.js`, `test/thread-fork-batch.test.js`, `test/slack-fork.test.js`,
+the `googlechat-*` tests and `test/mcp-control-plane-approval.test.js` for the unchanged Slack and
+Teams paths.
+
+Live acceptance (pending; nothing below has been executed). Fixture: a disposable **named Google
+Chat space with threaded replies** (`spaceThreadingState` THREADED_MESSAGES) on a gateway serving
+this candidate, the Chat app on the **HTTP endpoint** connection (card buttons do not act over
+Pub/Sub alone), the history app scope approved, and that space's channel set to Worker + Auto.
+Requester A is an approved non-admin member, B another approved member, C an organization admin.
+Run cases 1–4 once with the channel's runtime on Claude and once on Codex (`/model claude …` /
+`/model codex …` in a fresh thread, verified in the answer footer); 5–6 are engine-independent.
+
+1. **GCHAT-FORK-CLAUDE-01 / GCHAT-FORK-CODEX-01 — approved batch.** In a new thread A sends
+   "@app Remember the project marker KESTREL-{date}. Reply READY." After READY, A sends "@app Propose
+   forks for pricing, onboarding and support, each asking what our project marker is and one
+   question about that topic." Pass: one card in the thread lists all three titles and prompts with
+   **Create 3 forks** and **Cancel**; no new thread exists yet. A clicks **Cancel**; nothing is
+   created. A asks again and clicks **Create 3 forks**: the card reads approved, the source thread
+   shows "⏳ Approved 3 forks…" then "Created 3/3 forks:" with three links; three new top-level
+   messages "↪️ A Fork: …" exist in the space, each thread holds "↪️ Fork of this thread — opening
+   request from A:" plus its prompt, and each answer names KESTREL-{date} with the expected engine
+   in its footer. A's Activity lists three new rows. A follow-up "@app what did we just discuss?"
+   in one fork continues that fork only.
+2. **GCHAT-FORK-WAIT-CLAUDE-01 / GCHAT-FORK-WAIT-CODEX-01 — waits for the source.** In the source
+   thread of case 1 A sends "@app Propose forks for risks and timeline, each asking what our
+   project marker is." and leaves the card pending. A then sends "@app count slowly from 1 to 40,
+   one number per line" and, while the count runs, clicks **Create 2 forks**, then sends "@app
+   reply DONE" in the source thread. Pass: no fork root appears until the count's answer is final;
+   then both forks appear and each recalls the marker; DONE is answered only after both forks have
+   started.
+3. **GCHAT-FORK-CMD-CLAUDE-01 / GCHAT-FORK-CMD-CODEX-01 — typed `/fork`.** In the source thread A
+   sends "@app /fork What is our project marker, and what should we name the beta?". Pass: one new
+   thread "↪️ A Fork: What is our project marker…", the source thread answers "↪️ Fork started in a
+   new thread" with a working link, and the fork's answer names the marker. "@app /fork :fast hi"
+   is refused with the model-shortcut sentence and creates nothing.
+4. **GCHAT-FORK-STOP-CLAUDE-01 / GCHAT-FORK-STOP-CODEX-01 — stop before the copy.** A starts a long
+   count, approves a two-fork card, then sends "@app /stop" in the source thread. Pass: the count
+   stops, the source thread says the forks were stopped before creation and nothing was created;
+   no new thread appears.
+5. **GCHAT-FORK-AUTH-01 (engine-independent) — authority.** B clicks **Create N forks** on A's
+   card: B gets a private "Approval unavailable" message and nothing is created; C (admin) clicks
+   it: the forks are created and attributed to A.
+6. **GCHAT-FORK-REFUSE-01 (engine-independent) — where forks cannot exist.** In a DM with the app,
+   in an unnamed group chat and in a space without threaded replies (if the tenant still has one),
+   A sends "Split pricing and onboarding into forks" and "/fork test". Pass: the agent says the
+   conversation has no threads to fork into (tool refusal) and `/fork` answers "Can't fork this
+   thread: …"; no card and no new message appear.
+
+Record message links, card screenshots, footers and Activity evidence per engine in the private QA
+registry. Automated fakes do not establish live acceptance.
+
 ### Startup rename migration admission (engine-independent)
 
 - Fixture: isolated temporary runtime/workspace roots in `test/migrate-channelgate.test.js`;
