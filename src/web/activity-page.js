@@ -1190,7 +1190,7 @@ function settingsBrowser(config, browser, theme, connections) {
   const { document, location } = browser;
   const el = (id) => document.getElementById(id);
   const panel = el("settings-panel"), nav = el("settings-nav"), status = el("settings-status");
-  const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["email", "Email accounts"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
+  const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["email", "Email accounts"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"], ["api", "API tokens"]];
   const voiceCalls = config.voiceCalls === true;
   const wanted = String(location?.hash || "").replace(/^#/, "");
   let section = SECTIONS.some(([id]) => id === wanted) ? wanted : config.emailPage ? "email" : config.connectionsPage ? "connections" : "general";
@@ -1312,6 +1312,49 @@ function settingsBrowser(config, browser, theme, connections) {
       notice = String(result.notice || "Saved."); noticeKind = "ok";
       render();
     } catch { settle("That change couldn’t be saved. Please try again."); }
+  }
+
+  // Settings → API tokens has its own endpoints: it works per conversation, and a minted value
+  // lives only in this page's memory until the person leaves the section or the conversation.
+  const tok = { channels: null, channelId: "", list: null, reveal: null, loading: false, message: "", requested: false };
+  async function tokRequest(path, init) {
+    const response = await fetch(base + "/api/api-tokens" + path, { credentials: "same-origin", cache: "no-store", ...init });
+    if (response.status === 401) { end(); throw new Error(""); }
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (typeof result.error === "string" && response.status !== 403 && response.status !== 503) throw new Error(result.error);
+      throw new Error(response.status === 403 ? "You no longer have access to that conversation." : "That couldn’t be done. Please try again.");
+    }
+    return result;
+  }
+  async function tokLoadList() {
+    tok.list = null; tok.message = "";
+    if (!tok.channelId) { render(); return; }
+    render();
+    try { tok.list = await tokRequest("/" + encodeURIComponent(tok.channelId)); }
+    catch (error) { tok.message = error.message; }
+    render();
+  }
+  async function tokLoadChannels() {
+    tok.loading = true; tok.requested = true; tok.message = ""; render();
+    try {
+      const result = await tokRequest("");
+      tok.channels = result.channels || [];
+      if (!tok.channels.some((c) => c.channelId === tok.channelId)) tok.channelId = tok.channels[0]?.channelId || "";
+    } catch (error) { tok.channels = tok.channels || []; tok.message = error.message; }
+    tok.loading = false;
+    await tokLoadList();
+  }
+  async function tokMutate(path, body, errorNode) {
+    if (tok.loading || ended) return null;
+    tok.loading = true; lock(true);
+    if (errorNode) errorNode.textContent = "";
+    try {
+      return await tokRequest(path, { method: "POST", headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf }, body: JSON.stringify(body || {}) });
+    } catch (error) {
+      if (errorNode) errorNode.textContent = error.message; else { tok.message = error.message; }
+      return null;
+    } finally { tok.loading = false; lock(false); }
   }
 
   const BUILD = {
@@ -1463,6 +1506,62 @@ function settingsBrowser(config, browser, theme, connections) {
       pick.append(open);
       return [pick];
     },
+    api() {
+      const intro = card("API tokens", "A token lets an automation (Make.com, a script, a CI job) start runs in one conversation over the HTTP run API. Runs act as you, with your current access there, and stop working when you revoke the token or lose access. Channel managers and admins also see everyone’s tokens in their conversations.");
+      // Loaded after this render returns, so the loader's own repaints never nest inside it.
+      if (!tok.requested) { tok.requested = true; void Promise.resolve().then(tokLoadChannels); }
+      if (!tok.channels) { intro.append(node("p", "settings-empty", "Loading your conversations…")); return [intro]; }
+      if (!tok.channels.length) { intro.append(node("p", "settings-empty", tok.message || "There is no conversation you can create a token in yet.")); return [intro]; }
+      const picker = node("select", "settings-input"); picker.name = "conversation"; picker.disabled = tok.loading || ended;
+      for (const c of tok.channels) { const option = node("option", "", c.name + (c.count ? " (" + c.count + ")" : "")); option.value = c.channelId; option.selected = c.channelId === tok.channelId; picker.append(option); }
+      picker.addEventListener("change", () => { tok.channelId = picker.value; tok.reveal = null; void tokLoadList(); });
+      intro.append(field("Conversation", picker));
+      const cards = [intro];
+      if (tok.reveal && tok.reveal.channelId === tok.channelId) {
+        const shown = card("Copy your new token now", "It is shown only this once; the gateway keeps no copy. Leaving this page hides it for good.");
+        const value = input("token-value", { value: tok.reveal.token, max: 200 }); value.readOnly = true; value.disabled = false;
+        value.addEventListener("focus", () => value.select());
+        const copy = button("Copy", () => { void browser.navigator?.clipboard?.writeText(tok.reveal.token).then(() => { copy.textContent = "Copied"; }, () => { value.select(); }); }, "settings-button primary");
+        shown.append(field(tok.reveal.name, value), copy);
+        const example = node("pre", "settings-code", tok.reveal.example); shown.append(example);
+        const done = button("I’ve copied it", () => { tok.reveal = null; render(); }, "settings-button ghost"); shown.append(done);
+        cards.push(shown);
+      }
+      const list = card(tok.list?.manager ? "Tokens in this conversation" : "Your tokens here");
+      if (tok.message) list.append(node("p", "settings-error", tok.message));
+      if (!tok.list) list.append(node("p", "settings-empty", tok.message ? "" : "Loading tokens…"));
+      else {
+        for (const t of tok.list.tokens) {
+          list.append(row(t.name, t.prefix + "…" + t.last4 + " · " + (t.mine ? "yours" : "created by " + (t.createdByName || t.createdBy)) + " · created " + when(t.createdAt) + " · " + (t.lastUsedAt ? "last used " + when(t.lastUsedAt) : "never used"), [
+            button("Revoke", async () => {
+              if (browser.confirm && !browser.confirm("Revoke “" + t.name + "”? Automations using it get 401 from the next request.")) return;
+              const done = await tokMutate("/" + encodeURIComponent(tok.channelId) + "/" + encodeURIComponent(t.id) + "/revoke");
+              if (done) { notice = "Revoked “" + t.name + "”."; noticeKind = "ok"; await tokLoadChannels(); } else render();
+            }, "settings-button danger")]));
+        }
+        if (!tok.list.tokens.length) list.append(node("p", "settings-empty", tok.list.manager ? "No tokens in this conversation." : "You have no tokens in this conversation."));
+      }
+      cards.push(list);
+      const add = card("Create a token", "Give it a name that says where it is used.");
+      const nameInput = input("name", { max: 80, placeholder: "Make.com invoice flow" });
+      const error = node("p", "settings-error"); error.setAttribute("role", "alert");
+      const create = node("form", "settings-form");
+      const submit = node("button", "settings-button primary", "Create token"); submit.type = "submit"; submit.disabled = tok.loading || ended;
+      const footer = node("div", "settings-form-actions"); footer.append(submit);
+      create.append(field("Name", nameInput), error, footer);
+      create.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const channelId = tok.channelId;
+        const minted = await tokMutate("/" + encodeURIComponent(channelId), { name: nameInput.value }, error);
+        if (!minted) return;
+        tok.reveal = { channelId, token: minted.token, name: minted.record.name, example: minted.example };
+        notice = "Token “" + minted.record.name + "” created."; noticeKind = "ok";
+        await tokLoadChannels();
+      });
+      add.append(create);
+      cards.push(add);
+      return cards;
+    },
     ssh() {
       const k = data.ssh;
       const list = card("Your SSH keys", "Public keys that let you SSH into a channel's container once you enable access there (ask the agent: “enable SSH access for me”). Up to " + k.max + ".");
@@ -1484,7 +1583,7 @@ function settingsBrowser(config, browser, theme, connections) {
       const item = node("button", "settings-tab", label);
       item.type = "button";
       if (id === section) item.setAttribute("aria-current", "page");
-      item.addEventListener("click", () => { section = id; editing = null; notice = ""; noticeKind = ""; if (browser.history?.replaceState) browser.history.replaceState(null, "", base + "/settings" + (id === "email" ? "/email" : id === "connections" ? "/connections" : "#" + id)); render(); });
+      item.addEventListener("click", () => { section = id; editing = null; notice = ""; noticeKind = ""; tok.reveal = null; if (browser.history?.replaceState) browser.history.replaceState(null, "", base + "/settings" + (id === "email" ? "/email" : id === "connections" ? "/connections" : "#" + id)); render(); });
       return item;
     }));
     paintStatus();
@@ -1791,6 +1890,7 @@ select.settings-input{height:32px}
 .settings-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);grid-column:1/-1}
 .settings-check input,.settings-skill input{width:16px;height:16px;min-height:0;accent-color:var(--orange)}
 .settings-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px}
+.settings-code{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .settings-error{grid-column:1/-1;margin:0;color:var(--danger);font-size:12px;min-height:0}.settings-error:empty{display:none}
 .settings-warning{color:var(--warn);font-size:12px}
 .settings-empty{color:var(--faint);font-size:12.5px;margin:8px 0 0}

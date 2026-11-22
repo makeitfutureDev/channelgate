@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- API tokens can now be created and revoked from Slack channel Settings → API tokens and from the
+  Activity dashboard's Settings → API tokens (pick the conversation), not only by asking the agent.
+  Each token still belongs to one conversation and one person, its value is shown once, and you
+  see your own tokens — or all of them in a conversation you manage.
 - Google Chat: Composio SDK mode (Enterprise) now works in Google Chat. A Google Chat author and
   space get their own Composio identities, scoped to the Google Cloud project of your Chat app's
   service-account key, so agents there receive the personal and the shared Composio connection like

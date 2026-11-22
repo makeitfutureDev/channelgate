@@ -71,6 +71,7 @@ export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_r
 // THIS channel's rows by the handler, so a stale or forged id can never touch another channel's.
 export const CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID = "cg_channel_settings_automation_toggle";
 export const CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID = "cg_channel_settings_automation_delete";
+export const CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID = "cg_channel_settings_api_token_revoke";
 // The redesigned pages' controls (2026-10): inline forms, the variable and schedule ⋯ menus, the
 // in-place confirmations, the Access member ticks, and the in-place pickers.
 export const CHANNEL_SETTINGS_ROOT_CALLBACK_ID = "cg_channel_settings_modal";
@@ -96,8 +97,8 @@ export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
 // unattended (Schedules), how to reach this thread's session from a terminal (Diagnostics), and
 // everything personal to the viewer (You). LEGACY_TABS lands a view or button from before the
 // redesign on the page that now owns its controls.
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "diagnostics", "you"]);
-const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "diagnostics", secrets: "variables", automations: "schedules" });
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "api", "diagnostics", "you"]);
+const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "diagnostics", secrets: "variables", automations: "schedules", tokens: "api" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -404,6 +405,7 @@ const TAB_LABELS = Object.freeze({
   variables: "Variables",
   skills: "Skills",
   schedules: "Schedules",
+  api: "API tokens",
   diagnostics: "Diagnostics",
   you: "You",
 });
@@ -531,6 +533,12 @@ export function settingsFormSpec(key, snapshot = {}) {
         { name: "secret", label: "Secret", type: "checkbox", optional: true, initial: true, option: "Programs see a stand-in; the real value only goes to allowed servers" },
         { name: "hosts", label: "Allowed servers", optional: true, placeholder: "Optional — api.example.com, *.example.com", maxLength: 500 },
       ],
+    };
+  }
+  if (kind === "tok-add" && scope === "c") {
+    return {
+      key, title: "New API token", removable: false,
+      fields: [{ name: "name", label: "Name", placeholder: "e.g. Make.com invoice flow", maxLength: 80, hint: "Runs it starts act as you, in this conversation only" }],
     };
   }
   if ((kind === "var-val" || kind === "var-hosts") && FORM_SCOPES[scope] && name) {
@@ -1181,6 +1189,42 @@ function scheduleRows(snapshot, state) {
   return blocks;
 }
 
+// ── API tokens ───────────────────────────────────────────────────────────────────────────────
+// This conversation's HTTP run API tokens (src/gateway/api-tokens.js): the viewer's own, or every
+// one for a channel manager or an admin. Names and last four only; a new value appears once, in the
+// notice of the save that minted it, and is never rebuilt into a later view.
+export const API_TOKEN_LIST_LIMIT = 20;
+const tokenDate = (iso) => (iso ? String(iso).slice(0, 10) : "");
+
+function apiTokensPage(snapshot, state) {
+  const data = snapshot.apiTokens || {};
+  const active = (data.tokens || []).filter((token) => !token.revoked);
+  const blocks = [context(
+    "A token lets an automation (Make.com, a script, a CI job) start runs *in this conversation* over the HTTP run API. "
+    + "Runs act as the person who created it, with their current access, and stop working when it is revoked or they lose access here.",
+  )];
+  blocks.push(header(`${data.manager ? "Tokens here" : "Your tokens"} · ${active.length}`));
+  for (const token of active.slice(0, API_TOKEN_LIST_LIMIT)) {
+    const mine = token.createdBy === state.ownerId;
+    const owner = mine ? "you" : `<@${escapeMrkdwn(token.createdBy)}>`;
+    const text = `*${escapeMrkdwn(token.name)}* ${inlineCode(`${token.prefix}…${token.last4}`)}\n`
+      + `Created by ${owner} ${tokenDate(token.createdAt)} · ${token.lastUsedAt ? `last used ${tokenDate(token.lastUsedAt)}` : "never used"}`;
+    blocks.push({ type: "section", text: mrkdwn(text), accessory: button(CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID, "Revoke", state, "api_token_revoke", { id: token.id }, {
+      style: "danger",
+      confirm: destructiveConfirm("Revoke this token?", `*${escapeMrkdwn(token.name)}* stops working immediately. Automations using it get 401.`, "Revoke"),
+    }) });
+  }
+  if (!active.length) blocks.push(context(data.manager ? "_No tokens in this conversation._" : "_You have no tokens here._"));
+  if (active.length > API_TOKEN_LIST_LIMIT) blocks.push(context(`${active.length - API_TOKEN_LIST_LIMIT} more — the dashboard's Settings → API tokens lists them all.`));
+  const addKey = "tok-add:c";
+  if (state.form === addKey) blocks.push(...withForm([], addKey, snapshot, state));
+  else blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ New token", state, "form_open", { f: addKey })] });
+  blocks.push(context(data.manager
+    ? "You see every token of this conversation because you manage it."
+    : "You see your own tokens. Channel managers and admins see all of them."));
+  return blocks;
+}
+
 // ── You ──────────────────────────────────────────────────────────────────────────────────────
 function youPage(snapshot, state, opts) {
   return [
@@ -1220,7 +1264,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     ? [context("These shared settings are managed in the source conversation. Your personal settings remain under You.")]
     : {
     agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
-    skills: skillsPage, schedules: scheduleRows, diagnostics: diagnosticsPage, you: youPage,
+    skills: skillsPage, schedules: scheduleRows, api: apiTokensPage, diagnostics: diagnosticsPage, you: youPage,
   }[active](snapshot, state, opts);
   let blocks = [
     pageNav(state, active, { isDM: snapshot.isDM }),

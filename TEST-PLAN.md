@@ -3956,6 +3956,36 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
   qa-member and `"channel":"cg-testing-<other-engine>-admin"` answers 403; a POST with the legacy
   organization key still starts a run and the daemon log shows the deprecation warning. PASS when
   every step holds for both engines.
+## API tokens in Slack Settings and the dashboard (2026-11-22)
+
+- [x] Automated: `node scripts/run-tests.mjs test/api-tokens-ui.test.js` (then
+  `test/api-tokens.test.js`, `test/channel-settings-modal.test.js`,
+  `test/slack-settings-redesign.test.js`, one file per invocation) — the shared rule (own tokens
+  for a member, all for a manager/admin; revoking another person's token 403, another
+  conversation's 404, twice 409); the Slack page lists active tokens only with escaped names, a
+  confirmed Revoke and + New token, the form gives the modal Save, `tok-add` exists only for the
+  conversation scope, and every page/role/form still passes the Block Kit check with 25 tokens;
+  the Slack save mints for the clicker in this conversation with the value only in the notice, and
+  revoke follows `manageAccess` (members vs admins); the dashboard lists only conversations the
+  viewer may open (own DM first, never another person's DM), refuses others with 403, mints for the
+  session owner after re-checking the session, never lists a value, shows creator names to a
+  manager, and revokes by the same rule.
+- [x] Browser: `CG_BROWSER_MODULE=… CG_BROWSER_EXECUTABLE=… node --test
+  test/activity-api-tokens-browser.test.js` — Chromium picks the own DM first, switches
+  conversation, refuses an empty name beside the form, creates with the CSRF header, shows the
+  value once with Copy and the curl example, renders names as text, revokes after a confirm, fits
+  1440 and 390 px in light and dark, and the value is gone after leaving the section.
+- [ ] Live, Claude AND Codex (`cg-testing-<engine>-admin`, approved member Apps, admin contact;
+  Airtable API-TOKENS-UI-01 and -02):
+  (1) Apps opens Settings from a reply → **API tokens** → **+ New token**, names it qa-slack, Save.
+  Expected: the notice shows a `cgk_…` value once with a curl example; reopening Settings shows
+  qa-slack with no value. (2) From a shell POST `/api/runs` with that token and “Which engine,
+  model and role is this run using?” — the run is posted as a thread in that channel and reports
+  member rank on the channel's engine. (3) contact opens the same page and sees qa-slack created by
+  Apps, revokes it; the next POST answers 401. (4) Apps opens the dashboard → Settings → API
+  tokens, picks the channel, creates qa-dash, copies it, runs step 2 with it, then revokes it on
+  the dashboard; the next POST answers 401. (5) Apps cannot see contact's tokens on either
+  surface. PASS when every step holds for both engines.
 ## Run capability liveness (2026-11-03)
 
 - [x] Automated: `node scripts/run-tests.mjs test/capability-liveness.test.js` (then

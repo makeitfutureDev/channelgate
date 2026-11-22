@@ -36,6 +36,8 @@ import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation } from "../gateway/automations-view.js";
 import { PERSONAL_SKILLS_ID, channelSkillsView, personalSkillsView, saveSkillSelection, skillChannels } from "../gateway/skills-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
+import { apiTokenChannels, apiTokenChannelView, createDashboardApiToken, revokeDashboardApiToken } from "../gateway/api-tokens-view.js";
+import { ApiTokenError } from "../gateway/api-tokens.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
 import { platformOfConversation } from '../platforms/ids.js';
@@ -636,6 +638,58 @@ export function createActivityRouter({
       await context(req);
       return res.json({ ok: deleteAutomation(access, session.ownerId, entry, String(req.params.scheduleId).slice(0, 64)) });
     } catch (error) { return unavailable(res, error.status || 503); }
+  });
+
+  // Settings → API tokens: the same access rule as Automations, re-derived from the session owner
+  // on every request. A minted value is in exactly one response body (no-store) and nowhere else.
+  router.get("/:id/api/api-tokens", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const channels = await apiTokenChannels(await accessContext(client, session.ownerId), session.ownerId);
+      await context(req);
+      return res.json({ channels });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.get("/:id/api/api-tokens/:channelId", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const data = await apiTokenChannelView(await accessContext(client, session.ownerId), session.ownerId, req.params.channelId);
+      await context(req);
+      return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/api-tokens/:channelId", async (req, res) => {
+    let session, client;
+    try {
+      ({ session, client } = await context(req));
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+    } catch (error) { return unavailable(res, error.status || 403); }
+    try {
+      const minted = await createDashboardApiToken(await accessContext(client, session.ownerId), session.ownerId, req.params.channelId, req.body?.name, {
+        authorize: async () => { const current = await context(req); if (current.session !== session) throw Object.assign(new Error("Activity session changed"), { status: 401 }); },
+      });
+      res.set("Cache-Control", "no-store");
+      return res.json(minted);
+    } catch (error) {
+      if (error instanceof ApiTokenError) return res.status(error.status).json({ error: error.message });
+      return unavailable(res, error.status === 401 || error.status === 403 ? error.status : 503);
+    }
+  });
+  router.post("/:id/api/api-tokens/:channelId/:tokenId/revoke", async (req, res) => {
+    let session, client;
+    try {
+      ({ session, client } = await context(req));
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+    } catch (error) { return unavailable(res, error.status || 403); }
+    try {
+      const token = await revokeDashboardApiToken(await accessContext(client, session.ownerId), session.ownerId, req.params.channelId, req.params.tokenId, {
+        authorize: async () => { const current = await context(req); if (current.session !== session) throw Object.assign(new Error("Activity session changed"), { status: 401 }); },
+      });
+      return res.json({ token });
+    } catch (error) {
+      if (error instanceof ApiTokenError) return res.status(error.status).json({ error: error.message });
+      return unavailable(res, error.status === 401 || error.status === 403 ? error.status : 503);
+    }
   });
 
   router.get("/:id/api/calls", async (req, res) => {

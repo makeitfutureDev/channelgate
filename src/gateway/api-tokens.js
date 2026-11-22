@@ -86,6 +86,28 @@ export function revokeApiToken(id, { now = nowIso() } = {}) {
   return getApiToken(id);
 }
 
+// ── One rule for every surface that manages a conversation's tokens ──────────────────────────
+// The agent tools (src/mcp/tools/api-tokens.js), the Slack Settings → API tokens page and the
+// Activity dashboard's Settings → API tokens section all decide the same way. The CALLER proves
+// the person is authorized in the conversation (each surface has its own authentication); these
+// functions then decide which tokens that person sees and may revoke: their own, or — for a
+// channel manager or an admin (`manager`) — every token of the conversation.
+
+/** The tokens `userId` sees in one conversation (never a value). */
+export function conversationTokensFor({ channelId, userId, manager = false, includeRevoked = true } = {}) {
+  if (!channelId || !userId) return [];
+  return listApiTokens(manager ? { channelId, includeRevoked } : { channelId, createdBy: userId, includeRevoked });
+}
+
+/** Revoke one token of a conversation on behalf of `userId`. Throws ApiTokenError (404 / 403 / 409). */
+export function revokeConversationToken({ id, channelId, userId, manager = false, now } = {}) {
+  const token = Number.isSafeInteger(Number(id)) ? getApiToken(id) : null;
+  if (!token || !channelId || token.channelId !== String(channelId)) throw new ApiTokenError("No such token in this conversation.", 404);
+  if (token.createdBy !== userId && !manager) throw new ApiTokenError("Only the token's owner, a channel manager or an admin can revoke it.", 403);
+  if (token.revoked) throw new ApiTokenError(`Token #${token.id} “${token.name}” is already revoked.`, 409);
+  return revokeApiToken(token.id, now ? { now } : undefined);
+}
+
 /** Resolve a presented value to its live record (null when unknown or revoked). Records the use. */
 export function resolveApiToken(value, { now = nowIso() } = {}) {
   const v = String(value || "").trim();

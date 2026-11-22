@@ -3,9 +3,12 @@
 ## Authentication: channel tokens
 
 Authenticate `POST /api/runs` with `X-API-Key: <token>` or `Authorization: Bearer <token>`.
-The credential to use is a **channel token**: inside a conversation, anyone who may talk to the
-agent asks it to `create_api_token` (and `list_api_tokens`, `revoke_api_token`; admins also see
-and revoke every token on the Admin UI → API page). A channel token:
+The credential to use is a **channel token**. Anyone who may talk to the agent in a conversation
+creates one there in any of three ways: in Slack channel **Settings → API tokens → + New token**,
+on the Activity dashboard under **Settings → API tokens** (pick the conversation), or by asking the
+agent to `create_api_token` (also `list_api_tokens`, `revoke_api_token`). All three list your own
+tokens — or every token of the conversation when you manage it or are an admin — and revoke them;
+admins also see and revoke every token on the Admin UI → API page. A channel token:
 
 - belongs to **one conversation** — a run it starts is posted there as a thread; `channel` may be
   omitted or must name that conversation, otherwise the request answers 403;

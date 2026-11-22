@@ -300,6 +300,7 @@ test("every page, in every role and with every inline form open, passes Block Ki
     skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"], notLoaded: [{ name: "private-one", tier: "channel" }, { name: "private-two", tier: "organization" }] },
     skillPicker: { options: Array.from({ length: 130 }, (_, i) => ({ key: `skill-${i}`, label: `skill-${i}`, description: "d".repeat(200) })), selected: ["skill-3"] },
     mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [], foreign: ["someone-elses-skill"] },
+    apiTokens: { manager: true, tokens: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `flow <${i}> ${"n".repeat(80)}`, prefix: "cgk_abcd", last4: "wxyz", createdBy: i % 2 ? "U_OWNER" : "U_OTHER", createdAt: "2026-11-03T10:00:00.000Z", lastUsedAt: i % 3 ? "" : "2026-11-04T10:00:00.000Z", revoked: false })) },
     automations: [
       { id: "rec1", cron: "0 9 * * 1-5", description: "Daily", enabled: true, kind: "task", lastStatus: "ok" },
       { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping", enabled: true, kind: "reminder" },
@@ -311,10 +312,10 @@ test("every page, in every role and with every inline form open, passes Block Ki
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true },
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true, canEditOrgSecrets: true, canManageCloudMcp: true, canEnableAdmin: true },
   ];
-  const forms = ["composio:c", "make:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN"];
-  const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
+  const forms = ["composio:c", "make:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN", "tok-add:c"];
+  const formPage = (key) => key.startsWith("tok") ? "api" : (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
-    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "diagnostics", "you"]) {
+    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "api", "diagnostics", "you"]) {
       for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
         const view = buildChannelSettingsView(snapshot, { ...state, ...extra }, { ...options, tab, notice: "✅ Saved." });
         assert.deepEqual(blockKitProblems(view), [], `${tab} ${JSON.stringify(options)} ${JSON.stringify(extra)}`);
