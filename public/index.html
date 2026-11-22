@@ -634,7 +634,7 @@
                         </div>
                       </details>
                       <details class="gchat-guide-step" id="gchat-step-11">
-                        <summary>11. Optional: enable 🤖 / 🛑 / ✅ reaction controls</summary>
+                        <summary>11. Optional: enable 🤖 / 🛑 / ✅ reaction controls and the edit trigger</summary>
                         <div>
                           <p>Complete messaging first. Reactions require Google Workspace administrator approval; they are not enabled by the basic JSON key setup.</p>
                           <ol>
@@ -646,6 +646,7 @@
                             <li>Confirm the step 7 publisher still has <strong>Pub/Sub Publisher</strong> on the topic. In this dashboard, set <strong>Reaction events topic</strong> to <code>projects/PROJECT_ID/topics/atlas-chat-events</code>, then <strong>Save → Connect</strong>.</li>
                           </ol>
                           <p>Look for <code>reactions N/M spaces</code> in the connection status. If approval fails, basic messaging can still work.</p>
+                          <p>The same subscriptions report message edits, so this step also lets an edit that adds a mention of the app run that message, as on Slack and Teams. No extra setup is needed.</p>
                           <p><a href="https://developers.google.com/workspace/chat/authenticate-authorize-chat-app#admin-approval" target="_blank" rel="noopener noreferrer">Google's full administrator-approval procedure</a> · <a href="https://developers.google.com/workspace/events/guides/events-chat" target="_blank" rel="noopener noreferrer">Google Chat event subscriptions</a></p>
                         </div>
                       </details>
@@ -664,7 +665,7 @@
                     <input id="set-gchat-sub" type="text" placeholder="projects/my-project/subscriptions/chat-events" />
                   </label>
                   <label class="field">
-                    <span>Reaction events topic <code>projects/&lt;project&gt;/topics/&lt;name&gt;</code> (optional — enables 🤖 / 🛑 / ✅ reactions through Google Workspace Events; needs the admin-approved <code>chat.app.messages.readonly</code> scope)</span>
+                    <span>Reaction events topic <code>projects/&lt;project&gt;/topics/&lt;name&gt;</code> (optional — enables 🤖 / 🛑 / ✅ reactions and edits that add a mention, through Google Workspace Events; needs the admin-approved <code>chat.app.messages.readonly</code> scope)</span>
                     <input id="set-gchat-reaction-topic" type="text" placeholder="projects/my-project/topics/chat-events" />
                   </label>
                   <label class="field">
@@ -676,7 +677,7 @@
                     <input id="set-gchat-project-number" type="text" placeholder="123456789012" />
                   </label>
                   <label class="field">
-                    <span>Bot user id <code>users/…</code> (optional — learned automatically when the app is added to a space)</span>
+                    <span>Bot user id <code>users/…</code> (optional — learned automatically when the app is added to a space or mentioned, and remembered)</span>
                     <input id="set-gchat-bot" type="text" placeholder="users/1234567890" />
                   </label>
                   <div class="tok-foot">

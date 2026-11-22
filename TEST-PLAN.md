@@ -47,6 +47,78 @@ Live acceptance (Teams test tenant; once with the channel on Claude, once on Cod
 3. B (if in a group) clicks Run again. Pass: "Only the person who sent the interrupted request…".
 4. A clicks Run again. Pass: the card reads "Running the interrupted request again" and a new answer
    to the same request appears in the same session; a second click says it was already run again.
+
+## Google Chat edit trigger (2026-11-22)
+
+Root cause: a Chat app receives no interaction event for an edit, so an edit that adds a mention
+was never read. Edits now arrive as Workspace Events `message.v1.updated` on the reaction
+subscriptions. Automated:
+
+```sh
+node --test test/googlechat-edits.test.js test/googlechat-reactions.test.js
+```
+
+- Parser: single and batch payloads, malformed names dropped, only update types, `ce-time` with a
+  `lastUpdateTime` fallback. Freshness: one hour per edit, six days per message, future and invalid
+  times never act. Exact mention of THIS app only (another app, a slash command or an unknown own
+  id do not count); the prompt is `argumentText` or the text minus this app's mention ranges. Own
+  id learned only from an unambiguous interaction message (slash command app, exactly one app
+  mentioned in a space; never a DM or two apps).
+- Reconciler: a reaction-only subscription is patched with the full list (after renewing when
+  due), a complete one is untouched, a refused patch (400) creates the full subscription before
+  removing the old one, a failed create keeps the old one, a 403 keeps it renewed and degrades
+  status, a vanished one is recreated, a complete duplicate wins over an old one; the REST client
+  sends `PATCH …?updateMask=event_types` with all three types.
+- Pub/Sub → transport → durable inbox → ingest: an added mention runs once as the sender (mapped
+  from `users/…`), `trigger: "edit"`, in the message's thread; a redelivery and a later edit do not
+  run again; a message first delivered with its mention, or as a control command, never re-runs on
+  edit; no mention, another app's mention, app senders, stale, too-old, unmapped, never-edited and
+  DM edits reach neither the inbox nor the engine; an unapproved sender gets the normal refusal; a
+  newer mention-less edit withdraws a queued trigger (an older one does not) and re-adding later
+  runs once; batch updates act per message; no topic = inert and never read as a new message; the
+  learned own id survives a restart and then enables edits.
+
+Validation (this candidate): `test/googlechat-edits.test.js` 14/14; Google Chat files + platform
+reaction settings + inbox retention 150 passed, 1 skipped; `npm test` **5,687 tests, 5,609
+passed, 0 failed, 78 skipped**; `npm run check:static` clean. No live Google Chat run: every LIVE
+case below is unexecuted.
+
+Live fixtures: the Google Chat reaction fixtures below (Setup step 8 complete, `reactions N/M
+spaces` with no error, the named threaded space and the DM, approved author A, approved non-admin
+B, unapproved D, each of whom has messaged the app once so their `users/…` id is recorded). A
+Chat message is edited from its ⋮ menu → *Edit message*; a mention is added by typing `@` and
+picking the app from the list (typed text alone is not a mention).
+- [ ] LIVE `GCHAT-EDIT-ADD-CLAUDE-01` / `GCHAT-EDIT-ADD-CODEX-01` (space default engine set to each
+  in turn): A starts a new thread in the space WITHOUT mentioning the app:
+  `Reply exactly EDIT_TRIGGER_OK`. Wait 10 s: no reply. A edits the message to put the app mention
+  first, text otherwise unchanged. Pass: within a minute, one *Working on it* and one answer
+  `EDIT_TRIGGER_OK` in that thread, attributed to A (Activity / usage show A), engine as
+  configured; the daemon log has `edit of spaces/…/messages/… newly mentions the app; accepted`.
+  A then edits the same message to `@app Reply exactly EDIT_TRIGGER_TWICE`. Pass: no second run
+  within two minutes.
+- [ ] LIVE `GCHAT-EDIT-NOOP-01` (engine-independent: every case is refused before an engine is
+  chosen): (a) A posts `@app Reply exactly FIRST_ONLY`, waits for the answer, then edits it to
+  `@app Reply exactly SECOND_RUN` → no second run. (b) A posts `just a note`, edits it to
+  `just a note, edited` → nothing. (c) A posts `hello` mentioning ANOTHER Chat app in the space
+  (not ChannelGate), then edits that text → ChannelGate does nothing (needs a second app in the
+  space; without one record (c) as not run). (d) In the DM, A edits an
+  already-answered message → no new run. (e) D posts without a mention and edits to add the app
+  mention → the not-approved reply, no run. Pass: across (a)–(e) only the (a) original answer and
+  the (e) refusal appear; the log shows no `accepted` line for (a)–(d).
+- [ ] LIVE `GCHAT-EDIT-WITHDRAW-01` (engine-independent: the queue and withdrawal precede the
+  engine): A mentions the app in a thread with `Run sleep 120 in the shell, then reply SLEEP_DONE`.
+  While it works, B posts in the same thread, without a mention,
+  `Reply exactly WITHDRAWN_SHOULD_NOT_RUN`, edits it to add the app mention (a queue-position
+  notice appears), then edits it again to remove the mention. Pass: after `SLEEP_DONE`, no
+  `WITHDRAWN_SHOULD_NOT_RUN` answer; the log shows `mention removed … withdrawn`. B then edits the
+  mention back in → exactly one run answering `WITHDRAWN_SHOULD_NOT_RUN`.
+- [ ] LIVE `GCHAT-EDIT-SUBSCRIPTION-01` (engine-independent): before updating a gateway whose
+  reaction subscriptions predate this change, record `subscriptions.list` (filter
+  `event_types:"google.workspace.chat.reaction.v1.created"`): names and `eventTypes` (two reaction
+  types). Update and restart. Pass: the same number of subscriptions, one per space, each now
+  listing `google.workspace.chat.message.v1.updated` too; status `reactions N/M spaces` with no
+  error; 🤖 / 🛑 reactions still act.
+
 ## Teams history and earlier files (2026-11-22)
 
 Automated:

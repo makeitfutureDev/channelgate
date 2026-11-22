@@ -12,6 +12,13 @@
   such a request by itself, because it may already have done something; the button replays the
   original request once, through the usual access checks. The conversation's Activity entry shows
   the interrupted request as an error instead of idle.
+- Google Chat: editing a message to add a mention of the app now runs it, as on Slack and Teams.
+  It runs once, as the person who wrote the message, in its thread; editing a message the app
+  already answered, removing a mention, another app's mention and edits in a DM do nothing.
+  Google only reports edits through the same Workspace Events subscriptions as reaction controls,
+  so this needs the **Reaction events topic** and its administrator approval; existing
+  subscriptions are updated in place when the gateway restarts. The app's own Chat id is now
+  remembered across restarts.
 - Teams: an agent can read the earlier messages of the channel, channel thread or group chat it is
   answering in (`conversation_history`, like Google Chat) and fetch a file posted on one of them
   (`conversation_download_file`), so "catch me up" and "use the spreadsheet I posted earlier" work

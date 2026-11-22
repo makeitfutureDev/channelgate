@@ -19,6 +19,7 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | Settings, files, secrets, help | Cards v2 (requester-only private messages) and private browser forms | `platforms/googlechat/controls.js`, `platforms/googlechat/help.js` |
 | Approvals | Native cards in the source conversation; signed browser links | `platforms/approval-delivery.js` |
 | Reactions (🤖 start, 🛑 stop, ✅ acknowledge) | Through Workspace Events with the admin-approved app scope | `platforms/googlechat/reactions.js` |
+| Edited-message trigger | An edit that adds a mention of this app runs the message once as its sender, through Workspace Events `message.v1.updated` on the reaction subscriptions; already-handled messages, removed mentions, other apps' mentions, app and DM edits do nothing | `platforms/googlechat/edits.js`, `platforms/googlechat/transport.js` |
 | Attachments in, voice notes | Direct uploads download; Drive-picker shares are named as unreadable; Whisper transcription | `platforms/googlechat/events.js`, `platforms/ingest.js` |
 | File sending | `share_file` / `/sendfile` private controls | `mcp/tools/teams-native.js` |
 | Schedules, background results, notices | Shared `postNotice` / `postDirectMessage` | `platforms/notify.js` |
@@ -32,7 +33,6 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | Thread hydration on a fresh session | Slack's run starts with the thread in context; Chat relies on the agent calling `conversation_history` | Prepend the current thread (bounded) on a fresh session when the scope is approved |
 | Busy-thread Steer / Queue / Cancel choice | Chat queues and offers `/stop`; no explicit steer | Port the Teams busy-message Steer / Cancel card (`platforms/msteams/queue-controls.js`) to Cards v2 |
 | Re-download a historical file | History names earlier files but cannot fetch them | `media.download` by the attachment's resource name, scoped to this space, into the confined sink |
-| Edited-message trigger | An edited message that adds a mention is not re-read | Handle `MESSAGE_UPDATED` with duplicate suppression |
 | Background job status button | Results post back; no status control | Card button or `/status` listing for the conversation's jobs |
 | Tables and headings | Degraded although Google now documents both for Markdown mode | Flip `markdownTables` / `markdownHeadings` after the live probe below shows they render |
 | Agent directory, agent mail, thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |
