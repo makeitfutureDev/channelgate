@@ -9,6 +9,7 @@ import { assertEngineSelectable } from "../engines/selection.js";
 // processMessageEvent takes an explicit { botUserId, teamId } context instead of closing over
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
+import { runApprovedHarnessesCommand } from "../gateway/approved-harnesses.js";
 import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { adapterFor, engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
 import { HARNESS_IDS, isLicenseShapedId } from "../engines/license-state.js";
@@ -1124,6 +1125,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await reply(await buildPendingReportForUser(client, event.user, botUserId));
       } else if (sc.cmd === "model") {
         await postModelWizard(client, { channel: event.channel, threadTs: threadKey, meta });
+      } else if (sc.cmd === "harnesses") {
+        // The channel's Approved harnesses list: anyone may read it, only an organization admin
+        // (checked for THIS message) may set it — the same function as set_channel_approved_harnesses.
+        await reply(await runApprovedHarnessesCommand({
+          arg: sc.arg, meta, slug: entry.slug, channelId: event.channel,
+          actor: event.user, source: "slack-command", isAdmin: authorIsAdmin,
+        }));
       } else if (sc.cmd === "effort" || sc.cmd === "engine") {
         // Retired — kept in SLASH_COMMANDS so the text answers with a pointer instead of being
         // sent to the model as a prompt.

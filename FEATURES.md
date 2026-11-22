@@ -107,6 +107,18 @@ half had no tool, so an admin working in chat, a schedule or the run API could n
   it also lists every entry that can be approved with the value to pass; for everyone else it
   says only an organization admin can change the list (the gateway's full license inventory is
   not shown to non-admins).
+- Typed `/harnesses [all | entry, entry…]` — the same read and write without the agent, on every
+  surface: a Slack in-thread command (`@agent /harnesses …` in a channel), and the Teams / Google
+  Chat text controls (`src/platforms/conversation-controls.js`, routed as controls by both
+  transports). Bare `/harnesses` shows the list as stored now (admins also get the approvable
+  entries); with entries it sets the list. Entries are separated by commas or new lines, so a
+  license name may hold spaces; `all` (or `any`, `none`, `unrestricted`) clears the restriction.
+  It answers without starting an engine. Authorization is the message author's CURRENT
+  organization-admin role, checked for that message (`isAdmin` in Slack, `authorIsAdmin` in the
+  platform ingest); the audit row's source is `slack-command` or `chat-command`.
+- One implementation behind both: `src/gateway/approved-harnesses.js` (`approvedHarnessOptions`,
+  name resolution, `setChannelApprovedHarnesses`, `runApprovedHarnessesCommand`), so the tool and
+  the command cannot drift apart. The Slack, Teams and Google Chat help guides list the command.
 - Unchanged: who may pick among the approved entries (`/model`, `/license`, `/effort` — everyone
   allowed to talk there), what the list is checked against (channel selection, pools, thread
   pins, saved sessions, per-run overrides, queued work, failover), and the Settings controls.

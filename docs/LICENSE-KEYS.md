@@ -186,9 +186,11 @@ required before relying on them for unattended work. Tier changes never weaken c
 ## Enterprise channel harness approvals
 
 Organization admins can configure **Approved harnesses** in the admin channel editor, in Slack
-Settings → Agent, or by asking the agent in the channel (the admin-only
+Settings → Agent, by asking the agent in the channel (the admin-only
 `set_channel_approved_harnesses` tool; `get_channel_approved_harnesses` shows the current list to
-anyone in the channel). Leave the policy unrestricted, or approve any mix of whole harnesses and single
+anyone in the channel), or with the typed `/harnesses` command in Slack, Teams and Google Chat
+(bare shows the list; an admin sets it with `/harnesses harness:claude, <license name>` or clears
+it with `/harnesses all`). Leave the policy unrestricted, or approve any mix of whole harnesses and single
 engine licenses. An engine license is a provider credential of the Claude Code or Codex harness
 (see [the engine capability matrix](ENGINE-CAPABILITIES.md#harnesses-and-licenses)); it is
 unrelated to the ChannelGate license key this document describes.

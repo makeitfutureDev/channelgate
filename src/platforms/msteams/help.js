@@ -41,6 +41,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
         '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
         '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
+        '`/harnesses [all|entry, …]` — Show what this conversation may run on; an admin changes it.',
         '`/effort [level|default]` — Show or change reasoning effort.',
         '`/stop` or `/cancel` — Stop this session’s active and queued work.',
         '`/clear` — Stop and clear this session. Your next request starts fresh.',
