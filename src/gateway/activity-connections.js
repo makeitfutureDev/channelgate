@@ -5,7 +5,7 @@ import { getComposioMode, getComposioSdkApiKey, getComposioSdkPolicy } from "../
 import { getUser } from "../config/store.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { composioIdentity } from "../ee/composio-sessions.js";
-import { composioWorkspaceId } from "./composio-workspace.js";
+import { composioSubject } from "./composio-workspace.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { loadComposioInventory } from "./composio-inventory.js";
 import { connectRemoteClient } from "../mcp/remote-relay.js";
@@ -36,6 +36,14 @@ function sdkConfig(options) {
 }
 function checkCurrent(config, options) {
   if (fingerprint(config) !== fingerprint(sdkConfig(options))) fail("Connection settings changed. Refresh and try again.", 409);
+}
+// The signed-in person's Composio user identity: the Activity session's Slack team for a Slack
+// owner, and the surface's own workspace and subject for a Teams or Google Chat owner (a Google
+// Chat owner's recorded `users/<id>`, never their e-mail). Unknown → a named refusal, no guess.
+async function ownerIdentity({ ownerId, teamId }, options) {
+  const subject = await composioSubject({ kind: "user", id: ownerId, slackTeamId: teamId }, { loadUser: options.getUser || getUser });
+  if (subject.missing) fail(subject.missing, 409);
+  return subject;
 }
 
 export async function activityConnectionInventory({ ownerId, teamId }, options = {}) {
@@ -179,7 +187,8 @@ async function accountRequest(config, path, init, options, signal) {
 const privateOwner = (account, identity) => account?.user_id === identity
   && account?.experimental?.account_type === "PRIVATE";
 async function ownedSdkAccounts(config, { ownerId, teamId }, options) {
-  const identity = composioIdentity({ workspaceId: composioWorkspaceId({ kind: "user", id: ownerId, slackTeamId: teamId }), kind: "user", id: ownerId });
+  const owner = await ownerIdentity({ ownerId, teamId }, options);
+  const identity = composioIdentity({ workspaceId: owner.workspaceId, kind: "user", id: owner.id });
   const signal = AbortSignal.timeout(Math.max(10, Math.min(20_000, options.timeoutMs || 20_000)));
   const owned = new Map(), seen = new Set(); let cursor = "";
   for (let page = 0; page < 50; page++) {
@@ -216,7 +225,8 @@ export async function deleteActivityConnection({ ownerId, teamId, connectionId, 
   try {
     await checkAccess();
     if (!config) return await deletePersonalConnection({ ownerId, connectionId, authorize: checkAccess }, options);
-    const identity = composioIdentity({ workspaceId: composioWorkspaceId({ kind: "user", id: ownerId, slackTeamId: teamId }), kind: "user", id: ownerId });
+    const owner = await ownerIdentity({ ownerId, teamId }, options);
+    const identity = composioIdentity({ workspaceId: owner.workspaceId, kind: "user", id: owner.id });
     const signal = AbortSignal.timeout(Math.max(10, Math.min(20_000, options.timeoutMs || 20_000)));
     const url = `${ACCOUNTS_API}/${encodeURIComponent(connectionId)}`;
     const account = await accountRequest(config, url, {}, options, signal);
@@ -245,7 +255,8 @@ function catalogLogo(value, credential) {
 
 async function catalogRequest(config, { query = "", cursor = "", ownerId, teamId }, options) {
   if (typeof query !== "string" || query.length > 120 || typeof cursor !== "string" || cursor.length > 2048) fail("Invalid app search or page.");
-  const identity = composioIdentity({ workspaceId: composioWorkspaceId({ kind: "user", id: ownerId, slackTeamId: teamId }), kind: "user", id: ownerId });
+  const owner = await ownerIdentity({ ownerId, teamId }, options);
+  const identity = composioIdentity({ workspaceId: owner.workspaceId, kind: "user", id: owner.id });
   const allowed = config.policy.allowedApps;
   if (Array.isArray(allowed) && !allowed.length) return { apps: [], nextCursor: null };
   const selected = Array.isArray(allowed), signal = AbortSignal.timeout(20_000);
@@ -325,7 +336,8 @@ export async function createActivityConnection({ ownerId, teamId, sessionId, cal
         return { sessionId: remote.sessionId, mcp: remote.mcp, update: policy => remote.update(policy, requestOptions) };
       },
     } };
-    const endpoint = await (options.resolveSession || resolveSdkSession)({ workspaceId: composioWorkspaceId({ kind: "user", id: ownerId, slackTeamId: teamId }), kind: "user", id: ownerId,
+    const owner = await ownerIdentity({ ownerId, teamId }, options);
+    const endpoint = await (options.resolveSession || resolveSdkSession)({ workspaceId: owner.workspaceId, kind: "user", id: owner.id,
       threadKey: `activity-connections:${sessionId}`, accessKind: "owner", manageConnections: true, client: boundedClient });
     const session = await client.sessions.use(endpoint.sessionId, undefined, requestOptions);
     await checkAccess(); checkCurrent(config, options);

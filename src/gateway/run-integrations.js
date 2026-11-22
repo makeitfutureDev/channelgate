@@ -13,7 +13,7 @@ import { resolveCustomMcpsForRun } from "./custom-mcps.js";
 import { emailAccountSecrets } from "./email-accounts.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
-import { composioWorkspaceId } from "./composio-workspace.js";
+import { composioSubject, composioWorkspaceId } from "./composio-workspace.js";
 
 // Composio is intentionally different from the other token-backed integrations: expose the active
 // author's identity and the gateway's shared identity at the same time instead of choosing one.
@@ -46,6 +46,9 @@ export async function resolveComposioRuntime({
   workspaceId = "",
   channelId = "",
   authorId = "",
+  // The author's Composio subject when it differs from the gateway id (a Google Chat author is
+  // e-mail in the gateway and `users/<id>` to Composio). Empty means no personal identity.
+  userSubjectId = authorId,
   threadKey = "",
   meta = {},
   authorIsAdmin = false,
@@ -84,7 +87,7 @@ export async function resolveComposioRuntime({
     principalTrusted ? resolveSdk({
       workspaceId,
       kind: "user",
-      id: authorId,
+      id: userSubjectId,
       threadKey,
       accessKind: "owner",
       manageConnections: true,
@@ -125,9 +128,15 @@ export async function resolveComposioRuntime({
  */
 export async function resolveRunIntegrations({ meta = {}, channelId = "", authorId = "", threadKey = "", workspaceId = "", clean = false, untrustedPrincipal = false } = {}) {
   const composioMode = getComposioMode();
-  // Slack team for a Slack conversation, Entra tenant for a Microsoft Teams one; the author is on
-  // the conversation's surface, so one workspace serves both identities.
+  // Slack team for a Slack conversation, Entra tenant for a Microsoft Teams one, the Chat app's
+  // Cloud project for a Google Chat one; the author is on the conversation's surface, so one
+  // workspace serves both identities.
   const effectiveWorkspaceId = composioWorkspaceId({ kind: "channel", id: channelId, slackTeamId: workspaceId });
+  // A Google Chat author is named to Composio by the recorded `users/<id>`, never the e-mail. When
+  // it is unknown the personal identity is simply absent — no fallback to the shared one.
+  const userSubjectId = composioMode === "sdk" && !clean && !untrustedPrincipal && authorId
+    ? (await composioSubject({ kind: "user", id: authorId, slackTeamId: workspaceId })).id
+    : authorId;
   // The HTTP API authenticates its API key, not the caller-supplied Slack author id. Never use
   // that untrusted id to read a personal connector token or infer admin/approval state. Shared
   // channel identities remain available; the user identity is intentionally absent.
@@ -145,6 +154,7 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     workspaceId: effectiveWorkspaceId,
     channelId,
     authorId,
+    userSubjectId,
     threadKey,
     meta,
     authorIsAdmin: userIdentity.isAdmin,

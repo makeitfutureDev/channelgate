@@ -203,6 +203,14 @@ short-circuit that.
   unthreaded spaces, quote the request or a bot reply with a top-level `/stop`, `/status` or
   `/clear` to reach that turn; in threaded spaces send them in its thread. Space/group answers mention
   the requester and have Files/Variables/Settings plus referenced-file buttons below compact stats.
+- **Composio SDK mode (Enterprise):** a Google Chat author is the Composio user
+  `googlechat:<project>:user:users/<id>` and a space `googlechat:<project>:channel:spaces/<id>`,
+  where `<project>` is the `project_id` of the saved service-account key. The author is named by
+  the immutable `users/<id>` the gateway records from Google's own events — never the e-mail,
+  which an administrator can rename or reassign — so an author is connected after their first
+  message to the app. DMs receive only `composio-user`. Moving the Chat app to another Cloud
+  project starts new identities: accounts connected under the old project stay in Composio but no
+  longer attach.
 
 ---
 
@@ -596,6 +604,7 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Approvals by signed link | ✅ (in addition to the buttons) | native cards; legacy connector fallback | native thread cards; no supplemental links |
 | Session commands | full Slack controls | native help/settings/files + text controls | text subset + native settings/files (branch) |
 | Reaction controls (start / stop / acknowledge) | ✅ | with Workspace Events (setup step 8) | with event delivery |
+| Composio SDK identities (Enterprise) | ✅ | ✅ | ✅ |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
