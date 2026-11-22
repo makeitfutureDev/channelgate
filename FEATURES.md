@@ -1,5 +1,37 @@
 # ChannelGate — Features
 
+## Teams: read earlier messages and fetch their files (2026-11-22)
+
+A Teams run sees only the message addressed to it. Slack runs read their channel with
+`slack_channel_history` / `slack_thread_replies` and fetch an earlier file with
+`slack_download_file`; Google Chat gained `conversation_history`. Teams had neither.
+
+- `conversation_history` (`src/mcp/tools/conversation-history.js`) is offered on Teams when the
+  live connector has `readHistory`, which the transport installs only with **all-message events**
+  on (`src/platforms/msteams/history.js`): the reads use that feature's Graph application token and
+  permissions (resource-specific `ChatMessage.Read.Chat` / `ChannelMessage.Read.Group`, or the
+  tenant-wide equivalents) and the conversation's own subscription record. The Graph resource is
+  the one that record holds for the run's conversation (validated as a team-channel or chat
+  messages path); nothing a model or person types names another chat, channel or team. Personal
+  chats have no record and get an explicit "can't be read" answer.
+- Whole conversation: a channel's top-level messages (each with its thread id) or a group chat's
+  messages newest-first, paged through `@odata.nextLink` only when it points at Graph v1.0, up to
+  200, returned oldest→newest. A thread (`"current"` or a digits-only id from an earlier result,
+  channels only) reads its root and replies. System and deleted messages are skipped; HTML bodies
+  become text (mention names kept, entities decoded); a plain-text body is never read as markup.
+  401/403 answers with the permission remedy; requests refuse redirects and time out at 15 s.
+- `conversation_download_file` is registered only when the connector also has `historyFile`, i.e.
+  Teams file access is on. The model passes the `message` id (shown as
+  `[file: name] (message <id>, thread <id>)` in history), the `thread` for a reply and the `file`
+  name when there are several. The message is fetched from the conversation's own resource; only a
+  `reference` attachment's canonical URL goes to the existing drive-allowlisted resolver
+  (`src/platforms/msteams/files.js`, no Graph bearer on the byte download, size-capped); a file
+  outside the allowed drives, a missing message, an ambiguous or unknown name each answer with the
+  reason. The bytes land in this thread's `uploads/` through the intake's bounded no-follow writer
+  (`saveInboundAttachments`) and the tool returns the local path.
+- Both tools re-check the requester's access to the conversation on every call and are open
+  (no approval card), like Slack's reads. The Teams operating manual gains `reading.md`; the
+  parity audit lists both as implemented. → TEST-PLAN: Teams history and earlier files.
 ## Teams: background job status (2026-11-22)
 
 Slack's background job notice has a **Check status** button; on Teams the same notice was plain

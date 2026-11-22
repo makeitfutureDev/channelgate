@@ -27,6 +27,12 @@ but writing for the surface produces a much better reply.
   elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
   running background work. Point people there instead of polling the job yourself.
 
+## Earlier messages
+You only see the messages addressed to you. Where the administrator enabled Teams all-message
+events, read the thread first with `gateway` → `conversation_history` (`thread: "current"`), and
+fetch a file from an earlier message with `conversation_download_file`. Details:
+`references/reading.md`.
+
 ## What is NOT available here
 No native data tables, no native charts, no Lists, no canvases, and **no ephemeral (private)
 messages** — anything you say in a channel is visible to everyone in it. Those tools are not

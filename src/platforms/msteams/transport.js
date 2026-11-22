@@ -4,6 +4,7 @@
 // to us, so the transport's job is to hold a verified handler that the Express app can route to and
 // to prove the outbound credentials work before reporting itself connected.
 import { createTeamsFileResolver } from "./files.js";
+import { createTeamsHistory } from "./history.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createTeamsGraphEvents } from "./graph-events.js";
@@ -180,6 +181,11 @@ export async function startTeams({
     const graphAuth = deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE });
     const normalizer = deps.normalizeGraphEvents || normalizeGraphEvents;
     eventStore = deps.eventStore || createTeamsEventStore({ appId });
+    // History reads ride the same Graph permissions and per-conversation subscription record as
+    // these events; without them `conversation_history` is not offered on Teams at all.
+    const history = createTeamsHistory({ auth: graphAuth, store: eventStore, resolveFile, fetchImpl: deps.graphFetch || fetch });
+    connector.readHistory = history.readHistory;
+    if (resolveFile) connector.historyFile = history.historyFile;
     const activeSubscription = async row => (await eventStore.list()).some(current =>
       current.conversationId === row.conversationId && current.startedAt === row.startedAt);
     const graphDispatchOptions = {

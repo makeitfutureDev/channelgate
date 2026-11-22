@@ -738,6 +738,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
     "slack_channel_history", "slack_thread_replies", "conversation_history",
     "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
+    "conversation_download_file", // Teams twin: this conversation's message, allowed drives, this thread's uploads/
     "update_code_channel", // artifact tabs, context bar and title of the code channel the run is IN; refuses elsewhere
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress", "ask_questions",

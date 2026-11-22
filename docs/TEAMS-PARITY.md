@@ -60,6 +60,8 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
 | Voice | Local Whisper transcription, cancellable work, text fallback with explicit failure notes | No Slack transcript service; unavailable downloads/Whisper do not become raw-audio engine requests |
 | Concurrent attachments | A unique intake directory preserves each message/revision's bytes | Storage IDs do not change reply/session identity |
+| History reads | `conversation_history` reads the channel, channel thread or group chat the run answers in through Microsoft Graph | Only with all-message events (same Graph grants) and the conversation's own subscription resource; personal chats have none; nextLinks only on Graph |
+| Earlier-file download | `conversation_download_file` fetches a SharePoint file posted on a message of this conversation into the thread's uploads | Only with file access on; canonical URL through the drive allowlist; bounded no-follow writer |
 | Background job status | A job's started notice carries Check status (answered privately to the clicker) and `/jobs` lists the conversation's running work | Admin, approved or guest of that conversation; a job is reported only for its own conversation; legacy Submit clients get a private message |
 | Queued-message steer/cancel | A message queued behind busy work gets a card with Steer conversation and Cancel request; Steer reorders the durable queue and interrupts the sender's own run, Cancel drops only that message | Card data names only the durable row; sender or admitted admin; never interrupts or passes another person's work; restart-safe because the row is the record |
 
@@ -68,8 +70,6 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Slack feature | Teams gap | Next implementation slice |
 | --- | --- | --- |
 | Restart recovery presentation | Durable run state exists; some recovery orchestration and notification hooks remain Slack-owned | Audit and route recovery through the connector while preserving queue reservations and uncertain-outcome rules |
-| On-demand history/thread reads | Built-in MCP history tools are Slack-specific | Add conversation-scoped Teams reads through a separately authorized Graph route; expose safe metadata and respect explicit message scope |
-| Re-download a historical file | `slack_download_file` requires Slack file descriptors and channel membership proof | Teams-specific descriptor lookup and scoped Graph/SharePoint retrieval, using the existing confined streaming sink |
 | Follow-up digests, done/reopen reactions and nudges | Delivery plumbing is shared but Slack reaction and history ingestion drive parts of tracking | Audit the tracking inputs and map explicit Teams reactions; avoid treating robot activation as digest acknowledgement |
 | Scheduling acknowledgements | Shared schedules and private posts do not automatically provide Slack's interaction lifecycle | Port acknowledgement inputs, actor checks and expiry behavior independently of reaction triggering |
 | App Home onboarding and channel visibility | Slack App Home has no implemented Teams home surface | Personal app/tab or concise DM onboarding backed by the same user/channel authorization |
