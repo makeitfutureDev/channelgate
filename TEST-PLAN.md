@@ -1,5 +1,38 @@
 # ChannelGate — Test Plan
 
+## Teams history and earlier files (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/teams-history.test.js test/googlechat-history.test.js test/mcp-control-plane-approval.test.js
+```
+
+- HTML bodies become text; a channel read uses only its subscription resource, drops system and
+  deleted messages, returns oldest→newest with thread ids and file names, and never follows a
+  nextLink off Graph; a thread reads root + replies; a chat reads newest-first and pages on Graph;
+  a non-numeric thread, a thread in a chat, a personal chat, a forged resource and a 403 each answer
+  with their reason; a file is fetched only from a message of this conversation, only by its
+  canonical URL through the allowlisted resolver, with name matching, several-files and
+  outside-drive refusals; the tools pass the run's own conversation, save into this thread's
+  `uploads/`, and `conversation_download_file` is absent without file access; the transport
+  installs `readHistory` only with all-message events and `historyFile` only with file access too.
+
+Live acceptance (Teams test tenant with all-message events and file access on, one allowed drive;
+run once with the channel on Claude and once on Codex):
+
+1. In a channel thread, A posts three messages without mentioning the bot ("budget is 40k", "deadline
+   moved to March", and a message with `plan.xlsx` from the allowed SharePoint drive), then posts
+   "@bot catch me up on this thread". Pass: the answer mentions the budget and the March deadline
+   and names `plan.xlsx`; Observability shows a `conversation_history` call.
+2. "@bot open the spreadsheet I posted above and tell me the total of column B". Pass: a
+   `conversation_download_file` call, the file under `uploads/<thread>/`, and the right total.
+3. Post a file from a SharePoint site OUTSIDE the allowed drives and ask for it. Pass: the agent
+   relays "not in a SharePoint location the gateway may read" and does not invent its contents.
+4. In a group chat, "@bot summarize the last 20 messages". Pass: a summary of that chat only.
+5. In a personal chat, "@bot what did we discuss earlier?". Pass: the agent says personal chats
+   have no readable history (or uses the session it already has) and does not claim to have read it.
+6. Turn all-message events off and reconnect. Pass: the tools are no longer offered in a new turn.
 ## Teams background job status (2026-11-22)
 
 Automated:

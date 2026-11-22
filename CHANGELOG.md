@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams: an agent can read the earlier messages of the channel, channel thread or group chat it is
+  answering in (`conversation_history`, like Google Chat) and fetch a file posted on one of them
+  (`conversation_download_file`), so "catch me up" and "use the spreadsheet I posted earlier" work
+  without reposting. Both need Teams all-message events (the same Graph permissions); the file
+  download also needs Teams file access and only reads the SharePoint drives you allowed. Personal
+  chats keep no readable history.
 - Teams: a background job's or agent's "started" notice now has a **Check status** button, as in
   Slack. It shows the job's elapsed time and recent output to whoever clicks (members, approved
   users and guests of that conversation only), and keeps answering from the job's log after it

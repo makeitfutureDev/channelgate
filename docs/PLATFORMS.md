@@ -340,6 +340,13 @@ For a test installation, extend the CLI setup above:
    target and session attribution with both Claude and Codex. Include an external-member group and
    desktop/mobile clients. Do not declare all-message coverage from bot-reply reaction tests alone.
 
+The same grants let agents read a conversation's earlier messages: with all-message events on,
+Teams runs get `conversation_history` (the channel or group chat they reply in, a channel thread,
+up to 200 messages) through the subscription record of that conversation, and — when file access
+is also on — `conversation_download_file` for a SharePoint file posted on one of those messages,
+through the same drive allowlist as attachments. Personal chats have no subscription and no
+history read. A 403 from Graph is reported to the agent as the missing permission, never retried.
+
 The chat Graph route uses **Microsoft Graph beta**, so this feature remains experimental. A granted
 read permission does not guarantee every client emits the same reaction shape or that every
 federated conversation supports the subscription. The switch does not grant file/SharePoint access,
