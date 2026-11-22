@@ -1,5 +1,24 @@
 # ChannelGate — Features
 
+## Teams and Google Chat: ✅ dismisses a conversation from your Activity (2026-11-22)
+
+Slack's ✅ marks a thread done for the person who reacts. On Teams and Google Chat ✅ only closed a
+tracked reminder, and anywhere else answered "No pending Tick button reminder" — the parity audit's
+"personal follow-up dismissal is not available".
+
+- `acknowledgeReaction` (`src/platforms/reaction-controls.js`) still closes a tracked reminder
+  first. Otherwise it reads the session's Activity entry (`platform_threads`, keyed by the same
+  session key the turn recorded): the session's recorded starter marks it **done**
+  (`setPlatformThreadDone`), any other participant **dismisses it from their own list**
+  (`setPlatformThreadHidden`), and a reactor with no entry is told there is nothing to mark. A new
+  message in the session brings it back (the existing Activity rules); removing the reaction
+  reopens nothing.
+- Runs after the ordinary reaction gates (conversation admission, reactor authorization, sudo
+  thread). Audited as `platform_thread_done_reaction` (`scope`: `starter` or `participant`).
+- Teams and Google Chat share the path. Engine-independent: no engine runs.
+  → TEST-PLAN: Tick dismissal on Teams and Google Chat.
+- Composio SDK identities remain Slack-only: the identity format lives in `src/ee/`
+  (`composio-sessions.js`), whose changes need a prior licensing discussion.
 ## Teams: interrupted requests replace their working message and offer Run again (2026-11-22)
 
 Teams' durable intake never replays a request that was running when the daemon stopped (its tool

@@ -169,7 +169,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       return sent;
     } : null;
     if (message.trigger === "reaction" && message.reactionAction === "ack") {
-      await acknowledgeReaction({ message, reply });
+      await acknowledgeReaction({ message, reply, sessionKey });
       return { command: true };
     }
     const pendingAdmission = async pending => {

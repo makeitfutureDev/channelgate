@@ -15,7 +15,7 @@ ChannelGate has implemented the corresponding connector or UI.
 | Claude/Codex sessions, model settings and fallback | Shared runner and stores; chat controls and interactive escalation have separate surface integration requirements | `gateway/run.js`, `engines/registry.js` |
 | Containers, modes, network policy and secrets | Shared runtime boundary and per-conversation settings; Teams must not inherit Slack-only foreground escalation | `runtimes/`, `gateway/modes.js` |
 | Channel memory, instructions and skill grants | Same stores and managed instruction materialization; mutations requiring explicit approval still depend on an approval delivery path | `gateway/folders.js`, `gateway/channel-memory.js` |
-| Personal/shared MCP routing | Shared standard MCP configuration; enterprise Composio SDK identity support remains Slack-only | `gateway/mcp.js`, `ee/` |
+| Personal/shared MCP routing | Shared standard MCP configuration; enterprise Composio SDK identity support remains Slack-only (the identity format is in `src/ee/composio-sessions.js`; extending it needs a prior licensing discussion) | `gateway/mcp.js`, `ee/` |
 | Usage, engine health, event logs and admin pages | Shared backend and browser administration | `gateway/usage.js`, `web/`, `config/` |
 | Formatted replies and long-answer splitting | Supported with Teams Markdown degradation and matched mention entities | `platforms/format/teams.js` |
 | User name mentions | Conversation-roster lookup; unavailable roster degrades to literal text rather than invented pings | `platforms/msteams/connector.js` |
@@ -60,6 +60,7 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
 | Voice | Local Whisper transcription, cancellable work, text fallback with explicit failure notes | No Slack transcript service; unavailable downloads/Whisper do not become raw-audio engine requests |
 | Concurrent attachments | A unique intake directory preserves each message/revision's bytes | Storage IDs do not change reply/session identity |
+| Personal follow-up dismissal | ✅ on a message without a tracked reminder marks the session done in the starter's Activity or dismisses it from another participant's list | Ordinary reaction gates; reminders first; a new message brings it back |
 | Restart recovery presentation | An interrupted request's working message becomes the notice; Run again replays it on the author's click | Never automatic (unknown outcome); author and conversation only; 24-hour window; replay passes every message gate again |
 | History reads | `conversation_history` reads the channel, channel thread or group chat the run answers in through Microsoft Graph | Only with all-message events (same Graph grants) and the conversation's own subscription resource; personal chats have none; nextLinks only on Graph |
 | Earlier-file download | `conversation_download_file` fetches a SharePoint file posted on a message of this conversation into the thread's uploads | Only with file access on; canonical URL through the drive allowlist; bounded no-follow writer |
