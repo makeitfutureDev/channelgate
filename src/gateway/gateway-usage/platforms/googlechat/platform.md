@@ -28,7 +28,8 @@ knowing what degrades keeps you from writing a reply that arrives looking broken
   running background work privately. Point people there instead of polling the job yourself.
 - **Threads exist only in threaded spaces.** In a DM or a group chat the conversation is flat and
   every reply is a new top-level message. Don't refer to "this thread" unless you know you are in a
-  threaded space.
+  threaded space. Thread forks (`propose_thread_forks`, `/fork`) work only there:
+  `references/thread-forks.md`.
 
 ## What is NOT available here
 There are no native data tables, no native charts, no Lists, and no canvases on this surface — the

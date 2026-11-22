@@ -172,6 +172,14 @@ short-circuit that.
 - **Threads:** in a space, threads are honoured. In a DM, Google mints a *new* thread for every
   top-level message, so a thread seen for the first time is treated as the main flow (one continuous
   DM session) and a thread you explicitly reply into becomes a real side thread.
+- **Thread forks:** in a named space that uses threads, `/fork <new message>` and an approved
+  `propose_thread_forks` card (**Create N forks**, requester or admin, Auto mode included) post
+  each fork as a new top-level message — a new thread — and run its opening request there as the
+  requester from a copy of the source thread's engine session; the source thread gets the links.
+  The copy waits for the source's running turn, and later messages to the source wait until every
+  child has its copy. DMs, group chats and spaces without threads are refused with the reason.
+  The card's buttons need the HTTP endpoint connection like every card; otherwise decide it on
+  the admin UI's Approvals page.
 - **Editing:** 1 write/sec per space, shared with every other app in it. Deleting leaves a tombstone,
   so ChannelGate edits rather than deletes.
 - **Private controls:** app-authenticated `privateMessageViewer` keeps settings, files and browser
