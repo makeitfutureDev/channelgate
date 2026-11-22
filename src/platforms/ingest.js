@@ -30,7 +30,7 @@ import { getThreadSudo } from "../gateway/thread-engine.js";
 // the mapping is explicit rather than a passthrough of whatever a platform calls things.
 import { prepareVoiceAttachments, hasVoiceAttachments } from "./voice.js";
 import { voiceTranscriptReplies } from "../gateway/voice-transcript-replies.js";
-import { createConversationControls } from "./conversation-controls.js";
+import { createConversationControls, wasSteered } from "./conversation-controls.js";
 
 const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
 
@@ -75,12 +75,14 @@ async function ensureUserKnown(message) {
   });
 }
 
-export function createIngest({ connector, log = console, run = runMessage, onCommand = null, voice = prepareVoiceAttachments } = {}) {
+// `controls` may be shared with the surface's native controls (Teams queue cards steer the live
+// lanes they own); `queueNotice` lets a surface answer a queued message with its own controls.
+export function createIngest({ connector, log = console, run = runMessage, onCommand = null, voice = prepareVoiceAttachments, controls = createConversationControls(), queueNotice = null } = {}) {
   const adapter = platformOr(connector?.platform);
   const bankUsage = createUsageBank();
-  const controls = createConversationControls();
+  const STEERED_TEXT = "↪️ Interrupted to answer your newer message, which runs next in this session.";
 
-  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null } = {}) {
+  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null, queuedEvent = null } = {}) {
     if (message.platform !== adapter.id) throw new Error(`${adapter.id} ingest received a ${message.platform} message`);
     if (serviceUrl) connector.rememberServiceUrl?.(message.rawConversationId, serviceUrl);
 
@@ -149,7 +151,14 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     // A durable queue notice shares every conversation/author/sudo gate with a turn, but cannot
     // run an engine or command. Recheck after authorization so cancelled or started work stays quiet.
     if (queuedNoticeOnly) {
-      if (isQueued?.() && Number.isSafeInteger(position) && position > 0) await reply(`Queued in this session (position ${position}).`);
+      if (isQueued?.() && Number.isSafeInteger(position) && position > 0) {
+        let shown = false;
+        if (queueNotice && queuedEvent) {
+          try { shown = await queueNotice({ message, sessionKey, position, queuedEvent, isQueued }); }
+          catch (error) { log.warn?.(`[${adapter.id}] queue controls could not be posted: ${error?.message || error}`); }
+        }
+        if (!shown && isQueued()) await reply(`Queued in this session (position ${position}).`);
+      }
       return { skipped: 'queue-notice' };
     }
     // Native command replies share the same source conversation and group quote mapping as text.
@@ -270,13 +279,17 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       try { recordPlatformThreadOutcome(message.conversationId, sessionKey, { status: signal.aborted ? "idle" : "error" }); } catch { /* Activity cannot replace the answer */ }
       log.error?.(`[${adapter.id}] run failed in ${entry.slug}: ${err?.message || err}`);
       await progress.stop();
-      await deliver(connector, message, placeholder, signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply, "", replyMenu());
-      return { error: err };
+      await deliver(connector, message, placeholder, wasSteered(signal) ? STEERED_TEXT : signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply, "", replyMenu());
+      return wasSteered(signal) ? { skipped: "steered" } : { error: err };
     }
 
     try { recordPlatformThreadOutcome(message.conversationId, sessionKey, { status: runAdmissionRefusalKind(result) || result?.engineError || result?.isError || result?.error ? "error" : "idle" }); } catch { /* best effort */ }
     await progress.stop();
-    if (signal.aborted) { await deliver(connector, message, placeholder, "Stopped.", rememberReply, "", replyMenu()); return { skipped: "cancelled" }; }
+    if (signal.aborted) {
+      const steered = wasSteered(signal);
+      await deliver(connector, message, placeholder, steered ? STEERED_TEXT : "Stopped.", rememberReply, "", replyMenu());
+      return { skipped: steered ? "steered" : "cancelled" };
+    }
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
 
     let text = String(result.content || "").trim() || "_(no output)_";

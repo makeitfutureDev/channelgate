@@ -60,12 +60,12 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
 | Voice | Local Whisper transcription, cancellable work, text fallback with explicit failure notes | No Slack transcript service; unavailable downloads/Whisper do not become raw-audio engine requests |
 | Concurrent attachments | A unique intake directory preserves each message/revision's bytes | Storage IDs do not change reply/session identity |
+| Queued-message steer/cancel | A message queued behind busy work gets a card with Steer conversation and Cancel request; Steer reorders the durable queue and interrupts the sender's own run, Cancel drops only that message | Card data names only the durable row; sender or admitted admin; never interrupts or passes another person's work; restart-safe because the row is the record |
 
 ## Remaining feasible adaptations
 
 | Slack feature | Teams gap | Next implementation slice |
 | --- | --- | --- |
-| Busy-thread steer/queue choice | Slack posts authenticated decision controls and handles active-run steering | Port explicit choices to text/private links or cards; preserve author checks, session identity and queue ordering |
 | Background status button | Job execution/delivery is shared; Slack button callback is not | Add text status access or safe authenticated browser status links |
 | Restart recovery presentation | Durable run state exists; some recovery orchestration and notification hooks remain Slack-owned | Audit and route recovery through the connector while preserving queue reservations and uncertain-outcome rules |
 | On-demand history/thread reads | Built-in MCP history tools are Slack-specific | Add conversation-scoped Teams reads through a separately authorized Graph route; expose safe metadata and respect explicit message scope |

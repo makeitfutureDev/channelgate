@@ -56,7 +56,8 @@ async function startTeamsTransport(config, log) {
   });
   const controls = createTeamsControls({ connector });
   connector.shareFile = controls.shareFile;
-  const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
+  // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
+  const ingest = createIngest({ connector, log, onCommand: controls.onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
   return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 

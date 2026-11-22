@@ -111,7 +111,10 @@ When Teams reaction events are enabled and delivered to the gateway, 👽 **Alie
 sending a shortcut as text does not add a reaction. Smile robot IDs remain recognized
 when Teams delivers them. **Stop sign** (`stopsign`)
 requests cancellation of that session’s active and queued work; only the author or an administrator
-can stop it. React to the original message or a bot reply to select the session. **Tick button**
+can stop it. React to the original message or a bot reply to select the session.
+A message sent while its session is busy is queued and runs on its own; its queue card offers
+**Steer conversation** (interrupt the sender's own running request and answer this one next) and
+**Cancel request** (drop only this message). Only the sender or an admitted admin can use them. **Tick button**
 (`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.
 Removing the tick does not reopen that reminder. A tick on an ordinary message has no tracked
 reminder to close. Teams personal follow-up dismissal is not available.
