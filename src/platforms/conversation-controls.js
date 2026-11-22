@@ -14,6 +14,11 @@ import { runApprovedHarnessesCommand } from '../gateway/approved-harnesses.js';
 // to tell a saved selection from a refusal, so the wording lives in one place.
 export const SESSION_RUNTIME_SAVED = 'Session harness:';
 
+// The abort reason of a turn interrupted so the same author's queued message can run next. A stop
+// says "Stopped."; a steered turn says why it ended instead, and its successor is already queued.
+export const STEERED = Object.freeze({ code: 'steered' });
+export const wasSteered = signal => signal?.aborted === true && signal.reason === STEERED;
+
 export function createConversationControls() {
   const lanes = new Map();
   const keyFor = (message, sessionKey) => JSON.stringify([message.conversationId, sessionKey]);
@@ -21,7 +26,24 @@ export function createConversationControls() {
     if (!lanes.has(key)) lanes.set(key, { tail: Promise.resolve(), jobs: new Set(), clearing: false });
     return lanes.get(key);
   };
+  // The live work of one session, as far as steering needs to know: nothing running, only the
+  // requester's own work, or someone else's (which a steer never interrupts).
+  const steerState = (conversationId, sessionKey, authorId) => {
+    const lane = lanes.get(keyFor({ conversationId }, sessionKey));
+    if (!lane || !lane.jobs.size) return lane?.clearing ? 'clearing' : 'idle';
+    if (lane.clearing) return 'clearing';
+    return [...lane.jobs].every(job => job.author === authorId) ? 'own' : 'other-author';
+  };
   return {
+    // Synchronous on purpose: a caller checks, reorders its durable queue and steers with no await
+    // in between, so the run it inspected is the run it interrupts.
+    steerState,
+    steer({ conversationId, sessionKey, authorId }) {
+      const state = steerState(conversationId, sessionKey, authorId);
+      if (state !== 'own') return state;
+      for (const job of lanes.get(keyFor({ conversationId }, sessionKey)).jobs) job.controller.abort(STEERED);
+      return 'steered';
+    },
     // `picked` is the license step a native picker already ran for the harness its /model names
     // ({ license: "any" | id, also: [ids] }); typed text has no such step.
     async command({ message, sessionKey, slug, meta, authorIsAdmin, reply, pendingForSession = null, cancelPendingForSession = null, picked = null }) {

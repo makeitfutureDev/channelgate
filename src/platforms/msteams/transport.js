@@ -117,6 +117,64 @@ export async function startTeams({
       return { allowed: true, cancelled };
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   };
+  // A queued message's own controls (the Steer / Cancel card) name it by its lane and durable id.
+  // The lane is a closed word mapped to THIS bot's namespaces, so card data can never point at
+  // another bot's or another transport's rows.
+  const queueNamespace = kind => kind === "bot" ? botNamespace : kind === "graph" ? graphNamespace : "";
+  const queueKind = namespace => namespace === graphNamespace ? "graph" : "bot";
+  const queuedRow = (namespace, eventId) => getDb().prepare(`SELECT rowid AS id, event_id, conversation_id, status, data
+    FROM inbound_events WHERE namespace = ? AND event_id = ?`).get(namespace, eventId);
+  connector.queuedEvent = ({ kind, eventId }) => {
+    const namespace = queueNamespace(kind);
+    const row = namespace && typeof eventId === "string" ? queuedRow(namespace, eventId) : null;
+    if (!row) return null;
+    let conversationId = "", sessionKey = "";
+    try { [conversationId, sessionKey] = JSON.parse(row.conversation_id); } catch { return null; }
+    if (typeof conversationId !== "string" || typeof sessionKey !== "string") return null;
+    return { kind, eventId, status: row.status, conversationId, sessionKey,
+      authorId: row.status === "queued" ? pendingAuthor(row) : "" };
+  };
+  // Drops exactly one waiting message. Work already running is untouched.
+  connector.cancelQueuedEvent = ({ kind, eventId }) => {
+    const namespace = queueNamespace(kind);
+    if (!namespace) return false;
+    return getDb().prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued'")
+      .run(namespace, eventId).changes === 1;
+  };
+  // The session's queued messages AHEAD of this one, oldest first.
+  connector.queuedAhead = ({ kind, eventId }) => {
+    const namespace = queueNamespace(kind);
+    const target = namespace ? queuedRow(namespace, eventId) : null;
+    if (!target || target.status !== "queued") return null;
+    return getDb().prepare(`SELECT rowid AS id, event_id, data FROM inbound_events
+      WHERE namespace = ? AND conversation_id = ? AND status = 'queued' AND rowid < ? ORDER BY rowid`)
+      .all(namespace, target.conversation_id, target.id).map(row => ({ eventId: row.event_id, authorId: pendingAuthor(row) }));
+  };
+  // Moves one queued message to the front of its session's queue. The intake runs a session's rows
+  // in rowid order, so the rows' contents rotate one place back and the steered message takes the
+  // oldest queued slot; every other message keeps its relative order and its own identity.
+  connector.prioritizeQueuedEvent = ({ kind, eventId }) => {
+    const namespace = queueNamespace(kind);
+    if (!namespace) return false;
+    const db = getDb();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const target = queuedRow(namespace, eventId);
+      if (!target || target.status !== "queued") { db.exec("ROLLBACK"); return false; }
+      const rows = db.prepare(`SELECT rowid AS id, event_id, created_ms, data FROM inbound_events
+        WHERE namespace = ? AND conversation_id = ? AND status = 'queued' AND rowid <= ? ORDER BY rowid`)
+        .all(namespace, target.conversation_id, target.id);
+      if (rows.length > 1) {
+        const moved = [rows.at(-1), ...rows.slice(0, -1)];
+        const write = db.prepare("UPDATE inbound_events SET event_id = ?, created_ms = ?, data = ? WHERE rowid = ?");
+        // Event ids are unique per namespace: park them first, then write the rotated contents.
+        for (const row of rows) write.run(`steer:${randomUUID()}`, row.created_ms, row.data, row.id);
+        rows.forEach((row, index) => write.run(moved[index].event_id, moved[index].created_ms, moved[index].data, row.id));
+      }
+      db.exec("COMMIT");
+      return true;
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  };
   if (graphEventsEnabled) {
     if (!publicUrl || !tenantId) throw new Error("Teams all-message events require Public URL and tenant ID");
     const graphAuth = deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE });
@@ -127,6 +185,7 @@ export async function startTeams({
     const graphDispatchOptions = {
       conversationKey: ({ inbound }) => queueKey(inbound),
       handle: async ({ inbound, serviceUrl: sourceUrl, subscription }) => {
+        connector.queuedEventStarted?.({ kind: "graph", eventId: inbound?.raw?.eventId || "" });
         if (!await activeSubscription(subscription)) return;
         if (inbound.reactionAction === 'engage') {
           const current = (await eventStore.list()).find(row => row.conversationId === subscription.conversationId);
@@ -272,8 +331,12 @@ export async function startTeams({
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
   }
+  const botDispatch = createTeamsActivityDispatcher({ botId, onMessage, resolveFile, onActivity, graphEventsEnabled, getActivationReactions });
   const botInboxOptions = {
-    handle: createTeamsActivityDispatcher({ botId, onMessage, resolveFile, onActivity, graphEventsEnabled, getActivationReactions }),
+    handle: async payload => {
+      connector.queuedEventStarted?.({ kind: "bot", eventId: activityFingerprint(payload.activity) });
+      return botDispatch(payload);
+    },
     interrupted: async ({ activity, serviceUrl: sourceUrl }) => {
       const message = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
       if (!message) return;
@@ -297,12 +360,13 @@ export async function startTeams({
       const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'")
         .get(payload.namespace || botNamespace, payload.eventId || activityFingerprint(payload.activity));
       if (!isQueued()) return;
+      const queuedEvent = { kind: queueKind(payload.namespace || botNamespace), eventId: payload.eventId || activityFingerprint(payload.activity) };
       if (payload.inbound) {
-        await onMessage(payload.inbound, { serviceUrl: payload.serviceUrl, queuedNoticeOnly: true, position: payload.position, isQueued });
+        await onMessage(payload.inbound, { serviceUrl: payload.serviceUrl, queuedNoticeOnly: true, position: payload.position, isQueued, queuedEvent });
         return;
       }
       const dispatch = createTeamsActivityDispatcher({ botId, resolveFile, graphEventsEnabled, getActivationReactions,
-        onMessage: (message, context) => onMessage(message, { ...context, queuedNoticeOnly: true, position: payload.position, isQueued }),
+        onMessage: (message, context) => onMessage(message, { ...context, queuedNoticeOnly: true, position: payload.position, isQueued, queuedEvent }),
       });
       await dispatch(payload);
     },

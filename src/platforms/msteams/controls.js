@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { getPublicUrl, getDefaultModel, getMentionReactions } from '../../config/settings.js';
 import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
-import { SESSION_RUNTIME_SAVED } from '../conversation-controls.js';
+import { SESSION_RUNTIME_SAVED, createConversationControls } from '../conversation-controls.js';
+import { createTeamsQueueControls } from './queue-controls.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, parentRelative, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -35,8 +36,9 @@ const response = value => ({ status: 200, body: { statusCode: 200, type: 'applic
 // The listing page a detail/upload page returns to. Only a display hint: the listing clamps it.
 const listingPage = value => Math.min(Math.max(0, Math.floor(Number(value)) || 0), 100_000);
 
-export function createTeamsControls({ connector, now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
+export function createTeamsControls({ connector, conversation = createConversationControls(), now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
   const states = new Map();
+  const queue = createTeamsQueueControls({ connector, conversation, log });
   const consent = createTeamsFileConsent({ connector, now, authorizeWorkspace: ({ message, entry }) => authorize({ channelId: message.conversationId, ownerId: message.userId, slug: entry.slug }, { connector }) });
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
@@ -297,6 +299,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
     if (interaction.action.startsWith('menu.')) return openMenu(interaction, signal);
+    if (queue.isAction(interaction.action)) return queue.onAction(interaction, { respond: response });
     prune(); let state = states.get(interaction.data.stateId);
     if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
       const restored = inspectTeamsFileLauncher(interaction.data.stateId, connector.botId, now());
@@ -447,5 +450,5 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     return result;
   }
-  return { onCommand, onInvoke, shareFile, stop() { states.clear(); consent.stop(); } };
+  return { onCommand, onInvoke, shareFile, queueNotice: queue.notice, conversation, stop() { states.clear(); consent.stop(); } };
 }

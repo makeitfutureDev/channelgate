@@ -1,5 +1,39 @@
 # ChannelGate — Features
 
+## Teams: steer or cancel a queued message (2026-11-22)
+
+Slack asks what to do with a message sent while its thread is busy (Steer / Queue / Cancel). Teams
+used to queue it silently with a "Queued in this session (position N)" line, leaving `/stop` —
+which drops the whole session's work — as the only control.
+
+- A Teams message that waits behind running work in its session (the durable intake's queue notice,
+  Bot Framework and Graph lanes alike) is announced by an Adaptive Card: *Your message is queued
+  (position N)*, with **Steer conversation** and **Cancel request** (`src/platforms/msteams/queue-controls.js`).
+  The message is already queued and runs on its own, so there is no "Add to queue" button. Without
+  card support the old text line is posted instead.
+- The card carries no authority: its data is the intake lane (`bot` or `graph`, mapped to the bot's
+  OWN namespaces) and the waiting row's id. Every click re-reads that row and requires that it is
+  still `queued`, that it belongs to the clicked conversation (Teams' verified envelope, not the
+  card), and that the clicker sent it — or is a current organization admin the conversation admits.
+  Because the row is the record, the buttons answer correctly after a restart.
+- **Cancel request** marks exactly that row done; running work is untouched.
+- **Steer conversation** moves the message to the front of its session's queue (the queued rows'
+  contents rotate one place, so every other message keeps its order and identity —
+  `prioritizeQueuedEvent` in `src/platforms/msteams/transport.js`) and aborts the session's running
+  turn with the `STEERED` reason (`src/platforms/conversation-controls.js`); the interrupted answer
+  reads "↪️ Interrupted to answer your newer message, which runs next in this session." The check,
+  the reorder and the interrupt run with no await in between. A steer never interrupts another
+  person's running work and never jumps another person's queued message: both answer that the
+  message keeps its place, and the sender keeps both buttons. With nothing running in the session
+  the message just moves to the front.
+- A refusal is shown only to the clicker; a final answer (cancelled, steering, no longer queued)
+  also replaces the shared card. When a queued message starts on its own its card reads "Your
+  queued message has started" (process-local; after a restart the old card keeps its buttons and a
+  click answers that the message is no longer waiting).
+- Every answer is audited as `teams_queue_choice` (choice, outcome, requester, whether an admin
+  answered). `/help` and the Teams operating manual describe the buttons.
+- Engine-independent in mechanism (the steer aborts the turn's signal for Claude and Codex alike);
+  live acceptance covers both. → TEST-PLAN: Teams queued-message Steer / Cancel.
 ## `claude` in an SSH session runs on the channel's own Claude license (2026-11-22)
 
 An SSH session's `claude` was always the gateway's own Claude login. A channel **set to** a Claude

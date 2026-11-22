@@ -45,7 +45,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/effort [level|default]` — Show or change reasoning effort.',
         '`/stop` or `/cancel` — Stop this session’s active and queued work.',
         '`/clear` — Stop and clear this session. Your next request starts fresh.',
-        'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+        'Only the run author or an administrator may stop a request. New requests for the same session queue while I work; a queued message gets **Steer conversation** and **Cancel request** buttons.',
       ] },
     ] },
     { id: 'files', title: 'Files & voice notes', sections: [

@@ -1,5 +1,44 @@
 # ChannelGate — Test Plan
 
+## Teams queued-message Steer / Cancel (2026-11-22)
+
+Automated (scratch SQLite, signed Bot Framework envelopes, stubbed engine):
+
+```sh
+node --test test/teams-queue-controls.test.js test/teams-durable-intake.test.js \
+  test/platform-ingest.test.js test/teams-controls.test.js
+```
+
+- `teams-queue-controls`: a queued message gets ONE card (no extra text line) whose data holds only
+  `cgAction`, the lane and the row id; Cancel drops only that row and the engine never sees it;
+  Steer interrupts the sender's running turn with `STEERED`, the interrupted answer says why, the
+  steered message runs before an older queued one, which keeps its place; a stranger, another
+  conversation, a forged lane or path, and a running row are all refused with nothing changed; a
+  steer behind another person's running work or queued message keeps the order; an admitted admin
+  may cancel; the card reads "started" when its message starts; every answer is audited.
+- The existing durable-intake tests keep the plain "Queued in this session" line for connectors
+  without card support.
+
+Live acceptance (Teams test tenant; repeat once with the channel on Claude and once on Codex):
+
+1. Fixture: a Teams channel with the bot installed, two approved members A and B, and an admin C.
+   A asks "@bot count slowly from 1 to 60, one number per line, pausing between numbers" (a long
+   turn), then, in the same reply chain, "@bot what is 2+2?". Pass: the second message gets a card
+   *Your message is queued (position 1)* with **Steer conversation** and **Cancel request**.
+2. A clicks **Cancel request**. Pass: the card reads "Queued message cancelled"; the counting turn
+   finishes normally; no answer to "2+2" appears.
+3. A sends "@bot what is 3+3?" while a new long turn runs, then clicks **Steer conversation**.
+   Pass: the long turn's message changes to "↪️ Interrupted to answer your newer message…", the
+   card shows "Steering…", and the next answer is "6" in the same session (the footer names the
+   expected engine).
+4. B clicks A's queue card. Pass: B sees "This choice belongs to the person who sent that
+   message." and A's message still runs. C (admin) clicks **Cancel request** on another queued
+   message of A's: it is cancelled and `teams_queue_choice` (admin true) is in Observability.
+5. B starts a long turn; A queues a message and clicks Steer. Pass: "The running work belongs to
+   another person…", B's turn continues, A's message runs after it.
+6. Restart the gateway while a message is queued, then click its card. Pass: the click answers from
+   the durable row (cancel still works, or "already started" once it ran).
+
 ## `claude` in an SSH session runs on the channel's own Claude license (2026-11-22)
 
 - [x] `test/ssh-session.test.js` "claude over SSH on an added API license: …" (always runs): a

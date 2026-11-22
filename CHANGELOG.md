@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams: a message sent while its session is busy now gets **Steer conversation** and **Cancel
+  request** buttons, like Slack's busy-thread card. It is still queued and runs on its own; Steer
+  interrupts your own running request and answers the queued message next (the interrupted
+  answer says so), Cancel drops only that message. Only the sender, or a current admin the
+  conversation admits, can use the buttons; a steer never interrupts or jumps ahead of another
+  person's work. The card says when the message starts, and its buttons still answer correctly
+  after a gateway restart.
 - `claude` in an SSH session now runs on the channel's own Claude license. A channel set to a
   Claude license you added — a second Claude account, a custom server, an API key or a cloud
   route — got the gateway's own Claude login in its terminal, a different account than the
