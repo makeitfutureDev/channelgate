@@ -174,7 +174,7 @@ test("Settings pages are one dropdown on the first line, with the open page sele
   assert.equal(nav.accessory.action_id, CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID);
   assert.match(nav.text.text, /<#C_SETTINGS>/);
   assert.deepEqual(nav.accessory.options.map((entry) => parseActionValue(entry.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "Diagnostics", "You"]);
+  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "API tokens", "Diagnostics", "You"]);
   assert.equal(parseActionValue(nav.accessory.initial_option.value).p, "mcp");
   assert.equal(view.close.text, "Done");
   assert.equal(view.submit, undefined, "no form open, no submit");

@@ -7,7 +7,7 @@
 // the conversation. Revoking follows the same rule. The value is returned exactly once, inside
 // this tool result, and is never logged, stored or echoed again — not even its tail.
 import { z } from "zod";
-import { createApiToken, curlExample, getApiToken, listApiTokens, revokeApiToken } from "../../gateway/api-tokens.js";
+import { ApiTokenError, conversationTokensFor, createApiToken, curlExample, getApiToken, revokeConversationToken } from "../../gateway/api-tokens.js";
 import { getSettings } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 
@@ -66,7 +66,7 @@ export function register(server, ctx) {
       const refusal = await personOnly();
       if (refusal) return text(refusal);
       const manager = await requireManage();
-      const tokens = listApiTokens(manager ? { channelId } : { channelId, createdBy });
+      const tokens = conversationTokensFor({ channelId, userId: createdBy, manager });
       if (!tokens.length) return text(manager ? "No API tokens exist for this conversation." : "You have no API tokens in this conversation. `create_api_token` makes one.");
       return text(`${manager ? "API tokens of this conversation" : "Your API tokens in this conversation"}:\n${tokens.map(fmt).join("\n")}`);
     },
@@ -81,11 +81,14 @@ export function register(server, ctx) {
     async ({ id }) => {
       const refusal = await personOnly();
       if (refusal) return text(refusal);
-      const token = getApiToken(id);
-      if (!token || token.channelId !== channelId) return text("No such token in this conversation.");
-      if (token.createdBy !== createdBy && !(await requireManage())) return text("Only the token's owner, a channel manager or an admin can revoke it.");
-      if (token.revoked) return text(`Token #${token.id} \`${token.name}\` is already revoked.`);
-      revokeApiToken(id);
+      const owned = getApiToken(id)?.createdBy === createdBy;
+      let token;
+      try {
+        token = revokeConversationToken({ id, channelId, userId: createdBy, manager: !owned && (await requireManage()) });
+      } catch (e) {
+        if (e instanceof ApiTokenError) return text(e.message);
+        throw e;
+      }
       await logEvent("api_token_revoked", { channel: channelId, slug, id: token.id, name: token.name, owner: token.createdBy, author: createdBy });
       return text(`✅ Token #${token.id} \`${token.name}\` revoked. The next request with it is refused.`);
     },

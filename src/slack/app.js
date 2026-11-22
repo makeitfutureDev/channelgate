@@ -17,6 +17,7 @@ import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { channelFileRoot } from "../gateway/channel-file-root.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { modeLabel, isAuthorized, canManage, modeSettingsPatch } from "../gateway/modes.js";
+import { ApiTokenError, conversationTokensFor, createApiToken, curlExample, revokeConversationToken } from "../gateway/api-tokens.js";
 // Re-exported: the authorization contract moved to gateway/modes.js (beside canManage).
 export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
@@ -84,7 +85,7 @@ import {
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
   CHANNEL_SETTINGS_ACTION_PATTERN, CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID,
-  CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, escapeMrkdwn,
+  CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID, escapeMrkdwn,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
@@ -1061,6 +1062,30 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
   }
 }
 
+// Settings → API tokens. The modal's context already admitted the clicker as authorized in this
+// conversation (channelSettingsContext → isAuthorized) and as the modal's owner; a token is then
+// theirs, bound to this conversation. The value appears only in the returned notice, painted once
+// into the clicker's own modal; it is never logged, stored or rebuilt into a later view.
+async function createSettingsApiToken(values, { entry, meta, clicker }) {
+  let minted;
+  try {
+    minted = createApiToken({ name: values.name, channelId: meta.channelId || entry.channelId, slug: entry.slug, createdBy: clicker });
+  } catch (error) {
+    if (error instanceof ApiTokenError) return { field: "name", error: error.message.slice(0, 150) };
+    throw error;
+  }
+  await logEvent("api_token_created", { channel: minted.record.channelId, slug: entry.slug, id: minted.record.id, name: minted.record.name, author: clicker, via: "slack-settings" });
+  return { notice: `✅ Token ${inlineMcpName(minted.record.name)} created. *Copy it now* — it is shown only this once and the gateway keeps no copy:\n\`${minted.token}\`\n`
+    + "```" + curlExample(getPublicUrl(), minted.token) + "```" };
+}
+
+export async function revokeSettingsApiToken(id, { entry, meta, clicker, userIsAdmin, userIsApproved }) {
+  const manager = canManage(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+  const token = revokeConversationToken({ id, channelId: meta.channelId || entry.channelId, userId: clicker, manager });
+  await logEvent("api_token_revoked", { channel: token.channelId, slug: entry.slug, id: token.id, name: token.name, owner: token.createdBy, author: clicker, via: "slack-settings" });
+  return `🗑️ Revoked ${inlineMcpName(token.name)}. The next request with it is refused.`;
+}
+
 // Save the inline form `key`. → { notice } on success, { field, error } on a refusal.
 export async function saveSettingsForm(key, values, ctx) {
   const { entry, meta, clicker } = ctx;
@@ -1134,6 +1159,7 @@ export async function saveSettingsForm(key, values, ctx) {
       return refuse(fieldForEmailError(error.message, kind === "em" ? "imapHost" : "name"), error.message);
     }
   }
+  if (kind === "tok-add") return createSettingsApiToken(values, ctx);
   if (kind === "var-add") {
     let varName;
     try { varName = assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
@@ -1675,7 +1701,12 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   if (page === "mcp" && userIsAdmin) snapshot.cloudMcp = await cloudPickerData(meta, quick ? 600 : 2500);
   if (page === "skills") snapshot.skillPicker = channelSkillPicker(meta, { userId: state.ownerId, userIsAdmin });
   if (page === "you") snapshot.mySkillPicker = await mySkillPicker(state.ownerId, userIsAdmin);
-  const editOptions = channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) });
+  const viewerApproved = await isApproved(state.ownerId);
+  if (page === "api") {
+    const manager = canManage(meta, { authorId: state.ownerId, isAdminUser: userIsAdmin, isApprovedUser: viewerApproved });
+    snapshot.apiTokens = { manager, tokens: conversationTokensFor({ channelId: state.channelId, userId: state.ownerId, manager, includeRevoked: false }) };
+  }
+  const editOptions = channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: viewerApproved });
   // A cached list is private too. Recheck local authority after other async page work and omit
   // it if the credential/scope changed during rendering. Membership was checked by the caller.
   if (inventoryInput && settingsClient) {
@@ -2335,6 +2366,12 @@ async function connectAndWire(app) {
         if (!state.confirm || command.x !== state.confirm) throw new Error("This confirmation expired. Open Settings again.");
         const notice = await applySettingsConfirm(state.confirm, ctx);
         await repaint({ meta: await getChannelMeta(entry.slug), state: { form: "", confirm: "" } }, { notice });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID) {
+        const notice = await revokeSettingsApiToken(command.id, ctx)
+          .catch((error) => { if (error instanceof ApiTokenError) return `⚠️ ${error.message}`; throw error; });
+        await repaint({ state: { tab: "api", form: "", confirm: "" } }, { notice });
         return;
       }
       if (actionId === CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID) {

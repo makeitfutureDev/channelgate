@@ -2479,6 +2479,21 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
 - **The organization-wide key is deprecated, not removed.** It keeps working unchanged for
   existing automations (fixed admin principal, any conversation) and logs one deprecation warning
   per hour when used; the Settings card and the API page say so.
+- **Managed from Slack Settings and the dashboard too, under one rule.** Slack channel Settings has
+  an **API tokens** page (between Schedules and Diagnostics; old `tokens` links land on it): the
+  viewer's own active tokens, or every one when they manage the channel or are an admin, each with
+  a **Revoke** button behind a confirm, and **+ New token** opening an inline Name form. Saving
+  mints the token for the clicker in that conversation and shows the value once, with a curl
+  example, in the save notice of the clicker's own modal; it is never logged, stored or rebuilt
+  into a later view. The Activity dashboard's **Settings → API tokens** section
+  (`src/gateway/api-tokens-view.js`; `GET/POST /activity/:id/api/api-tokens[/:channelId]`,
+  `POST …/:channelId/:tokenId/revoke`) offers every Slack conversation the viewer may open there
+  (the dashboard's access rule, re-checked per request; only their own DM), lists the tokens they
+  see with creator names, creates one for the SESSION owner (Origin + CSRF, the session re-checked
+  before the write, the value in one `no-store` response and only in page memory until they leave
+  the section or switch conversation) and revokes after a confirm. The agent tools, the Slack page
+  and the dashboard all decide visibility and revocation through `conversationTokensFor` /
+  `revokeConversationToken` in `src/gateway/api-tokens.js`.
 ## Run capability liveness
 
 - **A run's control-socket capability is authority only while its conversation has live work.**
