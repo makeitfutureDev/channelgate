@@ -23,6 +23,9 @@ knowing what degrades keeps you from writing a reply that arrives looking broken
 - A message sent while its session is busy is queued and runs on its own; its card offers
   **Steer conversation** (interrupt the sender's own running request and answer this one next) and
   **Cancel request** (drop only this message). Only the sender or an admitted admin can use them.
+- A background job or agent you start announces itself with a **Check status** button (live
+  elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
+  running background work privately. Point people there instead of polling the job yourself.
 - **Threads exist only in threaded spaces.** In a DM or a group chat the conversation is flat and
   every reply is a new top-level message. Don't refer to "this thread" unless you know you are in a
   threaded space.

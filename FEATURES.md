@@ -214,6 +214,29 @@ queued behind running work with a bare "Queued in this session (position N)" lin
 - Engine-independent in mechanism (the steer aborts the turn's signal for Claude and Codex alike);
   live acceptance covers both. → TEST-PLAN: Google Chat queued-message Steer / Cancel.
 
+## Google Chat: background job status (2026-11-22)
+
+- `postNotice` also takes `chatCard`, a Cards v2 card sent where `richCards` is `cards-v2` (the
+  Adaptive `card` still goes only to `adaptive-cards`, the text everywhere else and with every card).
+  The background job's started notice passes `backgroundStartedChatCard(rec)`
+  (`src/gateway/background-status.js`): a header naming the job and a **Check status** button whose
+  only value is the job id.
+- **Check status** (`bgjob.status`, `src/platforms/googlechat/background-controls.js`) admits the
+  clicker with the gate Teams and Slack use, now shared as `backgroundAccessEntry` (admin, approved,
+  or an explicit guest of THAT conversation, read from Google's verified click envelope), and reports
+  a job only for that conversation (running with elapsed time, cap and recent output; finishing;
+  finished from its log; otherwise "no longer running here"). The answer is a private Cards v2
+  message only the clicker sees; **Refresh** on it repaints that private card in place. A refused
+  clicker gets a private "not authorized" line. Card text is HTML-escaped; only the status line's own
+  bold becomes `<b>`.
+- **`/jobs`** joins the Google Chat control lane (`GOOGLE_CHAT_CONTROL_COMMAND`) and lists the
+  conversation's running jobs and agents (up to ten, a status button for the first five) as a
+  private card to the sender, or as a text list when no private card can be addressed; "No
+  background jobs are running in this conversation." when idle. `/help` lists it and describes the
+  button.
+- Engine-independent: the status reads the job registry and logs, not an engine. → TEST-PLAN:
+  Google Chat background job status.
+
 ## Teams: read earlier messages and fetch their files (2026-11-22)
 
 A Teams run sees only the message addressed to it. Slack runs read their channel with

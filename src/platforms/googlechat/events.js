@@ -134,7 +134,7 @@ export function resolveThreadKey({ kind, threadName, seen }) {
   return known ? threadName : "";
 }
 
-export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile)(?:\s|$)/i;
+export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i;
 
 // A registered slash command arrives with `argumentText` holding ONLY the arguments (Google's own
 // example: text "/debug show code", argumentText " show code"). The command itself is the

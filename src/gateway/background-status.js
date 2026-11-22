@@ -8,9 +8,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { gatewayRoot } from "../config/paths.js";
+import { getChannelEntry, getChannelMeta, isAdmin, isApproved } from "../config/store.js";
+import { isAuthorized } from "./modes.js";
 import { getActiveBackgroundJobs } from "./background.js";
+import { chatAction, chatButtons, chatCard, chatText } from "../platforms/googlechat/cards.js";
 
 export const BACKGROUND_STATUS_ACTION = "bgjob.status";
+export const BACKGROUND_ACCESS_DENIED = "You're not authorized to see this conversation's background work.";
 const JOB_ID = /^[a-f0-9-]{4,40}$/i;
 const TAIL_CHARS = 600;
 
@@ -38,6 +42,17 @@ export function backgroundJobStatus({ jobId, slug, jobs = getActiveBackgroundJob
   try { recent = readFileSync(path.join(root(), "logs", "bg", `${slug}__${id}.log`), "utf8").trim().slice(-TAIL_CHARS); }
   catch { /* no log for this conversation */ }
   return recent ? { state: "finished", id, recent } : { state: "unknown", id };
+}
+
+// Who may see a conversation's background work: the same gate as Slack's button and /status — an
+// admin, an approved user, or an explicit guest of THIS conversation. `conversationId` must come
+// from the surface's verified envelope, never from card data. Returns the conversation's entry.
+export async function backgroundAccessEntry(conversationId, userId) {
+  const entry = await getChannelEntry(conversationId);
+  const meta = entry ? await getChannelMeta(entry.slug) : null;
+  if (!meta) return null;
+  const [adminUser, approvedUser] = await Promise.all([isAdmin(userId), isApproved(userId)]);
+  return isAuthorized(meta, userId, Boolean(meta.isDM), { isAdminUser: adminUser, isApprovedUser: approvedUser }) ? entry : null;
 }
 
 // One status as plain lines (Markdown-light: bold only), shared by the card and the text fallback.
@@ -89,4 +104,33 @@ export function backgroundJobsText(list) {
   if (!list.length) return "No background jobs are running in this conversation.";
   return [`Background work in this conversation (${list.length}):`,
     ...list.slice(0, 10).map(job => `- ${job.what} **${job.label}** — ${formatSpan(job.runtimeMs)} elapsed (id ${job.id})`)].join("\n");
+}
+
+// The same three views as Google Chat Cards v2. Card text is escaped by chatText before Chat reads
+// it as HTML; only the `**bold**` the status lines themselves write becomes <b>.
+const chatLine = text => {
+  const widget = chatText(text);
+  widget.textParagraph.text = widget.textParagraph.text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  return widget;
+};
+const chatStatusButton = (id, label = "Check status") => chatAction(label, BACKGROUND_STATUS_ACTION, "", { id });
+
+// The started notice's text already says what is running; the card under it adds the button.
+export function backgroundStartedChatCard({ id, kind, label }) {
+  return chatCard(`${kind === "agent" ? "🤖" : "⚙️"} ${kindLabel(kind)}: ${label}`, [chatButtons([chatStatusButton(id)])]);
+}
+
+export function backgroundStatusChatCard(status) {
+  const [headline, ...rest] = backgroundStatusLines(status);
+  const live = status.state === "running" || status.state === "finishing";
+  return chatCard("Background work status", [chatLine(headline), ...rest.map(chatText),
+    ...(live ? [chatButtons([chatStatusButton(status.id, "Refresh")])] : [])]);
+}
+
+export function backgroundJobsChatCard(list) {
+  if (!list.length) return chatCard("Background work", [chatText("No background jobs are running in this conversation.")]);
+  return chatCard(`Background work in this conversation (${list.length})`, [
+    ...list.slice(0, 10).map(job => chatLine(`${job.what} **${job.label}** — ${formatSpan(job.runtimeMs)} elapsed (id ${job.id})`)),
+    chatButtons(list.slice(0, 5).map(job => chatStatusButton(job.id, `Status: ${String(job.label).slice(0, 40)}`))),
+  ]);
 }

@@ -37,13 +37,16 @@ export function asConnector(clientOrConnector) {
 // `blocks` is a SLACK-ONLY rich payload. It is accepted here (rather than at a raw client call)
 // precisely so the connector can decide: a platform without Block Kit ignores it and the plain
 // `text` still delivers, instead of the call failing or posting nothing.
-// `card` is an Adaptive Card for surfaces that render them natively; `text` is still the message's
-// fallback, and the whole notice on every other surface.
-export async function postNotice(target, { conversationId, threadKey = "", text, blocks = null, card = null, ephemeralTo = "" } = {}) {
+// `card` is an Adaptive Card and `chatCard` a Google Chat Cards v2 card, each sent only where that
+// format renders natively; `text` is still the message's fallback, and the whole notice on every
+// other surface.
+export async function postNotice(target, { conversationId, threadKey = "", text, blocks = null, card = null, chatCard = null, ephemeralTo = "" } = {}) {
   const connector = asConnector(target);
   if (!connector) return null;
-  if (card && !ephemeralTo && connector.capabilities?.richCards === "adaptive-cards" && typeof connector.postCard === "function") {
-    return connector.postCard({ conversationId, threadKey, card, text });
+  const richCards = connector.capabilities?.richCards;
+  const native = richCards === "adaptive-cards" ? card : richCards === "cards-v2" ? chatCard : null;
+  if (native && !ephemeralTo && typeof connector.postCard === "function") {
+    return connector.postCard({ conversationId, threadKey, card: native, text });
   }
   const payload = { conversationId, threadKey, text, ephemeralTo };
   if (blocks && connector.capabilities?.richCards === "block-kit") payload.blocks = blocks;

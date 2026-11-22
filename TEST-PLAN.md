@@ -266,6 +266,37 @@ picking the app from the list (typed text alone is not a mention).
   listing `google.workspace.chat.message.v1.updated` too; status `reactions N/M spaces` with no
   error; 🤖 / 🛑 reactions still act.
 
+## Google Chat background job status (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/googlechat-background-status.test.js test/teams-background-status.test.js \
+  test/googlechat-controls.test.js test/platform-googlechat.test.js
+```
+
+- `googlechat-background-status`: `postNotice` sends `chatCard` only to `cards-v2`, the Adaptive
+  card only to `adaptive-cards`, text elsewhere and for private notices; the started notice passes
+  both cards; Check status answers an admitted member with a private, escaped status card and
+  Refresh (which repaints the private card), refuses a stranger and an unregistered space privately,
+  never reveals another conversation's job; `/jobs` lists only this conversation's jobs privately,
+  refuses a stranger, ignores `/jobs <text>`, falls back to text without a `users/…` name, says when
+  nothing runs; `/jobs` is a control-lane command and in `/help`.
+- The Teams background tests run unchanged over the shared `backgroundAccessEntry`.
+
+Live acceptance (HTTP endpoint connection; the job is started by the engine, so the Check status
+case runs once with the channel on Claude and once on Codex):
+
+1. **GCHAT-JOBS-CLAUDE-01 / GCHAT-JOBS-CODEX-01 — Check status.** Fixture: a Worker-mode space
+   with approved member A and unapproved member U. A asks "@app run `for i in $(seq 1 90); do echo
+   tick $i; sleep 2; done` in the background". Pass: the started notice shows a card *⚙️ Background
+   job: …* with **Check status**. After ~20 s A clicks it: a private card only A sees says "still
+   running — … elapsed" with recent `tick` lines and **Refresh**; Refresh repaints that card. After
+   the result posts, Check status says "This job already finished" with the last `tick 90` lines.
+2. **GCHAT-JOBS-LIST-01 (engine-independent) — /jobs and refusal.** While a job runs A sends "@app
+   /jobs": a private card lists the job's label, elapsed time and id with a status button. U sends
+   "@app /jobs" and clicks **Check status**: nothing about the job is shown to U.
+
 ## Google Chat queued-message Steer / Cancel (2026-11-22)
 
 Automated (scratch SQLite, the real Google Chat transport and durable intake, stubbed engine and
