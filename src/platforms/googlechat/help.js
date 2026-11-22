@@ -26,6 +26,7 @@ const TOPICS = [
     '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
     '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
     '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
+    '`/harnesses [all|entry[, entry…]]` — Show which harnesses and licenses this conversation may run on. An organization admin sets the list (Enterprise); it must keep the license the conversation runs on.',
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
@@ -85,7 +86,7 @@ export const GOOGLE_CHAT_HELP_TEXT = [
 // emoji section headers and a command/description split so the guide scans like a menu.
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
-  '/status': 'monitoring', '/model': 'tune', '/license': 'badge', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+  '/status': 'monitoring', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
 };
 const QUICK_ICONS = ['person', 'groups', 'forum'];
 const HEADERS = {

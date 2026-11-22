@@ -30,6 +30,7 @@ export const HELP_TEXT =
   "• `/resume` — terminal command to open this thread's session locally; `/resume <command or session id>` continues an existing session from this channel's folder in this thread\n" +
   "• `/pending` — threads where I'm waiting on your decision (alias `/followups`; bare `pending` / `my followups` work too)\n" +
   "• `/model` — choose channel/thread scope, an enabled engine, model, and effort (access policy is set in Settings)\n" +
+  "• `/harnesses` — which harnesses and licenses this channel may run on; an admin sets it with `/harnesses all` or `/harnesses harness:claude, <license name>` (Enterprise)\n" +
   "• `/compact` — compact this thread's history on engines that support it (Claude Code, including Qwen; Codex → use `/clear`)\n" +
   "• `/mode [read|worker|admin]` — show or set this channel's base mode; `bash` is an alias for Worker. Managers may change Read-only/Worker; Admin requires an organization admin. Set Auto and Lean separately in Settings\n" +
   "• `/sudo [on|off|status]` or `/sudo <message>` — organization-admin-only direct host execution; `@agent /sudo <message>` enables the thread and runs the request immediately; `/sudo` means on\n" +

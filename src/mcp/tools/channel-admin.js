@@ -18,36 +18,11 @@ import { logEvent } from "../../util/logger.js";
 // audit row naming the chat author who flipped it (config/channel-audit.js).
 import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
-import { engineLabel, harnessOf, licenseLabel, listedEngineIds, requireAdapter } from "../../engines/registry.js";
-import { HARNESS_IDS, harnessLabel } from "../../engines/license-state.js";
-import { assertApprovedEnginesUpdate, assertChannelEngineApproved, describeApprovedEngines, harnessPolicyEntry } from "../../gateway/channel-engines.js";
-import { effectiveMeta } from "../../gateway/effective-meta.js";
+import { engineLabel, requireAdapter } from "../../engines/registry.js";
+import { describeChannelApprovedHarnesses, setChannelApprovedHarnesses } from "../../gateway/approved-harnesses.js";
 import { networkEnforcedFor } from "../../engines/network-policy.js";
-import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail, getEngine } from "../../config/settings.js";
+import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
 import { parseDriveFolderId, testChannelSync } from "../../gateway/drivesync.js";
-
-// What a channel's approved list can hold, as Settings offers it: a whole harness (every license
-// of it, including ones added later) or single licenses, each named with its harness.
-function approvedHarnessOptions() {
-  return [
-    ...HARNESS_IDS.map((harness) => ({ value: harnessPolicyEntry(harness), label: `${harnessLabel(harness)} (any license)` })),
-    ...listedEngineIds().map((id) => ({ value: id, label: harnessOf(id) ? `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` : engineLabel(id) })),
-  ];
-}
-
-// One submitted entry → the stored policy entry: its id, or a name that fits exactly one option
-// (the full "Codex · Team seat", or the license's own name). Anything else is refused by the
-// caller with the list, never guessed at — an approved list decides which account pays.
-function resolveApprovedHarnessEntry(entry, options) {
-  const wanted = String(entry || "").trim().toLowerCase();
-  if (!wanted) return "";
-  const byValue = options.find((o) => o.value.toLowerCase() === wanted);
-  if (byValue) return byValue.value;
-  const byLabel = options.filter((o) => o.label.toLowerCase() === wanted || o.label.toLowerCase().split(" · ").slice(1).join(" · ") === wanted);
-  return byLabel.length === 1 ? byLabel[0].value : "";
-}
-
-const describeApprovedPolicy = (policy) => (policy == null ? "every harness and license (no restriction)" : describeApprovedEngines(policy) || "nothing this gateway still offers");
 
 // Human wording for a daemon drive-sync status ({ running, runningSince, last }).
 function describeDriveSyncStatus(status) {
@@ -277,15 +252,7 @@ export function register(server, ctx) {
       inputSchema: {},
     },
     async () => {
-      const meta = await loadMeta();
-      if (!meta) return text("Channel isn't set up yet — send a normal message first.");
-      const lines = [`Approved here: ${describeApprovedPolicy(meta.approvedEngines)}.`];
-      if (await requireAdmin()) {
-        lines.push("Entries an admin can approve:", ...approvedHarnessOptions().map((o) => `- \`${o.value}\` — ${o.label}`));
-      } else {
-        lines.push("Only an organization admin can change this list.");
-      }
-      return text(lines.join("\n"));
+      return text(describeChannelApprovedHarnesses(await loadMeta(), { isAdmin: await requireAdmin() }));
     }
   );
 
@@ -303,40 +270,8 @@ export function register(server, ctx) {
       inputSchema: { approved: z.union([z.literal("all"), z.array(z.string().min(1).max(200)).min(1).max(100)]) },
     },
     async ({ approved }) => {
-      if (!(await requireAdmin())) return text("Only organization admins can change this channel's approved harnesses.");
-      const options = approvedHarnessOptions();
-      let value = null;
-      if (approved !== "all") {
-        const unknown = [];
-        value = [];
-        for (const entry of approved) {
-          const resolved = resolveApprovedHarnessEntry(entry, options);
-          if (!resolved) unknown.push(entry);
-          else if (!value.includes(resolved)) value.push(resolved);
-        }
-        if (unknown.length) {
-          return text(`Nothing was changed: ${unknown.map((entry) => `"${entry}"`).join(", ")} ${unknown.length === 1 ? "is" : "are"} not an entry I can approve (unknown, or a name more than one license carries). Use one of:\n${options.map((o) => `- \`${o.value}\` — ${o.label}`).join("\n")}`);
-        }
-      }
-      let next;
-      try {
-        next = await patchAuditedMeta((meta) => {
-          const approvedEngines = assertApprovedEnginesUpdate(meta, value);
-          const after = { ...meta, approvedEngines };
-          // Same rule as Settings: a list that excludes what the channel runs on would refuse its
-          // very next turn, so the channel's license is changed first.
-          assertChannelEngineApproved(after, effectiveMeta(after).engine || getEngine());
-          return { approvedEngines };
-        });
-      } catch (error) {
-        if (error?.code === "channel_engine_not_approved") {
-          return text(`Nothing was changed: this channel currently runs on ${engineLabel(error.details?.engine)}, which that list leaves out. Include it, or change the channel's license with /model first.`);
-        }
-        if (error?.statusCode) return text(`Nothing was changed: ${error.message}`);
-        throw error;
-      }
-      if (!next) return text("Channel isn't set up yet — send a normal message first.");
-      return text(`✅ Approved for this channel: ${describeApprovedPolicy(next.approvedEngines)}. Applies to future engine launches, including fallback.`);
+      const result = await setChannelApprovedHarnesses({ slug, channelId, actor: createdBy, source: "mcp", isAdmin: await requireAdmin(), approved });
+      return text(result.text);
     }
   );
 

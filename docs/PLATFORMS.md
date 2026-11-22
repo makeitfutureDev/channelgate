@@ -397,6 +397,10 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   `/license default` change it for the session. It answers that there is nothing to choose when
   the harness has a single license there. An engine license is a provider credential, not the
   ChannelGate license key; see [engine capabilities](ENGINE-CAPABILITIES.md#harnesses-and-licenses).
+  Typed `/harnesses` shows which harnesses and licenses the conversation may run on (its
+  Approved harnesses list, Enterprise); an organization admin sets it with `/harnesses
+  harness:claude, <license name>` or clears it with `/harnesses all`, under the same rules and
+  audit as Settings. Google Chat answers the same command.
 - `/settings` posts a compact **Open settings** card in the original channel/thread or chat.
   Clicking it opens a large native Teams popup containing General, Variables, MCPs, Skills,
   Automations and Resume. `/secrets` uses the same launcher and opens Variables directly.

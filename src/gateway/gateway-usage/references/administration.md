@@ -163,7 +163,9 @@ These channel modes do not leave the container. The separate organization-admin-
   including ones added later) and single license ids or names — call the `get` tool first, it lists
   the exact entries for an admin. The list must keep the license the channel currently runs on:
   change that with `/model` first, then narrow. A refusal ("Nothing was changed: …") is the answer
-  to relay; never work around it by editing files or settings.
+  to relay; never work around it by editing files or settings. People can also type
+  `/harnesses` (show) or, as an admin, `/harnesses harness:claude, <license name>` / `/harnesses
+  all` themselves — the gateway answers that command directly, with the same rules.
 - `set_channel_network` (admin) — set whether this channel may use the network (needs Bash on to
   be useful) so `git`/`gh`/`curl` and deploy CLIs work; the engines are told the answer (Codex read
   mode refuses network on its own). There is no per-domain allow-list to add to. The container has

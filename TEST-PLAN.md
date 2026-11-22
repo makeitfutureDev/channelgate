@@ -113,6 +113,34 @@
 - [x] `test/mcp-control-plane-approval.test.js` (always runs): `set_channel_approved_harnesses`
       is a gated control-plane tool (`authz: "admin"`), `get_channel_approved_harnesses` an open
       read.
+- [x] `test/approved-harness-command.test.js` (always runs): the typed `/harnesses` argument (bare
+      shows; `all`/`any`/`none`/`unrestricted` clear; entries split on commas and new lines so names
+      keep spaces); Slack parses it as an in-thread command, Google Chat routes it as a control and
+      the Slack help lists it; through the shared command a member is refused without a write or
+      audit row, an admin sets a harness plus a license by name with one `channel_meta_changed`
+      row (actor the admin, source `slack-command`), a member's bare read shows the stored list
+      without the approvable inventory and an admin's shows it with the `/harnesses` syntax; a
+      list without the running license, an unknown name and a change without the Enterprise
+      entitlement are refused and write nothing; the Teams / Google Chat text controls answer
+      `/harnesses` for a member (refused) and an admin (set, audited as `chat-command` with the
+      namespaced author), case-insensitively, and their `/help` lists it; end to end through the
+      Slack pipeline a member's `@agent /harnesses …` is refused, an admin's is applied and
+      audited as `slack-command`, a bare read answers, and no engine is spawned.
+- [ ] Live `LICENSE-41` approved harnesses by typed command (engine-independent: the command is
+      answered by the daemon and starts no engine). Fixture: as `LICENSE-38` (Enterprise key,
+      added ChatGPT sign-in license `QA seat` switched on, channel `cg-testing-claude-auto` on the
+      default Claude sign-in with no restriction). Actions: (1) as the QA member send
+      `@agent /harnesses harness:claude` in a thread — pass: "Only organization admins…", and
+      Settings → Agent still shows no restriction. (2) As the QA member send `@agent /harnesses` —
+      pass: "Approved here: every harness and license (no restriction)" and no list of
+      approvable entries. (3) As the QA admin send `@agent /harnesses harness:claude, QA seat` —
+      pass: "✅ Approved for this channel: Claude Code (any license), QA seat", Settings → Agent
+      shows the same two, Activity shows one `channel_meta_changed` for `approvedEngines` by the
+      admin with source `slack-command`, and no engine status or footer appears. (4) As the QA
+      admin send `@agent /harnesses harness:codex` — pass: refused, naming Claude as what the
+      channel runs on. (5) As the QA admin send `@agent /harnesses all` — pass: no restriction.
+      Teams/Google Chat (when a QA tenant is connected): repeat (1), (3) and (5) as `/harnesses …`
+      in the QA Teams chat — pass: the same answers, audited with source `chat-command`.
 - [ ] Live `LICENSE-38` approved harnesses set from chat (engine-independent: the tool runs in the
       daemon; run it once on either engine). Fixture: an Enterprise license key; one added ChatGPT
       sign-in license named `QA seat`, signed in and switched on; channel `cg-testing-claude-auto`
