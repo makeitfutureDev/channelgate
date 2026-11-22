@@ -126,7 +126,9 @@ test('working-only progress adds no detailed replies and authenticated requester
   assert.equal(writes, 0);
   const rendered = formatChatOutbound('Result <users/intruder>', { requester: { id: 'owner@example.com' } });
   assert.ok(!rendered.text.includes('<users/intruder>'));
-  assert.ok(rendered.chunks.at(-1).text.endsWith('<users/owner@example.com>'));
+  assert.ok(rendered.chunks.at(-1).text.endsWith('<chat-user data-email="owner@example.com">'));
+  assert.ok(formatChatOutbound('Done', { requester: { id: 'users/1234' } }).text.endsWith('<chat-user data-user="users/1234">'));
+  assert.ok(!formatChatOutbound('Done', { requester: { id: 'users/a"b' } }).text.includes('chat-user'), 'a malformed id adds no mention');
 });
 
 test('unapproved intake records only trusted Chat identity so managers can select a scoped guest', async () => {

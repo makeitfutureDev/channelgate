@@ -521,6 +521,43 @@ test('Cards v2 create and patch retain controls, private viewer and the original
   assert.equal(calls.length, 2);
 });
 
+test('every text write names Markdown syntax, never as an update-mask path, and a refusal of the field falls back once', async () => {
+  const calls = [];
+  let refuse = false;
+  const api = createChatApi({ auth: fakeAuth(), fetchImpl: async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url: new URL(url), method: init.method, body });
+    if (refuse && body.markupSyntax) {
+      return { ok: false, status: 400, text: async () => 'Invalid JSON payload received. Unknown name "markupSyntax" at \'message\': Cannot find field.' };
+    }
+    return ok({ name: 'spaces/AAA/messages/M1', thread: { name: 'spaces/AAA/threads/T' } });
+  } });
+  await api.createMessage('spaces/AAA', { text: '**bold** [x](https://example.com)' });
+  assert.equal(calls[0].body.markupSyntax, 'MARKUP_SYNTAX_MARKDOWN');
+  await api.patchMessage('spaces/AAA/messages/M1', { text: 'edited' });
+  assert.equal(calls[1].body.markupSyntax, 'MARKUP_SYNTAX_MARKDOWN');
+  assert.equal(calls[1].url.searchParams.get('updateMask'), 'text', 'markupSyntax is never an updateMask path');
+  await api.patchMessage('spaces/AAA/messages/M1', { cardsV2: [{ cardId: 'c', card: {} }] });
+  assert.equal(calls[2].body.markupSyntax, undefined, 'a card-only patch carries no text and no syntax');
+
+  refuse = true;
+  await api.createMessage('spaces/AAA', { text: 'still delivered' });
+  assert.equal(calls.length, 5, 'one refused attempt, one retry without the field');
+  assert.equal(calls[3].body.markupSyntax, 'MARKUP_SYNTAX_MARKDOWN');
+  assert.equal(calls[4].body.markupSyntax, undefined);
+  assert.equal(calls[4].body.text, 'still delivered');
+  await api.createMessage('spaces/AAA', { text: 'remembered' });
+  assert.equal(calls.length, 6, 'the client remembers the refusal and does not ask again');
+  assert.equal(calls[5].body.markupSyntax, undefined);
+});
+
+test('a 400 unrelated to markupSyntax is not retried without it', async () => {
+  let n = 0;
+  const api = createChatApi({ auth: fakeAuth(), fetchImpl: async () => { n++; return { ok: false, status: 400, text: async () => 'Invalid thread name' }; } });
+  await assert.rejects(api.createMessage('spaces/AAA', { text: 'x' }), /Invalid thread name/);
+  assert.equal(n, 1);
+});
+
 test('footer and menu controls survive both private delivery and edits', async () => {
   const api = fakeChatApi();
   const connector = createGoogleChatConnector({ api, capabilities: googleChatAdapter.capabilities });
