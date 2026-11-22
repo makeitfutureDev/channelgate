@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Teams restart recovery presentation (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/teams-restart-recovery.test.js test/teams-durable-intake.test.js test/platform-ingest.test.js
+```
+
+- Ingest reports its working message before the engine runs; the transport records it on the
+  running row and a finished row keeps nothing; after a restart the working message is replaced by
+  the notice card with Run again and nothing reruns by itself; the card names only the held record;
+  Run again is refused for another person, another conversation and a malformed id (nothing
+  changes), replays the original text exactly once for the author, retires the shared card, and is
+  audited; a held record expires after 24 hours; without cards the working message is edited into
+  the text notice and nothing is held.
+
+Live acceptance (Teams test tenant; once with the channel on Claude, once on Codex):
+
+1. In a personal chat, A sends "@bot count slowly to 300, one number per line, pausing between
+   numbers". While it runs, restart the gateway with `restart_gateway` (or `systemctl --user
+   restart channelgate`) with a short drain (`CG_SHUTDOWN_DRAIN_MS=1000`).
+2. Pass: after the restart the "⏳ Agent is working…" message itself now reads "This Teams request
+   was interrupted…" with **Run again**; no second warning message; the request did not restart.
+3. B (if in a group) clicks Run again. Pass: "Only the person who sent the interrupted request…".
+4. A clicks Run again. Pass: the card reads "Running the interrupted request again" and a new answer
+   to the same request appears in the same session; a second click says it was already run again.
 ## Teams history and earlier files (2026-11-22)
 
 Automated:

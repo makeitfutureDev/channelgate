@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams: a request cut off by a gateway restart no longer leaves its "Agent is working…" message
+  spinning beside a separate warning. That message becomes the interruption notice, which now has
+  a **Run again** button for the person who asked (for 24 hours). The gateway still never reruns
+  such a request by itself, because it may already have done something; the button replays the
+  original request once, through the usual access checks. The conversation's Activity entry shows
+  the interrupted request as an error instead of idle.
 - Teams: an agent can read the earlier messages of the channel, channel thread or group chat it is
   answering in (`conversation_history`, like Google Chat) and fetch a file posted on one of them
   (`conversation_download_file`), so "catch me up" and "use the spreadsheet I posted earlier" work

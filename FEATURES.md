@@ -1,5 +1,29 @@
 # ChannelGate — Features
 
+## Teams: interrupted requests replace their working message and offer Run again (2026-11-22)
+
+Teams' durable intake never replays a request that was running when the daemon stopped (its tool
+effects are unknown) and posts a notice instead. Slack's recovery explains its dangling "working"
+placeholder and replays automatically; on Teams the placeholder stayed "⏳ Agent is working…" next
+to the notice, and repeating the request meant retyping it.
+
+- A running Teams turn records its visible working message on its OWN durable intake row
+  (`onWorking` from `src/platforms/ingest.js`, written by the transport only while the row is
+  `running`; a finished row is emptied as before). Bot Framework and Graph (edit/reaction) lanes
+  both record it, including a replay's own row.
+- On recovery the notice REPLACES that message (an Adaptive Card through `updateCard`, or a text
+  edit where cards are unavailable), falling back to a new card and then a plain post when the
+  message is gone. The Activity entry is set to `error`.
+- The card carries **Run again** (`recovery.retry`, `src/platforms/msteams/recovery-controls.js`),
+  naming only a held record in its own namespace (`msteams-retry:<app>`, status `held`) that keeps
+  the original request, its lane, author and conversation. A click is accepted only from that
+  author in that conversation (Teams' verified envelope), claims the record once, refuses after 24
+  hours, and enqueues the original request under a new id in its original lane and session queue,
+  where every ordinary gate (authorization, mention, sudo, admission) runs again. Never automatic.
+  Held records older than a week are deleted at transport start. Clicks are audited as
+  `teams_interrupted_retry`. Without card support nothing is held and the notice stays text.
+- Engine-independent (intake and delivery only); live acceptance covers both engines because the
+  interrupted turn is an engine run. → TEST-PLAN: Teams restart recovery presentation.
 ## Teams: read earlier messages and fetch their files (2026-11-22)
 
 A Teams run sees only the message addressed to it. Slack runs read their channel with
