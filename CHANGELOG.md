@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Google Chat: Composio SDK mode (Enterprise) now works in Google Chat. A Google Chat author and
+  space get their own Composio identities, scoped to the Google Cloud project of your Chat app's
+  service-account key, so agents there receive the personal and the shared Composio connection like
+  in Slack and Teams (only the personal one in direct messages). An author is identified by their
+  Google account ID, not their e-mail address, and is ready after their first message to the app.
+  Slack and Teams identities and the accounts connected to them are unchanged.
 - Teams: Composio SDK mode (Enterprise) now works in Teams conversations. A Teams author and
   conversation get their own Composio identities, scoped to your Microsoft Teams tenant, so agents
   there receive both the personal and the shared Composio connection like in Slack. Set the Teams

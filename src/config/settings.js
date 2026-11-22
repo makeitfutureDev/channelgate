@@ -282,6 +282,21 @@ export function googleChatServiceAccountEmail() {
   }
 }
 
+// The Google Cloud project the Chat app's service account belongs to (`project_id` in the stored
+// key; not a secret). Composio SDK mode names Google Chat identities under it: a Chat app is
+// configured in exactly one project, the key is required for every Google Chat connection, and a
+// project ID never changes — rotating the key inside the project keeps it.
+export function googleChatProjectId() {
+  const raw = resolveGoogleChatConfig().serviceAccountJson;
+  if (!raw) return "";
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return typeof parsed?.project_id === "string" ? parsed.project_id.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 export function hasGoogleChatConfig() {
   const c = resolveGoogleChatConfig();
   return Boolean(c.serviceAccountJson && c.subscription);

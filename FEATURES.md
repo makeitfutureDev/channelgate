@@ -1,5 +1,39 @@
 # ChannelGate — Features
 
+## Google Chat: Composio SDK identities (2026-11-22)
+
+Composio SDK mode (Enterprise) now names Google Chat authors and spaces, on the seam the Teams slice
+introduced. Before, a Google Chat subject failed the Slack identity rules, so a Google Chat turn in
+SDK mode received neither `composio-user` nor `composio-agent`. Changed in `src/ee/` at the
+maintainer's request; the entitlement, session policy, limits and usage reporting are untouched.
+
+- `composioIdentity` (`src/ee/composio-sessions.js`) names a Google Chat author
+  `googlechat:<project>:user:users/<id>` and a space `googlechat:<project>:channel:spaces/<id>`
+  (from the gateway's `gchat:spaces/<id>`). The subject is Google's immutable account resource
+  name, never the e-mail address the gateway keys Google Chat users by: an address can be renamed
+  or reassigned to another person and must not carry connected accounts with it. An e-mail-shaped
+  subject, a malformed `users/` or `spaces/` name, and a project that is not a standard Cloud
+  project ID (`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`; a Slack team, a Teams tenant and a legacy
+  domain-scoped `example.com:proj` id are refused) all throw. Slack and Teams identities are
+  byte-identical to before.
+- The workspace is the `project_id` of the saved Google Chat service-account key
+  (`googleChatProjectId()` in `src/config/settings.js`): the key is required for every Google Chat
+  connection, a Chat app is configured in exactly one Cloud project, and a project ID never changes
+  (rotating the key inside the project keeps it). No new setting. A missing or unreadable key is
+  named ("…save a Google Chat service-account key that contains its project_id (Settings → Google
+  Chat)").
+- `composioSubject` (`src/gateway/composio-workspace.js`) supplies the workspace and the subject
+  together: a Google Chat author's `users/<id>` is the `googleChatUserName` the transport records
+  from Google's own events on every message and card click; an author already identified by
+  `users/<id>` is used as is. No recorded resource → no subject: the run gets no `composio-user`
+  (the shared identity is still only the conversation's — no fallback), and the inventory and
+  Activity say the account ID is recorded once the person sends the app a message.
+- Callers: the run (`resolveRunIntegrations`, so chat turns, background work and SSH sessions alike;
+  DMs get only `composio-user`; the HTTP run API never a personal identity), the connection
+  inventory (admin channel and user pages), and Activity self-service connect, list and delete for
+  an owner whose id is a Google Chat address. Google Chat's Cards v2 settings and private browser
+  forms are the Teams settings code and needed no change, as on Teams.
+  → TEST-PLAN: Google Chat Composio SDK identities.
 ## Teams: Composio SDK identities (2026-11-22)
 
 In Composio SDK mode (Enterprise) a run gets session-scoped `composio-user` and `composio-agent`
@@ -12,7 +46,8 @@ Changed in `src/ee/` at the maintainer's request.
   `msteams:<tenant>:user:<29:…>` and `msteams:<tenant>:channel:<native id>`, the tenant being the
   configured Entra tenant GUID (lower-cased; a Slack team id is refused there). Slack identities are
   byte-identical to before, so existing connected accounts and stored session mappings stay
-  attached. Google Chat subjects remain unsupported (they fail the Slack rules and resolve nothing).
+  attached. Google Chat subjects were unsupported at this point; see "Google Chat: Composio SDK
+  identities".
 - `composioWorkspaceId` (`src/gateway/composio-workspace.js`) is the one place that supplies the
   workspace for a subject — the Slack team for Slack, `teamsTenantId` for Teams — used by the run
   (`resolveRunIntegrations`, so turns, background work and SSH sessions alike), the connection

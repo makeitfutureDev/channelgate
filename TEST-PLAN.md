@@ -1,5 +1,60 @@
 # ChannelGate — Test Plan
 
+## Google Chat Composio SDK identities (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/googlechat-composio-sdk.test.js test/teams-composio-sdk.test.js \
+  test/composio-sdk.test.js test/composio-sdk-run.test.js test/composio-sessions.test.js \
+  test/composio-inventory.test.js test/activity-connections.test.js
+```
+
+- Slack and Teams identities are byte-identical; a Google Chat author `users/<id>` and space
+  `gchat:spaces/<id>` become `googlechat:<project>:user:users/<id>` /
+  `googlechat:<project>:channel:spaces/<id>`; an e-mail subject, malformed `users/`/`spaces/`
+  names, and a Slack team, Teams tenant, upper-case or domain-scoped id as the project are refused;
+  the project is the service-account key's `project_id` (none for a missing or unparsable key, with
+  the Settings → Google Chat message); an e-mail author resolves to the recorded
+  `googleChatUserName`, an unrecorded or malformed one to no subject; an SDK session for a Google
+  Chat author is created under the Google Chat identity; a space turn resolves `sdk-user` +
+  `sdk-channel`, a DM turn `sdk-user` + `none-dm`, an unrecorded author `sdk-unavailable` with the
+  shared identity unchanged, a run-API turn no personal identity — and no e-mail ever reaches
+  Composio; the inventory names a missing project or an unrecorded author and lists accounts under
+  the Google Chat identities; Activity connect uses the `users/<id>` identity, refuses an unrecorded
+  owner (409, named), and delete checks ownership against the same identity.
+
+Live fixtures (operator-owned, disposable): Enterprise license with the Composio SDK entitlement;
+Settings → Composio in **SDK mode** with the organization SDK key; the gateway's Google Chat app
+(HTTP endpoint connection, so card buttons act) with its service-account key saved; a named
+threaded space where approved author A may manage access and approved member B may not (Managers:
+admins or a named list without B); a DM between A and the app. A has sent the app at least one
+message before the run (so `users/<id>` is recorded). Pin each engine case's thread with
+`/model claude` or `/model codex`. Composio dashboard access for the evidence.
+
+- [ ] LIVE `GCHAT-COMPOSIO-SDK-CLAUDE-01` / `GCHAT-COMPOSIO-SDK-CODEX-01` (personal, DM): A sends
+  `Which Composio identities do you have in this conversation, and which apps are connected to my
+  account?` Pass: the answer names only `composio-user` (no shared/agent identity in a DM) and lists
+  A's connected apps (or none). Then `Connect my Google Calendar.` Pass: a `connect.composio.dev`
+  link; after A completes it, `What's on my calendar tomorrow?` reads A's calendar. Composio's
+  dashboard shows the connected account under `googlechat:<project_id>:user:users/<A's id>` — no
+  e-mail address in the user id.
+- [ ] LIVE `GCHAT-COMPOSIO-SDK-CLAUDE-02` / `GCHAT-COMPOSIO-SDK-CODEX-02` (shared, space): A sends
+  `@app connect a shared Gmail account for this space.` Pass: a connect link whose Composio user is
+  `googlechat:<project_id>:channel:spaces/<space id>`; after connecting, `@app list the 3 newest
+  subjects in the space's Gmail` answers from `composio-agent`. B sends `@app connect a shared Slack
+  account for this space.` Pass: no connect link for the shared identity (B is a member, not a
+  manager); B's own `@app which apps are connected to my account?` uses B's `composio-user`, never
+  A's or the space's accounts.
+- [ ] LIVE `GCHAT-COMPOSIO-SDK-ADMIN-01` (engine-independent: identity naming and inventory are
+  daemon-side): admin UI → the space's Connections shows the shared Gmail account from 02 under the
+  space identity, Users → A shows A's Calendar account from 01. A newly approved person C who has
+  never messaged the app: Users → C → Connections reads "The Google Chat account ID of this person is not
+  recorded yet…"; after C sends the app one DM, it reads ready. Clear the service-account key on a
+  scratch gateway (or test install): the space's Connections names the missing Google Cloud project
+  ID (Settings → Google Chat). A Slack channel and a Teams chat on the same gateway still list their
+  pre-existing accounts under `slack:<team>:…` / `msteams:<tenant>:…`.
+
 ## Teams Composio SDK identities (2026-11-22)
 
 Automated:
