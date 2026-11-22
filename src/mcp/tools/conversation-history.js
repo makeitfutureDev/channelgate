@@ -1,5 +1,6 @@
 // conversation_history: read earlier messages of THIS conversation on a non-Slack surface whose
-// live connector can (Google Chat, and Teams through Graph; Slack keeps slack_channel_history / slack_thread_replies).
+// live connector can (Google Chat, and Teams through Graph; Slack keeps slack_channel_history / slack_thread_replies),
+// and conversation_download_file for a file on one of them (Google Chat media.download, Teams SharePoint).
 // Hard-scoped like the Slack reads: the conversation is the signed run context's, never an
 // argument, and a thread argument must belong to it. Safe without a per-user login for the same
 // reason as Slack's: the requester is a member here and the app is too, so it exposes nothing they
@@ -88,8 +89,9 @@ export function register(server, ctx) {
         `Download a file that was posted on an earlier message of THIS ${label} conversation into this thread's ` +
         "uploads/ folder and return its local path. Pass the `message` id shown under the file in a " +
         "conversation_history result, the `thread` id shown there when the message is a reply, and the `file` " +
-        "name when the message has several. This conversation only; files outside the SharePoint drives the " +
-        "administrator allowed are refused.",
+        "name when the message has several. This conversation only; a file the app cannot reach (a Google " +
+        "Drive share in Google Chat, a Teams file outside the SharePoint drives the administrator allowed) is " +
+        "refused with the reason.",
       inputSchema: {
         message: z.string().describe("The message id from conversation_history."),
         thread: z.string().optional().describe("The thread id shown with a reply's file, if any."),

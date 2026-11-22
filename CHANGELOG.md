@@ -2,6 +2,14 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Google Chat: an agent can fetch a file posted on an earlier message of the space it is answering
+  in (`conversation_download_file`, as on Teams), so "use the PDF I posted above" works without
+  reposting. The file must be uploaded into Chat; a file shared from Google Drive is refused with a
+  request to upload it directly.
+- Google Chat: when you mention the app in the middle of an existing thread it has not worked in
+  yet, its first answer there already sees the thread's earlier messages (the last 20, shortened),
+  as in Slack. This needs the same administrator-approved message-read scope as
+  `conversation_history`; without it, or if the read fails, the answer simply runs as before.
 - Teams and Google Chat: ✅ on a message that carries no tracked reminder now marks that
   conversation done in your Activity (if you started it) or dismisses it from your own Activity list
   (if you only took part), instead of answering that there was nothing to acknowledge. A new message

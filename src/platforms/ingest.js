@@ -24,6 +24,7 @@ import path from "node:path";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 import { acknowledgeReaction } from "./reaction-controls.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
+import { hydrateFreshThread, threadContextFetcher } from "./thread-hydration.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -262,10 +263,18 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       signal.throwIfAborted();
       progress.activity();
       try { recordPlatformThreadMessage({ message, slug: entry.slug, threadKey: sessionKey }); } catch (error) { log.warn?.(`[${adapter.id}] Activity index failed: ${error?.message || error}`); }
+      // A fresh session inside an existing thread starts with the thread's earlier messages
+      // (connectors that declare hydrationScope; bounded, best effort, never an error). Read here,
+      // after the session queue and behind the placeholder, like Slack's first-turn replay.
+      const threadContext = await hydrateFreshThread({ connector, message, slug: entry.slug, sessionKey, log });
+      signal.throwIfAborted();
       result = await run({
         channelId: message.conversationId,
         authorId: message.userId,
-        text: prepared.text,
+        text: threadContext + prepared.text,
+        // A session healed, switched or failed over mid-turn replays the thread the same way,
+        // unless this turn already carries it.
+        getFallbackContext: threadContext ? null : threadContextFetcher({ connector, message, log }),
         // Session roots for flat chats must never become native reply addresses.
         threadKey: sessionKey,
         attachments: prepared.paths,
