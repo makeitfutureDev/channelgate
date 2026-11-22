@@ -1,6 +1,6 @@
 // Durable Composio SDK session mappings. Connected accounts live in Composio under the stable
-// external identity; this table only remembers which remote MCP session belongs to one Slack
-// thread/access class so restarts reuse it without storing credentials.
+// external identity; this table only remembers which remote MCP session belongs to one Slack or
+// Microsoft Teams thread/access class so restarts reuse it without storing credentials.
 import { createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
 
@@ -22,8 +22,32 @@ function requiredText(value, label, max = 512) {
   return clean;
 }
 
+// Microsoft Teams identities: an author is a Bot Framework user id (`29:…`), a conversation is the
+// gateway's namespaced id (`teams:<native conversation id>`), and the workspace is the Entra
+// tenant. Slack identities keep their exact original form, so existing connected accounts stay
+// attached to the same Composio user.
+const TEAMS_TENANT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TEAMS_USER_RE = /^29:[A-Za-z0-9_-]{1,256}$/;
+const TEAMS_CONVERSATION_RE = /^teams:([A-Za-z0-9][A-Za-z0-9:@._=-]{0,299})$/;
+
+// Which surface an identity subject belongs to. Callers use it to supply that surface's workspace.
+export function composioSubjectPlatform({ kind = "", id = "" } = {}) {
+  const subject = String(id || "").trim();
+  if (kind === "user" && TEAMS_USER_RE.test(subject)) return "msteams";
+  if (kind === "channel" && subject.startsWith("teams:")) return "msteams";
+  return "slack";
+}
+
 export function composioIdentity({ workspaceId = "", kind = "", id = "" } = {}) {
   if (!KINDS.has(kind)) throw new Error("invalid Composio identity kind");
+  if (composioSubjectPlatform({ kind, id }) === "msteams") {
+    const tenant = String(workspaceId || "").trim().toLowerCase();
+    if (!TEAMS_TENANT_RE.test(tenant)) throw new Error("invalid Composio Microsoft Teams tenant identifier");
+    const raw = String(id || "").trim();
+    const subject = kind === "user" ? raw : TEAMS_CONVERSATION_RE.exec(raw)?.[1];
+    if (!subject) throw new Error(`invalid Composio Microsoft Teams ${kind} identifier`);
+    return `msteams:${tenant}:${kind}:${subject}`;
+  }
   const workspace = requiredId(workspaceId, "workspace");
   const subject = requiredId(id, kind);
   return `slack:${workspace}:${kind}:${subject}`;

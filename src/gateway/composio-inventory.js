@@ -4,6 +4,7 @@ import { Composio } from "@composio/core";
 import { getComposioMode, getComposioSdkApiKey } from "../config/settings.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { composioIdentity } from "../ee/composio-sessions.js";
+import { composioWorkspaceId, composioWorkspaceMissing } from "./composio-workspace.js";
 import { connectRemoteClient } from "../mcp/remote-relay.js";
 import { publicPinnedFetch } from "../mcp/public-fetch.js";
 import { composioUrl } from "./mcp-catalog.js";
@@ -163,7 +164,7 @@ async function personalAccounts({ token, url, connect, timeoutMs, totalTimeoutMs
 }
 
 async function sdkAccounts({ kind, id, config, sdkClient, timeoutMs, totalTimeoutMs }) {
-  const identity = composioIdentity({ workspaceId: config.workspaceId, kind, id });
+  const identity = composioIdentity({ workspaceId: composioWorkspaceId({ kind, id, slackTeamId: config.workspaceId }), kind, id });
   const client = sdkClient || new Composio({
     apiKey: config.sdkApiKey, userApiKey: null, orgApiKey: null, allowTracking: false,
   });
@@ -227,8 +228,8 @@ export async function loadComposioInventory({ kind, id, record = {} } = {}, opti
       try { await (options.requireEntitlement || requireComposioSdkEntitlement)(); }
       catch { return answer({ state: "unavailable", message: "Composio SDK connections require an active Enterprise license.", accounts: [] }); }
       if (!config.sdkApiKey) return answer({ state: "unconfigured", message: "The organization Composio SDK key is not configured.", accounts: [] });
-      if (typeof config.workspaceId !== "string" || !config.workspaceId.trim()) {
-        return answer({ state: "unavailable", message: "The Slack workspace identity required for Composio SDK connections is not available.", accounts: [] });
+      if (!composioWorkspaceId({ kind, id, slackTeamId: typeof config.workspaceId === "string" ? config.workspaceId : "" })) {
+        return answer({ state: "unavailable", message: composioWorkspaceMissing({ kind, id }), accounts: [] });
       }
       return answer(await sdkAccounts({ kind, id, config, sdkClient: options.sdkClient, timeoutMs, totalTimeoutMs }));
     }

@@ -1,5 +1,27 @@
 # ChannelGate — Features
 
+## Teams: Composio SDK identities (2026-11-22)
+
+In Composio SDK mode (Enterprise) a run gets session-scoped `composio-user` and `composio-agent`
+endpoints for stable external identities `slack:<workspace>:user:<id>` / `…:channel:<id>`. The
+identity check only admitted Slack ids, so on Teams both identities silently resolved to nothing.
+Changed in `src/ee/` at the maintainer's request.
+
+- `composioIdentity` (`src/ee/composio-sessions.js`) recognizes a Teams author (Bot Framework
+  `29:…` id) and a Teams conversation (`teams:<native id>`) and names them
+  `msteams:<tenant>:user:<29:…>` and `msteams:<tenant>:channel:<native id>`, the tenant being the
+  configured Entra tenant GUID (lower-cased; a Slack team id is refused there). Slack identities are
+  byte-identical to before, so existing connected accounts and stored session mappings stay
+  attached. Google Chat subjects remain unsupported (they fail the Slack rules and resolve nothing).
+- `composioWorkspaceId` (`src/gateway/composio-workspace.js`) is the one place that supplies the
+  workspace for a subject — the Slack team for Slack, `teamsTenantId` for Teams — used by the run
+  (`resolveRunIntegrations`, so turns, background work and SSH sessions alike), the connection
+  inventory (which now names a missing Teams tenant instead of the Slack workspace) and Activity
+  self-service connections.
+- Everything else is unchanged and surface-neutral: the Enterprise entitlement, the session policy,
+  manager/member access from `canManage`, no shared identity in personal chats, no per-thread
+  Composio account in SDK mode, and the daemon-side relay that keeps session URLs out of containers.
+  → TEST-PLAN: Teams Composio SDK identities.
 ## Engine licenses: review fixes — signed-out first license, honest key checks, switched-off keys (2026-11-22)
 
 A review of the harness/license implementation (two harnesses, each run on a sign-in or on a
@@ -114,8 +136,8 @@ tracked reminder, and anywhere else answered "No pending Tick button reminder" �
   thread). Audited as `platform_thread_done_reaction` (`scope`: `starter` or `participant`).
 - Teams and Google Chat share the path. Engine-independent: no engine runs.
   → TEST-PLAN: Tick dismissal on Teams and Google Chat.
-- Composio SDK identities remain Slack-only: the identity format lives in `src/ee/`
-  (`composio-sessions.js`), whose changes need a prior licensing discussion.
+- Composio SDK identities were Slack-only at this point; see "Teams: Composio SDK identities".
+
 ## Teams: interrupted requests replace their working message and offer Run again (2026-11-22)
 
 Teams' durable intake never replays a request that was running when the daemon stopped (its tool

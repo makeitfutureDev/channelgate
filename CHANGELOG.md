@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Teams: Composio SDK mode (Enterprise) now works in Teams conversations. A Teams author and
+  conversation get their own Composio identities, scoped to your Microsoft Teams tenant, so agents
+  there receive both the personal and the shared Composio connection like in Slack. Set the Teams
+  tenant ID in Settings → Microsoft Teams. Slack identities and the accounts connected to them are
+  unchanged.
 - Licenses: a selection whose first license is signed out now continues on its next license.
   A conversation set to several licenses of one harness ended with the first license's sign-in
   error when that one had no login, although another selected license could have answered. It now
