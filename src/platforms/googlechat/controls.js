@@ -21,6 +21,8 @@ import { parseSettingsCommand, GOOGLE_CHAT_SETTINGS_USAGE } from './settings-com
 import { handleGeneral } from '../msteams/settings-general.js';
 import { verifyMenuAction } from './reply-menu.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
+import { createConversationControls } from '../conversation-controls.js';
+import { createGoogleChatQueueControls } from './queue-controls.js';
 
 const FORMS = /^(?:(?:channel|thread)_(?:engine|license|also|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|skillRuntimeSwap|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment|settingsPage)$/;
 export function googleChatActionData(event) {
@@ -61,8 +63,11 @@ export function googleChatControlMessage(error) {
   return message && message.length <= 300 && !/[\r\n]/.test(message) && !/^Google Chat /.test(message) ? message : GENERIC_FAILURE;
 }
 
-export function createGoogleChatControls({ connector, authorize = googleChatWorkspaceContext, publicUrl = getPublicUrl, now = Date.now, log = console } = {}) {
+// `conversation` is the live session lanes the ingest owns (boot.js shares one set): the queue
+// card's Steer interrupts the run that ingest started.
+export function createGoogleChatControls({ connector, conversation = createConversationControls(), authorize = googleChatWorkspaceContext, publicUrl = getPublicUrl, now = Date.now, log = console } = {}) {
   const states = new Map();
+  const queue = createGoogleChatQueueControls({ connector, conversation, log });
   const prune = () => { for (const [id, state] of states) if (state.expires <= now()) states.delete(id); while (states.size >= 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   const ownerResource = state => state.message.raw?.senderName || state.message.userId;
@@ -188,6 +193,9 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
           card: chatCard('Approval recorded', [chatText(result.outcome || 'Handled.')]), text: 'Approval recorded' });
         return;
       }
+      // Queue buttons name a durable row only and re-check the clicker against the verified
+      // conversation, so they need no opened-controls state.
+      if (queue.isAction(action)) return await queue.onAction(event, { action, data });
       if (action.startsWith('menu.')) {
         const sealed = verifyMenuAction(action, data);
         if (!sealed || sealed.conversationId !== event.rawConversationId || sealed.authorId && sealed.authorId !== event.userId) throw controlError('These buttons belong to the original requester and conversation.');
@@ -237,5 +245,6 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
     return open({ message: { conversationId: channelId, rawConversationId: channelId.slice(6), userId: authorId,
       threadKey: isThreadName(threadKey) ? threadKey : '', isDM: Boolean(meta.isDM), raw: { senderName: user?.googleChatUserName || '' } }, entry, meta, sessionKey: threadKey, relative: normalizeRelativePath(relative) }, 'file');
   }
-  return { onCommand, onCard, shareFile, recordUser: message => rememberIdentity(message.userId, message.raw?.senderName), stop() { states.clear(); } };
+  return { onCommand, onCard, shareFile, queueNotice: queue.notice, conversation,
+    recordUser: message => rememberIdentity(message.userId, message.raw?.senderName), stop() { states.clear(); } };
 }

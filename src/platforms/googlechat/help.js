@@ -30,7 +30,7 @@ const TOPICS = [
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
-    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
     'In a threaded space, send `/stop`, `/status` or `/clear` in the request’s thread. In a group chat or a space without threads, quote my reply (or your request) when you send it.',
   ] },
   { title: 'Files & voice notes', rows: [

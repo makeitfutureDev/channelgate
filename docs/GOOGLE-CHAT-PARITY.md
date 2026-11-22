@@ -16,6 +16,7 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | Mentions and broadcast defang | `@Name` → `<chat-user data-user="users/…">`; model-written `<users/…>` and every `<chat-*>` tag defanged in any case | `platforms/format/gchat.js` |
 | Long-run progress | One working placeholder, edited into a ticking heartbeat (1 edit/s/space) | `platforms/conversation-progress.js` |
 | Stop, status, queue position | `/stop`, `/cancel`, `/status`; queued requests are told their position | `platforms/googlechat/controls.js`, `platforms/ingest.js` |
+| Busy-thread Steer / Cancel choice | A request queued behind busy work gets a shared Cards v2 card with Steer conversation and Cancel request (sender or admitted admin; refusals private; restart-safe from the durable row; never passes another person's work) | `platforms/googlechat/queue-controls.js`, `platforms/queue-choice.js`, `platforms/queued-events.js` |
 | Settings, files, secrets, help | Cards v2 (requester-only private messages) and private browser forms | `platforms/googlechat/controls.js`, `platforms/googlechat/help.js` |
 | Approvals | Native cards in the source conversation; signed browser links | `platforms/approval-delivery.js` |
 | Reactions (🤖 start, 🛑 stop, ✅ acknowledge) | Through Workspace Events with the admin-approved app scope | `platforms/googlechat/reactions.js` |
@@ -32,7 +33,6 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 
 | Slack feature | Google Chat gap | Next slice |
 | --- | --- | --- |
-| Busy-thread Steer / Queue / Cancel choice | Chat queues and offers `/stop`; no explicit steer | Port the Teams busy-message Steer / Cancel card (`platforms/msteams/queue-controls.js`) to Cards v2 |
 | Background job status button | Results post back; no status control | Card button or `/status` listing for the conversation's jobs |
 | Tables and headings | Degraded although Google now documents both for Markdown mode | Flip `markdownTables` / `markdownHeadings` after the live probe below shows they render |
 | Agent directory, agent mail, thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |
