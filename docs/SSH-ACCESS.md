@@ -259,10 +259,19 @@ session gets:
   why and is signed out in that license's directory — the gateway's own login never stands in.
   Every other channel — one on the gateway's Claude login, a Codex channel, a channel on a
   shipped provider harness — keeps the gateway's own login above, unchanged.
+- **Unless the channel does not approve it.** The gateway's own login is the license `claude`. In
+  a channel whose Approved harnesses leave it out, a session never gets it: `claude` there is an
+  added Claude license the channel may use (a sign-in before a keyed one, placed as above), and
+  when there is none it prints `claude: no Claude license is usable in this channel — claude in
+  this session is not signed in` and starts signed out. The access-only login file, the account
+  record and the editor token an earlier session left are removed, and the egress proxy refuses
+  the gateway's login for that channel whatever is still lying around. Approve Claude again and
+  the next refresh (or reconnect) restores it. Signing in to your own Anthropic account inside
+  the container is your own account, not a gateway license, and is not affected.
 
 Codex over SSH uses the same selected license as a channel turn (above); the `ssh_session_start`
 event records it as `codexLicense`, with `codexProblem` when it is not signed in — and Claude's as
-`claudeLicense` (`claude` for the gateway's own login), with `claudeProblem`. "show SSH access" in the
+`claudeLicense` (`claude` for the gateway's own login, empty when the channel may use none), with `claudeProblem`. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.

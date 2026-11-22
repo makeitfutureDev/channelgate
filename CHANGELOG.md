@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Approved harnesses now also decide whether `claude` works inside a channel's container. Before,
+  a channel approved for Codex only could still have a tool or a terminal run `claude` on the
+  gateway's own Claude sign-in. Now that login is not loaded there, the network proxy refuses it
+  for that channel (including a copy left from before the list changed), and `claude` starts
+  signed out and says that Claude Code is not approved in the channel. Over SSH the terminal uses
+  an added Claude license the channel may use, if there is one. Channels without an Approved
+  harnesses list, and channels that approve Claude, are unchanged.
 - API tokens can now be created and revoked from Slack channel Settings → API tokens and from the
   Activity dashboard's Settings → API tokens (pick the conversation), not only by asking the agent.
   Each token still belongs to one conversation and one person, its value is shown once, and you

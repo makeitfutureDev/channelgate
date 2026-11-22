@@ -302,7 +302,7 @@ async function runSession(socket, header, leftover, state) {
     log.log?.(`[ssh] session ${id.slice(0, 8)}: ${user.id} → ${entry.slug} (${target.container.name})${client ? ` from ${client}` : ""}`);
     await logEvent("ssh_session_start", {
       slug: entry.slug, channel: entry.channelId, author: user.id, session: id, fingerprint: key.fingerprint, client,
-      claudeRelayed: claude.relayed, claudeAccount: Boolean(claude.account), claudeLicense: claude.license || "claude",
+      claudeRelayed: claude.relayed, claudeAccount: Boolean(claude.account), claudeLicense: claude.license ?? "claude",
       ...(claude.reason && !claude.relayed ? { claudeProblem: String(claude.reason).slice(0, 300) } : {}), mcp: prepared.mcpServers || [], secrets: prepared.secrets || [], problems: prepared.problems || [],
       codexMcp: prepared.codex?.mcpServers || [], codexLicense: prepared.codex?.license || "", ...(prepared.codex?.reason ? { codexProblem: prepared.codex.reason } : {}),
     });

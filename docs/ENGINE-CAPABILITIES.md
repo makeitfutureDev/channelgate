@@ -81,6 +81,12 @@ harness, including ones added later; a stored plain `claude` or `codex` entry ad
 default sign-in; a lock that names only a removed license approves nothing. See
 [license keys](LICENSE-KEYS.md#enterprise-channel-harness-approvals).
 
+The lock also covers the `claude` every channel container carries for tools and terminals, which
+is the gateway's own Claude login (the license `claude`): where the lock leaves it out, that
+login is not loaded into the container, the egress proxy refuses its placeholder for that channel,
+and `claude` starts signed out and says why. A terminal uses an added Claude license the channel
+may use instead, when there is one.
+
 "License" here means an engine license. The ChannelGate product license key is a separate thing,
 documented in [LICENSE-KEYS.md](LICENSE-KEYS.md). The administrator guide to engine licenses is
 [engine-licenses.md](../documentation/src/content/docs/features/engine-licenses.md).
