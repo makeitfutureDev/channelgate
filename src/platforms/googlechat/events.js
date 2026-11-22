@@ -134,7 +134,11 @@ export function resolveThreadKey({ kind, threadName, seen }) {
   return known ? threadName : "";
 }
 
-export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i;
+export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs|fork)(?:\s|$)/i;
+// Commands the app answers directly (registered ones bypass the mention gate like the rest) that
+// still wait their turn in the session queue: `/fork` copies the session only after the work ahead
+// of it has finished, as Slack's queued fork does, so it is never routed past a running turn.
+export const GOOGLE_CHAT_QUEUED_COMMAND = /^\/fork(?:\s|$)/i;
 
 // A registered slash command arrives with `argumentText` holding ONLY the arguments (Google's own
 // example: text "/debug show code", argumentText " show code"). The command itself is the

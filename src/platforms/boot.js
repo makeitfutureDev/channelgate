@@ -13,6 +13,7 @@ import { createChatApi } from "./googlechat/api.js";
 import { createGoogleChatConnector } from "./googlechat/connector.js";
 import { startGoogleChat } from "./googlechat/transport.js";
 import { createGoogleChatControls } from "./googlechat/controls.js";
+import { createGoogleChatThreadForks } from "./googlechat/thread-forks.js";
 import { createTeamsAuth } from "./msteams/auth.js";
 import { createTeamsApi } from "./msteams/api.js";
 import { createTeamsConnector } from "./msteams/connector.js";
@@ -35,12 +36,17 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   // The same lanes serialize the daemon-driven turns of agent mail (gateway/agent-mail.js) with the
   // people writing in that thread, and let /stop reach them.
   connector.conversationLanes = controls.conversation;
+  // Thread forks share the same session lanes, so a fork waits for (and holds) its source session.
+  const forks = createGoogleChatThreadForks({ connector, conversation: controls.conversation, log });
+  connector.threadForkRefusal = forks.refusal;
+  connector.runThreadForks = forks.runApproved;
+  const onCommand = async (args) => await forks.guard(args) || await forks.command(args) || controls.onCommand(args);
   // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
-  const ingest = createIngest({ connector, log, onCommand: controls.onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
+  const ingest = createIngest({ connector, log, onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
   return startGoogleChat({
     ...config,
     capabilities,
-    onMessage: ingest,
+    onMessage: (message, options) => options?.fork ? forks.runChild(ingest, message, options) : ingest(message, options),
     getActivationReactions: () => getMentionReactions('googlechat'),
     onCard: controls.onCard,
     onStop: controls.stop,

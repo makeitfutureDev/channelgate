@@ -8662,6 +8662,49 @@ upgrade host Node before updating; rebuilding the image alone does not upgrade t
 
 Foreground Slack agents can propose 1–10 titled discussion forks with exact opening prompts. One durable requester/admin approval card is mandatory even in Auto mode; the full proposal must fit its 2400-character preview. After approval, the daemon queues behind the source turn, creates independent native sessions from the same context, indexes each in Activity, and posts child/source links. Normal access, engine, license and run-slot gates apply. Sudo and code-channel sources are refused. Pending proposals deduplicate, clicks execute once, and partial creations retain their IDs; interrupted execution fails closed without automatically recreating threads.
 
+## Thread forks in Google Chat (2026-11-22)
+
+Google Chat (Beta) declares the `threadForks` capability. In a **named space that uses threads**
+(`spaceThreadingState` THREADED_MESSAGES or GROUPED_MESSAGES, read live from `spaces.get` and
+cached ten minutes), a person's foreground turn (`googlechat_foreground`, trusted principal, full
+toolset) can call `propose_thread_forks`, and a person can type `/fork <new message>`:
+
+- **One card per batch.** The proposal is the same durable `thread_forks` approval as Slack's
+  (exact titles/prompts hashed, identical pending proposals reuse the card). It is posted in the
+  source thread through the Google Chat approval delivery as Cards v2 with **Create N forks** /
+  **Cancel** / Request changes; only the requester or an admin can create, Auto mode included.
+  Cards v2 approval cards now carry each request's own button labels; Teams cards are unchanged.
+- **Each child is a new Chat thread.** The app posts a new top-level message `↪️ {Requester} Fork:
+  {title}` in the same space (Chat starts a thread for it), pins the child to the source's license
+  selection, model, effort and Lean flag, posts `↪️ Fork of [this thread](link) — opening request
+  from {Requester}:` with the exact prompt, and queues that request in the transport's durable
+  intake as a turn **authored by the requester** in the new thread. The turn starts from a native
+  copy of the source thread's engine session (`forkSourceSessionId`); if the engine refuses the copy
+  before running anything, it continues in a fresh session from the source thread's earlier
+  messages (`conversation_history` scope; the note names Google Chat). Its text is a request, never
+  a command. Each child is its own Activity row owned by the requester.
+- **Ordering.** The copy waits for the source thread's running turn: the source session's lane is
+  reserved and its queued messages stay in SQLite (no run slot held) until every child has its copy
+  or its first turn ended without one. `/stop` in the source thread before the copy cancels the
+  batch ("stopped before creation. Nothing was created."). Children run under the ordinary
+  admission, license and run-slot gates. The approval click returns at once — the batch never waits
+  inside a card click or the control lane, so `/stop` and a permission card in the source thread
+  stay reachable.
+- **Results.** The source thread gets `Created N/M forks:` with a link per created thread (or the
+  per-topic failure); `/fork` answers `↪️ Fork started in a new thread`. Created thread names are
+  journaled on the approval row as they appear. An uncertain create is never retried; a restart
+  never recreates threads; a child whose first answer a restart interrupted says so in its thread.
+- **Refusals.** DMs and group chats ("have no threads to fork into"), spaces without threads, a
+  thread without a completed container session, sudo threads, a different access lane, a revoked
+  requester and a disconnected Google Chat transport are refused with the reason, before any card
+  or thread exists. `/fork :model-shortcut` is not supported in Google Chat (a fork keeps the
+  source license; `/model` changes the new thread).
+- `/fork` is a registered Google Chat command (mention bypass for registered slash commands) that
+  still waits in the session queue behind running work, like Slack's queued fork; `/help` lists it.
+  The `gateway-usage` guide ships a Google Chat overlay of `references/thread-forks.md`.
+
+Slack fork behavior is unchanged.
+
 ## Incoming iPhone voice calls (branch implementation, 2026-11-18)
 
 An authenticated conversation member can ask the agent to `call_user` in its current thread.

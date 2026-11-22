@@ -26,6 +26,13 @@
   to send your own words without a card. Both spaces must be on Google Chat and you must be a member
   of both; a Slack or Teams channel cannot be reached from Google Chat (or the other way round).
   `/stop` in the other space's thread stops its agent's turn.
+- Google Chat: thread forks. In a named space that uses threads, ask the agent to split topics into
+  forks and approve one **Create N forks** card (you or an admin, also in Auto mode), or type
+  `/fork <new message>` yourself. Each fork is a new thread in the same space that starts from a
+  copy of the source thread's conversation, and the source thread gets the links. Forking waits
+  for the source thread's current answer; messages you send there meanwhile run after every fork
+  has its copy. Direct messages, group chats and spaces without threads say why they cannot fork.
+  `/fork :shortcut` is not available in Google Chat yet.
 - Licenses: a selection whose first license is signed out now continues on its next license.
   A conversation set to several licenses of one harness ended with the first license's sign-in
   error when that one had no login, although another selected license could have answered. It now

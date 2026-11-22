@@ -31,6 +31,7 @@ const TOPICS = [
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
+    '`/fork <new message>` — In a threaded space, start a new thread from a copy of this thread’s session and send it that message. It waits for this thread’s current work first. Ask me to “split these topics into forks” to get one approval card for several at once.',
     'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
     'In a threaded space, send `/stop`, `/status` or `/clear` in the request’s thread. In a group chat or a space without threads, quote my reply (or your request) when you send it.',
   ] },
@@ -88,7 +89,7 @@ export const GOOGLE_CHAT_HELP_TEXT = [
 // emoji section headers and a command/description split so the guide scans like a menu.
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
-  '/status': 'monitoring', '/jobs': 'pending_actions', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+  '/status': 'monitoring', '/jobs': 'pending_actions', '/fork': 'call_split', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
 };
 const QUICK_ICONS = ['person', 'groups', 'forum'];
 const HEADERS = {

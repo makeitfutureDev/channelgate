@@ -83,7 +83,10 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
   const bankUsage = createUsageBank();
   const STEERED_TEXT = "↪️ Interrupted to answer your newer message, which runs next in this session.";
 
-  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null, queuedEvent = null, onWorking = null } = {}) {
+  // `fork` is set only by the daemon's own fork runner (a thread fork's opening request, authored
+  // by its requester in the new thread): { sourceSessionId, onSourceForked, fallbackContext }. Its
+  // text is a request, never a command, and the turn starts from a native copy of the source session.
+  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null, queuedEvent = null, onWorking = null, fork = null } = {}) {
     if (message.platform !== adapter.id) throw new Error(`${adapter.id} ingest received a ${message.platform} message`);
     if (serviceUrl) connector.rememberServiceUrl?.(message.rawConversationId, serviceUrl);
 
@@ -187,13 +190,13 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       pendingForSession: connector.pendingForSession ? scope => connector.pendingForSession({ ...scope, isEligible: pendingAdmission }) : null,
       cancelPendingForSession: connector.cancelPendingForSession ? scope => connector.cancelPendingForSession({ ...scope, isEligible: pendingAdmission }) : null,
     };
-    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
-    if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
+    if (!fork && onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
+    if (!fork && await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
     // Ask directive: "@app ask #space <message>" hands the exact text to THAT conversation's agent
     // (gateway/agent-mail.js), as Slack's typed form does — on a surface that can prove membership
     // of both conversations. The person typed it, so there is no approval card; the daemon re-checks
     // their live access, and the reply comes back into this session as a new turn.
-    if (!message.attachments.length && message.trigger !== "reaction" && platformSupports(adapter.id, "agentDirectory")) {
+    if (!fork && !message.attachments.length && message.trigger !== "reaction" && platformSupports(adapter.id, "agentDirectory")) {
       const ask = parseAskDirective(message.text);
       if (ask) {
         const mail = activeAgentMail();
@@ -298,6 +301,11 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         getFallbackContext: threadContext ? null : threadContextFetcher({ connector, message, log }),
         // Session roots for flat chats must never become native reply addresses.
         threadKey: sessionKey,
+        ...(fork?.sourceSessionId ? {
+          forkSourceSessionId: fork.sourceSessionId,
+          onForkSessionResolved: () => fork.onSourceForked?.(),
+          getForkFallbackContext: typeof fork.fallbackContext === "function" ? fork.fallbackContext : null,
+        } : {}),
         attachments: prepared.paths,
         signal,
         onDelta: progress.activity,
