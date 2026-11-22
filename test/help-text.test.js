@@ -172,7 +172,7 @@ test('Teams help distinguishes disabled activation from named and custom reactio
 // second obsolete page inventory in the help tests.
 test("Slack help follows current Settings navigation and independent harness choices", async () => {
   const { CHANNEL_SETTINGS_TABS } = await import("../src/slack/channel-settings.js");
-  const labels = CHANNEL_SETTINGS_TABS.map(tab => tab === "mcp" ? "MCP" : tab[0].toUpperCase() + tab.slice(1));
+  const labels = CHANNEL_SETTINGS_TABS.map(tab => tab === "mcp" ? "MCP" : tab === "api" ? "API tokens" : tab[0].toUpperCase() + tab.slice(1));
   assert.ok(HELP_TEXT.includes(labels.join(" · ")));
   assert.match(HELP_TEXT, /DMs omit Access/);
   assert.match(HELP_TEXT, /Settings → Schedules/);
