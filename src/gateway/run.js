@@ -26,7 +26,7 @@ import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine, sameHarness, harnessOf } from "../engines/registry.js";
-import { harnessLabel } from "../engines/license-state.js";
+import { harnessLabel, isLicenseShapedId } from "../engines/license-state.js";
 import { validateRunContext } from "../engines/contract.js";
 import { getRunConcurrency, getEngine, getEnginePool, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
@@ -892,6 +892,16 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       };
     }
     const substitute = sameHarnessSubstitute || enabledEngines.find(usableHere) || "";
+    // An administrator-added license that is switched off never runs, even with nothing to run
+    // instead: the egress proxy no longer swaps its credential (egress/grants.js), so starting it
+    // would only fail on its first request with a sign-in error that names the wrong problem.
+    if (!substitute && isLicenseShapedId(engine)) {
+      return {
+        slug: entry.slug, cwd: "", model: "", engine,
+        content: `${engineLabel(engine)} is disabled in gateway Settings and nothing else is approved to run here. Enable it, or select another harness for this conversation.`,
+        sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
+      };
+    }
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);
       engine = substitute;
@@ -1136,6 +1146,10 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
 
   // The Claude credential for the harness that will actually run — settled only now (see above).
   let claudeRelay;
+  // A sign-in this turn's license does not have, found before the selection's other licenses are
+  // known. It is held until they are (the credential gate inside the main try): a selection with
+  // another license of this harness hands the turn to it instead of ending here.
+  let heldCredentialError = null;
   try {
     claudeRelay = await claudeCredentialFor(engine);
   } catch (error) {
@@ -1147,9 +1161,13 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       if (enginePinnedByUser || pinnedModel) {
         error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel };
       }
+      const poolWaiting = licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pinnedModel });
+      if (poolWaiting.length) heldCredentialError = error;
     }
-    await dropUnusedSession();
-    throw error;
+    if (!heldCredentialError) {
+      await dropUnusedSession();
+      throw error;
+    }
   }
   const claudeOauthToken = claudeRelay?.token || "";
   // What the warm pool keys on: the login's SOURCE and the expiry of the token this turn was
@@ -1848,9 +1866,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // but a replay-safe one — nothing happened, so the next license may try.
   const fallbackEndsTurn = (error) => error?.code === "channel_spending_limit"
     || Boolean(error?.details?.incompleteTurn && error.details.replaySafe !== true);
-  const runFallbackEngine = async (noteFor, failureContext = "a usage/spend limit") => {
+  const runFallbackEngine = async (noteFor, failureContext = "a usage/spend limit", queue = fallbackQueue) => {
     // A license known to be limited right now is tried last, not re-probed first.
-    const order = [...fallbackQueue.filter((id) => !coolingDown(id)), ...fallbackQueue.filter(coolingDown)];
+    const order = [...queue.filter((id) => !coolingDown(id)), ...queue.filter(coolingDown)];
     const tried = [];
     for (const candidate of order) {
       const attempt = { spawned: false };
@@ -2168,7 +2186,19 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // configuration message. Then the LEASE (so the idle reaper cannot stop the environment out
     // from under a turn that is about to spawn in it), then ensureUp. Daemon-internal turns never come
     // through here (they spawn on the local runtime directly), which is why there is no branch.
-    assertRuntimeCredentials(target, engine);
+    // A license that cannot authenticate here is a configuration problem, never a provider outage:
+    // it does not fail over to the other harness. The OTHER LICENSES of this selection are a
+    // different matter — the person who chose them chose them for exactly this — so a selection
+    // that has one hands the turn to it (below, once the environment is up) instead of ending on
+    // the first license's missing sign-in while another approved one sits idle.
+    let credentialGateError = heldCredentialError;
+    if (!credentialGateError) {
+      try { assertRuntimeCredentials(target, engine); } catch (error) {
+        if (!error?.details?.runtimeCredential || !poolEngines.length) throw error;
+        credentialGateError = error;
+      }
+    }
+    if (credentialGateError && !poolEngines.length) throw credentialGateError;
     runtimeLease = target.runtime.acquireLease(target, { kind: "run", id: newRunId("run") });
     // The turn is live work in this channel from here to the finally: the egress proxy swaps this
     // channel's (and, for this author, their personal) placeholders only while it is.
@@ -2178,6 +2208,26 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
     // License and unavailable-skill warnings apply whichever engine answers this turn.
     if (runWarning) announceAnswerNote(runWarning);
+
+    if (credentialGateError) {
+      console.warn(`[gateway] ${engine} has no usable sign-in in ${entry.slug} (${credentialGateError.message}) — trying the selection's other licenses`);
+      try {
+        return await runFallbackEngine(
+          (label) => `⚠️ _${engineLabel(engine)} has no usable sign-in right now — using ${label}._\n\n`,
+          "its sign-in was unavailable before it could start",
+          poolEngines,
+        );
+      } catch (poolError) {
+        if (fallbackEndsTurn(poolError)) throw poolError;
+        // No license of the selection could take over. The first license's own configuration
+        // message stays authoritative (and unclassified as a provider failure); it says the rest
+        // in one sentence, like a failed failover does.
+        const tried = poolError?.fallbackTried?.length ? poolError.fallbackTried : poolEngines.map((id) => ({ engine: id, label: engineLabel(id) }));
+        credentialGateError.details = { ...(credentialGateError.details || {}), fallbackError: poolError.message, alsoFailed: tried.map((t) => t.engine) };
+        credentialGateError.message = `${credentialGateError.message} — ${labelList(tried.map((t) => t.label))} could not answer either: ${poolError.message}`;
+        throw credentialGateError;
+      }
+    }
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -2638,7 +2688,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     };
   } catch (error) {
     // Backend credential gates fail before the provider catch. Add only diagnostic pin facts;
-    // keep runtimeCredential classification and the existing no-fallback behavior unchanged.
+    // keep the runtimeCredential classification, and never treat it as a reason to cross to the
+    // other harness (the selection's own other licenses were already tried at the gate).
     if (error?.details?.runtimeCredential && runtimePinned) {
       error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
     }

@@ -111,7 +111,7 @@ export const LICENSE_KINDS = Object.freeze({
     description: "An API key for the Anthropic API, or for any server that speaks the Anthropic Messages API. Claude Code is pointed at that server with this key.",
     types: PROVIDER_TYPES, provider: "custom", credential: "key",
     fields: ["baseUrl", "apiKey", "authScheme", "models"], authSchemes: ["x-api-key", "bearer"], relayHeaders: ["authorization", "x-api-key"],
-    modelsOptional: true,
+    defaultBaseUrl: "https://api.anthropic.com", modelsOptional: true,
     hints: { baseUrl: "https://api.anthropic.com", models: "Optional for api.anthropic.com. Any other server: the model ids it serves." },
   }),
   "claude-aws": kindFacts({
@@ -189,7 +189,9 @@ export function normalizeLicenseRecord(raw) {
   const region = clean(raw.region, 40).toLowerCase();
   return Object.freeze({
     ...base,
-    ...(has("baseUrl") ? { baseUrl: LICENSE_BASE_URL_RE.test(baseUrl) ? baseUrl : kind.defaultBaseUrl } : {}),
+    // A BLANK address means the vendor's own API. One that is stored but unusable never does: a
+    // key issued by some other server must not be sent to the vendor because its address broke.
+    ...(has("baseUrl") ? { baseUrl: LICENSE_BASE_URL_RE.test(baseUrl) ? baseUrl : baseUrl ? "" : kind.defaultBaseUrl } : {}),
     ...(has("apiKey") ? { apiKey: typeof raw.apiKey === "string" && !/\s/.test(raw.apiKey.trim()) ? raw.apiKey.trim().slice(0, 4096) : "" } : {}),
     authScheme: kind.authSchemes.includes(raw.authScheme) ? raw.authScheme : kind.authSchemes[0],
     ...(has("region") ? { region: isLicenseRegion(kind.provider, region) ? region : "" } : {}),

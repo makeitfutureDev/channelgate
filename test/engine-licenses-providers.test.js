@@ -209,6 +209,40 @@ test("what a run is handed: the real value on the host, a placeholder in a proxi
   assert.equal(refused.rejected, true);
 });
 
+test("a channel's placeholder stops answering once its license is switched off or taken off the channel's approved list", async () => {
+  reset();
+  const record = store.getLicenseRecord(add("claude-api").id);
+  const channelId = "C0PROVIDER2";
+  const target = { backend: "container", meta: { channelId }, container: { egress: { active: true, mode: "proxy", network: "none" } } };
+  const { token } = grants.containerLicenseApiCredential({ target, record });
+  let approvedEngines = null;
+  const deps = { metaFor: async (id) => (id === channelId ? { approvedEngines } : null) };
+  const swapped = async () => (await grants.resolveEgressGrant(token, deps))?.value || "";
+  assert.equal(await swapped(), KEY, "a usable license is swapped on its own server");
+  assert.deepEqual((await grants.resolveEgressGrant(token, deps)).hosts, ["llm.example.com"]);
+
+  // Switched off in Settings: the placeholder a channel already holds is worth nothing, at once.
+  saveSettings({ engineEnabled: { claude: true, codex: true, [record.id]: false } });
+  assert.equal(await swapped(), "", "a disabled license's key is not sent anywhere");
+  saveSettings({ engineEnabled: { claude: true, codex: true, [record.id]: true } });
+  assert.equal(await swapped(), KEY, "switching it back on restores the same placeholder — nothing was revoked");
+
+  // Taken off THIS channel's approved list: the same, for this channel only.
+  approvedEngines = ["claude"];
+  assert.equal(await swapped(), "", "a license the channel may no longer use is not swapped there");
+  const elsewhere = grants.containerLicenseApiCredential({ target: { ...target, meta: { channelId: "C0PROVIDER3" } }, record }).token;
+  assert.equal((await grants.resolveEgressGrant(elsewhere, deps))?.value, KEY, "another channel's approval is its own");
+  approvedEngines = [record.id];
+  assert.equal(await swapped(), KEY);
+  approvedEngines = ["harness:claude"];
+  assert.equal(await swapped(), KEY, "approving the whole harness approves its licenses");
+
+  // Removing the license is still the one thing that revokes the grant itself.
+  await store.deleteLicense(record.id);
+  assert.equal(await grants.resolveEgressGrant(token, deps), null);
+  assert.equal(grants.lookupGrant(token), null);
+});
+
 test("Claude Code is started on each provider with that provider's own switches, and nothing inherited leaks in", () => {
   reset();
   const env = (kind, extra) => adapters.claudeProviderEnv(store.getLicenseRecord(add(kind, extra).id), "TOKEN", "/cfg");

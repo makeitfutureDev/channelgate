@@ -416,7 +416,7 @@ export function builtinRemovalText(manifest) {
 // How each field reads for each provider. Wording only — which fields exist is the catalog's.
 const FIELD_COPY = {
   baseUrl: {
-    custom: ["Server address", "https only. The vendor's own API, or any compatible server."],
+    custom: ["Server address", "https only. Leave blank for the vendor's own API, or enter any compatible server."],
     azure: ["Azure endpoint", "Your resource's endpoint, https only."],
   },
   apiKey: {
