@@ -3975,7 +3975,8 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
   conversation, refuses an empty name beside the form, creates with the CSRF header, shows the
   value once with Copy and the curl example, renders names as text, revokes after a confirm, fits
   1440 and 390 px in light and dark, and the value is gone after leaving the section.
-- [ ] Live, Claude AND Codex (`cg-testing-<engine>-worker`, approved member Apps, admin contact):
+- [ ] Live, Claude AND Codex (`cg-testing-<engine>-admin`, approved member Apps, admin contact;
+  Airtable API-TOKENS-UI-01 and -02):
   (1) Apps opens Settings from a reply → **API tokens** → **+ New token**, names it qa-slack, Save.
   Expected: the notice shows a `cgk_…` value once with a curl example; reopening Settings shows
   qa-slack with no value. (2) From a shell POST `/api/runs` with that token and “Which engine,
