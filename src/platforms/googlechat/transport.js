@@ -48,7 +48,14 @@ export async function startGoogleChat({
 
   const api = deps.api || createChatApi({ auth });
   let selfId = String(botUserId || "");
-  const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, log });
+  // The admin-approved app-scope token (chat.app.messages.readonly): reaction subscriptions, the
+  // reacted message, and conversation_history reads. Minted lazily on a SEPARATE auth, so an
+  // unapproved scope fails only those features, never messaging.
+  let eventsAuthCache = deps.eventsAuth || null;
+  const eventsAuth = () => (eventsAuthCache ||= createGoogleAuth({ serviceAccount: serviceAccountJson, scopes: CHAT_REACTION_EVENT_SCOPES }));
+  let historyApiCache = deps.historyApi || null;
+  const historyApi = () => (historyApiCache ||= createChatApi({ auth: eventsAuth() }));
+  const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, historyApi, log });
   const seenThreads = createSeenThreads();
   const namespace = `googlechat:${subscription}`;
   const controlNamespace = `googlechat-controls:${subscription}`;
@@ -143,8 +150,6 @@ export async function startGoogleChat({
 
   // ── Reactions (Google Workspace Events) ───────────────────────────────────────────────────
   const reactionsEnabled = Boolean(reactionTopic);
-  let eventsAuthCache = deps.eventsAuth || null;
-  const eventsAuth = () => (eventsAuthCache ||= createGoogleAuth({ serviceAccount: serviceAccountJson, scopes: CHAT_REACTION_EVENT_SCOPES }));
   const eventsApi = reactionsEnabled ? deps.eventsApi || createChatApi({ auth: eventsAuth() }) : null;
   const subscriptions = reactionsEnabled ? deps.reactionSubscriptions || createReactionSubscriptions({
     client: deps.eventsClient || createWorkspaceEventsClient({ auth: eventsAuth() }),

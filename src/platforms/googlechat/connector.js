@@ -8,6 +8,9 @@ import { buildNameDirectory } from "../format/mentions.js";
 import { normalizeName } from "../../slack/directory.js";
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
+export const HISTORY_SCOPE_REMEDY = "Reading earlier Google Chat messages needs app authentication with administrator "
+  + "approval for the scope https://www.googleapis.com/auth/chat.app.messages.readonly (the same approval reaction "
+  + "controls use; docs/PLATFORMS.md → Google Chat). Ask a gateway admin to have a Workspace administrator approve it.";
 function privateViewer(user) {
   if (!user) return null;
   const name = String(user).startsWith('users/') ? String(user) : `users/${user}`;
@@ -34,7 +37,10 @@ export function toSpaceName(conversationId) {
 
 // `actionEndpoint` is the HTTP endpoint URL (or a getter, so a Public URL change applies live) that
 // card clicks are routed to; see routeCardActions.
-export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", actionEndpoint = "", log = console } = {}) {
+// `historyApi` returns the Chat client minted with the admin-approved chat.app.messages.readonly app
+// scope (lazily: an unapproved scope must never break the messaging transport). Without it the
+// conversation_history tool answers with the remedy instead of reading.
+export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", actionEndpoint = "", historyApi = null, log = console } = {}) {
   const chat = api || createChatApi({ auth });
   const endpoint = () => String((typeof actionEndpoint === 'function' ? actionEndpoint() : actionEndpoint) || '');
   const cardsFor = card => card ? [{ cardId: 'channelgate', card: validateChatCard(routeCardActions(card, endpoint())) }] : [];
@@ -62,6 +68,38 @@ export function createGoogleChatConnector({ auth, capabilities, api = null, botU
       // Keep the last good snapshot; mention resolution simply no-ops until the next refresh.
       return hit?.snapshot || { map: new Map(), maxWords: 1 };
     }
+  }
+
+  // Earlier public messages of a space or one of its threads, as plain rows for the model. Names
+  // come from the space's member list (an app-authenticated message names its sender only by id).
+  async function readHistory({ conversationId, threadKey = "", limit = 30 } = {}) {
+    const space = toSpaceName(conversationId);
+    if (!isSpaceName(space)) throw new Error("This is not a Google Chat space.");
+    const thread = threadKey ? scopedThread(space, threadKey) : "";
+    if (threadKey && !thread) throw new Error("That is not a Google Chat thread name.");
+    const client = typeof historyApi === "function" ? historyApi() : historyApi;
+    if (!client?.listMessages) throw new Error(HISTORY_SCOPE_REMEDY);
+    let messages;
+    try {
+      messages = await client.listMessages(space, { threadName: thread, limit });
+    } catch (error) {
+      // An unapproved app scope fails when the token is minted (400/401) or at the call (403).
+      if ([400, 401, 403].includes(error?.status) || /unauthorized_client|access_denied|invalid_scope/i.test(String(error?.message))) {
+        throw new Error(HISTORY_SCOPE_REMEDY);
+      }
+      throw error;
+    }
+    const names = new Map();
+    try { for (const m of await chat.listMembers(space)) names.set(m.id, m.name); } catch {}
+    return messages.map((m) => ({
+      name: m.name,
+      thread: m.thread?.name || "",
+      createTime: m.createTime || "",
+      sender: m.sender?.type === "BOT" ? `${m.sender?.displayName || "an app"} [app]`
+        : (m.sender?.displayName || names.get(m.sender?.name) || m.sender?.name || "unknown"),
+      text: String(m.text ?? m.argumentText ?? ""),
+      attachments: (m.attachment || []).map((a) => ({ name: a.contentName || "", type: a.contentType || "" })),
+    }));
   }
 
   // Defined outside the connector literal so `post()` can call them without depending on `this` —
@@ -135,6 +173,7 @@ export function createGoogleChatConnector({ auth, capabilities, api = null, botU
     },
 
     openDm,
+    readHistory,
     threadFor,
     // DMs and unnamed group chats are flat; a named space may or may not be threaded, and the
     // inbound event is what tells us. The connector answers the general question conservatively.

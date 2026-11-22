@@ -104,7 +104,8 @@ optional field exists only to short-circuit that.
       [authorization guide](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app):
       Marketplace SDK app configuration for the ChannelGate service account), then have a Google
       Workspace administrator **approve** the app. Without that approval the subscriptions fail;
-      messaging is unaffected.
+      messaging is unaffected. The same approval lets agents read earlier public messages of their
+      own conversation with the `conversation_history` tool, with or without a reaction topic.
    3. Workspace Events publishes with the **same publisher identity as step 5** (the add-on's
       Configuration-page service account, or `chat-api-push@system.gserviceaccount.com` for a
       standalone app), so the step 5 grant on the topic already covers it. Events then arrive

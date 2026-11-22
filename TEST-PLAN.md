@@ -2058,6 +2058,58 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   viewer. This authenticated deployed-page check remains unexecuted by this implementation;
   local fixture results are recorded separately and do not claim deployment acceptance.
 
+## Google Chat Markdown, mention defang and conversation history (2026-11-22)
+
+Root causes: no Chat request named `markupSyntax`, so an app whose default is Chat syntax showed
+the formatter's Markdown literally; mentions used the Chat-syntax `<users/…>` form; the defang was
+case-sensitive and missed `<chat-emoji>` / `<chat-citation>`; and a run mentioned mid-thread could
+not read the discussion it was asked about.
+
+Automated: `test/platform-googlechat.test.js` (every text create/patch carries
+`MARKUP_SYNTAX_MARKDOWN`, never in `updateMask`; a card-only patch carries none; a 400 naming
+`markupSyntax` retries once without it and the client remembers; an unrelated 400 is not retried),
+`test/platforms.test.js` (resolved `@Name` → `<chat-user data-user=…>`; `<chat-user>`,
+`<CHAT-USER>`, `< chat-user`, `</chat-user>`, `<USERS/all>`, `<chat-emoji>`, `<chat-citation>`
+defanged; code spans and `Vec<String>` untouched), `test/googlechat-controls.test.js` (requester
+mention by id and email, malformed id adds none), `test/googlechat-history.test.js` (list call:
+newest-first paging under the cap, `thread.name` filter, other-space and injected thread names
+refused; connector: member names, `[app]` label, attachments, other-space thread refused, scope
+refusal → remedy, transient error passes through; tool: current thread resolved from a background
+agent's `::agent-N` key, a synthetic schedule key answers "not in a thread", whole-space rows name
+their thread, absent on Slack / disconnected / history-less connectors, access re-checked).
+
+Live fixtures (operator-owned, disposable): the gateway's Google Chat app (HTTP endpoint or
+Pub/Sub) with Setup step 8's `chat.app.messages.readonly` approval, a named threaded space and a DM
+with the app; approved author A and a second approved member B in the space. Run each engine case
+in a thread pinned to that engine (`/model claude` or `/model codex`).
+- [ ] LIVE `GCHAT-FORMAT-MD-CLAUDE-01` / `GCHAT-FORMAT-MD-CODEX-01`: in the DM, A sends
+  `Reply with exactly these lines and nothing else: **BOLD_OK**, _ITALIC_OK_, ~~STRIKE_OK~~,
+  [LINK_OK](https://example.com), and a bullet list of A and B.` Pass: bold, italic,
+  strikethrough, a clickable `LINK_OK` and a bulleted list render — no literal `**`, `~~` or
+  `[LINK_OK](`. Edit-path check: the answer replaces the working message with the same rendering.
+- [ ] LIVE `GCHAT-DEFANG-01` (engine-independent: the formatter runs after the engine): in the DM,
+  A sends `Reply with exactly: T1 <users/all> T2 <chat-user data-user="users/all"> T3
+  <CHAT-USER data-user="users/all"> T4 <chat-emoji data-name="smile"> T5 Vec<String> T6`.
+  Pass: every sequence is shown as literal text, nobody is notified, the message has no
+  `USER_MENTION` annotation other than the requester's closing mention (read it back with
+  `spaces.messages.get`), and `Vec<String>` is visible. Record whether `<String>` is visible in
+  Markdown mode; if Chat swallows it as an HTML tag, open a follow-up to escape unknown tags.
+- [ ] LIVE `GCHAT-MENTION-01` (engine-independent): in the space, A mentions the app with
+  `Reply with: thanks @B` (B's display name). Pass: B receives a real mention notification and the
+  answer ends with A's mention.
+- [ ] LIVE `GCHAT-HISTORY-CLAUDE-01` / `GCHAT-HISTORY-CODEX-01`: in a space thread, B posts (no
+  mention) `The release codename is HISTORY_OK_7` and A posts `I agree`; then A mentions the app
+  with `What is the release codename we discussed in this thread?`. Pass: the run calls
+  `conversation_history` with `thread: "current"` and answers `HISTORY_OK_7`. Then in a different
+  thread A asks `Summarize the last few messages in this space`; pass: the summary names the
+  codename thread. A private message (only-you-can-see notice) in the space never appears.
+- [ ] LIVE `GCHAT-HISTORY-SCOPE-01` (engine-independent): on a gateway whose Chat app lacks the
+  approval, ask the HISTORY case. Pass: the answer states that reading earlier messages needs the
+  administrator-approved `chat.app.messages.readonly` scope; ordinary replies keep working.
+- [ ] LIVE `GCHAT-TABLES-PROBE-01` (engine-independent, informational): post a Markdown table and
+  a `## Heading` through a temporary formatter build with `markdownTables`/`markdownHeadings`
+  true. Record whether they render; if they do, flip both capabilities in a follow-up.
+
 ## Google Chat setup guide in Settings (2026-11-13)
 
 - Engine-independent documentation: static settings markup and CSS; reading the guide does not

@@ -870,6 +870,34 @@ the central pair. Network switches, per-channel server approvals and host-key ve
 apply. Key creation is atomic across concurrent preparations; incomplete or unsafe existing pairs
 fail closed instead of being replaced. Separate gateway installations create separate keys.
 
+## Google Chat replies in Markdown, mention defang and conversation history (2026-11-22)
+
+- **Markdown is named on every write.** The Google Chat formatter writes standard Markdown, but a
+  Chat app's default syntax depends on when it was created and older apps default to Chat syntax,
+  where `**bold**` and `[label](url)` arrive as literal characters. Every text create and patch now
+  sends `markupSyntax: MARKUP_SYNTAX_MARKDOWN` (beside `text`, never as an `updateMask` path); if
+  the API refuses the field, the client drops it once, remembers that, and delivers in the app's
+  default syntax rather than failing the reply (`src/platforms/googlechat/api.js`).
+- **Mentions use Markdown mode's tag.** A resolved `@Name` and the requester's closing mention
+  render as `<chat-user data-user="users/…">` (`data-email` for an email identity). Model-written
+  `<users/…>` and every `<chat-*>` tag (user, emoji, citation, closing tags) are defanged with a
+  zero-width space in any letter case or spacing; inline code spans and ordinary angle brackets
+  (`Vec<String>`) stay verbatim (`src/platforms/format/gchat.js`).
+- **`conversation_history`.** A Google Chat run sees only the messages addressed to it. The new
+  gateway tool reads earlier public messages of THIS conversation — the current thread
+  (`thread: "current"`), a named thread of this space, or the whole space with each message's
+  thread — oldest→newest with author, time and attachment names/types, `limit` 30 (max 200), each
+  message capped at 2,000 characters. The conversation comes from the signed run context, a thread
+  from another space is refused, access is re-checked on every call, and the read uses the
+  administrator-approved `chat.app.messages.readonly` app scope (the reaction-controls approval) on
+  a separate token, so an unapproved scope answers with the remedy and never affects messaging.
+  Registered only where a live connector can read history (Google Chat today); Slack keeps
+  `slack_channel_history` / `slack_thread_replies`. The Google Chat guide overlay
+  (`platforms/googlechat/reading.md`) tells the agent to read the thread when mentioned mid-thread.
+- **Parity audit.** `docs/GOOGLE-CHAT-PARITY.md` lists what Google Chat shares with Slack, the
+  remaining gaps and the platform boundaries.
+- → TEST-PLAN: Google Chat Markdown, mention defang and conversation history.
+
 ## Combined Activity across Slack, Google Chat and Teams (2026-11-18)
 
 The existing personal Activity dashboard also lists new Google Chat and Microsoft Teams agent

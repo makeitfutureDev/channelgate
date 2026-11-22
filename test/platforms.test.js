@@ -229,11 +229,22 @@ test("Google Chat resolves a sanctioned @Name and defangs a model-authored one",
     "Ping @Alex Doe, also <users/all> and <users/123>.",
     { capabilities: capabilitiesFor("googlechat"), directory: DIR, normalizeName },
   );
-  assert.match(out.text, /<users\/U04>/);
+  assert.match(out.text, /<chat-user data-user="users\/U04">/);
   // The model's own sequences must not survive as live annotations.
   assert.doesNotMatch(out.text, /<users\/all>/);
   assert.doesNotMatch(out.text, /<users\/123>/);
   assert.equal(out.chunks.every((c) => c.mentions.length === 0), true);
+});
+
+test("Google Chat defangs the Markdown chat-* tags in any case or spacing, and leaves code spans and prose alone", () => {
+  const hostile = [
+    '<chat-user data-user="users/all">', '<CHAT-USER data-email="boss@example.com">', '< chat-user data-user="users/1">',
+    '</chat-user>', '<USERS/all>', '<chat-emoji data-name="x">', '<chat-citation data-source="y">',
+  ];
+  const out = formatChatOutbound(`Hi ${hostile.join(" ")} \`<users/all>\` Vec<String> a<b`, { capabilities: capabilitiesFor("googlechat") });
+  assert.doesNotMatch(out.text.replace(/`[^`]*`/g, ""), /<\s*\/?\s*(?:users\/|chat-)/i, "no live tag or Chat-syntax mention survives");
+  assert.match(out.text, /`<users\/all>`/, "an inline code span is literal in both syntaxes and stays verbatim");
+  assert.match(out.text, /Vec<String> a<b/, "ordinary angle brackets are not touched");
 });
 
 test("Teams emits the <at> tag AND the matching entity, and escapes a model-authored tag", () => {

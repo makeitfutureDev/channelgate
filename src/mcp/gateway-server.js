@@ -33,6 +33,7 @@ import { register as registerTokens } from "./tools/tokens.js";
 import { register as registerApiTokens } from "./tools/api-tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerTeamsNative } from "./tools/teams-native.js";
+import { register as registerConversationHistory } from "./tools/conversation-history.js";
 import { register as registerLicense } from "./tools/license.js";
 import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
@@ -641,6 +642,7 @@ export function createGatewayMcpServer(ctx) {
     registerApiTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerTeamsNative(server, ctx);
+    registerConversationHistory(server, ctx);
     registerLicense(server, ctx);
     registerSkills(server, ctx);
     registerAgentDirectory(server, ctx);
@@ -657,6 +659,7 @@ export function createGatewayMcpServer(ctx) {
     registerMemoryTool(server, ctx);
     registerSlackNative(server, ctx);
     registerTeamsNative(server, ctx);
+    registerConversationHistory(server, ctx);
     registerPermissionPrompt(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
