@@ -36,7 +36,7 @@ live Claude/Codex acceptance lives in `TEST-PLAN.md`. Paths are relative to `src
 | --- | --- | --- |
 | Tables and headings | Degraded although Google now documents both for Markdown mode | Flip `markdownTables` / `markdownHeadings` after the live probe below shows they render |
 | Agent directory, agent mail, thread forks, code channels | Slack-only | Out of scope until the shared seams accept non-Slack conversations |
-| Composio SDK identities (Enterprise) | Slack-only | Same as Teams |
+| Composio SDK identities (Enterprise) | Slack and Microsoft Teams only | Needs a Google Chat workspace identity (`src/gateway/composio-workspace.js`, `src/ee/composio-sessions.js`) |
 | Dialogs | Unavailable in the Pub/Sub connection mode | Requires the HTTP endpoint mode for every interaction |
 
 ## Platform boundaries

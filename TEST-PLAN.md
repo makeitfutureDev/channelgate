@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Teams Composio SDK identities (2026-11-22)
+
+Automated:
+
+```sh
+node --test test/teams-composio-sdk.test.js test/composio-sdk.test.js test/composio-sdk-run.test.js \
+  test/composio-inventory.test.js test/composio-sessions.test.js
+```
+
+- Slack identities are unchanged; a Teams author and conversation become `msteams:<tenant>:…`
+  with the tenant lower-cased; a Slack team id as a Teams tenant, malformed Teams ids and non-Teams
+  ids under Slack rules are refused; the workspace resolver returns the tenant for Teams subjects
+  and the Slack team otherwise; an SDK session for a Teams author is created under the Teams
+  identity; a Teams turn in SDK mode resolves both `sdk-user` and `sdk-channel` endpoints from the
+  tenant; the inventory names a missing tenant.
+
+Live acceptance (Enterprise license, Composio SDK mode with an organization SDK key, Teams tenant ID
+set; once with the channel on Claude, once on Codex):
+
+1. In a Teams personal chat, A asks "@bot which Composio apps can you use for me?". Pass: the
+   answer comes from `composio-user` only (no shared identity in a personal chat); Composio's
+   dashboard shows the user id `msteams:<tenant>:user:29:…`.
+2. A asks "@bot connect my Google Calendar". Pass: a Composio connect link for A's identity; after
+   connecting, "@bot what's on my calendar tomorrow?" reads A's calendar.
+3. In a Teams channel where A may manage access, "@bot connect a shared Gmail account for this
+   channel". Pass: a connect link for `msteams:<tenant>:channel:19:…`; a member who may not manage
+   gets no connect tools for the shared identity.
+4. The same prompts in a Slack channel still use `slack:<team>:…` identities and the accounts
+   connected before this change.
 ## Engine licenses: review fixes (2026-11-22)
 
 Automated:

@@ -13,6 +13,7 @@ import { resolveCustomMcpsForRun } from "./custom-mcps.js";
 import { emailAccountSecrets } from "./email-accounts.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
+import { composioWorkspaceId } from "./composio-workspace.js";
 
 // Composio is intentionally different from the other token-backed integrations: expose the active
 // author's identity and the gateway's shared identity at the same time instead of choosing one.
@@ -124,7 +125,9 @@ export async function resolveComposioRuntime({
  */
 export async function resolveRunIntegrations({ meta = {}, channelId = "", authorId = "", threadKey = "", workspaceId = "", clean = false, untrustedPrincipal = false } = {}) {
   const composioMode = getComposioMode();
-  const effectiveWorkspaceId = String(workspaceId || process.env.CG_SLACK_TEAM_ID || "").trim();
+  // Slack team for a Slack conversation, Entra tenant for a Microsoft Teams one; the author is on
+  // the conversation's surface, so one workspace serves both identities.
+  const effectiveWorkspaceId = composioWorkspaceId({ kind: "channel", id: channelId, slackTeamId: workspaceId });
   // The HTTP API authenticates its API key, not the caller-supplied Slack author id. Never use
   // that untrusted id to read a personal connector token or infer admin/approval state. Shared
   // channel identities remain available; the user identity is intentionally absent.

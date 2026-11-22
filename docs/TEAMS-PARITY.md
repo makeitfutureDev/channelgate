@@ -15,7 +15,7 @@ ChannelGate has implemented the corresponding connector or UI.
 | Claude/Codex sessions, model settings and fallback | Shared runner and stores; chat controls and interactive escalation have separate surface integration requirements | `gateway/run.js`, `engines/registry.js` |
 | Containers, modes, network policy and secrets | Shared runtime boundary and per-conversation settings; Teams must not inherit Slack-only foreground escalation | `runtimes/`, `gateway/modes.js` |
 | Channel memory, instructions and skill grants | Same stores and managed instruction materialization; mutations requiring explicit approval still depend on an approval delivery path | `gateway/folders.js`, `gateway/channel-memory.js` |
-| Personal/shared MCP routing | Shared standard MCP configuration; enterprise Composio SDK identity support remains Slack-only (the identity format is in `src/ee/composio-sessions.js`; extending it needs a prior licensing discussion) | `gateway/mcp.js`, `ee/` |
+| Personal/shared MCP routing | Shared standard MCP configuration; enterprise Composio SDK identities cover Teams authors and conversations as `msteams:<tenant>:…` (Google Chat still unsupported) | `gateway/mcp.js`, `ee/` |
 | Usage, engine health, event logs and admin pages | Shared backend and browser administration | `gateway/usage.js`, `web/`, `config/` |
 | Formatted replies and long-answer splitting | Supported with Teams Markdown degradation and matched mention entities | `platforms/format/teams.js` |
 | User name mentions | Conversation-roster lookup; unavailable roster degrades to literal text rather than invented pings | `platforms/msteams/connector.js` |
