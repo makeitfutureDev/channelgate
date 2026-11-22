@@ -2,6 +2,7 @@ import { getEngine, getDmTemplate, ENGINES } from "../config/settings.js";
 import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
 import { isLicenseShapedId } from "../engines/license-state.js";
 import { normalizeModeMeta } from "./modes.js";
+import { licenseFitsConversation } from "./channel-engines.js";
 
 // A conversation default naming a LICENSE an administrator has since deleted reads as "no default
 // here": the conversation follows the gateway default again, and the pool chosen beside that
@@ -9,8 +10,13 @@ import { normalizeModeMeta } from "./modes.js";
 // is the one projection every settings surface, policy check and picker shares — a deleted id
 // reaching the registry lookups behind them throws, which is what stopped the Slack settings
 // modal from opening and refused every approved-harness edit on such a channel.
+// A license that was since LIMITED to another conversation (engines/license-state.js) is the same
+// case from here: it no longer exists in this one. A thread someone pinned to it is different — a
+// pin is an explicit ask, and is refused by name instead of being answered by another account.
+const usableDefault = (meta, id) => ENGINES.includes(id) && licenseFitsConversation(meta, id);
 function withoutDeletedLicense(meta) {
-  if (!meta || !isLicenseShapedId(meta.engine) || ENGINES.includes(meta.engine)) return meta;
+  if (!meta || typeof meta.engine !== "string" || !meta.engine) return meta;
+  if (ENGINES.includes(meta.engine) ? licenseFitsConversation(meta, meta.engine) : !isLicenseShapedId(meta.engine)) return meta;
   const { engine: _engine, licensePool: _pool, ...rest } = meta;
   return rest;
 }
@@ -25,7 +31,7 @@ function withoutDeletedLicense(meta) {
 export function effectiveMeta(meta) {
   if (meta?.isDM && !meta.workspaceLink && (meta.template === "user" || meta.template === "admin")) {
     const t = getDmTemplate(meta.template);
-    const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
+    const engine = (usableDefault(meta, meta.engine) ? meta.engine : "") || (usableDefault(meta, t.engine) ? t.engine : "") || getEngine() || "claude";
     return normalizeModeMeta({
       ...meta,
       skills: t.skills,
@@ -41,9 +47,9 @@ export function effectiveMeta(meta) {
       cleanMode: t.cleanMode,
       // Only a harness this build ships: a template (or DM) still naming a retired one follows
       // the gateway default instead of projecting an id no adapter answers to.
-      engine: [meta.engine, t.engine].find((id) => ENGINES.includes(id)) || "",
+      engine: [meta.engine, t.engine].find((id) => usableDefault(meta, id)) || "",
       // The pool travels with the license: from the DM when the DM named it, else the template's.
-      licensePool: ENGINES.includes(meta.engine) ? meta.licensePool || "" : t.licensePool || "",
+      licensePool: usableDefault(meta, meta.engine) ? meta.licensePool || "" : t.licensePool || "",
     });
   }
   return normalizeModeMeta(withoutDeletedLicense(meta));

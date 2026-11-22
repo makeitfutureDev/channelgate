@@ -20,6 +20,7 @@ import {
 import { engineRegistry } from "../../engines/registry.js";
 import { isProviderKind } from "../../engines/license-state.js";
 import { cancelLicenseCodexLogin, licenseCodexLoginStatus, startLicenseCodexLogin } from "../../gateway/channel-codex-login.js";
+import { getChannelEntry } from "../../config/store.js";
 import { logEvent } from "../../util/logger.js";
 
 const ADMIN_UI = "admin-ui";
@@ -28,9 +29,17 @@ const formFields = (body = {}) => ({
   kind: body.kind, label: body.label, type: body.type,
   baseUrl: body.baseUrl, apiKey: body.apiKey, authScheme: body.authScheme, models: body.models,
   region: body.region, projectId: body.projectId, serviceAccount: body.serviceAccount, apiVersion: body.apiVersion,
+  // The one conversation the license is limited to: "" for every conversation, absent = unchanged.
+  channelId: body.channelId,
 });
+// A limit names a conversation this gateway knows. Checked here, where the channel index is, and
+// only for a limit being SET: an unchanged or cleared one needs no conversation to exist.
+async function assertKnownConversation(channelId, previous = "") {
+  if (typeof channelId !== "string" || !channelId.trim() || channelId.trim() === previous) return;
+  if (!(await getChannelEntry(channelId.trim()))) throw new EngineLicenseError("That conversation is not known to this gateway. Choose one from the list.", 400);
+}
 // What an audit row may say changed: names only, and for a credential only THAT it changed.
-const PLAIN_FIELDS = ["label", "type", "baseUrl", "authScheme", "region", "projectId", "apiVersion"];
+const PLAIN_FIELDS = ["label", "type", "baseUrl", "authScheme", "region", "projectId", "apiVersion", "channelId"];
 const SECRET_FIELDS = ["apiKey", "serviceAccount"];
 
 export function createLicensesRouter({ verify = verifyLicense } = {}) {
@@ -50,8 +59,10 @@ export function createLicensesRouter({ verify = verifyLicense } = {}) {
 
   router.post("/engine-licenses", async (req, res, next) => {
     try {
-      const record = createLicense(formFields(req.body));
-      await logEvent("engine_license_added", { license: record.id, harness: record.harness, kind: record.kind, type: record.type, name: record.label, author: ADMIN_UI });
+      const fields = formFields(req.body);
+      await assertKnownConversation(fields.channelId);
+      const record = createLicense(fields);
+      await logEvent("engine_license_added", { license: record.id, harness: record.harness, kind: record.kind, type: record.type, name: record.label, ...(record.channelId ? { limitedTo: record.channelId } : {}), author: ADMIN_UI });
       // A provider license is checked against its server as soon as it exists; a sign-in license
       // has nothing to check until someone signs it in.
       const verification = isProviderKind(record.kind) ? (await verify(record.id).catch(() => null))?.verification || null : null;
@@ -71,11 +82,12 @@ export function createLicensesRouter({ verify = verifyLicense } = {}) {
       }
       const before = getLicenseRecord(req.params.id);
       const { kind: _kind, ...fields } = formFields(req.body);
+      await assertKnownConversation(fields.channelId, before?.channelId || "");
       const record = updateLicense(req.params.id, fields);
       const changed = PLAIN_FIELDS.filter((key) => before && (before[key] ?? "") !== (record[key] ?? ""));
       for (const key of SECRET_FIELDS) if (before && (before[key] ?? "") !== (record[key] ?? "")) changed.push(key);
       if (before && JSON.stringify(before.models || []) !== JSON.stringify(record.models || [])) changed.push("models");
-      await logEvent("engine_license_changed", { license: record.id, harness: record.harness, name: record.label, changed, author: ADMIN_UI });
+      await logEvent("engine_license_changed", { license: record.id, harness: record.harness, name: record.label, changed, ...(changed.includes("channelId") ? { limitedTo: record.channelId || "", previousLimit: before?.channelId || "" } : {}), author: ADMIN_UI });
       const reverify = isProviderKind(record.kind) && !record.verification;
       const verification = reverify ? (await verify(record.id).catch(() => null))?.verification || null : null;
       res.json({ ok: true, license: await withStatus(getLicenseRecord(record.id) || record), verification });

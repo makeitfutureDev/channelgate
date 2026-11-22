@@ -121,8 +121,11 @@ function applyEngineManifests(manifests) {
 
 // Where an engine picker stands (admin-licenses.js): the manifest and the on/off map, plus — for a
 // channel — whether it signed in its own Codex account and which licenses its lock admits.
-function licenseEnv({ codexAuthSource = "", policy = null } = {}) {
-  return { manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED, codexAuthSource, policy };
+// `channelIds` names the conversation the picker is for (its id and, for a code channel, the
+// channel it was opened from): a license limited to one conversation is offered only there, so a
+// picker with no conversation — a template, the gateway default — never offers one.
+function licenseEnv({ codexAuthSource = "", policy = null, channelIds = [] } = {}) {
+  return { manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED, codexAuthSource, policy, channelIds: channelIds.filter(Boolean) };
 }
 
 // What an engine id reads as wherever one is printed. From the manifest — a license an admin added
@@ -2382,7 +2385,9 @@ function renderChannelDetail(ch) {
   const harnessHelp = card.querySelector(".ch-harness-help");
   let harnessPolicyDirty = false;
   harnessRestrict.checked = Array.isArray(meta.approvedEngines);
-  const harnessLock = mountLicenseLock(harnessOptions, { manifests: ENGINE_MANIFESTS, policy: meta.approvedEngines });
+  // A license limited to another conversation can never run here, so it is not something to approve.
+  const hereIds = [ch.channelId, meta.codeChannel?.originChannelId].filter(Boolean);
+  const harnessLock = mountLicenseLock(harnessOptions, { manifests: ENGINE_MANIFESTS.filter((m) => !m.limitedToChannel || hereIds.includes(m.limitedToChannel)), policy: meta.approvedEngines });
   const approvedHarnesses = () => harnessRestrict.checked ? harnessLock.values() : null;
   const approvalAdmits = (id) => policyAdmits(approvedHarnesses(), ENGINE_MANIFESTS.find((m) => m.id === id));
   // The channel default: harness → license → "if it fails, also use" (meta `engine` + `licensePool`).
@@ -2390,7 +2395,7 @@ function renderChannelDetail(ch) {
   // stand on the card, saved or not. `engineSelect.value` is the engine id, "" = the gateway default.
   const engineSelect = mountLicensePicker({
     harnessSelect: card.querySelector(".ch-engine"),
-    env: () => licenseEnv({ codexAuthSource: authSource.value, policy: approvedHarnesses() }),
+    env: () => licenseEnv({ codexAuthSource: authSource.value, policy: approvedHarnesses(), channelIds: [ch.channelId, meta.codeChannel?.originChannelId] }),
     engine: meta.engine || "",
     pool: meta.licensePool || "",
     includeDefault: true,
@@ -2780,7 +2785,7 @@ function renderChannelDetail(ch) {
 // flag shape the template/DM save expects (no `profile` field — it's re-derived from the flags).
 // `storesPool` is false where only `engine` is stored (the settings templates): the license step
 // then offers single licenses, with no "Any license" and no "also use".
-function buildConfigEditor(cfg = {}, { storesPool = false } = {}) {
+function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "cfg-editor";
   el.innerHTML = `
@@ -2851,7 +2856,7 @@ function buildConfigEditor(cfg = {}, { storesPool = false } = {}) {
   // the engine id, "" = the gateway default.
   const engineSelect = mountLicensePicker({
     harnessSelect: el.querySelector(".cfg-engine"),
-    env: () => licenseEnv(),
+    env: () => licenseEnv({ channelIds: [channelId] }),
     engine: cfg.engine || "",
     pool: storesPool ? cfg.licensePool || "" : "",
     includeDefault: true,
@@ -3047,7 +3052,7 @@ function renderDmDetail(id) {
     customBox.innerHTML = "";
     ed = null;
     if (tplSel.value === "custom") {
-      ed = buildConfigEditor(dm.meta || {}, { storesPool: true });
+      ed = buildConfigEditor(dm.meta || {}, { storesPool: true, channelId: dm.channelId });
       customBox.appendChild(ed.el);
       if (dm.meta?.workspaceLink) for (const input of ed.el.querySelectorAll("input,select,button")) {
         if (!input.matches(".cfg-engine,.lic-select,.lic-also input,.cfg-model,.cfg-effort")) input.disabled = true;
@@ -4157,6 +4162,21 @@ function builtinLicenseSettings(id) {
     || null;
 }
 
+// The conversations a license can be limited to (Settings can be opened before the Conversations
+// page ever loaded its lists, so they are fetched when missing).
+async function licenseConversations() {
+  // Read-only here: the Conversations page owns its lists and repaints when it loads them.
+  let channels = CHANNELS, dms = DMS;
+  if (!channels.length && !dms.length) {
+    [{ channels }, { dms }] = await Promise.all([api("/api/channels"), api("/api/dms")]);
+  }
+  const named = [
+    ...channels.map((c) => ({ id: c.channelId, label: conversationChannelName(c) || c.name || c.slug || c.channelId })),
+    ...dms.map((d) => ({ id: d.channelId, label: `DM · ${d.userName || d.dmUserId || d.slug || d.channelId}` })),
+  ];
+  return named.filter((place) => place.id).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+
 function paintEngineLicenses() {
   const root = document.getElementById("engine-enabled-box");
   if (!root || !ENGINE_MANIFESTS.length) return;
@@ -4186,6 +4206,8 @@ function paintEngineLicenses() {
     reload: loadSettings,
     // Only the step this page can account for: its own version → the one the check produced.
     versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    // What a license can be limited to: every channel and DM this gateway knows, by name.
+    conversations: licenseConversations,
   });
   licensesManager.paint();
 }

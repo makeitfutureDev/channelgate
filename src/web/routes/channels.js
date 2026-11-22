@@ -376,6 +376,10 @@ export function createChannelsRouter({
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
+      // A license NAMED for this conversation is checked by name: the projection below drops one
+      // that is limited to another conversation (it reads as "no default here"), which must not
+      // turn a refused pick into a silent save.
+      if (Object.hasOwn(body, "engine") && next_.engine) assertChannelEngineApproved(next_, next_.engine);
       if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
         assertChannelEngineApproved(next_, effectiveMeta(next_).engine || getEngine());
       }
@@ -588,6 +592,8 @@ export function createChannelsRouter({
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
           if (Object.hasOwn(body, "approvedEngines")) out.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
+          // A license named for this conversation is checked by name (see the DM route above).
+          if (Object.hasOwn(body, "engine") && out.engine) assertChannelEngineApproved(out, out.engine);
           if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
             assertChannelEngineApproved(out, effectiveMeta(out).engine || getEngine());
           }

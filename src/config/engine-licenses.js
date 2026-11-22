@@ -14,14 +14,15 @@
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { getSettings, saveSettings, isEngineEnabled } from "./settings.js";
-import { ENGINE_IDS, adapterFor, engineRegistry, harnessOf, isDefaultLicense, isRemovableBuiltinLicense, isRemovedLicense, licenseLabel, removedBuiltinLicenses } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, engineRegistry, harnessOf, isDefaultLicense, isGatewayWideLicense, isRemovableBuiltinLicense, isRemovedLicense, licenseLabel, removedBuiltinLicenses } from "../engines/registry.js";
 import {
   API_AUTH_SCHEMES, API_VERSION_RE, DEFAULT_LICENSE_NAME, GCP_PROJECT_RE, LICENSE_BASE_URL_RE, LICENSE_KINDS, LICENSE_KIND_IDS, LICENSE_TYPES, HARNESSES,
   MAX_LICENSE_MODELS, MAX_LICENSE_NAME_LENGTH, MAX_SERVICE_ACCOUNT_BYTES, cleanLicenseName, harnessLabel, isLicenseRegion, isProviderKind, licenseApiHost, licenseEndpoint, licenseIsVendorApi,
-  licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel, normalizeLicenseModels, normalizeLicenseRecord,
+  licenseKindOfId, licenseLoginCommand, licenseLoginHome, licenseTypeLabel, normalizeLicenseChannelId, normalizeLicenseModels, normalizeLicenseRecord,
   normalizeLicenseNames, normalizeLicenseRecords, normalizeRemovedLicenses, normalizeServiceAccount, serviceAccountFacts,
 } from "../engines/license-state.js";
 import { licenseDefaultEffortKey, licenseDefaultModelKey, verifyProviderLicense } from "../engines/license-adapters.js";
+import { assertChannelLimitedLicensesEntitled } from "../gateway/channel-engines.js";
 import { publicPinnedFetch } from "../mcp/public-fetch.js";
 
 // A ceiling, not a product limit: every license is an adapter the pickers and the health probe
@@ -72,6 +73,10 @@ export function licenseForApi(record) {
     enabled: isEngineEnabled(record.id), loginCommand: licenseLoginCommand(record),
     defaultModel: String(getSettings()[licenseDefaultModelKey(record.id)] || ""),
     defaultEffort: String(getSettings()[licenseDefaultEffortKey(record.id)] || ""),
+    // The one conversation this license is limited to ("" = every conversation). A stored limit
+    // that names no conversation reads as limited and unusable, never as unlimited.
+    channelId: normalizeLicenseChannelId(record.channelId),
+    channelLimited: Boolean(record.channelId),
   };
   if (!kind.provider) return out;
   const has = (field) => kind.fields.includes(field);
@@ -216,6 +221,17 @@ const writeLicenses = (mutate, onSaved = null) => {
   return result;
 };
 
+// The conversation a form limits the license to (engines/license-state.js): "" for every
+// conversation, else one conversation id. Not sent = unchanged. Whether that conversation EXISTS
+// is the caller's question (web/routes/licenses.js asks the channel index); the id's shape is ours.
+function channelLimit(input, previous = null) {
+  if (input.channelId === undefined) return previous?.channelId || "";
+  if (input.channelId === null || input.channelId === "") return "";
+  const id = normalizeLicenseChannelId(input.channelId);
+  if (!id) refuse("Choose the conversation this license is limited to.");
+  return id;
+}
+
 // ── CRUD ──────────────────────────────────────────────────────────────────────────────────────
 export function createLicense(input = {}) {
   const kind = LICENSE_KINDS[input.kind];
@@ -223,6 +239,8 @@ export function createLicense(input = {}) {
   const type = input.type === undefined || input.type === "" ? kind.types[0] : input.type;
   if (!kind.types.includes(type)) refuse(`A ${kind.label} license is one of: ${kind.types.map(licenseTypeLabel).join(", ")}.`);
   const label = cleanLabel(input.label);
+  const channelId = channelLimit(input);
+  if (channelId) assertChannelLimitedLicensesEntitled();
   return writeLicenses((records, current) => {
     if (records.length >= MAX_ENGINE_LICENSES) refuse(`A gateway holds at most ${MAX_ENGINE_LICENSES} added licenses.`, 409);
     assertLabel(label, records);
@@ -230,6 +248,7 @@ export function createLicense(input = {}) {
     do { id = `${kind.prefix}${randomBytes(4).toString("hex")}`; } while (records.some((record) => record.id === id));
     const record = normalizeLicenseRecord({
       id, kind: kind.id, label, type, createdAt: new Date().toISOString(),
+      ...(channelId ? { channelId } : {}),
       ...(kind.provider ? providerFields(kind, input) : {}),
     });
     if (!record) refuse("The license could not be stored.");
@@ -254,8 +273,28 @@ export function updateLicense(id, input = {}) {
     assertLabel(label, records, id);
     const type = input.type === undefined ? previous.type : input.type;
     if (!kind.types.includes(type)) refuse(`A ${kind.label} license is one of: ${kind.types.map(licenseTypeLabel).join(", ")}.`);
+    const channelId = channelLimit(input, previous);
+    // Limiting a license (or moving its limit) takes it away from everywhere else. Clearing a
+    // limit needs nothing: it is the way out after a downgrade.
+    const limiting = Boolean(channelId) && channelId !== (previous.channelId || "");
+    let defaults = {};
+    if (limiting) {
+      assertChannelLimitedLicensesEntitled();
+      if (!previous.channelId) {
+        // The gateway must be left with something every conversation can run on, exactly as when
+        // a license is deleted — and whatever named this one as the GATEWAY's default moves on.
+        const survivors = ENGINE_IDS.filter((other) => other !== id && isGatewayWideLicense(other) && isEngineEnabled(other));
+        if (isEngineEnabled(id) && !survivors.length) {
+          refuse(`${previous.label} is the only license switched on for the whole gateway. Switch another one on (and save) before limiting it to one conversation.`, 409);
+        }
+        const pool = Array.isArray(current.enginePool) ? current.enginePool.filter((entry) => entry !== id) : current.enginePool;
+        defaults = current.engine === id ? { engine: previous.harness, enginePool: "" } : pool !== current.enginePool ? { enginePool: pool } : {};
+      }
+    }
+    const { channelId: _limit, ...kept } = previous;
     const record = normalizeLicenseRecord({
-      ...previous, label, type,
+      ...kept, label, type,
+      ...(channelId ? { channelId } : {}),
       ...(kind.provider ? providerFields(kind, input, previous) : {}),
     });
     if (!record) refuse("The license could not be stored.");
@@ -268,7 +307,7 @@ export function updateLicense(id, input = {}) {
     const staleDefault = Boolean(defaultModel && listed.length && !listed.includes(defaultModel));
     return {
       result: record,
-      settings: { engineLicenses: next, ...(staleDefault ? { [licenseDefaultModelKey(id)]: "", [licenseDefaultEffortKey(id)]: "" } : {}) },
+      settings: { engineLicenses: next, ...defaults, ...(staleDefault ? { [licenseDefaultModelKey(id)]: "", [licenseDefaultEffortKey(id)]: "" } : {}) },
     };
   });
 }
@@ -286,8 +325,10 @@ export async function deleteLicense(id) {
     // The gateway must be left with something to run, exactly as for a shipped license
     // (removeBuiltinLicense): the read-time rescue (settings.js isEngineEnabled) would otherwise
     // switch the default harnesses back on behind the administrator's back.
-    const survivors = ENGINE_IDS.filter((other) => other !== id && !adapterFor(other)?.channelScoped && isEngineEnabled(other));
-    if (isEngineEnabled(id) && !survivors.length) {
+    // A license limited to one conversation is not something the gateway can run on, so it is
+    // neither a survivor nor ever the last one.
+    const survivors = ENGINE_IDS.filter((other) => other !== id && isGatewayWideLicense(other) && isEngineEnabled(other));
+    if (isGatewayWideLicense(id) && isEngineEnabled(id) && !survivors.length) {
       refuse(`${record.label} is the only license switched on. Switch another one on (and save) before deleting it.`, 409);
     }
     const enabled = { ...(current.engineEnabled && typeof current.engineEnabled === "object" ? current.engineEnabled : {}) };
@@ -376,7 +417,7 @@ export async function removeBuiltinLicense(id) {
     // The gateway must be left with something to run. A removed license cannot count, and the
     // read-time rescue (settings.js isEngineEnabled) would otherwise switch a default harness
     // back on behind the administrator's back.
-    const survivors = ENGINE_IDS.filter((other) => other !== id && !adapterFor(other)?.channelScoped && isEngineEnabled(other));
+    const survivors = ENGINE_IDS.filter((other) => other !== id && isGatewayWideLicense(other) && isEngineEnabled(other));
     if (!adapter.channelScoped && isEngineEnabled(id) && !survivors.length) {
       refuse(`${adapter.label} is the only license switched on. Switch another one on (and save) before removing it.`, 409);
     }

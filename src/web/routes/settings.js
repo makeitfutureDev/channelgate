@@ -82,7 +82,7 @@ import { readSecret } from "../secrets.js";
 // The shared admin principal — one password, no personal identity behind an admin-UI action.
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
-import { engineUiManifest, isRemovedLicense, refreshEngineModels } from "../../engines/registry.js";
+import { engineLabel, engineUiManifest, isGatewayWideLicense, isRemovedLicense, refreshEngineModels } from "../../engines/registry.js";
 // The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 import { gatewayCodexLoginStatus, startGatewayCodexLogin, cancelGatewayCodexLogin } from "../../gateway/channel-codex-login.js";
@@ -467,7 +467,8 @@ export function createSettingsRouter({
           id,
           isRemovedLicense(id) ? false : typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
         ]));
-        if (!ENGINES.some((id) => !requireAdapter(id).channelScoped && next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
+        // Something every conversation can run on: a license limited to one conversation is not that.
+        if (!ENGINES.some((id) => isGatewayWideLicense(id) && next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
         patch.engineEnabled = next;
       }
       if (typeof body.engine === "string" && ENGINES.includes(body.engine)) {
@@ -475,6 +476,8 @@ export function createSettingsRouter({
         // engine against the state being written, not the state on disk.
         const enabledAfter = patch.engineEnabled ? patch.engineEnabled[body.engine] : isEngineEnabled(body.engine);
         if (!enabledAfter) return res.status(400).json({ error: `engine "${body.engine}" is disabled — enable it or pick another default` });
+        // The gateway default is what every conversation without a pick of its own runs on.
+        if (!isGatewayWideLicense(body.engine)) return res.status(400).json({ error: `${engineLabel(body.engine)} is limited to one conversation and cannot be the gateway default — pick it in that conversation's settings instead` });
         patch.engine = body.engine;
       }
       // The gateway default's license pool: validated beside the default license being written,
@@ -482,6 +485,8 @@ export function createSettingsRouter({
       if (Object.hasOwn(body, "enginePool")) {
         try { patch.enginePool = normalizeLicensePool(body.enginePool, patch.engine || getEngine()); }
         catch (error) { return res.status(400).json({ error: error.message }); }
+        const limited = Array.isArray(patch.enginePool) ? patch.enginePool.find((id) => !isGatewayWideLicense(id)) : "";
+        if (limited) return res.status(400).json({ error: `${engineLabel(limited)} is limited to one conversation and cannot be part of the gateway default` });
       } else if (patch.engine && patch.engine !== getEngine()) patch.enginePool = "";
       if (body.modelShortcuts !== undefined) {
         const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)

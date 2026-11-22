@@ -1,5 +1,48 @@
 # ChannelGate — Features
 
+## Engine licenses: a license limited to one conversation (2026-11-23)
+
+A customer's own account in one channel is now an ordinary engine license with a limit, not a
+special kind of sign-in. Any license an administrator adds — a Claude sign-in, a ChatGPT sign-in,
+an API key or custom server, Amazon Bedrock, Google Vertex AI, Microsoft Azure, for Claude Code and
+for Codex alike — can be limited to **one conversation** (Settings → Engine licenses → the
+license's form → "Available in": *Every conversation* or one channel/DM). Everything else about the
+license is unchanged: how it is added, signed in, verified, switched on and off, and removed.
+
+- **The record** (`settings.engineLicenses`) gains one optional field, `channelId` — one
+  conversation id, matched exactly (`normalizeLicenseChannelId`, `licenseChannelOf` in
+  `src/engines/license-state.js`). A stored value that is not a conversation id reads as *limited
+  to nowhere*, never as unlimited. A listing returns `channelId` and `channelLimited`; the engine
+  manifest the pickers read carries `limitedToChannel`.
+- **Where it runs.** `isChannelEngineApproved` (`src/gateway/channel-engines.js`) — the one check
+  behind every turn, background job, API run, schedule, memory review, SSH session, license pool
+  and picker — refuses a limited license outside its conversation. Its conversation is the one
+  whose id it names and the **code channels opened from it** (`codeChannel.originChannelId`); a DM
+  that merely shares that channel's workspace is not. The approved-harness list still applies on
+  top. "Any license" and a stored pool never reach it elsewhere, and the egress proxy swaps its key
+  or relayed sign-in only for containers of its own conversation — a placeholder another channel
+  still holds answers nothing, and moving the limit moves where it answers with nothing re-issued.
+- **What it can never be.** The gateway default, part of the gateway default's pool, or "the last
+  license left": the Settings save refuses both by name, `getEngine()` ignores a stored one, and
+  switching off or deleting the other licenses still requires one license every conversation can
+  run on. Limiting the license the gateway runs on by default hands the default back to that
+  harness's own sign-in; limiting the only gateway-wide license that is switched on is refused.
+- **What a conversation sees.** In its own conversation the license is offered like any other (the
+  dashboard pickers, Slack/Teams/Google Chat settings, `/model`, the approved-harness list).
+  Elsewhere it is not listed. A conversation default that named it before it was limited follows
+  the gateway default again, exactly like a deleted license; a thread somebody pinned to it, and
+  any attempt to pick it elsewhere, is refused by name: "<license> is limited to another
+  conversation and cannot be used in this one."
+- **Enterprise.** Limiting a license, and running on a limited one, use the existing *dedicated
+  channel sign-in* entitlement (`channelCodexLogin`; `src/ee/` is unchanged). Without it a limit
+  cannot be set or moved (403), and a license that is already limited runs nowhere until the limit
+  is cleared — clearing is always allowed.
+- **The shipped "Codex (channel account)"** — the sign-in a channel's own members start from the
+  channel's settings — keeps working as before and is not converted. An administrator can replace
+  it per channel by adding a ChatGPT sign-in license limited to that channel; that license is
+  signed in from Settings → Engine licenses.
+  → TEST-PLAN: Engine licenses limited to one conversation.
+
 ## A channel that does not approve Claude has no `claude` login (2026-11-23)
 
 Every channel container carries a `claude` on the gateway's own Claude login, whatever engine the

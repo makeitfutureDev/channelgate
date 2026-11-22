@@ -45,8 +45,10 @@ const notReady = (id, target, message) => Object.assign(new Error(message), {
 });
 
 // The facts every surface shows about a license. Plain data: it rides the UI manifest.
+// `channelId` is the one conversation the license is limited to ("" = every conversation).
 const licenseFacts = (record) => Object.freeze({
   kind: record.kind, kindLabel: LICENSE_KINDS[record.kind].label, type: record.type, typeLabel: licenseTypeLabel(record.type),
+  channelId: record.channelId || "",
 });
 
 const sessionDirs = (base, id) => Object.freeze({

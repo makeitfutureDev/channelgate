@@ -14,16 +14,18 @@
 import { adapterFor, coherentLicensePool, harnessOf, isEngineId, licenseLabel, licensesOfHarness, modelBelongsToEngine } from "../engines/registry.js";
 import { HARNESS_IDS, LICENSE_POOL_ANY, harnessLabel, isHarnessId, readLicensePool } from "../engines/license-state.js";
 import { getEngine, getEnginePool, isEngineEnabled } from "../config/settings.js";
-import { isChannelEngineApproved } from "./channel-engines.js";
+import { isChannelEngineApproved, licenseFitsConversation } from "./channel-engines.js";
 
 export { LICENSE_POOL_ANY, readLicensePool };
 
 const invalid = (message) => Object.assign(new Error(message), { status: 400, statusCode: 400, code: "invalid_license_pool" });
 
-// A channel-account license exists only in the conversation that signed it in.
+// A channel-account license exists only in the conversation that signed it in, and a license an
+// administrator limited to one conversation only there (isChannelEngineApproved refuses it
+// everywhere else too; asked here as well so the rule reads in one place).
 const availableHere = (meta, id) => {
   const adapter = adapterFor(id);
-  return Boolean(adapter) && (!adapter.channelScoped || meta?.codexAuthSource === "channel");
+  return Boolean(adapter) && (!adapter.channelScoped || meta?.codexAuthSource === "channel") && licenseFitsConversation(meta, id);
 };
 
 // Every license of `harness` this conversation may run on right now: registered, switched on in

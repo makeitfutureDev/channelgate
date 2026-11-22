@@ -2,7 +2,7 @@ import { BUILTIN_ENGINE_ADAPTERS, licenseAdaptersFor } from "./adapters.js";
 import { createAdapterRegistry } from "./contract.js";
 import {
   DEFAULT_LICENSE_NAME, LICENSE_POOL_ANY, builtinLicenseName, harnessLabel, harnessOfLicenseId, isHarnessId, isRemovedLicenseId,
-  normalizeLicenseRecords, readLicensePool, removedLicenseIds, setLicenseRecords,
+  licenseChannelOf, normalizeLicenseRecords, readLicensePool, removedLicenseIds, setLicenseRecords,
 } from "./license-state.js";
 
 export const engineRegistry = createAdapterRegistry(BUILTIN_ENGINE_ADAPTERS);
@@ -78,6 +78,14 @@ export const isRemovableBuiltinLicense = (engine) => engineRegistry.isBuiltin(St
 // rows and policies still name it — but it is off everywhere and listed nowhere.
 export const isRemovedLicense = (engine) => isRemovableBuiltinLicense(engine) && isRemovedLicenseId(engine);
 export const removedBuiltinLicenses = () => removedLicenseIds().filter(isRemovableBuiltinLicense);
+// A license the whole gateway can run on: not one a conversation signed in for itself (the shipped
+// channel account) and not one an administrator limited to a single conversation
+// (license-state.js). Only these can be the gateway default, sit in its pool, or count as
+// "something left to run" when another license is switched off or removed.
+export const isGatewayWideLicense = (engine) => {
+  const adapter = adapterFor(engine);
+  return Boolean(adapter) && !adapter.channelScoped && !licenseChannelOf(adapter.id);
+};
 // The licenses a surface may LIST: everything registered that has not been removed.
 export const listedEngineIds = () => ENGINE_IDS.filter((id) => !isRemovedLicense(id));
 // The provider-failure kinds this engine's runner reports as "the provider did not answer" — the
@@ -332,6 +340,8 @@ export function engineUiManifest() {
     ownCredential: adapterFor(manifest.id)?.ownCredential?.kind || "",
     // True when the listed models are the license's whole catalog (a custom server's own list).
     modelListClosed: adapterFor(manifest.id)?.modelListClosed === true,
+    // The one conversation an administrator limited this license to ("" = every conversation).
+    limitedToChannel: licenseChannelOf(manifest.id),
   }));
 }
 

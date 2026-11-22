@@ -11,15 +11,17 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { getEngine } from "../config/settings.js";
 import { engineLabel, harnessOf, licenseLabel, listedEngineIds } from "../engines/registry.js";
 import { HARNESS_IDS, harnessLabel } from "../engines/license-state.js";
-import { assertApprovedEnginesUpdate, assertChannelEngineApproved, describeApprovedEngines, harnessPolicyEntry } from "./channel-engines.js";
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved, describeApprovedEngines, harnessPolicyEntry, licenseFitsConversation } from "./channel-engines.js";
 import { effectiveMeta } from "./effective-meta.js";
 
 // What a channel's approved list can hold, as Settings offers it: a whole harness (every license
 // of it, including ones added later) or single licenses, each named with its harness.
-export function approvedHarnessOptions() {
+// `meta` is the channel the list is for: a license limited to another conversation
+// (engines/license-state.js) can never run here, so it is not something to approve here.
+export function approvedHarnessOptions(meta = null) {
   return [
     ...HARNESS_IDS.map((harness) => ({ value: harnessPolicyEntry(harness), label: `${harnessLabel(harness)} (any license)` })),
-    ...listedEngineIds().map((id) => ({ value: id, label: harnessOf(id) ? `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` : engineLabel(id) })),
+    ...listedEngineIds().filter((id) => licenseFitsConversation(meta || {}, id)).map((id) => ({ value: id, label: harnessOf(id) ? `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` : engineLabel(id) })),
   ];
 }
 
@@ -54,7 +56,7 @@ export function parseApprovedHarnessesArg(text) {
 export function describeChannelApprovedHarnesses(meta, { isAdmin = false, setHint = "set_channel_approved_harnesses" } = {}) {
   if (!meta) return "Channel isn't set up yet — send a normal message first.";
   const lines = [`Approved here: ${describeApprovedPolicy(meta.approvedEngines)}.`];
-  if (isAdmin) lines.push(`Entries an admin can approve (pass them to ${setHint}):`, ...optionLines(approvedHarnessOptions()));
+  if (isAdmin) lines.push(`Entries an admin can approve (pass them to ${setHint}):`, ...optionLines(approvedHarnessOptions(meta)));
   else lines.push("Only an organization admin can change this list.");
   return lines.join("\n");
 }
@@ -67,7 +69,7 @@ export function describeChannelApprovedHarnesses(meta, { isAdmin = false, setHin
  */
 export async function setChannelApprovedHarnesses({ slug, channelId = "", actor = "", source = "", isAdmin = false, approved }) {
   if (!isAdmin) return { ok: false, text: "Only organization admins can change this channel's approved harnesses." };
-  const options = approvedHarnessOptions();
+  const options = approvedHarnessOptions(slug ? await getChannelMeta(slug) : { channelId });
   let value = null;
   if (approved !== "all") {
     const entries = Array.isArray(approved) ? approved : [];

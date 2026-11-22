@@ -1,4 +1,4 @@
-import { assertApprovedEnginesUpdate, assertChannelEngineApproved, engineAvailableForChannel, harnessPolicyEntry } from "../gateway/channel-engines.js";
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved, engineAvailableForChannel, harnessPolicyEntry, licenseFitsConversation } from "../gateway/channel-engines.js";
 import { getLicenseStatus } from "../ee/license.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 import { randomUUID } from "node:crypto";
@@ -1289,7 +1289,8 @@ function channelSettingsSnapshot(meta = {}) {
         // A single license is named with its harness: "Codex · Default sign-in" beside "Codex (any license)".
         // A removed license is offered only while the stored lock still names it (so it can be read
         // and unticked), never as something new to approve.
-        ...ENGINE_IDS.filter((id) => !isRemovedLicense(id) || (Array.isArray(meta.approvedEngines) && meta.approvedEngines.includes(id)))
+        // The same goes for a license limited to another conversation: it can never run here.
+        ...ENGINE_IDS.filter((id) => (!isRemovedLicense(id) && licenseFitsConversation(meta, id)) || (Array.isArray(meta.approvedEngines) && meta.approvedEngines.includes(id)))
           .map((id) => ({ value: id, label: `${harnessLabel(harnessOf(id))} · ${licenseLabel(id)}` })),
       ],
       channelLogin,

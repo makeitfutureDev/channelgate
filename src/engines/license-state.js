@@ -173,6 +173,24 @@ export function normalizeLicenseModels(value) {
   return Object.freeze(out);
 }
 
+// ── Licenses limited to one conversation ──────────────────────────────────────────────────────
+// A license is normally usable wherever its harness is. An administrator can LIMIT one to a single
+// conversation — a customer's own account for the customer's channel: it then runs there (and in
+// the code channels opened from it) and nowhere else, is offered in no other picker, and can be
+// neither the gateway default nor part of the gateway's pool. Any kind can be limited, on both
+// harnesses; the limit is one more fact of the record (`channelId`, a stored conversation id —
+// Slack's bare, the other surfaces' namespaced, src/platforms/ids.js). Who enforces it is
+// src/gateway/channel-engines.js; this file only says what the limit IS.
+export const MAX_LICENSE_CHANNEL_ID_LENGTH = 300;
+// A limit that was stored but cannot name a conversation. It matches none, so the license runs
+// nowhere until an administrator picks a conversation again — never everywhere.
+export const UNUSABLE_LICENSE_CHANNEL = "\u0000invalid";
+export function normalizeLicenseChannelId(value) {
+  if (typeof value !== "string") return "";
+  const id = value.trim();
+  return id && id.length <= MAX_LICENSE_CHANNEL_ID_LENGTH && !/[\s\u0000-\u001f\u007f]/.test(id) ? id : "";
+}
+
 // One stored record → the frozen shape every reader gets, or null when it cannot be a license (a
 // hand-edited entry never becomes an adapter that would fail every turn in an unexplained way).
 export function normalizeLicenseRecord(raw) {
@@ -182,7 +200,13 @@ export function normalizeLicenseRecord(raw) {
   const label = clean(raw.label, 60);
   if (!label) return null;
   const type = kind.types.includes(raw.type) ? raw.type : kind.types[0];
-  const base = { id: raw.id, kind: kind.id, harness: kind.harness, label, type, createdAt: clean(raw.createdAt, 40) };
+  // The ONE conversation this license may run in, or absent for every conversation (see "Licenses
+  // limited to one conversation" below). A stored value that is not an id never widens the license.
+  const channelId = normalizeLicenseChannelId(raw.channelId);
+  const base = {
+    id: raw.id, kind: kind.id, harness: kind.harness, label, type, createdAt: clean(raw.createdAt, 40),
+    ...(channelId ? { channelId } : raw.channelId ? { channelId: UNUSABLE_LICENSE_CHANNEL } : {}),
+  };
   if (!kind.provider) return Object.freeze(base);
   const has = (field) => kind.fields.includes(field);
   const baseUrl = clean(raw.baseUrl, 300).replace(/\/+$/, "");
@@ -294,6 +318,10 @@ export function setLicenseRecords(value) {
 }
 export const licenseRecords = () => [...records.values()];
 export const licenseRecord = (id) => records.get(String(id || "")) || null;
+// The conversation a license is limited to ("" = every conversation). Only an administrator-added
+// license can carry one; an id that names no record is not limited by this.
+export const licenseChannelOf = (id) => records.get(String(id || ""))?.channelId || "";
+export const isChannelLimitedLicense = (id) => Boolean(licenseChannelOf(id));
 
 // ── The licenses the gateway ships with: renamed, removed ─────────────────────────────────────
 // A harness's own sign-in (`claude`, `codex`) is the one license that cannot be removed. Every
