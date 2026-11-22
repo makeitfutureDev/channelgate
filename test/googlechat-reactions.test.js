@@ -5,6 +5,7 @@ import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { parseReactionEvent, googleChatReactionAction, reactionIsFresh, resolveReactor, REACTION_CREATED, REACTION_DELETED, REACTION_BATCH_CREATED } = await import('../src/platforms/googlechat/reactions.js');
 const { createReactionSubscriptions, createWorkspaceEventsClient, isTopicName } = await import('../src/platforms/googlechat/workspace-events.js');
+const { MESSAGE_UPDATED } = await import('../src/platforms/googlechat/edits.js');
 const { startGoogleChat } = await import('../src/platforms/googlechat/transport.js');
 const { googleChatAdapter } = await import('../src/platforms/googlechat.js');
 const { createIngest } = await import('../src/platforms/ingest.js');
@@ -86,10 +87,11 @@ function fakeClient(subs = []) {
     async create(arg) { calls.push(['create', arg.space, arg.topic]); },
     async renew(name) { calls.push(['renew', name]); },
     async reactivate(name) { calls.push(['reactivate', name]); },
+    async setEventTypes(name) { calls.push(['setEventTypes', name]); },
     async remove(name) { calls.push(['remove', name]); } };
 }
 const sub = (name, space, { state = 'ACTIVE', expireTime, topic = TOPIC, includeResource = true } = {}) => ({ name, targetResource: `//chat.googleapis.com/${space}`, state, expireTime,
-  eventTypes: [REACTION_CREATED, REACTION_DELETED], notificationEndpoint: { pubsubTopic: topic }, payloadOptions: { includeResource } });
+  eventTypes: [REACTION_CREATED, REACTION_DELETED, MESSAGE_UPDATED], notificationEndpoint: { pubsubTopic: topic }, payloadOptions: { includeResource } });
 
 test('a pass creates missing, renews expiring, reactivates suspended, retires orphans and never touches foreign subscriptions', async () => {
   const now = Date.parse('2026-10-14T12:00:00Z');
@@ -159,7 +161,7 @@ test('the REST client sends Google\'s documented create and renew shapes', async
   await client.reactivate('subscriptions/s1');
   await client.list();
   assert.deepEqual(seen[0], { url: 'https://workspaceevents.googleapis.com/v1/subscriptions', method: 'POST', body: {
-    targetResource: '//chat.googleapis.com/spaces/A', eventTypes: [REACTION_CREATED, REACTION_DELETED],
+    targetResource: '//chat.googleapis.com/spaces/A', eventTypes: [REACTION_CREATED, REACTION_DELETED, MESSAGE_UPDATED],
     notificationEndpoint: { pubsubTopic: TOPIC }, payloadOptions: { includeResource: true } } });
   assert.equal(seen[1].url, 'https://workspaceevents.googleapis.com/v1/subscriptions/s1?updateMask=ttl');
   assert.deepEqual(seen[1].body, { ttl: '0s' });

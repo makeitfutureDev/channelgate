@@ -90,11 +90,12 @@ matches step 2. Google's [Workspace add-on Pub/Sub guide](https://developers.goo
 and [Chat troubleshooting guide](https://developers.google.com/workspace/chat/troubleshoot-chat-apps)
 cover these distinct configurations.
 
-The app's own `users/…` id is learned automatically the first time it is added to a space; the
-optional field exists only to short-circuit that.
+The app's own `users/…` id is learned automatically the first time it is added to a space or is
+mentioned alone in a message, and remembered across restarts; the optional field exists only to
+short-circuit that.
 
-8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge).** A Chat app never receives
-   an interaction event for a reaction; Google delivers reactions only through
+8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge) and the edit trigger.** A
+   Chat app never receives an interaction event for a reaction or an edit; Google delivers both only through
    [Google Workspace Events subscriptions](https://developers.google.com/workspace/events/guides/events-chat).
    ChannelGate creates and maintains one per space the app belongs to, with **app authentication**
    (generally available since 2026-03-31), so no user has to sign in:
@@ -118,6 +119,13 @@ optional field exists only to short-circuit that.
    each one about hourly, reactivates suspended ones, recreates expired ones, retires those for
    spaces the app left, and reconciles on startup, on joining a space and on Google's lifecycle
    events. Reactions made while the gateway is down for longer than that are not delivered.
+
+   The same subscriptions deliver message updates (`google.workspace.chat.message.v1.updated`), so
+   this step also enables the **edit trigger**: editing a message in a space to add a mention of
+   the app runs it once, as its author, like a new mention. No extra setup is needed; subscriptions
+   created before this existed gain the event type in place on the next reconciliation. An edit
+   acts only within an hour, on a message under six days old that the app has not already
+   handled, and only once the app's own `users/…` id is known (above).
 
 9. **Optional — working card buttons (HTTP endpoint connection).** Card and button clicks reach a
    Chat app only through an HTTP endpoint connection

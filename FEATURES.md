@@ -43,6 +43,47 @@ to the notice, and repeating the request meant retyping it.
   `teams_interrupted_retry`. Without card support nothing is held and the notice stays text.
 - Engine-independent (intake and delivery only); live acceptance covers both engines because the
   interrupted turn is an engine run. → TEST-PLAN: Teams restart recovery presentation.
+
+## Google Chat: an edit that adds a mention runs the message (2026-11-22)
+
+Slack and Teams run a message when an edit adds a real mention of the app. A Google Chat app
+receives no interaction event for an edit, so on Chat the edited message was never read.
+
+- Edits reach a Chat app only through Google Workspace Events
+  (`google.workspace.chat.message.v1.updated`, and `batchUpdated`, which Google sends on its own
+  for bursts). The per-space subscriptions that carry reactions now carry this type too, so the
+  feature needs exactly the reaction setup (Reaction events topic, Workspace Events API, the
+  admin-approved `chat.app.messages.readonly` scope) and is inert without a topic. The reconciler
+  upgrades a reaction-only subscription in place (`PATCH ?updateMask=event_types` with the full
+  list, after any renewal); if Google refuses the change (400) it creates the full subscription
+  first and then retires the old one, so a failed replacement never loses reactions, and a pass
+  prefers a complete subscription over an older duplicate (`src/platforms/googlechat/workspace-events.js`).
+- The payload is only the CURRENT message, never the earlier version, so "newly mentioned" is
+  judged against the durable inbox: an edit acts only when the message now carries a
+  `USER_MENTION` of THIS app's own `users/…` id (another app's mention never counts) and the inbox
+  has not already accepted that message — through its original mention, a slash command, or an
+  earlier edit. It is accepted under the message's own name, so redeliveries, further edits and a
+  later-arriving original event all collapse into one run (`src/platforms/googlechat/edits.js`,
+  `transport.js` → `onMessageUpdateEvent`).
+- The edited message then takes the ordinary path (`acceptMessage`, shared with delivered
+  mentions): control lane for `/stop`-style text, the session queue with its position notice,
+  then ingest's authorization and mention gate, the space's thread as the session key. It runs as
+  the message's sender, resolved from `users/…` through the same recorded mapping reactions use;
+  `argumentText` (or the text minus this app's mention ranges) is the prompt, labelled
+  `trigger: "edit"`.
+- Never acts: edits by any app (the app's own progress edits arrive about once a second while a
+  turn runs and are dropped before any lookup), updates no person made (no `lastUpdateTime`),
+  edits in a DM (the message was already answered), edits older than one hour, edits of a
+  message created before the inbox's memory (six days), senders with no or an ambiguous recorded
+  `users/…` id, and edits that only remove a mention. Removing the mention again before a queued
+  edit trigger starts withdraws it (an out-of-order older update withdraws nothing); adding it
+  back later counts as new. Unapproved senders get the normal refusal.
+- The app's own `users/…` id is now kept across restarts (`_meta`, per subscription) and is also
+  learned from an unambiguous message delivered to the app (a slash command's app, or a space
+  message mentioning exactly one app), not only from being added to a space. Until it is known
+  the edit trigger stays inactive and says so once in the log. → TEST-PLAN: Google Chat edit
+  trigger.
+
 ## Teams: read earlier messages and fetch their files (2026-11-22)
 
 A Teams run sees only the message addressed to it. Slack runs read their channel with
@@ -3144,6 +3185,8 @@ control-plane status.
   with under two hours left (four-hour maximum), reactivates suspended ones, recreates expired
   ones, retires duplicates and those for spaces the app left, and never touches subscriptions on
   another topic. Status appears in the transport line (`reactions N/M spaces` or the error).
+  The same subscriptions also deliver message updates for the edit trigger ("Google Chat: an edit
+  that adds a mention runs the message").
 - Events arrive on the existing pulled subscription. The reactor (`users/…`) maps to exactly one
   gateway user recorded from that person's delivered messages; the reacted message and its space
   are fetched to resolve thread and session. Start runs the reacted person's text as the reactor,
