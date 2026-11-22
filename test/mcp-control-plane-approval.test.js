@@ -736,7 +736,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_compose_reply", // validates + acknowledges only; the daemon renders the observed call under THIS thread's answer
     "slack_share_file", // one confined channel file into THIS thread, like the explorer's Share button
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
-    "slack_channel_history", "slack_thread_replies",
+    "slack_channel_history", "slack_thread_replies", "conversation_history",
     "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
     "update_code_channel", // artifact tabs, context bar and title of the code channel the run is IN; refuses elsewhere
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js

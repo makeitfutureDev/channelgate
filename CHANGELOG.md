@@ -9,6 +9,17 @@
   conversation admits, can use the buttons; a steer never interrupts or jumps ahead of another
   person's work. The card says when the message starts, and its buttons still answer correctly
   after a gateway restart.
+- Google Chat replies render as intended on every Chat app. The formatter writes Markdown, but no
+  request said so, and an app created before Markdown became Google's default showed literal `**`
+  and `[label](url)`. Every reply and edit now asks for Markdown (and still delivers if Google
+  refuses the field). Mentions use Markdown mode's `<chat-user>` tag, and any mention or other
+  `<chat-*>` tag written by the model is defanged in every letter case, so it can never ping the
+  space.
+- New gateway tool `conversation_history` for Google Chat: the agent can read earlier messages of
+  the current thread or the whole space (public messages only) when it is mentioned mid-thread or
+  asked to catch up. It uses the same administrator-approved `chat.app.messages.readonly` scope as
+  reaction controls; without that approval the tool explains what is missing and messaging is
+  unaffected. `docs/GOOGLE-CHAT-PARITY.md` records Google Chat's parity with Slack.
 - `claude` in an SSH session now runs on the channel's own Claude license. A channel set to a
   Claude license you added — a second Claude account, a custom server, an API key or a cloud
   route — got the gateway's own Claude login in its terminal, a different account than the

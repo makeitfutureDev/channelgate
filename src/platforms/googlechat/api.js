@@ -143,6 +143,30 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
       return call(requireName(messageName, isMessageName, "message"));
     },
 
+    // The newest public messages of one space (or one of its threads), returned oldest → newest.
+    // Needs the admin-approved chat.app.messages.readonly app scope; chat.bot cannot list messages.
+    // Private messages (privateMessageViewer) are never returned to an app-authenticated caller.
+    async listMessages(space, { threadName = "", limit = 30, pageSize = 100 } = {}) {
+      const parent = requireName(space, isSpaceName, "space");
+      const max = Math.max(1, Math.min(200, Math.floor(Number(limit) || 30)));
+      let filter = null;
+      if (threadName) {
+        const thread = requireName(threadName, isThreadName, "thread");
+        if (!thread.startsWith(`${parent}/threads/`)) throw new Error('Google Chat thread belongs to another space');
+        filter = `thread.name = ${thread}`;
+      }
+      const out = [];
+      let pageToken = "";
+      do {
+        const res = await call(`${parent}/messages`, { query: {
+          pageSize: Math.min(pageSize, max - out.length), orderBy: "createTime desc", filter, pageToken: pageToken || null,
+        } });
+        for (const message of res?.messages || []) if (isMessageName(message?.name)) out.push(message);
+        pageToken = res?.nextPageToken || "";
+      } while (pageToken && out.length < max);
+      return out.slice(0, max).reverse();
+    },
+
     // Every space the app is a member of (chat.bot). Reaction subscriptions are per space.
     async listSpaces({ pageSize = 1000, limit = 5000 } = {}) {
       const out = [];

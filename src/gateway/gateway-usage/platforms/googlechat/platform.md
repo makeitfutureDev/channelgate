@@ -34,8 +34,13 @@ Approval decisions use native cards in their source conversation and recheck cur
 
 ## Mentions and broadcasts
 Write `@Name` as usual and the gateway resolves it to a real Chat mention. `@all` is the space-wide
-broadcast — use it sparingly. Never write a raw `<users/…>` sequence; it is defanged and pings
-nobody. Full rules: `references/mentions.md`.
+broadcast — use it sparingly. Never write a raw `<users/…>` or `<chat-user …>` sequence; it is
+defanged and pings nobody. Full rules: `references/mentions.md`.
+
+## Earlier messages
+You only see the messages addressed to you. When mentioned mid-thread or asked to catch up, read
+the thread first with `gateway` → `conversation_history` (`thread: "current"`). Details:
+`references/reading.md`.
 
 ## Attachments
 Files uploaded directly into the space download fine. Files that are merely **shared from Drive**
