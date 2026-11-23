@@ -63,12 +63,13 @@ test("automations are listed per allowed conversation, the viewer's own DM first
 test("the dashboard renders an Automations tab and page", () => {
   const page = activityPage({ sessionId: "s", csrf: "c", view: "automations" });
   assert.match(page.html, /<title>Automations · ChannelGate/);
-  assert.match(page.html, /id="automation-channel"/);
+  assert.match(page.html, /id="ab-root"/);
+  assert.match(page.html, /automationBoardBrowser|function automationBoardBrowser/);
   assert.match(page.html, /\/automations" aria-current="page">Automations</);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, />Automations<\/a>/);
 });
 
-test("dashboard layout: wide pages, Skills under Settings, automations error filter, subscriptions by harness", async () => {
+test("dashboard layout: wide pages, Skills under Settings, automations health board, subscriptions by harness", async () => {
   const { activityPage } = await import("../src/web/activity-page.js");
   const { createSubscriptionUi } = await import("../public/subscription-ui.js");
   const skills = activityPage({ sessionId: "s", csrf: "c", view: "skills" }).html;
@@ -77,7 +78,7 @@ test("dashboard layout: wide pages, Skills under Settings, automations error fil
   assert.match(skills, /\.calls-page\{max-width:1800px/);
   assert.match(skills, /\.settings-page\{width:100%;max-width:1800px/);
   const automations = activityPage({ sessionId: "s", csrf: "c", view: "automations" }).html;
-  assert.match(automations, /id="automation-errors"/);
+  assert.match(automations, /\.ab-page\{width:100%;min-width:0;max-width:1480px/);
   const html = createSubscriptionUi().grouped([{ name: "A", harness: "claude" }, { name: "B", harness: "codex" }, { name: "C", harness: "claude" }]);
   assert.deepEqual([...html.matchAll(/subscription-group-title">([^<]+)/g)].map((m) => m[1].trim()), ["Claude Code", "Codex"]);
 });

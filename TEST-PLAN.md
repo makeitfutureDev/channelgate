@@ -1,5 +1,47 @@
 # ChannelGate — Test Plan
 
+## Automations health board (2026-11-24)
+
+Regression: `test/automation-health-board.test.js` (classifier, verdicts and fix steps; member vs
+admin-console scope; edit/run rights and the shared validator; Run now's manual trigger and its
+refusals; console routes; the shared module), `test/activity-automations.test.js`,
+`test/schedule-prompt-editor.test.js`, `test/schedule-health-admin.test.js`.
+
+Fixtures: a shared test channel with (A) a task created by the tester, (B) a task created by
+another person, (C) a task in the tester's own DM, (D) a one-time task. Give A a working prompt
+("Post today's date and the word OK"), B any prompt.
+
+Engine-independent (board, verdicts, filters, permissions — no engine turn):
+1. Remove the bot from the channel of B, let B run (or wait for its time). Open Activity →
+   Automations as an approved non-admin. Pass: B is under **Not delivered** as Undeliverable with
+   "How to fix"; its Overview lists the `/invite @<bot>` step with Copy; its switch, Run now and
+   Save are disabled with the "runs with their accounts" note. Re-invite the bot: after B's next
+   successful run it moves to Healthy.
+2. Views and facets: Needs attention, Not delivered, Failing, Created by me, Paused, Everything
+   show the counts the cards confirm; ticking a conversation and a problem narrows the list and
+   shows removable chips; Clear all restores; search by a run id from the Runs tab finds its card;
+   24h/7d/30d changes the KPI line. Pass: no card outside the filters, no count mismatch.
+3. Pause A with its switch. Pass: it moves to Paused, `list_schedules` shows it disabled; turn it
+   back on from the Paused card.
+4. Edit A in Settings (rename, change time to weekdays 09:15, delivery "Post in the channel").
+   Pass: the card and `list_schedules` show the new name, "At 09:15 on weekdays", Channel post. An
+   invalid cron (Custom → `nope`) shows the validator's error and changes nothing.
+5. As an organization admin, open the admin console → Automations. Pass: the same page, every
+   conversation (including C as "DM · <tester>") and host-access rows; Settings shows the Host access
+   switch; the console's "Run history of every automation, deleted ones included" still opens.
+6. Phone width (390px), both themes on Activity. Pass: no horizontal scroll; views scroll
+   sideways; cards stack with full-width primary action.
+
+Claude and Codex (each engine as the channel's harness):
+7. Run now on A, confirm. Pass: toast "Started…", a run with trigger "Run now" appears under Runs
+   with Started/engine/model, its answer posts in the channel per A's delivery, A stays paused if
+   it was paused. A second Run now while it runs answers "already running".
+8. Make A fail (prompt that needs a secret the channel lacks, e.g. "Call the Make API with
+   MAKE_API_MISSING"). Pass: Failing with the problem text and "1"/"2 in a row" streak after two
+   Run nows; the Runs tab shows the error and the event timeline; fix the prompt, Run now, card
+   returns to Healthy.
+9. Thread loop (`/loop` in a thread): its card has no Run now (thread loops pace themselves).
+
 ## Unattended work: visible, hidden, or only on failure (2026-11-24)
 
 Automated: `node --test test/run-visibility.test.js test/api-run-outcomes.test.js test/automation-health.test.js`

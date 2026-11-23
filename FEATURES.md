@@ -1,5 +1,60 @@
 # ChannelGate — Features
 
+## Automations health board — one page for admins and members (2026-11-24)
+
+The Automations page of the admin console and of the Activity dashboard is now ONE component
+(`src/web/automation-board.js`): the dashboard inlines it, the console imports the same source as a
+module from `/automation-board.js`. Same layout, filters and actions; only the scope differs — the
+console sees every conversation on every platform, every DM (named "DM · Person") and host-access
+(`sudo`) rows; a member sees the conversations the dashboard already lets them open plus their own
+DM. It replaces the per-conversation picker, the "Only with errors" switch and the console's
+schedule list and edit modal. The console keeps "Run history of every automation, deleted ones
+included".
+
+- **Two outcomes per run.** Every run is shown as the RUN (did the work happen) and its DELIVERY
+  (did the answer reach the conversation): a two-row strip of the last 30 runs on every card, top
+  row run, bottom row delivery. Success % counts a run only when it worked AND its answer arrived
+  (or was held back by rule).
+- **Health verdict** (`src/gateway/automation-health.js`, pure): Broken, Degraded, Healthy or
+  Paused, with a problem category — Bot removed / channel archived, Delivery failed, Delivery
+  retrying, Platform disconnected, Interrupted by restart, Blocked, Login expired, Credential
+  rejected, Connector / tool error, Usage / spending / license limit, Access refused, Engine turned
+  off, Silent too long, Container resources exhausted, Out of attempts, Deferred, Agent reported
+  failure, Run failed, Outcome not reported, Fails now and then — the failing streak, since when,
+  and numbered **How to fix** steps (a copyable `/invite @bot` when the bot's name is known).
+- **Board.** Hero: "N automations need you · M not delivered", the window's runs, success %, not
+  delivered, failed and spend, a Broken/Degraded/Healthy/Paused bar and a "Start here" card for the
+  most urgent problem. Views: Needs attention (default), Not delivered, Failing, Created by me,
+  Paused, Everything. Facets with counts: Conversation, Problem, Type, Created by; search over
+  name, instructions, error and run id; window 24h / 7d / 30d; sort by urgency, next run, lowest
+  success, cost or name. Cards are grouped Not delivered → Failing → Healthy → Paused.
+- **Detail** (`#automation=<channel>/<id>`, Back returns to the board): status, switch, Run now,
+  Edit, stats (last runs, success, next run, not delivered, spend), and tabs Overview (open issue
+  with How to fix, key facts), Runs (each run's status, delivery, cost, trigger, error, tokens,
+  tool calls, delivery attempts and event timeline) and Settings.
+- **Same editor for everyone**: name, on/off, instructions, success criteria, timing (every day /
+  weekdays / weekly / monthly / hourly / cron, or the one-time date), delivery, result policy,
+  silent start, ping, failure notices; the admin console alone adds Host access (`sudo`). Both
+  surfaces go through one validator (`src/config/schedule-patch.js`), which the console's
+  `PUT /api/schedules/:id` now uses too.
+- **Who may change or run an automation**: its creator, an organization admin, or the owner of
+  the DM it lives in — because it runs with the creator's identity and connections. Everyone else
+  who can see it gets a read-only page that says why. API runs are read-only (manage the token).
+- **Run now** (`runScheduleNow`, `src/gateway/scheduler.js`): one immediate execution through the
+  normal `runSchedule` path (same author, delivery and one-time attempt budget), recorded with
+  `trigger: "manual"` and `triggeredBy`; a paused automation stays paused. Refused for thread loops
+  (400), while the automation is running or still delivering (409), at the fan-out ceiling (429) and
+  with no connected chat platform (503). The confirmation says it costs a run and can repeat
+  external actions.
+- Routes: Activity `GET /:id/api/automations/board`, `POST …/:channelId/:scheduleId/update|run`
+  (CSRF-checked, re-authorized per request, validation errors shown, access errors not); console
+  `GET /api/automation-board/board`, `GET …/:channelId/:scheduleId/runs`, `POST …/update|run|delete`.
+
+Not possible yet: "Retry delivery" of a saved answer after a PERMANENT delivery failure — the
+gateway discards it when the conversation can never accept it, so the fix is re-invite, then Run now.
+
+→ TEST-PLAN: Automations health board (2026-11-24).
+
 ## Unattended work: visible, hidden, or only on failure (2026-11-24)
 
 API runs and scheduled tasks can now stay out of the conversation unless something goes wrong.
@@ -1315,7 +1370,7 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 - Skills is no longer a top-menu tab: it is the Settings → Skills section. `/activity/<id>/skills`
   still serves it, rendered inside the Settings shell with the section list (Settings marked
   current in the top menu); the Settings tab navigates there.
-- Automations has an **Only with errors** switch. The conversation picker then lists only the
+- Automations has an **Only with errors** switch (superseded by the Automations health board, 2026-11-24). The conversation picker then lists only the
   conversations with an enabled automation whose LAST run failed, blocked or was interrupted,
   most failing first; each option shows its failing count and each failing card says "Last run …"
   in red. `/api/automations` carries `failing` per conversation.
