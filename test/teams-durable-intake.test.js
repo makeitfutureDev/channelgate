@@ -42,7 +42,10 @@ const request = (appId, body) => ({ body, headers: { authorization: `Bearer ${to
 const row = (appId, body, controls = false) => getDb().prepare("SELECT * FROM inbound_events WHERE namespace = ? AND event_id = ?")
   .get(`msteams-bot${controls ? "-controls" : ""}:${appId}`, activityFingerprint(body));
 async function until(predicate) {
-  for (let count = 0; count < 200; count++) {
+  // A wall-clock deadline, not a poll count: on a slow host 200 × 5 ms polls end long before a
+  // loaded event loop delivers the state, which failed update smoke runs on small servers.
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
