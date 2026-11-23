@@ -3,8 +3,21 @@ import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // agent report can describe the task. Missing/ambiguous reports never become empty successes.
 import { redactLogValue } from "../util/redact.js";
 
-export function automationPrompt(prompt) {
-  return `${prompt}\n\n[Automation outcome reporting]\nAfter doing the task, append exactly one final fenced block named automation-result containing JSON:
+// Optional caller-stated success criteria ("goal"): what must be true for the run to count as
+// succeeded. Bounded, and still agent-reported evidence — never independent verification.
+export const SUCCESS_CRITERIA_MAX = 2000;
+export function normalizeSuccessCriteria(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") throw Object.assign(new Error("successCriteria must be a string."), { statusCode: 400 });
+  const v = value.trim();
+  if (v.length > SUCCESS_CRITERIA_MAX) throw Object.assign(new Error(`successCriteria is limited to ${SUCCESS_CRITERIA_MAX} characters.`), { statusCode: 400 });
+  return v;
+}
+
+export function automationPrompt(prompt, { successCriteria = "" } = {}) {
+  const criteria = String(successCriteria || "").trim().slice(0, SUCCESS_CRITERIA_MAX);
+  const goal = criteria ? `\nSuccess criteria (the expected result, set by whoever configured this task):\n${criteria}\nCheck each criterion against the actual target systems before reporting. Report succeeded only when every criterion is met, failed when the work ran but a criterion is unmet, blocked when a prerequisite prevented checking; name the unmet criterion in the summary.` : "";
+  return `${prompt}\n\n[Automation outcome reporting]${goal}\nAfter doing the task, append exactly one final fenced block named automation-result containing JSON:
 \`\`\`automation-result
 {"status":"succeeded","summary":"What actually completed","connections":[{"name":"composio-user/gmail","status":"available"}]}
 \`\`\`

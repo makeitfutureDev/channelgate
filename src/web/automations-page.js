@@ -24,8 +24,12 @@ export function automationsBrowser(config, browser) {
     li.append(node("strong", STATUS[run.status] || run.status || "Unknown"), node("span", when(run.startedAt)));
     if (run.durationMs) li.append(node("span", duration(run.durationMs)));
     if (typeof run.costUsd === "number") li.append(node("span", "~$" + run.costUsd.toFixed(4)));
+    if (run.engine || run.model) li.append(node("span", [run.engine, run.model].filter(Boolean).join(" · ")));
+    if (run.deliveryStatus && /pending/.test(run.deliveryStatus)) li.append(node("span", run.deliveryStatus));
     const text = run.error || run.summary;
     if (text) li.append(node("p", text));
+    const broken = (run.connections || []).filter((c) => c.status !== "available");
+    if (broken.length) li.append(node("p", "Connections: " + broken.map((c) => c.name + " " + c.status).join(", ")));
     return li;
   }
   function card(a) {
@@ -33,11 +37,14 @@ export function automationsBrowser(config, browser) {
     const head = node("summary");
     head.append(node("span", a.title, "automation-title"), node("span", a.recurrence, "automation-recurrence"));
     if (failing(a)) head.append(node("span", "Last run " + (STATUS[a.runs.lastStatus] || a.runs.lastStatus).toLowerCase(), "automation-failing"));
-    const meta = node("span", (a.enabled ? (a.nextRun ? "Next: " + a.nextRun : "No upcoming run") : "Paused") + " · " + a.kind + (a.mine ? " · created by you" : ""), "automation-meta");
+    const meta = node("span", a.kind === "API"
+      ? "API" + (a.runs.running ? " · " + a.runs.running + " running now" : "") + (a.runs.costUsd ? " · ~$" + a.runs.costUsd.toFixed(2) + " in 7 days" : "")
+      : (a.enabled ? (a.nextRun ? "Next: " + a.nextRun : "No upcoming run") : "Paused") + " · " + a.kind + (a.mine ? " · created by you" : ""), "automation-meta");
     head.append(meta);
     details.append(head);
     const body = node("div", undefined, "automation-detail");
     if (a.instructions) { body.append(node("h2", "Instructions")); body.append(node("p", a.instructions, "automation-instructions")); }
+    if (a.successCriteria) { body.append(node("h2", "Success criteria")); body.append(node("p", a.successCriteria, "automation-instructions")); }
     const runsHead = node("h2", "Run history" + (a.runs.total ? " · " + a.runs.total + " run" + (a.runs.total === 1 ? "" : "s") + (a.runs.successRate === null ? "" : ", " + Math.round(a.runs.successRate * 100) + "% succeeded") : ""));
     const runs = node("ul", undefined, "automation-runs");
     body.append(runsHead, runs);
@@ -61,7 +68,7 @@ export function automationsBrowser(config, browser) {
       loaded = true; runs.replaceChildren(node("li", "Loading runs…"));
       try {
         const data = await request("/api/automations/" + encodeURIComponent(select.value) + "/" + encodeURIComponent(a.id) + "/runs");
-        runs.replaceChildren(...(data.runs.length ? data.runs.map(runRow) : [node("li", "No runs recorded in the last 90 days.")]));
+        runs.replaceChildren(...(data.runs.length ? data.runs.map(runRow) : [node("li", a.kind === "API" ? "No API runs in the last 7 days." : "No runs recorded in the last 90 days.")]));
       } catch (error) { loaded = false; runs.replaceChildren(node("li", error.message)); }
     });
     return details;
@@ -103,7 +110,7 @@ export function automationsBrowser(config, browser) {
   void loadChannels();
 }
 
-export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders and loops in the conversations you can access that have any. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><label class="automation-errors"><input type="checkbox" id="automation-errors"> Only with errors</label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
+export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders, loops and HTTP API runs in the conversations you can access that have any. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><label class="automation-errors"><input type="checkbox" id="automation-errors"> Only with errors</label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
 
 export const AUTOMATIONS_CSS = `
 .automation-picker{display:flex;gap:10px;align-items:center;font-size:14px}

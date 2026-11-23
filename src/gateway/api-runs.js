@@ -62,6 +62,7 @@ import { isAdmin, isApproved } from "../config/store.js";
 import { postNotice, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria } from "./schedule-outcome.js";
 import { resolveApiConversation, threadPermalink, validateConversationKey } from "./api-conversations.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
@@ -482,6 +483,9 @@ async function fireWebhook(job) {
     costEstimated: Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     error: job.error || null,
+    taskStatus: job.taskStatus || null,
+    outcome: job.outcome || null,
+    model: job.model || null,
     result: job.result ? { content: job.result.content } : null,
   };
   const controller = new AbortController();
@@ -537,6 +541,14 @@ export async function startApiRun(input = {}) {
     return { ok: false, code: 400, error: error.message };
   }
   if (conversationKey && !input.channel) return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  let outcomeOptions;
+  try {
+    const successCriteria = normalizeSuccessCriteria(input.successCriteria);
+    if (input.reportOutcome !== undefined && typeof input.reportOutcome !== "boolean") return { ok: false, code: 400, error: "reportOutcome must be true or false." };
+    outcomeOptions = { successCriteria, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) };
+  } catch (error) {
+    return { ok: false, code: 400, error: error.message };
+  }
   // Resolve keyed targets before deduplication, so a globally reused event key can never return
   // a different channel's conversation. Legacy unkeyed idempotency semantics remain unchanged.
   const conversationEntry = conversationKey ? await resolveChannel(input.channel) : null;
@@ -590,7 +602,7 @@ export async function startApiRun(input = {}) {
 
   let outcome;
   try {
-    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry });
+    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions });
   } catch (e) {
     releaseStart(idemKey, settle, { ok: false, code: 500, error: e.message });
     throw e;
@@ -624,7 +636,7 @@ async function userPrincipalRefusal(principal, entry, meta) {
   return null;
 }
 
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry }) {
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions = { successCriteria: "", reportOutcome: false } }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -726,7 +738,8 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   const engine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
   const resumeCommand = presetSessionId ? await buildResumeCommand({ slug, cwd, sessionId: presetSessionId, engine }) : null;
 
-  const textForRun = buildTextForRun({ msg, authorId, attachmentPath });
+  const baseText = buildTextForRun({ msg, authorId, attachmentPath });
+  const textForRun = outcomeOptions.reportOutcome ? automationPrompt(baseText, { successCriteria: outcomeOptions.successCriteria }) : baseText;
 
   const now = Date.now();
   const job = {
@@ -758,6 +771,11 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     deliveryPending: false,
     idempotencyKey: idemKey,
     overrides: overrides || null,
+    successCriteria: outcomeOptions.successCriteria,
+    reportOutcome: outcomeOptions.reportOutcome,
+    taskStatus: null,
+    outcome: null,
+    model: null,
     stopRequested: false,
     recoveryAttempts: 0,
     createdMs: now,
@@ -793,6 +811,18 @@ export function settleRunCost(result = {}, ledger = null) {
   if (result?.costUSD != null) return { costUSD: result.costUSD, estimated: false };
   if (ledger?.costUSD != null) return { costUSD: ledger.costUSD, estimated: Boolean(ledger.costEstimated) };
   return { costUSD: null, estimated: false };
+}
+
+// The task outcome of an API run — the schedules' rules (schedule-outcome.js). Engine failures and
+// admission refusals (license cap, usage limit, harness lock) are gateway facts for every run; the
+// agent's own succeeded/no-op/failed/blocked report exists only when the caller asked for it
+// (`reportOutcome` or `successCriteria`). A clean run without one is "unreported": the engine
+// finished, nobody claimed the task did.
+export function apiRunOutcome(result = {}, { reportOutcome = false } = {}) {
+  const classified = classifyScheduleResult(result);
+  const outcome = classified.automationOutcome;
+  if (reportOutcome || outcome.source === "gateway") return classified;
+  return { ...result, automationOutcome: { status: "unreported", summary: "", connections: [], source: "none" } };
 }
 
 // The per-thread slot a turn holds while it runs — the SAME queue Slack messages use, so an API
@@ -854,7 +884,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       status?.onEvent?.(ev);
     };
 
-    const result = await runMessage({
+    const rawResult = await runMessage({
       channelId: job.channelId,
       // The deprecated organization key's run acts as the API principal: an admin credential with
       // no person behind it, where `job.author` (caller-named) labels the kickoff, prompt
@@ -877,9 +907,11 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       untrustedPrincipal: job.principalKind !== "user",
       origin: "api_foreground",
       progressReport: Boolean(status && client),
-      onDelta: status?.onDelta,
+      // The outcome block is stripped from the final answer; streaming it live would show it.
+      onDelta: job.reportOutcome ? undefined : status?.onDelta,
       onEvent,
       onRuntimeResolved: (runtime) => {
+        if (runtime?.model) job.model = runtime.model;
         if (runtime?.engine && runtime.engine !== job.engine) {
           job.engine = runtime.engine;
           persist(job);
@@ -888,6 +920,11 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       },
     });
 
+    const result = apiRunOutcome(rawResult, { reportOutcome: job.reportOutcome });
+    const outcome = result.automationOutcome;
+    job.taskStatus = outcome.status;
+    job.outcome = { status: outcome.status, summary: outcome.summary || "", connections: outcome.connections || [], source: outcome.source, errorKind: outcome.errorKind || null };
+    job.model = result.runtimeModel || result.model || job.model || null;
     // Report the harness that actually answered, including a default's automatic failover.
     // This also applies when a stop arrives as that harness is finishing.
     job.engine = result.engine || job.engine;
@@ -927,7 +964,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.result = { content: result.content || "", costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs ?? null, usage: result.usage || null };
     persist(job);
 
-    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs });
+    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs, taskStatus: job.taskStatus });
 
     if (client) {
       try {
@@ -972,6 +1009,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       await logEvent("api_run_stopped", { id: job.id, slug: job.slug }).catch(() => {});
     } else {
       job.status = "failed";
+      job.taskStatus = "failed";
       job.completedMs = Date.now();
       job.error = err.message;
       persist(job);

@@ -30,6 +30,27 @@ it. An authenticated admin session also works from the browser.
 The Admin UI's HTTP run API page documents message/file inputs, harness and license overrides, polling,
 stopping and completion webhooks.
 
+## Task outcome and success criteria
+
+`status` says whether the **engine** finished (`completed`, `failed`, `interrupted`, `stopped`).
+`taskStatus` says whether the **work** did, with the same vocabulary as schedules: `succeeded`,
+`no-op`, `failed`, `blocked`, `interrupted` or `unreported`; `outcome` carries the summary and the
+connections the agent checked. Admission refusals (usage or spending limit, license cap, a harness
+the conversation does not allow) and engine failures are always reported (`blocked` / `failed`).
+
+The agent reports on the work itself only when asked:
+
+```json
+{ "message": "Sync paid invoices to Airtable",
+  "successCriteria": "Every invoice paid today is marked Paid in Airtable" }
+```
+
+`successCriteria` (≤ 2000 characters) implies `reportOutcome: true`; send `reportOutcome: true`
+alone to get a report without a goal. Without either, a clean run is `unreported`. With either,
+the answer's text is not streamed live in Slack (the final answer is posted whole). The report is
+the agent's own evidence, not independent verification. API runs appear on the Activity
+dashboard's Automations page, grouped by token.
+
 ## Harness and license selection
 
 There are two harnesses, Claude Code and Codex. Every registered engine ID is a **license** of one

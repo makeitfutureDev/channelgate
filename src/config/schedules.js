@@ -18,7 +18,7 @@ export function getSchedules() {
   return getDb().prepare("SELECT data FROM schedules ORDER BY rowid").all().map((r) => fromJson(r.data, {}));
 }
 
-export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop, sudo }) {
+export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop, sudo, successCriteria }) {
   const sched = {
     id: randomUUID().slice(0, 8),
     channelId,
@@ -30,6 +30,8 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     matchPrefix: typeof matchPrefix === "string" ? matchPrefix : "",
     prompt,
     description: description || "",
+    // Optional "goal": what must be true for a fire to count as succeeded (schedule-outcome.js).
+    successCriteria: typeof successCriteria === "string" ? successCriteria.trim() : "",
     createdBy: createdBy || "",
     // Explicit host execution, authorized by the creation/edit surface and rechecked at every
     // spawn. Never infer this from the launching thread's /sudo flag or channel admin mode.

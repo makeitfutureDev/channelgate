@@ -1,5 +1,49 @@
 # ChannelGate — Test Plan
 
+## API runs as automations, and success criteria (2026-11-24)
+
+Automated:
+
+```sh
+node --test test/api-run-outcomes.test.js test/activity-automations.test.js test/api-runs-*.test.js
+```
+
+- [x] "success criteria are injected into the outcome instruction only when set": absent → no
+      `Success criteria`; set → the text and the "Report succeeded only when every criterion is
+      met" rule; non-string and > 2000 characters refused.
+- [x] "an API run's outcome: gateway facts always, the agent's report only when asked": a valid
+      report → `succeeded` and the block stripped; no request → `unreported`, content untouched;
+      `licenseRefused` → `blocked`; `engineError` → `failed`; an unavailable connection downgrades
+      a success to `blocked`.
+- [x] "startApiRun validates and stores successCriteria…": 2001 characters and a non-boolean
+      `reportOutcome` → 400; a goal implies `reportOutcome` and wraps `textForRun`; a plain run is
+      not wrapped.
+- [x] "API sources group by credential and follow the API-token visibility rule": admin sees the
+      token and organization-key sources; the token's creator sees only theirs; another member
+      sees none; the latest finished run sets `lastStatus`; success rate over reported runs; run
+      rows carry model and unavailable connections.
+- [x] "the Automations view lists API sources beside schedules, never deletable".
+
+Live (both engines — the agent writes the outcome report, so Claude and Codex each run it):
+
+- [ ] Fixture `cg-testing-claude-auto` and `cg-testing-codex-auto`, a channel token in each, the
+      channel's Gmail connection disconnected for step 2. Action per channel:
+      1. `POST /api/runs` `{"message":"Count the files in this folder","successCriteria":"The reply states an exact file count"}`.
+         Pass: `GET /api/runs/:id` has `status: "completed"`, `taskStatus: "succeeded"`, an
+         `outcome.summary`, a `model`; the Slack answer shows no `automation-result` block.
+      2. `POST /api/runs` `{"message":"Draft a reply to my latest unread Gmail","reportOutcome":true}`.
+         Pass: `taskStatus: "blocked"` with the Gmail connection listed `unavailable`.
+      3. `POST /api/runs` `{"message":"Reply OK"}`. Pass: `taskStatus: "unreported"`, streamed
+         answer unchanged.
+      4. Dashboard → Automations → that channel as the token's creator. Pass: an "API runs · token
+         “…”" card with three runs, the failing badge (latest finished run blocked if step 2 ran
+         last), engine · model on each row; as a non-admin other member the card is absent; as an
+         admin the organization-key card appears when the org key was used.
+- [ ] Schedule goal: in each channel ask the agent "every day at 9 check unread Gmail and draft
+      replies; success means a draft exists for each unread client email" → `list_schedules` with
+      id shows `successCriteria`; trigger it; the run history summary names the criterion result;
+      the Automations card shows "Success criteria".
+
 ## Engine licenses limited to one conversation (2026-11-23)
 
 Automated:

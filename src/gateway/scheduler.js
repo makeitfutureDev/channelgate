@@ -368,7 +368,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       result = await runMessage({
         channelId: sched.channelId,
         authorId: sched.createdBy,
-        text: loopTick ? sched.prompt : automationPrompt(sched.prompt),
+        text: loopTick ? sched.prompt : automationPrompt(sched.prompt, { successCriteria: sched.successCriteria }),
         onRuntimeResolved: (runtime) => updateScheduleRun(run.id, { engine: runtime.engine || "", model: runtime.model || "" }),
         onEvent: (event) => {
           if (["tool_use", "tool_result", "thinking", "quiet", "agent_activity"].includes(event?.kind)) {

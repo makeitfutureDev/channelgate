@@ -624,7 +624,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const access = await accessContext(client, session.ownerId);
       const entry = await checkedChannel(access, session.ownerId, req.params.channelId);
-      const runs = automationRuns(access, entry, String(req.params.scheduleId).slice(0, 64));
+      const runs = automationRuns(access, entry, String(req.params.scheduleId).slice(0, 64), session.ownerId);
       await context(req);
       return res.json({ runs });
     } catch (error) { return unavailable(res, error.status || 503); }

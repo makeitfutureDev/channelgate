@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Automations now include HTTP API runs: each channel API token (and, for admins, the
+  organization key) appears on the Automations page with its recent runs, outcome, model, cost and
+  failures. API runs report a task status (`taskStatus`, `outcome`) beside `status`, so a usage-limit
+  refusal or broken connection no longer reads as "completed". Schedules and API runs accept an
+  optional success criteria ("goal") that the agent checks and reports against.
 - Dashboard: every page now uses the same wide layout; Skills moved into Settings; Automations can
   show only the conversations whose automations are failing; Subscriptions are grouped by harness.
 - A channel can now reach a private or local service — a LAN SSH/SFTP or FTP server, a NAS, an

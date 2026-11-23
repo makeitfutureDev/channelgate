@@ -3,7 +3,7 @@
 // higher limit than the app default so a small inline base64 file fits.
 //
 //   POST /api/runs        → start a run. Body: { message, channel?, author?, file?, fileUrl?,
-//                           fileName?, webhook? }. Returns { jobId, sessionId, resumeCommand,
+//                           fileName?, webhook?, successCriteria?, reportOutcome? }. Returns { jobId, sessionId, resumeCommand,
 //                           statusUrl, harness, engine, slackThread }.
 //   GET  /api/runs/:id    → the job's status + result.
 import express from "express";
@@ -36,6 +36,12 @@ function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) 
     durationMs: job.durationMs ?? null,
     result: job.result ? job.result.content : null,
     error: job.error || null,
+    // Task outcome (schedule rules): "completed" says the engine finished; taskStatus says whether
+    // the work did — succeeded/no-op/failed/blocked/interrupted/unreported.
+    taskStatus: job.taskStatus || (job.status === "failed" ? "failed" : job.status === "interrupted" ? "interrupted" : null),
+    outcome: job.outcome || null,
+    successCriteria: job.successCriteria || null,
+    model: job.model || null,
   };
 }
 
@@ -57,8 +63,8 @@ export function createRunsRouter({ slack } = {}) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
+      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome } = req.body ?? {};
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome, slack, principal: tokenPrincipal(req) });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({
