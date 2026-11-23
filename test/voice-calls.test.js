@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import express from "express";
 import { ensureTestEnv } from "./helpers.js";
+import { invalidateConversationMembers } from "../src/slack/members.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
@@ -1003,6 +1004,7 @@ test("voice completion refuses mismatched roots and lost private membership", as
   assert.match((await completionResponse(f, "root-changed")).error, /starter/);
   f.client.conversations.replies = async () => {
     f.client.conversations.members = async () => ({ members: [] });
+    invalidateConversationMembers(); // Slack's member_left_channel event clears the cache
     return { messages: [f.root] };
   };
   assert.match((await completionResponse(f, "membership-lost")).error, /current conversation access/);
