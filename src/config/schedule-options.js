@@ -6,9 +6,10 @@ import { platformOfConversation } from "../platforms/ids.js";
 export function validateScheduleOptions(s) {
   if (s.sudo !== undefined && typeof s.sudo !== "boolean") return "sudo must be a boolean.";
   if (s.sudo && (s.kind === "reminder" || s.loop)) return "Sudo execution requires an ordinary agent task, not a reminder or thread loop.";
-  if (s.kind === "reminder" && (s.executionVisibility === "silent" || s.resultPolicy === "on-result" || s.failureNotify === false || s.delivery === "thread")) {
+  if (s.kind === "reminder" && (s.executionVisibility === "silent" || (s.resultPolicy === "on-result" || s.resultPolicy === "on-failure") || s.failureNotify === false || s.delivery === "thread")) {
     return "Silent/result-only/thread options are for agent tasks, not reminders.";
   }
+  if (s.resultPolicy === "on-failure" && s.failureNotify === false) return "Result messages \"only on failure\" needs failure notifications on; otherwise nothing would ever be posted.";
   if (s.delivery !== "thread") return "";
   const platform = platformOfConversation(s.channelId);
   const key = s.deliveryThread;

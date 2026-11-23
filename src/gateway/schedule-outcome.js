@@ -61,8 +61,13 @@ export function classifyScheduleResult(result = {}) {
   } };
 }
 
+// The outcomes that ask for attention: everything but a reported success or healthy no-op.
+export const HEALTHY_OUTCOMES = new Set(["succeeded", "no-op"]);
+export const needsAttention = (status) => !HEALTHY_OUTCOMES.has(status || "unreported");
+
 export function suppressScheduleResult(sched, result) {
   const status = result?.automationOutcome?.status || "unreported";
   return (sched.resultPolicy === "on-result" && status === "no-op") ||
+    (sched.resultPolicy === "on-failure" && !needsAttention(status)) ||
     (sched.failureNotify === false && !["succeeded", "no-op"].includes(status));
 }

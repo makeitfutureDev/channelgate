@@ -1,5 +1,27 @@
 # ChannelGate — Features
 
+## Unattended work: visible, hidden, or only on failure (2026-11-24)
+
+API runs and scheduled tasks can now stay out of the conversation unless something goes wrong.
+
+- **API runs** take `visibility` in `POST /api/runs` (`API_VISIBILITIES`, `src/gateway/api-runs.js`):
+  `visible` (default, unchanged: kickoff message, thread, answer), `hidden` (nothing is posted;
+  the run is headless in the channel's folder; results via `GET /api/runs/:id`, the webhook and the
+  Automations page), `on-failure` (hidden, plus ONE top-level alert in the channel when the run
+  needs attention — failed, blocked, interrupted, or no valid outcome report — naming the run, the
+  request, the reason and unavailable connections; also after a restart interrupted it).
+  `on-failure` implies `reportOutcome`, because a failed task is only known from the agent's report.
+  `conversationKey` continues a visible thread, so it is refused (400) with the other two values.
+  `GET` returns `visibility`.
+- **Schedules** gain result policy `on-failure` ("Send only when it fails or is blocked" in the
+  admin schedule editor; `result_policy: "on-failure"` in `create_schedule` / `update_schedule`;
+  `resultPolicy` on the admin PUT). Every succeeded or no-op run is suppressed; failed, blocked,
+  interrupted and unreported runs are delivered. With `execution_visibility: "silent"` that is a
+  task that never posts while healthy. It is refused for reminders and together with failure
+  notifications off (nothing would ever post).
+- **Automations page** shows how a task posts ("Silent start, posts only failures") and, on each API
+  run row, "Hidden in chat" / "Chat only on failure" / "Failure alert posted".
+
 ## API runs as automations, and success criteria (2026-11-24)
 
 HTTP API runs were invisible to the dashboard and their `completed` status only said the engine

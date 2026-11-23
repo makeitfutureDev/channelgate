@@ -52,7 +52,7 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     // the JSON record so a daemon restart cannot create a second thread for the same day.
     delivery: kind !== "reminder" && ["daily-thread", "channel", "dm-on-match", "thread"].includes(delivery) && (!once || delivery !== "daily-thread") ? delivery : "standard",
     executionVisibility: executionVisibility === "silent" ? "silent" : "visible",
-    resultPolicy: resultPolicy === "on-result" ? "on-result" : "always",
+    resultPolicy: ["on-result", "on-failure"].includes(resultPolicy) ? resultPolicy : "always",
     failureNotify: failureNotify !== false,
     deliveryThread: typeof deliveryThread === "string" ? deliveryThread : "",
     dailyThreadDate: "",
