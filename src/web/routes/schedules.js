@@ -8,6 +8,7 @@ import { settingsForApi } from "../../config/settings.js";
 import { costHistoryStart } from "../../ee/cost-history.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
+import { normalizeSuccessCriteria } from "../../gateway/schedule-outcome.js";
 
 export function createSchedulesRouter() {
   const router = Router();
@@ -96,6 +97,10 @@ export function createSchedulesRouter() {
         patch.prompt = req.body.prompt;
       }
       if (typeof req.body?.description === "string") patch.description = req.body.description;
+      if (Object.hasOwn(req.body || {}, "successCriteria")) {
+        try { patch.successCriteria = normalizeSuccessCriteria(req.body.successCriteria); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       if (Object.hasOwn(req.body || {}, "notify") && !["channel", "user", "none"].includes(req.body.notify)) {
         return res.status(400).json({ error: "invalid notification setting" });
       }

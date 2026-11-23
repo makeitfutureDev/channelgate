@@ -11,6 +11,11 @@ import { parseCron } from "../util/cron.js";
 import { daemonTimeZone, isUtcZone, zonedStamp } from "../util/timezone.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { activityChannelName } from "../slack/home-threads.js";
+import { apiSourcesForChannel, apiSourceRuns, API_SOURCE_PREFIX } from "./api-run-history.js";
+
+// The synthetic conversation of channel-less API runs (api-runs.js API_CHANNEL_ID). Admin-only.
+const API_CHANNEL_ID = "cg-api";
+const apiSources = (access, userId, channelId) => apiSourcesForChannel(channelId, { isAdmin: access.user?.isAdmin === true, userId });
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -72,17 +77,23 @@ export function recurrenceWords(s, opts) {
 export async function automationChannels(access, userId) {
   const out = [];
   for (const entry of await listChannels()) {
+    if (entry.channelId === API_CHANNEL_ID) {
+      const sources = access.user?.isAdmin === true ? apiSources(access, userId, API_CHANNEL_ID) : [];
+      if (sources.length) out.push({ channelId: API_CHANNEL_ID, name: "API runs without a conversation", personal: false, count: sources.length, failing: sources.filter(apiFailing).length });
+      continue;
+    }
     if (platformOfConversation(entry.channelId) !== "slack") continue;
     // Count first: a conversation without automations is never listed, and skipping it here
     // also spares its (possibly Slack-backed) membership check.
     const shown = listForChannel(entry.channelId).filter((s) => visible(s, access));
-    const count = shown.length;
+    const sources = apiSources(access, userId, entry.channelId);
+    const count = shown.length + sources.length;
     if (!count || !await access.allows(entry)) continue;
     const dm = isDM(entry);
     const meta = dm ? await getChannelMeta(entry.slug) : null;
     if (dm && meta?.dmUserId && meta.dmUserId !== userId) continue; // only the viewer's OWN DM
     const name = String(await activityChannelName(entry)).replace(/^#+/, "");
-    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${name}`, personal: dm, count, failing: failingCount(shown, entry.channelId) });
+    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${name}`, personal: dm, count, failing: failingCount(shown, entry.channelId) + sources.filter(apiFailing).length });
   }
   return out.sort((a, b) => Number(b.personal) - Number(a.personal) || b.count - a.count || a.name.localeCompare(b.name));
 }
@@ -96,9 +107,15 @@ function failingCount(schedules, channelId) {
 }
 
 const visible = (s, access) => !s.sudo || access.user?.isAdmin === true;
+// An API source asks for attention when its latest finished run failed.
+const apiFailing = (source) => FAILED_RUN_STATUSES.has(source.runs.lastStatus);
 
 // Throws 403 unless the viewer may see this conversation right now.
 export async function checkedChannel(access, userId, channelId) {
+  if (channelId === API_CHANNEL_ID) {
+    if (access.user?.isAdmin !== true) throw Object.assign(new Error("Conversation denied"), { status: 403 });
+    return { channelId, slug: "api", name: "API runs", synthetic: true };
+  }
   const entry = typeof channelId === "string" && /^[A-Z0-9]{1,32}$/.test(channelId) ? await getChannelEntry(channelId) : null;
   if (!entry || !await access.allows({ ...entry, channelId })) throw Object.assign(new Error("Conversation denied"), { status: 403 });
   if (isDM(entry)) {
@@ -112,19 +129,25 @@ const canDelete = (s, access, userId, entry) => access.user?.isAdmin === true ||
 
 export function channelAutomations(access, userId, entry, now = new Date()) {
   const historyStart = costHistoryStart();
-  return listForChannel(entry.channelId).filter((s) => visible(s, access)).map((s) => {
+  const api = apiSources(access, userId, entry.channelId).map((src) => ({ id: src.id, title: src.title,
+    instructions: "", kind: "API", recurrence: src.revoked ? "Started by HTTP API calls · token revoked" : "Started by HTTP API calls",
+    enabled: true, nextRun: null, createdBy: "", mine: false, canDelete: false,
+    runs: { total: src.runs.total, running: src.runs.running, lastStatus: src.runs.lastStatus, lastStartedAt: src.runs.lastStartedAt, successRate: src.runs.successRate, costUsd: src.runs.costUsd } }));
+  if (entry.synthetic) return api;
+  return api.concat(listForChannel(entry.channelId).filter((s) => visible(s, access)).map((s) => {
     const next = scheduleNextRun(s, now);
     const summary = scheduleRunSummary(s.id, entry.channelId, historyStart);
     return { id: s.id, title: s.description || (s.kind === "reminder" ? "Reminder" : "Scheduled task"),
-      instructions: String(s.prompt || "").slice(0, 4000), kind: s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task",
+      instructions: String(s.prompt || "").slice(0, 4000), successCriteria: String(s.successCriteria || "").slice(0, 2000), kind: s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task",
       recurrence: recurrenceWords(s), enabled: s.enabled !== false, nextRun: next ? zonedStamp(next) : null,
       createdBy: s.createdBy || "", mine: s.createdBy === userId, canDelete: canDelete(s, access, userId, entry),
       runs: { total: summary.total, lastStatus: summary.lastStatus, lastStartedAt: summary.lastStartedAt, successRate: summary.successRate } };
-  });
+  }));
 }
 
 const RUN_FIELDS = ["id", "status", "startedAt", "completedAt", "durationMs", "summary", "error", "engine", "model", "costUsd", "deliveryStatus", "taskStatus"];
-export function automationRuns(access, entry, scheduleId) {
+export function automationRuns(access, entry, scheduleId, userId = "") {
+  if (scheduleId.startsWith(API_SOURCE_PREFIX)) return apiSourceRuns(entry.channelId, scheduleId, { isAdmin: access.user?.isAdmin === true, userId });
   const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
   if (s && !visible(s, access)) throw Object.assign(new Error("Automation denied"), { status: 403 });
   return listScheduleRuns({ scheduleId, channelId: entry.channelId, limit: 30 })
@@ -132,6 +155,7 @@ export function automationRuns(access, entry, scheduleId) {
 }
 
 export function deleteAutomation(access, userId, entry, scheduleId) {
+  if (scheduleId.startsWith(API_SOURCE_PREFIX)) throw Object.assign(new Error("API runs are not deletable; revoke the token instead"), { status: 404 });
   const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
   if (!s || !visible(s, access)) throw Object.assign(new Error("Not found"), { status: 404 });
   if (!canDelete(s, access, userId, entry)) throw Object.assign(new Error("Not yours"), { status: 403 });

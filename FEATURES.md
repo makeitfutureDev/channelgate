@@ -1,5 +1,36 @@
 # ChannelGate — Features
 
+## API runs as automations, and success criteria (2026-11-24)
+
+HTTP API runs were invisible to the dashboard and their `completed` status only said the engine
+finished. They now report a task outcome the way schedules do, and any automation can carry an
+optional **goal**.
+
+- **Success criteria.** A schedule (`create_schedule` / `update_schedule` `success_criteria`, the
+  admin `PUT /schedules/:id` `successCriteria`) and an API run (`POST /api/runs` `successCriteria`)
+  may state what must be true for a run to count as succeeded (≤ 2000 characters). It is inserted
+  into the outcome-report instruction (`automationPrompt`, `src/gateway/schedule-outcome.js`): the
+  agent checks each criterion against the target systems and reports succeeded / failed / blocked
+  naming the unmet one. Still agent-reported evidence, not independent verification. Editing it
+  follows the prompt's rule (creator or admin, `expected_prompt`).
+- **API run outcomes** (`apiRunOutcome`, `src/gateway/api-runs.js`). Every job records `taskStatus`
+  and `outcome` (status, summary, connections, source) beside the unchanged `status`. Engine
+  failures and admission refusals — product-license cap, usage/spending limit, harness lock — are
+  gateway facts on every run (`failed`, `blocked`). The agent's own report is requested only with
+  `reportOutcome: true` or a `successCriteria`; then the report block is stripped from the answer
+  and the live Slack stream of answer text is off for that run so the block is never shown. A clean
+  run without a report is `unreported`. `GET /api/runs[/:id]` and the webhook add `taskStatus`,
+  `outcome`, `successCriteria` (GET) and `model`.
+- **Automations page.** Each conversation lists its API sources beside its schedules: one per
+  channel API token and one for the deprecated organization key, with the last-7-days run history
+  (status, engine · model, duration, cost under the plan's cost-history window, error or outcome
+  summary, unavailable connections, pending Slack/webhook delivery), runs in flight, the success
+  rate over reported runs, and the failing badge / "Only with errors" filter. Visibility follows the
+  API-token rule: admins see every source including the organization key; anyone else only the
+  runs of tokens they created. Channel-less runs appear for admins as "API runs without a
+  conversation". API sources cannot be deleted (revoke the token). Source:
+  `src/gateway/api-run-history.js`, `src/gateway/automations-view.js`.
+
 ## Engine licenses: a license limited to one conversation (2026-11-23)
 
 A customer's own account in one channel is now an ordinary engine license with a limit, not a
