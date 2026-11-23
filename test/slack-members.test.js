@@ -234,3 +234,27 @@ test("member-left lifecycle removes the departed user's channel guest grant", as
   assert.deepEqual(stored, { allowedUsers: ["U_KEEP"], memory: true });
   assert.equal(await handleMemberLeftChannel({ channel: "", user: "U_KEEP" }, deps), false);
 });
+
+test("cached conversation members: one shared Slack lookup, TTL expiry, failure not cached, events invalidate", async () => {
+  const { cachedConversationMemberIds, invalidateConversationMembers } = await import("../src/slack/members.js");
+  let calls = 0, fail = false, members = ["U1"];
+  const client = { conversations: { members: async () => { calls++; if (fail) throw new Error("ratelimited"); return { members: [...members] }; } } };
+  let t = 1000;
+  const now = () => t;
+  invalidateConversationMembers("GCACHE");
+  const [a, b] = await Promise.all([cachedConversationMemberIds(client, "GCACHE", { now }), cachedConversationMemberIds(client, "GCACHE", { now })]);
+  assert.deepEqual(a, ["U1"]); assert.deepEqual(b, ["U1"]); assert.equal(calls, 1);
+  members = ["U1", "U2"];
+  t += 30_000;
+  assert.deepEqual(await cachedConversationMemberIds(client, "GCACHE", { now }), ["U1"]);
+  assert.equal(calls, 1);
+  invalidateConversationMembers("GCACHE"); // member_joined_channel / member_left_channel
+  assert.deepEqual(await cachedConversationMemberIds(client, "GCACHE", { now }), ["U1", "U2"]);
+  assert.equal(calls, 2);
+  t += 61_000; fail = true;
+  await assert.rejects(cachedConversationMemberIds(client, "GCACHE", { now }), /ratelimited/);
+  fail = false;
+  assert.deepEqual(await cachedConversationMemberIds(client, "GCACHE", { now }), ["U1", "U2"]);
+  assert.equal(calls, 4);
+  invalidateConversationMembers("GCACHE");
+});

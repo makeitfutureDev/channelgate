@@ -76,6 +76,9 @@ export function recurrenceWords(s, opts) {
 // The conversations the viewer may open, DM first. Sudo schedules are admin-only.
 export async function automationChannels(access, userId) {
   const out = [];
+  // Count first: a conversation without automations is never listed, and skipping it here
+  // also spares its (possibly Slack-backed) membership check.
+  const candidates = [];
   for (const entry of await listChannels()) {
     if (entry.channelId === API_CHANNEL_ID) {
       const sources = access.user?.isAdmin === true ? apiSources(access, userId, API_CHANNEL_ID) : [];
@@ -83,12 +86,14 @@ export async function automationChannels(access, userId) {
       continue;
     }
     if (platformOfConversation(entry.channelId) !== "slack") continue;
-    // Count first: a conversation without automations is never listed, and skipping it here
-    // also spares its (possibly Slack-backed) membership check.
     const shown = listForChannel(entry.channelId).filter((s) => visible(s, access));
     const sources = apiSources(access, userId, entry.channelId);
+    if (shown.length + sources.length) candidates.push({ entry, shown, sources });
+  }
+  await access.prefetch?.(candidates.map((c) => c.entry));
+  for (const { entry, shown, sources } of candidates) {
     const count = shown.length + sources.length;
-    if (!count || !await access.allows(entry)) continue;
+    if (!await access.allows(entry)) continue;
     const dm = isDM(entry);
     const meta = dm ? await getChannelMeta(entry.slug) : null;
     if (dm && meta?.dmUserId && meta.dmUserId !== userId) continue; // only the viewer's OWN DM
