@@ -145,7 +145,7 @@ test("Google Chat quiet progress keeps the model, heartbeat and aliased subagent
   progress.event({ kind: "agent_activity", id: "a", aliasIds: ["b"], status: "running" });
   progress.event({ kind: "agent_activity", id: "b", status: "running" });
   t.mock.timers.tick(30000); await flush();
-  assert.match(edits.at(-1).text, /Codex · gpt-6\.1-sol/);
+  assert.match(edits.at(-1).text, /gpt-6\.1-sol/);
   assert.doesNotMatch(edits.at(-1).text, /default/);
   assert.match(edits.at(-1).text, /30s elapsed.*1 subagent\(s\) running\. Still connected/);
   progress.event({ kind: "agent_activity", id: "b", status: "completed" });
