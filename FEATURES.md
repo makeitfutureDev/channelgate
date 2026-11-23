@@ -1363,6 +1363,19 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 
 → TEST-PLAN: Container process limit (2026-11-19).
 
+## Faster Activity and dashboard lists (2026-11-24)
+
+Dashboard pages no longer ask Slack for a private conversation's member list one conversation at a
+time on every load. Membership answers are shared across requests for up to 60 seconds
+(`cachedConversationMemberIds` in `src/slack/members.js`), concurrent lookups of one conversation
+share one Slack request, a failed lookup is never cached, and Slack's `member_joined_channel` /
+`member_left_channel` events clear the conversation's entry at once. The Activity feed and the Automations list warm
+the membership of the conversations they need with up to six lookups at a time. Thread status
+(working, done, waiting) is still read live on every refresh. Message, approval and question
+authorization keep their live membership checks.
+
+→ TEST-PLAN: Faster Activity and dashboard lists (2026-11-24).
+
 ## Activity dashboard layout, error filter and harness groups (2026-11-24)
 
 - Every dashboard page (Calls, Automations, Skills, Subscriptions, every Settings section) shares

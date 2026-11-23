@@ -1951,6 +1951,18 @@ can still name it, resolves to the normal default instead of ending a turn or re
       recreating its container with `--pids-limit 4096` (`podman inspect --format
       '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
 
+## Faster Activity and dashboard lists (2026-11-24)
+
+Regression: `test/slack-members.test.js` (shared lookup, TTL, failure not cached, invalidation),
+`test/activity.test.js`, `test/home-threads.test.js`, `test/activity-automations.test.js`.
+Live (engine-independent — no engine runs): on a gateway whose viewer belongs to 20+ private
+channels or group DMs with automations, open Activity and then Automations; a second load within
+60 s must not call `conversations.members` again (daemon log / Slack API count) and must render
+in well under a second. Remove the viewer from one private channel in Slack: on the next refresh
+that channel's threads and automations are gone (the leave event clears the cache). Start a turn
+from the dashboard's thread and require its row to change to working and then done on refresh with
+no extra delay.
+
 ## Activity dashboard layout, error filter and harness groups (2026-11-24)
 
 Engine-independent (dashboard rendering only). Regression: `test/activity-automations.test.js`

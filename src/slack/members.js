@@ -60,6 +60,38 @@ export async function handleBotJoinedChannel(event, deps) {
   });
 }
 
+// Short-lived shared membership cache for READ views (Activity dashboard, Automations, and the
+// other dashboard lists). A page load used to page conversations.members for every private
+// conversation one after another, on every request. Departures and joins clear the entry the
+// moment Slack reports them (invalidateConversationMembers), so the TTL only bounds a missed
+// event. Concurrent lookups of the same conversation share one request. Action paths (messages,
+// approvals, questions) keep calling listConversationMemberIds directly.
+export const CONVERSATION_MEMBERS_TTL_MS = 60 * 1000;
+// Keyed by Slack client first, so a reconnected app (new token, new workspace) starts empty.
+let memberCaches = new WeakMap(); // client -> Map(channelId -> { at, ids } | { pending })
+const invalidators = new Set();
+export function invalidateConversationMembers(channelId) {
+  if (!channelId) { memberCaches = new WeakMap(); invalidators.clear(); return; }
+  for (const cache of invalidators) cache.delete(channelId);
+}
+export async function cachedConversationMemberIds(client, channelId, { now = Date.now, ttlMs = CONVERSATION_MEMBERS_TTL_MS } = {}) {
+  let memberCache = memberCaches.get(client);
+  if (!memberCache) { memberCache = new Map(); memberCaches.set(client, memberCache); invalidators.add(memberCache); }
+  const hit = memberCache.get(channelId);
+  if (hit?.pending) return hit.pending;
+  if (hit && now() - hit.at <= ttlMs) return hit.ids;
+  const marker = {};
+  marker.pending = listConversationMemberIds(client, channelId).then((ids) => {
+    if (memberCache.get(channelId) === marker) memberCache.set(channelId, { at: now(), ids });
+    return ids;
+  }, (error) => {
+    if (memberCache.get(channelId) === marker) memberCache.delete(channelId);
+    throw error;
+  });
+  memberCache.set(channelId, marker);
+  return marker.pending;
+}
+
 const MEMBER_PAGE_SIZE = 200;
 const USER_LOOKUP_BATCH = 8;
 const membershipMutationTails = new Map();

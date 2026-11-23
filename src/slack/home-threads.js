@@ -6,7 +6,7 @@ import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 import { platformOfConversation } from "../platforms/ids.js";
-import { listConversationMemberIds } from "./members.js";
+import { cachedConversationMemberIds } from "./members.js";
 import { listPendingApprovals } from "./approvals.js";
 import { clearDone, markDone } from "../gateway/followups.js";
 import { syncThreadDoneMarker } from "./thread-done-marker.js";
@@ -44,13 +44,31 @@ export function normalizeThreadView(value = {}) {
   return { filter: Object.hasOwn(LABELS, value.filter) ? value.filter : "active", page: Number.isSafeInteger(page) && page >= 0 ? Math.min(page, 1000000) : 0 };
 }
 
+const MEMBERSHIP_PREFETCH_CONCURRENCY = 6;
+
 export async function accessContext(client, userId) {
   const user = await getUser(userId) || {};
   const membership = new Map();
   let unavailable = false;
+  const members = (channelId) => {
+    if (!membership.has(channelId)) {
+      membership.set(channelId, cachedConversationMemberIds(client, channelId).catch(() => { unavailable = true; return []; }));
+    }
+    return membership.get(channelId);
+  };
   return {
     user,
     get unavailable() { return unavailable; },
+    // Warm the membership of several private conversations at once (bounded), so the checks
+    // that follow do not wait on Slack one conversation at a time.
+    async prefetch(entries, concurrency = MEMBERSHIP_PREFETCH_CONCURRENCY) {
+      const ids = [...new Set([...entries].filter((e) => e && !["channel", "C"].includes(e.type)
+        && platformOfConversation(e.channelId) === "slack").map((e) => e.channelId))];
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, async () => {
+        while (next < ids.length) await members(ids[next++]);
+      }));
+    },
     async allows(entry, threadTs = "") {
       if (!entry || platformOfConversation(entry.channelId) !== "slack") return false;
       const meta = await getChannelMeta(entry.slug);
@@ -59,11 +77,7 @@ export async function accessContext(client, userId) {
       // Public channels need gateway admission. Private/group/DM conversation names and content
       // require actual Slack membership even for an organization admin, with no stale cache.
       if (!["channel", "C"].includes(entry.type)) {
-        if (!membership.has(entry.channelId)) {
-          try { membership.set(entry.channelId, await listConversationMemberIds(client, entry.channelId)); }
-          catch { unavailable = true; membership.set(entry.channelId, []); }
-        }
-        if (!membership.get(entry.channelId).includes(userId)) return false;
+        if (!(await members(entry.channelId)).includes(userId)) return false;
       }
       if (threadTs && !user.isAdmin && await getThreadSudo(entry.slug, threadTs)) return false;
       return true;
@@ -361,7 +375,9 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
     && (pinned.has(JSON.stringify([row.channel_id, row.thread_ts])) || pinnedChannels.has(row.channel_id));
   let ordinaryCount = 0, hiddenCount = 0, archivedCount = 0;
   let truncated = false;
-  for (const row of eligibleSlackThreadsForUser(userId)) {
+  const eligibleRows = eligibleSlackThreadsForUser(userId);
+  await access.prefetch(eligibleRows.map((row) => channels.get(row.channel_id)));
+  for (const row of eligibleRows) {
     if (row.hidden_ms > 0 && !requested.includeHidden) continue;
     // Shared Done stays visible until this viewer completes it personally or hides it.
     const status = slackThreadStatus(row, runtime);

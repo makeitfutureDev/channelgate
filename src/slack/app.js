@@ -65,7 +65,7 @@ import { COMPOSIO_INVENTORY_ACTION_ID } from "./composio-inventory-view.js";
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
 import { readBotMemberships } from "./bot-membership.js";
-import { handleBotJoinedChannel, handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
+import { handleBotJoinedChannel, handleMemberLeftChannel, invalidateConversationMembers, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -3547,6 +3547,7 @@ async function connectAndWire(app) {
     }
   });
   app.event("member_left_channel", async ({ event }) => {
+    invalidateConversationMembers(event.channel);
     try {
       if (await handleMemberLeftChannel(event, { botUserId, getChannelEntry, patchChannelMeta, ensureChannelFolder })) {
         if (event.user === botUserId) {
@@ -3613,6 +3614,7 @@ async function connectAndWire(app) {
   // MakeItFuture members. When a MIF member later joins, add just them. Non-MIF members are
   // never added (only approved users on the MakeItFuture list).
   app.event("member_joined_channel", async ({ event, client }) => {
+    invalidateConversationMembers(event.channel);
     try {
       if (event.user === botUserId) {
         const joined = await handleBotJoinedChannel(event, {
