@@ -1,4 +1,5 @@
-import { engineLabel } from "../engines/registry.js";
+import { engineLabel, harnessOf, modelsForEngine } from "../engines/registry.js";
+import { harnessLabel } from "../engines/license-state.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -7,10 +8,32 @@ function firstNonEmpty(...values) {
   return "";
 }
 
-// An unset effort delegates to the CLI. Keep that choice visible without inventing a level or
-// changing the runner's flags. Shared by the live runner label and completed-reply statistics.
-export function effortLabel({ effort } = {}) {
-  return firstNonEmpty(effort) || "default effort";
+// The effort a run actually uses: the configured one, else the model catalog's declared default
+// for that model (Codex discovery reports it). Unknown → "" and the label omits it — a status
+// never says "default effort". Shared by the live runner label and completed-reply statistics.
+export function effortLabel({ effort, engine = "", model = "" } = {}) {
+  const set = firstNonEmpty(effort);
+  if (set) return set;
+  if (!engine || !model) return "";
+  try {
+    return modelsForEngine(engine).find((entry) => entry.value === String(model).trim())?.defaultEffort || "";
+  } catch { return ""; }
+}
+
+// The harness running a license ("Claude", "Codex") — what a live status names, never the
+// license/account name.
+export function runtimeHarnessLabel(engine) {
+  const harness = harnessOf(engine);
+  return (harness && harnessLabel(harness)) || engineLabel(engine) || String(engine || "");
+}
+
+// "Claude · Opus 5.5 (high)": harness, the real model, the real effort when known.
+export function runtimeStatusLabel({ engine = "", model = "", effort = "" } = {}, { display = false } = {}) {
+  const harness = runtimeHarnessLabel(engine);
+  if (!model) return harness;
+  const name = display ? modelDisplayLabel(model, engine) : modelLabel({ engine, model });
+  const level = effortLabel({ effort, engine, model });
+  return `${harness ? `${harness} · ` : ""}${name}${level ? ` (${level})` : ""}`;
 }
 
 function numberField(value, ...keys) {

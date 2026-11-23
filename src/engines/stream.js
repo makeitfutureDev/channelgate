@@ -296,7 +296,11 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     // the actual top-level provider message separately: a tiny answer can use fewer tokens
     // than a Haiku title, and neither that title nor a child agent identifies the answering model.
     const primary = p && !p.parent_tool_use_id && !p.parentToolUseId;
-    if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") initialModel = p.model.trim();
+    if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") {
+      initialModel = p.model.trim();
+      // The model the CLI actually runs, so a status label never has to say "CLI default".
+      if (initialModel) onEvent?.({ kind: "runtime_model", model: initialModel });
+    }
     const message = p?.type === "assistant" ? p.message : p?.type === "stream_event" && p.event?.type === "message_start" ? p.event.message : null;
     const model = typeof message?.model === "string" ? message.model.trim() : "";
     if (primary && !p.error && !message?.error && model && model !== "<synthetic>") {

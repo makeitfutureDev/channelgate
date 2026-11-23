@@ -3773,7 +3773,7 @@ not imply native-client or deployed-runtime acceptance.
 
 Regression: `node --test test/message-cost-visibility.test.js test/runtime-identity-preamble.test.js test/runtime-integration-surfaces.test.js test/platform-run-details.test.js test/skill-runtime.test.js`.
 Also run `test/slack-progress.test.js` and `test/slack-stop-progress.test.js`.
-Confirm effort follows the model with cost shown or hidden, unspecified effort reads `default effort`, fresh/resumed
+Confirm effort follows the model with cost shown or hidden, unspecified effort is the model's declared default or omitted (never `default effort`), fresh/resumed
 results preserve every override layer, and failover/model retries retain the answering attempt's effort.
 
 Live acceptance, separately for Claude and Codex: in a disposable Slack Worker fixture, select a
@@ -3781,8 +3781,9 @@ compatible model and Low effort via `/model` for this thread. Send "Reply OK", t
 "Reply OK again". Pass: both footers begin `model · low`, followed by optional cost and the
 `ctx:` segment (see Reply footer context). Change thread effort to High and repeat; the next footer says
 `high`, earlier footers retain `low`. Clear all gateway/channel/thread effort choices on the fixture;
-pass: both the native running/Stop label (`model (default effort)`) and footer
-(`model · default effort · …`) retain effort text. Observe the assistant status/loading line too.
+pass: the native running/Stop label reads `<harness> · <real model>` (e.g. `Claude Code · Opus 5.5`,
+never the license name, `CLI default` or `default effort`) and the footer `model · …` with the
+model's declared default effort when known. Observe the assistant status/loading line too.
 Switch from explicit High to a fallback engine with all efforts unset: the old High must disappear
 from both live and final labels. CLI flags and stored settings must remain unchanged. Restore fixture settings.
 Inspect both streamed and classic reply paths; the same shared formatter supplies unattended replies.
