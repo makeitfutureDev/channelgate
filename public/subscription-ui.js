@@ -59,12 +59,24 @@ export function createSubscriptionUi() {
     const items = rows.filter(hasNoQuota).map((row) => `<li><strong>${esc(row.name)}</strong> — ${esc(row.message || "No subscription quota.")}</li>`).join("");
     return items ? `<section class="subscription-notes" aria-label="Licenses without a subscription quota"><h3>No subscription quota</h3><ul>${items}</ul></section>` : "";
   }
-  const cards = (rows) => rows.filter((row) => !hasNoQuota(row)).map(card).join("");
-  return { card, cards, notes, summary, reset, isSubscription };
+  // Cards grouped under one heading per harness (Claude Code, Codex, …), in first-seen order.
+  const HARNESS_LABELS = { claude: "Claude Code", codex: "Codex" };
+  function grouped(rows) {
+    const groups = new Map();
+    for (const row of rows) {
+      const key = typeof row.harness === "string" && row.harness ? row.harness : "other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    return [...groups].map(([key, items]) => `<section class="subscription-group" aria-label="${esc(HARNESS_LABELS[key] || key)}"><h2 class="subscription-group-title">${esc(HARNESS_LABELS[key] || (key === "other" ? "Other" : key))} <span>${items.length}</span></h2><div class="subscription-grid">${items.map(card).join("")}</div></section>`).join("");
+  }
+  const cards = (rows) => grouped(rows.filter((row) => !hasNoQuota(row)));
+  return { card, cards, grouped, notes, summary, reset, isSubscription };
 }
 
 export const SUBSCRIPTION_CSS = `
 .subscription-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;margin:20px 0;align-items:start}
+.subscription-group{grid-column:1/-1;min-width:0}.subscription-group .subscription-grid{margin:10px 0 22px}.subscription-group-title{font-size:15px;margin:0;font-weight:600}.subscription-group-title span{color:var(--muted);font-weight:500;font-size:13px}
 .subscription-card{min-width:0;padding:16px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .subscription-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.subscription-card h3{font-size:18px;line-height:1.4;margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere}
 .subscription-account{display:flex;flex-direction:column;gap:2px;margin:-5px 0 12px;color:var(--muted);font-size:14px;overflow-wrap:anywhere}.subscription-workspace{font-size:13px;opacity:1}

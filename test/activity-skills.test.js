@@ -125,13 +125,13 @@ test("selection diff is case-insensitive", () => {
   assert.deepEqual(picker.skillSelectionDiff(["A", "b"], ["a", "C"]), { added: ["C"], removed: ["b"] });
 });
 
-test("the dashboard renders a Skills tab and page; Settings points to it", () => {
+test("Skills renders as a Settings section with its own page; the top menu has no Skills tab", () => {
   const page = activityPage({ sessionId: "s", csrf: "c", view: "skills" });
   assert.match(page.html, /<title>Skills · ChannelGate/);
   assert.match(page.html, /id="skills-channel"/);
   assert.match(page.html, /id="skills-search"/);
   assert.match(page.html, /id="skills-pending"[^>]* hidden/);
   assert.match(page.html, /\/skills" aria-current="page">Skills</);
-  assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, />Skills<\/a>/);
+  assert.doesNotMatch(activityPage({ sessionId: "s", csrf: "c" }).html, /<a href="\/activity\/s\/skills"/);
   assert.match(activityPage({ sessionId: "s", csrf: "c", view: "settings" }).html, /Open the Skills page/);
 });

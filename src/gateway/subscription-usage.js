@@ -177,7 +177,7 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
     const manifest = adapter(engine);
     const usage = manifest?.subscriptionUsage;
     const provider = usage?.provider;
-    const base = { account: publicAccount(null), provider: engine, kind: "unsupported", name: displayName(engine) || manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+    const base = { account: publicAccount(null), provider: engine, harness: manifest?.cli || "", kind: "unsupported", name: displayName(engine) || manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
     if (!Object.hasOwn(ENDPOINTS, provider || "")) {
       cache.delete(engine);
       // Say WHY there is nothing to show: a per-channel account and a pay-per-use key have no

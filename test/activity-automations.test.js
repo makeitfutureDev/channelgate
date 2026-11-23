@@ -67,3 +67,17 @@ test("the dashboard renders an Automations tab and page", () => {
   assert.match(page.html, /\/automations" aria-current="page">Automations</);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, />Automations<\/a>/);
 });
+
+test("dashboard layout: wide pages, Skills under Settings, automations error filter, subscriptions by harness", async () => {
+  const { activityPage } = await import("../src/web/activity-page.js");
+  const { createSubscriptionUi } = await import("../public/subscription-ui.js");
+  const skills = activityPage({ sessionId: "s", csrf: "c", view: "skills" }).html;
+  assert.match(skills, /class="settings-tab" href="\/activity\/s\/skills" aria-current="page">Skills/);
+  assert.doesNotMatch(skills, /<a href="\/activity\/s\/skills"/);
+  assert.match(skills, /\.calls-page\{max-width:1800px/);
+  assert.match(skills, /\.settings-page\{width:100%;max-width:1800px/);
+  const automations = activityPage({ sessionId: "s", csrf: "c", view: "automations" }).html;
+  assert.match(automations, /id="automation-errors"/);
+  const html = createSubscriptionUi().grouped([{ name: "A", harness: "claude" }, { name: "B", harness: "codex" }, { name: "C", harness: "claude" }]);
+  assert.deepEqual([...html.matchAll(/subscription-group-title">([^<]+)/g)].map((m) => m[1].trim()), ["Claude Code", "Codex"]);
+});

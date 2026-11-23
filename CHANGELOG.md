@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Dashboard: every page now uses the same wide layout; Skills moved into Settings; Automations can
+  show only the conversations whose automations are failing; Subscriptions are grouped by harness.
 - A channel can now reach a private or local service — a LAN SSH/SFTP or FTP server, a NAS, an
   internal API, an MCP server on the gateway host — once an organization admin approves that exact
   host and port. Ask with `allow_channel_private_host`; the card shows the address the host

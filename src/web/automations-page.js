@@ -6,6 +6,10 @@ export function automationsBrowser(config, browser) {
   const listEl = document.getElementById("automation-list");
   const notice = document.getElementById("automations-status");
   const refresh = document.getElementById("automations-refresh");
+  const errorsOnly = document.getElementById("automation-errors");
+  const FAILED = ["failed", "blocked", "interrupted"];
+  const failing = (a) => a.enabled && FAILED.includes(a.runs?.lastStatus);
+  let channels = [];
   const node = (tag, text, cls) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (cls) el.className = cls; return el; };
   const when = (iso) => iso ? new Date(iso).toLocaleString() : "";
   const STATUS = { succeeded: "Succeeded", "no-op": "Nothing to do", failed: "Failed", blocked: "Blocked", unreported: "Finished", interrupted: "Interrupted", skipped: "Skipped", queued: "Queued", running: "Running" };
@@ -28,6 +32,7 @@ export function automationsBrowser(config, browser) {
     const details = node("details", undefined, "automation-card");
     const head = node("summary");
     head.append(node("span", a.title, "automation-title"), node("span", a.recurrence, "automation-recurrence"));
+    if (failing(a)) head.append(node("span", "Last run " + (STATUS[a.runs.lastStatus] || a.runs.lastStatus).toLowerCase(), "automation-failing"));
     const meta = node("span", (a.enabled ? (a.nextRun ? "Next: " + a.nextRun : "No upcoming run") : "Paused") + " · " + a.kind + (a.mine ? " · created by you" : ""), "automation-meta");
     head.append(meta);
     details.append(head);
@@ -66,32 +71,45 @@ export function automationsBrowser(config, browser) {
     notice.textContent = "Loading automations…"; listEl.replaceChildren();
     try {
       const data = await request("/api/automations/" + encodeURIComponent(select.value));
-      listEl.replaceChildren(...data.automations.map(card));
-      notice.textContent = data.automations.length ? "" : "No automations in this conversation.";
+      const shown = errorsOnly.checked ? data.automations.filter(failing) : data.automations;
+      listEl.replaceChildren(...shown.map(card));
+      notice.textContent = shown.length ? "" : errorsOnly.checked ? "No automation here is failing right now." : "No automations in this conversation.";
     } catch (error) { notice.textContent = error.message; }
+  }
+  // "Only with errors" narrows the picker to conversations with a failing automation, most first.
+  async function paintChannels(previous = select.value) {
+    const list = errorsOnly.checked ? channels.filter((c) => c.failing > 0).sort((a, b) => b.failing - a.failing) : channels;
+    const total = channels.reduce((sum, c) => sum + (c.failing || 0), 0);
+    errorsOnly.parentElement.lastChild.textContent = " Only with errors" + (total ? " (" + total + ")" : "");
+    select.replaceChildren(...list.map((c) => { const o = node("option", c.name + " (" + c.count + (c.failing ? " · " + c.failing + " failing" : "") + ")"); o.value = c.channelId; return o; }));
+    listEl.replaceChildren();
+    if (!list.length) { notice.textContent = errorsOnly.checked ? "No conversation has a failing automation." : "None of the conversations you can access has an automation yet."; return; }
+    if (list.some((c) => c.channelId === previous)) select.value = previous;
+    await loadChannel();
   }
   async function loadChannels() {
     refresh.disabled = true; notice.textContent = "Loading conversations…";
     const previous = select.value;
     try {
       const data = await request("/api/automations");
-      select.replaceChildren(...data.channels.map((c) => { const o = node("option", c.name + " (" + c.count + ")"); o.value = c.channelId; return o; }));
-      if (!data.channels.length) { notice.textContent = "None of the conversations you can access has an automation yet."; return; }
-      if (data.channels.some((c) => c.channelId === previous)) select.value = previous;
-      await loadChannel();
+      channels = data.channels;
+      await paintChannels(previous);
     } catch (error) { notice.textContent = error.message; }
     finally { refresh.disabled = false; }
   }
   select.addEventListener("change", () => { void loadChannel(); });
+  errorsOnly.addEventListener("change", () => { void paintChannels(); });
   refresh.addEventListener("click", () => { void loadChannels(); });
   void loadChannels();
 }
 
-export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders and loops in the conversations you can access that have any. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
+export const AUTOMATIONS_HTML = `<section class="calls-page automations-page" aria-label="Automations"><div class="calls-head"><h1>Automations</h1><button id="automations-refresh" class="order-button" type="button">Refresh</button></div><p class="calls-copy">Scheduled tasks, reminders and loops in the conversations you can access that have any. Your direct messages hold your personal ones.</p><label class="automation-picker">Conversation <select id="automation-channel"></select></label><label class="automation-errors"><input type="checkbox" id="automation-errors"> Only with errors</label><p id="automations-status" role="status" aria-live="polite">Loading…</p><div id="automation-list"></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
 
 export const AUTOMATIONS_CSS = `
 .automation-picker{display:flex;gap:10px;align-items:center;font-size:14px}
 .automation-picker select{flex:1;min-width:0;max-width:420px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit}
+.automation-errors{display:inline-flex;gap:6px;align-items:center;margin-top:10px;font-size:13px;color:var(--muted);cursor:pointer}
+.automation-failing{color:#e5484d;font-weight:600}
 #automations-status{color:var(--muted);font-size:13px;margin:14px 0}
 .automation-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:12px 0;overflow:hidden}
 .automation-card>summary{display:flex;flex-wrap:wrap;gap:6px 20px;cursor:pointer;padding:16px 18px;font-size:13px;list-style:revert}
