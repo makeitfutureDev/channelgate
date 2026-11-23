@@ -56,7 +56,7 @@ import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
+import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, engineSessionState, fallbackEffortFor } from "../engines/registry.js";
 import { codexHarnessFor } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
 import { LICENSE_POOL_ANY, licensePoolCandidates, readLicensePool, selectableLicenses } from "./license-pool.js";
@@ -1468,7 +1468,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   }
   const gatewayDefaultEffort = getDefaultEffort(engine);
   const effortForModel = (selectedModel) => [threadEffort, meta.effort, gatewayDefaultEffort]
-    .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
+    .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || fallbackEffortFor(engine, selectedModel);
   // Dashboard-only lifecycle signal: by this point the exact spawn engine/model are known. Keep it
   // best-effort so a display-layer callback can never prevent an engine run.
   try { onRuntimeResolved?.({ engine, model, effort: effortForModel(model), ...runtimeSignal }); } catch { /* non-fatal */ }
@@ -1958,7 +1958,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       : meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
     const fallbackDefaultEffort = (keepsTurnModel && effortForModel(model)) || getDefaultEffort(fallbackEngine);
-    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
+    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: (fallbackDefaultEffort && effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : fallbackEffortFor(fallbackEngine, fallbackModel)), ...runtimeSignal }); } catch { /* non-fatal */ }
     const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
     // Failing over TO Claude needs Claude's credential, which the primary turn never resolved when
@@ -1979,7 +1979,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (note) announceAnswerNote(note);
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
-      const effort = effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : "";
+      const effort = (fallbackDefaultEffort && effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : fallbackEffortFor(fallbackEngine, modelOverride));
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
@@ -2055,7 +2055,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         toModel: defaultModel,
         crossEngineFallback: true,
       });
-      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, defaultModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
+      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, effort: (fallbackDefaultEffort && effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, defaultModel) ? fallbackDefaultEffort : fallbackEffortFor(fallbackEngine, defaultModel)), ...runtimeSignal }); } catch { /* non-fatal */ }
       // Told to the delivery layer BEFORE the retry spawns, because a Slack answer is written from
       // the live stream: a note added to the finished `content` below never reaches the message a
       // streamed turn produced. Nothing has streamed yet (the rejection landed before generation),

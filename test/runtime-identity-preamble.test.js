@@ -249,7 +249,7 @@ test("clean runs retain only safe runtime facts, and an unspecified model stays 
   await runMessage({ ...context, text: "Tell me what is inspectable." });
   const [call] = attempts(start);
   assert.ok(call);
-  assert.deepEqual(metadata(call), { engine: "codex", configured_model: null, configured_effort: null, session: "fresh" });
+  assert.deepEqual(metadata(call), { engine: "codex", configured_model: null, configured_effort: "medium", session: "fresh" });
   const prompt = call.args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
   assert.doesNotMatch(prompt, /Channel memory|Composio identities|Current personal skill grants/);
   assert.match(prompt, /null means.*not exposed/i);
@@ -277,8 +277,8 @@ test("cross-engine fallback and its model retry use their own engine, model, eff
   assert.equal(calls.length, 3);
   for (const call of calls) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
   assert.deepEqual(metadata(calls[0]), { engine: "claude", configured_model: "sonnet", configured_effort: "high", session: "fresh" });
-  assert.deepEqual(metadata(calls[1]), { engine: "codex", configured_model: "gpt-5.6", configured_effort: null, session: "fresh" });
-  assert.deepEqual(metadata(calls[2]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: null, session: "fresh" });
+  assert.deepEqual(metadata(calls[1]), { engine: "codex", configured_model: "gpt-5.6", configured_effort: "medium", session: "fresh" });
+  assert.deepEqual(metadata(calls[2]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: "medium", session: "fresh" });
   const followupStart = backend.calls.spawn.length;
   await runMessage({ ...context, text: "CODEX_STUB_REJECT_MODEL" });
   const followup = attempts(followupStart);
@@ -330,10 +330,12 @@ for (const engine of ["claude", "codex"]) {
     await setThreadEffort(context.entry.slug, context.threadKey, "");
     await patchChannelMeta(context.entry.slug, { effort: "" });
     saveSettings({ [key]: "" });
-    results.push(await runMessage({ ...context, text: "Use the CLI default." }));
+    results.push(await runMessage({ ...context, text: "Nothing chosen: the harness fallback effort." }));
     const calls = attempts(start);
     assert.equal(calls.length, 6);
-    const expected = ["low", "high", "medium", "low", "high", null];
+    // With nothing chosen anywhere the run still gets a concrete effort (fallbackEffortFor), passed
+    // as a flag, so every status names the effort the run really has.
+    const expected = ["low", "high", "medium", "low", "high", engine === "claude" ? "high" : "medium"];
     assert.deepEqual(calls.map((call) => metadata(call).configured_effort), expected);
     assert.deepEqual(results.map((result) => result.effort || null), expected, "reply results retain each attempt effort");
     for (let i = 0; i < calls.length; i++) {

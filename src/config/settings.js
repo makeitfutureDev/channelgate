@@ -8,7 +8,7 @@ import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
-import { ENGINE_IDS, adapterOr, isGatewayWideLicense, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, harnessOf, isGatewayWideLicense, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
 import { licenseChannelOf, setBuiltinLicenseState } from "../engines/license-state.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
@@ -482,17 +482,26 @@ export function getEnginePool() {
 export function getDefaultModel(engine) {
   const s = getSettings();
   // Per-engine default model, looked up by the adapter's settings key rather than a binary
-  // ternary that would silently hand a third engine Claude's default.
-  const v = s[adapterOr(engine).defaultModelKey];
-  return typeof v === "string" ? v.trim() : "";
+  // ternary that would silently hand a third engine Claude's default. A license with no default
+  // of its own inherits its harness's (Settings → Agent defaults), so a default is always a value.
+  const own = s[adapterOr(engine).defaultModelKey];
+  if (typeof own === "string" && own.trim()) return own.trim();
+  const harness = harnessOf(engine);
+  const inherited = harness && harness !== engine ? s[adapterOr(harness).defaultModelKey] : "";
+  return typeof inherited === "string" ? inherited.trim() : "";
 }
 
-// Blank preserves the CLI default; stale or hand-edited values never reach a runner.
+// Stale or hand-edited values never reach a runner. A license without its own default effort
+// inherits its harness's, like the default model above.
 export function getDefaultEffort(engine) {
   const adapter = adapterOr(engine);
-  const raw = getSettings()[adapter.defaultEffortKey];
-  const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-  return adapter.efforts.includes(effort) ? effort : "";
+  const read = (key) => {
+    const raw = getSettings()[key];
+    const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    return adapter.efforts.includes(effort) ? effort : "";
+  };
+  const harness = harnessOf(engine);
+  return read(adapter.defaultEffortKey) || (harness && harness !== engine ? read(adapterOr(harness).defaultEffortKey) : "");
 }
 
 export function getModelShortcuts() {

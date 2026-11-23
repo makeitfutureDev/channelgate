@@ -3783,7 +3783,7 @@ compatible model and Low effort via `/model` for this thread. Send "Reply OK", t
 `high`, earlier footers retain `low`. Clear all gateway/channel/thread effort choices on the fixture;
 pass: the native running/Stop label reads `<harness> · <real model>` (e.g. `Claude Code · Opus 5.5`,
 never the license name, `CLI default` or `default effort`) and the footer `model · …` with the
-model's declared default effort when known. Observe the assistant status/loading line too.
+concrete effort (with nothing chosen: Claude `high`, Codex the model's declared default) that also appears as the CLI's effort flag. Observe the assistant status/loading line too.
 Switch from explicit High to a fallback engine with all efforts unset: the old High must disappear
 from both live and final labels. CLI flags and stored settings must remain unchanged. Restore fixture settings.
 Inspect both streamed and classic reply paths; the same shared formatter supplies unattended replies.
