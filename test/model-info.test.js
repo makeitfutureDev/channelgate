@@ -118,13 +118,13 @@ test("Codex context uses the runtime-reported usable window from rollout request
   assert.equal(contextWindowFor(result), 258_400);
 });
 
-test("a live runtime label names the harness, the real model and always a concrete effort", async () => {
+test("a live runtime label names the real model (no harness) and always a concrete effort", async () => {
   const { runtimeStatusLabel, effortLabel } = await import("../src/gateway/model-info.js");
   const { createStreamConsumer } = await import("../src/engines/stream.js");
-  assert.equal(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5", effort: "low" }), "Claude Code · Opus 5.5 (low)");
-  assert.match(runtimeStatusLabel({ engine: "codex" }), /^Codex · \S+ \(\w+\)$/);
-  assert.equal(runtimeStatusLabel({ engine: "claude" }), "Claude Code");
-  assert.equal(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5" }), "Claude Code · Opus 5.5 (high)");
+  assert.equal(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5", effort: "low" }), "Opus 5.5 (low)");
+  assert.match(runtimeStatusLabel({ engine: "codex" }), /^\S+ \(\w+\)$/);
+  assert.equal(runtimeStatusLabel({ engine: "claude" }), "");
+  assert.equal(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5" }), "Opus 5.5 (high)");
   assert.equal(effortLabel({}), "");
   assert.doesNotMatch(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5" }), /default/);
   const events = [];

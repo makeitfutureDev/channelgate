@@ -13,7 +13,7 @@
   other harness is on, each license of that harness one by one. Before, a conversation with no
   pool stored went straight from its one Claude license to Codex's own sign-in and stopped there,
   while other approved licenses sat idle. A selection that lists specific licenses keeps its list.
-- The running/Stop label now names the harness and the real model (`Claude Code · Opus 5.5 (low)`)
+- The running/Stop label now shows only the real model and effort (`Opus 5.5 (low)`)
   instead of the license name, and never says `CLI default` or `default effort`: a license with no
   default of its own uses its harness's default model and effort, an unset model is the one the CLI
   reports, and an unset effort is resolved to a concrete level the run is given (the model's

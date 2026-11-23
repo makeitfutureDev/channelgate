@@ -1,5 +1,4 @@
 import { engineLabel, harnessOf, modelsForEngine, fallbackEffortFor } from "../engines/registry.js";
-import { harnessLabel } from "../engines/license-state.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -16,26 +15,20 @@ export function effortLabel({ effort, engine = "", model = "" } = {}) {
   try { return fallbackEffortFor(engine, model); } catch { return ""; }
 }
 
-// The harness running a license ("Claude", "Codex") — what a live status names, never the
-// license/account name.
-export function runtimeHarnessLabel(engine) {
-  const harness = harnessOf(engine);
-  return (harness && harnessLabel(harness)) || engineLabel(engine) || String(engine || "");
-}
-
-// "Claude · Opus 5.5 (high)": harness, the real model, the real effort when known.
+// "Opus 5.5 (high)": the real model and effort — no harness or license name. "" until the model
+// is known (a Claude run with nothing configured, until its init event); callers keep their
+// generic name meanwhile.
 export function runtimeStatusLabel({ engine = "", model: configured = "", effort = "" } = {}, { display = false } = {}) {
-  const harness = runtimeHarnessLabel(engine);
   // Codex with no model chosen anywhere runs its catalog's first (priority-ordered) model. Claude
   // reports its model at start-up instead (stream.js runtime_model), so it waits for that.
   let model = configured;
   if (!model && harnessOf(engine) === "codex") {
     try { model = modelsForEngine(engine)[0]?.value || ""; } catch { model = ""; }
   }
-  if (!model) return harness;
+  if (!model) return "";
   const name = display ? modelDisplayLabel(model, engine) : modelLabel({ engine, model });
   const level = effortLabel({ effort, engine, model });
-  return `${harness ? `${harness} · ` : ""}${name}${level ? ` (${level})` : ""}`;
+  return `${name}${level ? ` (${level})` : ""}`;
 }
 
 function numberField(value, ...keys) {

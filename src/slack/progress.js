@@ -282,11 +282,11 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
     }
   };
   let runtimeFacts = null;
-  // Harness (never the license/account name) · the real model · the real effort when known.
+  // The real model and effort (never the harness or license name).
   const applyRuntime = (facts) => {
     runtimeFacts = facts;
     runtime = runtimeStatusLabel(facts);
-    nativeName = runtimeStatusLabel(facts, { display: true });
+    nativeName = runtimeStatusLabel(facts, { display: true }) || "AI agent";
     render();
   };
   return {
