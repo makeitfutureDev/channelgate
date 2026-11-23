@@ -15,11 +15,15 @@
 // and relays a turn needs); "on" → any public destination, or only `allowHosts` (plus engine hosts)
 // when an allowlist is given. `rawPassthrough` ({host, port} entries) marks destinations that get a
 // plain CONNECT tunnel WITHOUT TLS termination (SSH, Postgres); honored only when mode is "on".
+// `privateDestinations` ({host, port, address}: admin-approved, see private-hosts.js) are the one
+// exception to the public-only rule: an exact host:port match may reach its PINNED private or
+// loopback address as a raw tunnel, only while every DNS answer still equals that pin.
 // Unknown modes fail closed.
 import dns from "node:dns";
 import { isIP } from "node:net";
 import { classifyAddress } from "../../web/ip-policy.js";
 import { hostMatches, normalizeHost } from "./rules.js";
+import { LOOPBACK_ALIAS, privateAddressProblem } from "./private-hosts.js";
 
 const DNS_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;
 
@@ -75,7 +79,7 @@ async function resolveAll(hostname, lookup, timeoutMs = DNS_LOOKUP_TIMEOUT_MS) {
 // → { ok, category?, reason?, address, family?, tunnel }.
 // `allowLoopbackHosts` is TEST-ONLY: names listed there may resolve to loopback (the end-to-end
 // suite points a fake hostname at a 127.0.0.1 upstream). Production callers never pass it.
-export async function checkDestination({ hostname, port, mode, allowHosts = null, rawPassthrough = [], engineHosts = [], lookup, allowLoopbackHosts = [], lookupTimeoutMs = DNS_LOOKUP_TIMEOUT_MS }) {
+export async function checkDestination({ hostname, port, mode, allowHosts = null, rawPassthrough = [], privateDestinations = [], engineHosts = [], lookup, allowLoopbackHosts = [], lookupTimeoutMs = DNS_LOOKUP_TIMEOUT_MS }) {
   const host = normalizeHost(hostname);
   const portNumber = Number(port);
   if (!isValidDestinationHost(host) || !Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
@@ -94,6 +98,14 @@ export async function checkDestination({ hostname, port, mode, allowHosts = null
     return refuse("policy", "No network policy is configured for this channel.");
   }
 
+  const pinned = mode === "on" && Array.isArray(privateDestinations)
+    ? privateDestinations.find((rule) => normalizeHost(rule?.host) === host && Number(rule?.port) === portNumber)
+    : null;
+  if (pinned) return checkPinned(host, portNumber, pinned, lookup, lookupTimeoutMs);
+  if (host === LOOPBACK_ALIAS) {
+    return refuse("not-approved", `${host}:${portNumber} is not an approved private destination for this channel; ask an admin with allow_channel_private_host.`);
+  }
+
   let addresses;
   try {
     addresses = await resolveAll(host, lookup, lookupTimeoutMs);
@@ -107,8 +119,31 @@ export async function checkDestination({ hostname, port, mode, allowHosts = null
     const kind = classifyAddress(address);
     if (kind === "" || (kind === "loopback" && loopbackOk)) continue;
     const label = kind === "invalid" ? "an invalid address" : `a ${kind} address`;
-    return refuse("blocked-address", `${host} resolves to ${label}, which channels may not reach.`);
+    const hint = kind === "private" || kind === "loopback" || kind.startsWith("carrier-grade")
+      ? ` An admin can approve this exact host and port with allow_channel_private_host${kind === "loopback" ? ` (reach it as ${LOOPBACK_ALIAS}:<port>)` : ""}.`
+      : "";
+    return refuse("blocked-address", `${host} resolves to ${label}, which channels may not reach.${hint}`);
   }
   const first = addresses[0];
   return { ok: true, address: first.address, family: first.family || isIP(first.address), tunnel };
+}
+
+// An approved private destination: the pinned address, only while DNS still agrees with it.
+async function checkPinned(host, port, rule, lookup, lookupTimeoutMs) {
+  const address = String(rule.address || "").toLowerCase();
+  const problem = privateAddressProblem(address, port);
+  if (problem) return refuse("blocked-address", `${host} ${problem}.`);
+  if (host !== LOOPBACK_ALIAS && !isIP(host)) {
+    let addresses;
+    try {
+      addresses = await resolveAll(host, lookup, lookupTimeoutMs);
+    } catch (error) {
+      if (error?.code === "CG_DNS_TIMEOUT") return refuse("dns-timeout", `${host} did not resolve in time.`);
+      return refuse("dns-failure", `${host} could not be resolved.`);
+    }
+    if (!addresses.length || addresses.some((entry) => String(entry.address).toLowerCase() !== address)) {
+      return refuse("pin-mismatch", `${host} no longer resolves only to its approved address ${address}; an admin must approve it again.`);
+    }
+  }
+  return { ok: true, address, family: isIP(address), tunnel: true, private: true };
 }

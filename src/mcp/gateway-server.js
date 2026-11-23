@@ -45,7 +45,7 @@ import { register as registerAgentMail } from "./tools/agent-mail.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { register as registerEgressHosts } from "./tools/egress-hosts.js";
-import { isChannelWorker, prepareEgressHost } from "../gateway/egress-hosts.js";
+import { isChannelWorker, prepareEgressHost, preparePrivateHost } from "../gateway/egress-hosts.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
@@ -351,6 +351,8 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
     ["allow_channel_ssh_host", { authz: "worker", details: ({ host, port }) => `Allow raw TCP connections to ${host} for THIS channel on ${port === undefined ? "ports 22 (SSH), 5432 and 6543 (PostgreSQL)" : `TCP port ${port} only`}? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
+    ["allow_channel_private_host", { authz: "worker", tier: "admin", details: ({ host, port, address }) => `Allow THIS channel to reach the PRIVATE destination ${host}:${port}, pinned to ${address}? Only an organization admin can approve. Traffic is tunnelled through the egress proxy to that exact address and port only (no other port, no other host on that network) and persists for future channel runs until revoked. No SSH key or secret access is granted.` }],
+    ["revoke_channel_private_host", { authz: "worker", details: AUTOMATIC }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     // Which licenses the channel may run on: admins only, and reversible with one more call. The
     // handler keeps the Enterprise entitlement check and refuses a list that excludes the license
@@ -573,6 +575,15 @@ export function createGatewayMcpServer(ctx) {
             return text(`Couldn't request SSH egress: ${error.message}`);
           }
         }
+        if (name === "allow_channel_private_host") {
+          try {
+            const prepared = await preparePrivateHost(ctx, args?.host, { port: args?.port, address: args?.address });
+            args = { host: prepared.host, port: prepared.port, address: prepared.address };
+            hostAlreadyAllowed = prepared.alreadyAllowed;
+          } catch (error) {
+            return text(`Couldn't request private egress: ${error.message}`);
+          }
+        }
         // A gate may know the saved call could not be applied: say so now instead of posting a card.
         const problem = typeof gate.precheck === "function" ? await gate.precheck(args ?? {}) : "";
         if (problem) return { ...text(`Couldn't request \`${name}\`: ${problem} No approval card was posted and nothing was changed.`), isError: true };
@@ -600,7 +611,9 @@ export function createGatewayMcpServer(ctx) {
             // Every other surviving card is durable: the exact call is saved and applied on the
             // click by the daemon, so no engine waits and no card expires. The public-link card
             // stays inline because the model needs the minted URL in the same turn.
-            durableAction = buildControlPlaneAction(ctx, { tool: name, args: args ?? {}, tier });
+            const asked = gateAuthz(gate, args);
+            durableAction = buildControlPlaneAction(ctx, { tool: name, args: args ?? {}, tier,
+              ...(gate.tier !== undefined && typeof asked === "string" && asked !== "any" && asked !== tier ? { requesterTier: asked } : {}) });
           }
           const d = await requireToolApproval(name, details, tier, durableAction);
           if (d.pending) {

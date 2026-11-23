@@ -2,6 +2,12 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A channel can now reach a private or local service — a LAN SSH/SFTP or FTP server, a NAS, an
+  internal API, an MCP server on the gateway host — once an organization admin approves that exact
+  host and port. Ask with `allow_channel_private_host`; the card shows the address the host
+  resolves to, and the proxy keeps using only that address. Services on the gateway host itself
+  are reached as `host.channelgate.internal:<port>`. Cloud metadata addresses and the gateway's own
+  admin port can never be approved. `revoke_channel_private_host` removes an entry.
 - A turn whose license hits its usage limit now tries every other license of the same harness
   that the conversation may use, even when nobody chose "Any license" — then, if failover to the
   other harness is on, each license of that harness one by one. Before, a conversation with no

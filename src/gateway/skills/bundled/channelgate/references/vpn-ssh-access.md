@@ -46,8 +46,17 @@ An explicit `port` opens only that exact host:port; the card and saved action na
 For a custom port, for example 32921, pass `port: 32921` and retry SSH with `-p 32921`.
 Omitting `port` preserves the legacy TCP ports 22, 5432 and 6543 and cannot open a custom port.
 Network must remain on and private/loopback/metadata addresses remain blocked. Approval
-adds no SSH key, secret host grant, private route, or open network. Use the isolated VPN or
-operator paths below when the destination is private.
+adds no SSH key, secret host grant, private route, or open network.
+
+For one exact PRIVATE or LOOPBACK `host:port` (LAN SSH/SFTP or FTP server, NAS, internal API,
+an MCP server on the gateway host), use `allow_channel_private_host({host, port})`. The gateway
+pins the single address the host resolves to now; the durable card shows it and only an
+organization admin can approve. The proxy then tunnels to that address only and refuses as soon
+as DNS points anywhere else. Reach the gateway host's own loopback as
+`host.channelgate.internal:<port>`, never 127.0.0.1. Metadata, link-local and the gateway's
+admin port are never approvable; passive FTP needs each data port approved (prefer SFTP).
+`revoke_channel_private_host` removes an entry. Use the isolated VPN when a whole private
+network, rather than a few exact ports, is needed.
 
 ## Option 2: Agent procedure — VPN or SSH tunnel access
 

@@ -684,7 +684,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   const GATED = new Set([
     "propose_thread_forks",
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
-    "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "allow_channel_private_host", "revoke_channel_private_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
     "set_channel_approved_harnesses", // which licenses the channel may run on: admins only, automatic, audited
     "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
@@ -1132,6 +1132,38 @@ test("both engines request durable worker approval for SSH egress, including Aut
       await patchChannelMeta(SLUG, { allowBash: false, adminMode: false, autoMode: false });
       const stale = await applySaved(request, "admin UI");
       assert.equal(stale.ok, false, "even admin UI cannot apply a worker approval in a read-only channel");
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
+});
+
+test("both engines request ADMIN-clicked approval for a pinned private destination", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressPrivateHosts: [] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `private-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        const result = await client.callTool({ name: "allow_channel_private_host", arguments: { host: "192.168.50.7", port: 22 } });
+        assert.match(resultText(result), awaitingCard);
+        const metadata = await client.callTool({ name: "allow_channel_private_host", arguments: { host: "169.254.169.254", port: 80 } });
+        assert.match(resultText(metadata), /Couldn't request private egress: .*may never reach/);
+      });
+      assert.equal(approvalRequests.length, 1, "a refused destination posts no card");
+      const request = approvalRequests[0].body;
+      assert.equal(request.requiredTier, "admin");
+      assert.deepEqual(request.durableAction.args, { host: "192.168.50.7", port: 22, address: "192.168.50.7" });
+      assert.match(request.toolInput.details, /192\.168\.50\.7:22, pinned to 192\.168\.50\.7.*Only an organization admin/);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, []);
+      assert.equal((await applySaved(request, "U_CTRL_MEMBER")).ok, false, "a member cannot approve a private destination");
+      const saved = await applySaved(request, "U_CTRL_ADMIN");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, ["192.168.50.7:22@192.168.50.7"]);
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        assert.match(resultText(await client.callTool({ name: "revoke_channel_private_host", arguments: { host: "192.168.50.7" } })), /Removed/);
+      });
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, []);
     }
   } finally { await saveChannelMeta(SLUG, original); }
 });

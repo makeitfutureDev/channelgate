@@ -1,3 +1,4 @@
+import { assertValidEgressPrivateHosts } from "../../gateway/egress/private-hosts.js";
 import { channelBudgetStatus } from "../../gateway/channel-budget.js";
 import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
@@ -540,6 +541,14 @@ export function createChannelsRouter({
           return res.status(400).json({ error: e.message });
         }
       }
+      let egressPrivateHostsPatch;
+      if (body.egressPrivateHosts !== undefined) {
+        try {
+          egressPrivateHostsPatch = assertValidEgressPrivateHosts(body.egressPrivateHosts);
+        } catch (e) {
+          return res.status(400).json({ error: e.message });
+        }
+      }
       // Atomic read-modify-write: the merge callback runs inside the store's BEGIN IMMEDIATE
       // transaction, so a concurrent writer (Slack /mode, an MCP channel-admin tool) can't be
       // clobbered by this save reading stale meta.
@@ -606,6 +615,7 @@ export function createChannelsRouter({
           // written only when sent, so an unrelated save records no change to them.
           if (typeof body.rawNetwork === "boolean") out.rawNetwork = body.rawNetwork;
           if (egressRawHostsPatch !== undefined) out.egressRawHosts = egressRawHostsPatch;
+          if (egressPrivateHostsPatch !== undefined) out.egressPrivateHosts = egressPrivateHostsPatch;
           // Capability profile: a preset expands to (and OVERRIDES) the four capability flags, so the
           // preset is authoritative even if a stale checkbox was also sent. "custom" keeps whatever
           // flags were set above (the individual toggles). An unknown/absent profile leaves things as-is.
