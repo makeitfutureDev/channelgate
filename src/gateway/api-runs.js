@@ -62,7 +62,7 @@ import { isAdmin, isApproved } from "../config/store.js";
 import { postNotice, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
-import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria } from "./schedule-outcome.js";
+import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, needsAttention } from "./schedule-outcome.js";
 import { resolveApiConversation, threadPermalink, validateConversationKey } from "./api-conversations.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
@@ -71,6 +71,9 @@ import { resolveApiConversation, threadPermalink, validateConversationKey } from
 export const API_CHANNEL_ID = "cg-api";
 export const API_SLUG = "api";
 
+// Where a run shows in its channel: "visible" (kickoff thread + answer), "hidden" (nothing posted;
+// GET / webhook / Automations page only), "on-failure" (nothing unless it needs attention).
+export const API_VISIBILITIES = ["visible", "hidden", "on-failure"];
 const MAX_INFLIGHT = 25; // reject new starts past this many concurrently-running API jobs (429)
 // Cap for an inline base64 payload or a downloaded webhook-supplied fileUrl — the same ceiling every
 // inbound attachment gets (util/bounded-bytes.js). A fileUrl body streams to disk under it; an
@@ -241,21 +244,22 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
       job.status = "interrupted";
       job.completedMs = Date.now();
       job.error = "The gateway restarted before saving this run's result. External actions may already have happened. Inspect the target systems before explicitly submitting a new run; this request was not run again.";
-      job.interruptionNoticePending = Boolean(job.slackThread);
+      job.taskStatus = "interrupted";
+      job.interruptionNoticePending = Boolean(job.slackThread) || job.visibility === "on-failure";
       job.webhookPending = Boolean(job.webhook);
     }
     jobs.set(job.id, job);
     persist(job);
-    const client = job.slackThread ? connectedClient : null;
+    const client = job.slackThread || job.visibility === "on-failure" ? connectedClient : null;
     try {
-      if (client && job.deliveryPending && job.result) {
+      if (client && job.slackThread && job.deliveryPending && job.result) {
         await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
           result: { ...job.result, engine: job.engine, cwd: job.cwd, sessionId: job.sessionId }, footer: true });
         job.deliveryPending = false;
         persist(job);
       }
       if (client && job.interruptionNoticePending) {
-        await postNotice(client, { conversationId: job.channelId, threadKey: job.threadKey,
+        await postNotice(client, { conversationId: job.channelId, threadKey: job.slackThread ? job.threadKey : "",
           text: `⚠️ API run \`${job.id}\` was interrupted. External actions are unknown; inspect before retrying. It was not run again.` });
         job.interruptionNoticePending = false;
         persist(job);
@@ -545,7 +549,11 @@ export async function startApiRun(input = {}) {
   try {
     const successCriteria = normalizeSuccessCriteria(input.successCriteria);
     if (input.reportOutcome !== undefined && typeof input.reportOutcome !== "boolean") return { ok: false, code: 400, error: "reportOutcome must be true or false." };
-    outcomeOptions = { successCriteria, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) };
+    const visibility = input.visibility === undefined || input.visibility === null || input.visibility === "" ? "visible" : input.visibility;
+    if (!API_VISIBILITIES.includes(visibility)) return { ok: false, code: 400, error: `visibility must be one of: ${API_VISIBILITIES.join(", ")}.` };
+    if (visibility !== "visible" && conversationKey) return { ok: false, code: 400, error: "conversationKey continues a visible Slack thread; it cannot be combined with visibility \"" + visibility + "\"." };
+    // "on-failure" must know whether the WORK failed, so it always asks the agent for its report.
+    outcomeOptions = { successCriteria, visibility, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) || visibility === "on-failure" };
   } catch (error) {
     return { ok: false, code: 400, error: error.message };
   }
@@ -636,7 +644,7 @@ async function userPrincipalRefusal(principal, entry, meta) {
   return null;
 }
 
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions = { successCriteria: "", reportOutcome: false } }) {
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions = { successCriteria: "", reportOutcome: false, visibility: "visible" } }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -704,7 +712,9 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
 
   // Real-channel runs use a Slack root as their session key. Keyed events resolve a durable root;
   // unkeyed events create their own, with the legacy headless fallback if the kickoff fails.
-  const canSlack = Boolean(channel) && registeredSlack;
+  // hidden / on-failure: no kickoff and no thread — the run is headless in its channel's folder;
+  // on-failure posts one alert to the channel only when the run needs attention.
+  const canSlack = Boolean(channel) && registeredSlack && outcomeOptions.visibility === "visible";
   let threadKey = `api:${jobId}`;
   let slackThread = false;
   let threadReused = false;
@@ -773,6 +783,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     overrides: overrides || null,
     successCriteria: outcomeOptions.successCriteria,
     reportOutcome: outcomeOptions.reportOutcome,
+    visibility: outcomeOptions.visibility,
     taskStatus: null,
     outcome: null,
     model: null,
@@ -796,7 +807,8 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
 
   // Drive the run in the background — the HTTP handler returns immediately. `driver` is injectable
   // for the same reason recoverApiRuns takes one: admission can then be tested without a subprocess.
-  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
+  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null,
+    alertClient: outcomeOptions.visibility === "on-failure" && registeredSlack ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
 
   return startShape(job);
 }
@@ -839,8 +851,31 @@ function apiTranscript(job, content) {
   return `User (HTTP API run${job.author !== API_PRINCIPAL ? ` on behalf of ${job.author}` : ""}):\n${job.message || "(file only)"}\n\nAssistant:\n${content || ""}`;
 }
 
+// visibility "on-failure": one top-level alert in the run's channel when the run needs attention
+// (failed, blocked, interrupted, or no valid outcome report). Never throws.
+const FAILURE_WORDS = { failed: "failed", blocked: "was blocked", interrupted: "was interrupted", unreported: "finished without reporting its outcome" };
+export function failureAlertText(job) {
+  const status = job.taskStatus || "failed";
+  const request = String(job.message || "(file only)").replace(/\s+/g, " ").trim();
+  const reason = job.error || job.outcome?.summary || "";
+  const broken = (job.outcome?.connections || []).filter((c) => c.status !== "available").map((c) => `${c.name} ${c.status}`);
+  return `⚠️ API run \`${job.id}\` ${FAILURE_WORDS[status] || status}` +
+    `\n*Request:* ${mdToMrkdwn(request.length > 300 ? `${request.slice(0, 300)}…` : request)}` +
+    (reason ? `\n*Reason:* ${mdToMrkdwn(reason.slice(0, 1000))}` : "") +
+    (broken.length ? `\n*Connections:* ${broken.join(", ")}` : "");
+}
+async function postFailureAlert(client, job) {
+  try {
+    await postNotice(client, { conversationId: job.channelId, text: failureAlertText(job) });
+    job.failureAlertedMs = Date.now();
+    persist(job);
+  } catch (e) {
+    await logEvent("api_failure_alert_error", { id: job.id, error: e.message }).catch(() => {});
+  }
+}
+
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
-async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
+async function runInBackground(job, { textForRun, attachmentPath, client, alertClient = null, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
   const runKey = threadRunKey(job);
@@ -965,6 +1000,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     persist(job);
 
     await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs, taskStatus: job.taskStatus });
+    if (alertClient && needsAttention(job.taskStatus)) await postFailureAlert(alertClient, job);
 
     if (client) {
       try {
@@ -1018,6 +1054,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         await status?.stop?.();
         postNoticeWithMenu(client, { channel: job.channelId, threadKey: job.threadKey, text: `⚠️ API run \`${job.id}\` failed: ${err.message}` }).catch(() => {});
       }
+      if (alertClient) await postFailureAlert(alertClient, job);
     }
   } finally {
     if (queued) runQueue.release(runKey, handle);

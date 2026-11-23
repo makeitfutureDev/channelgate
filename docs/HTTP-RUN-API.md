@@ -51,6 +51,19 @@ the answer's text is not streamed live in Slack (the final answer is posted whol
 the agent's own evidence, not independent verification. API runs appear on the Activity
 dashboard's Automations page, grouped by token.
 
+## Visibility in chat
+
+`visibility` decides what the run posts in its channel:
+
+- `visible` (default): a kickoff message, a thread, and the answer in it.
+- `hidden`: nothing is posted. Read the result with `GET /api/runs/:id`, the webhook, or the
+  Activity dashboard's Automations page.
+- `on-failure`: nothing is posted unless the run fails, is blocked (a usage limit, a disconnected
+  account, a missing permission), is interrupted or does not report its outcome — then one alert
+  in the channel. It turns on `reportOutcome` automatically.
+
+`conversationKey` keeps a visible thread, so it only works with `visible`.
+
 ## Harness and license selection
 
 There are two harnesses, Claude Code and Codex. Every registered engine ID is a **license** of one

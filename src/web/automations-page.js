@@ -26,6 +26,7 @@ export function automationsBrowser(config, browser) {
     if (typeof run.costUsd === "number") li.append(node("span", "~$" + run.costUsd.toFixed(4)));
     if (run.engine || run.model) li.append(node("span", [run.engine, run.model].filter(Boolean).join(" · ")));
     if (run.deliveryStatus && /pending/.test(run.deliveryStatus)) li.append(node("span", run.deliveryStatus));
+    if (run.posting) li.append(node("span", run.posting));
     const text = run.error || run.summary;
     if (text) li.append(node("p", text));
     const broken = (run.connections || []).filter((c) => c.status !== "available");
@@ -39,7 +40,7 @@ export function automationsBrowser(config, browser) {
     if (failing(a)) head.append(node("span", "Last run " + (STATUS[a.runs.lastStatus] || a.runs.lastStatus).toLowerCase(), "automation-failing"));
     const meta = node("span", a.kind === "API"
       ? "API" + (a.runs.running ? " · " + a.runs.running + " running now" : "") + (a.runs.costUsd ? " · ~$" + a.runs.costUsd.toFixed(2) + " in 7 days" : "")
-      : (a.enabled ? (a.nextRun ? "Next: " + a.nextRun : "No upcoming run") : "Paused") + " · " + a.kind + (a.mine ? " · created by you" : ""), "automation-meta");
+      : (a.enabled ? (a.nextRun ? "Next: " + a.nextRun : "No upcoming run") : "Paused") + " · " + a.kind + (a.posting ? " · " + a.posting : "") + (a.mine ? " · created by you" : ""), "automation-meta");
     head.append(meta);
     details.append(head);
     const body = node("div", undefined, "automation-detail");

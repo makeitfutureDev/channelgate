@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- API runs can be `hidden` (nothing posted in chat) or `on-failure` (one alert only when a run
+  fails or is blocked); scheduled tasks can send results only when they fail or are blocked.
 - Automations now include HTTP API runs: each channel API token (and, for admins, the
   organization key) appears on the Automations page with its recent runs, outcome, model, cost and
   failures. API runs report a task status (`taskStatus`, `outcome`) beside `status`, so a usage-limit

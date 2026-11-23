@@ -139,10 +139,18 @@ export function channelAutomations(access, userId, entry, now = new Date()) {
     const summary = scheduleRunSummary(s.id, entry.channelId, historyStart);
     return { id: s.id, title: s.description || (s.kind === "reminder" ? "Reminder" : "Scheduled task"),
       instructions: String(s.prompt || "").slice(0, 4000), successCriteria: String(s.successCriteria || "").slice(0, 2000), kind: s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task",
-      recurrence: recurrenceWords(s), enabled: s.enabled !== false, nextRun: next ? zonedStamp(next) : null,
+      recurrence: recurrenceWords(s), posting: postingWords(s), enabled: s.enabled !== false, nextRun: next ? zonedStamp(next) : null,
       createdBy: s.createdBy || "", mine: s.createdBy === userId, canDelete: canDelete(s, access, userId, entry),
       runs: { total: summary.total, lastStatus: summary.lastStatus, lastStartedAt: summary.lastStartedAt, successRate: summary.successRate } };
   }));
+}
+
+// How a task shows in chat, in words (schedule options executionVisibility + resultPolicy).
+function postingWords(s) {
+  if (s.kind === "reminder" || s.loop) return "";
+  const start = s.executionVisibility === "silent" ? "Silent start" : "";
+  const result = s.resultPolicy === "on-failure" ? "posts only failures" : s.resultPolicy === "on-result" ? "posts only results" : "";
+  return [start, result].filter(Boolean).join(", ");
 }
 
 const RUN_FIELDS = ["id", "status", "startedAt", "completedAt", "durationMs", "summary", "error", "engine", "model", "costUsd", "deliveryStatus", "taskStatus"];

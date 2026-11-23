@@ -63,6 +63,7 @@ export function register(server, ctx) {
         "`delivery:'dm-on-match'` needs `match_prefix`: no routine messages or failure posts; only a result beginning with that prefix is DM'd to the creator, then the schedule stops. Failures remain visible in schedule status. " +
         "Use execution_visibility:'silent' to omit startup announcements, independently of the destination. " +
         "Use result_policy:'on-result' to suppress only explicitly reported healthy no-op checks; unreported outcomes are never success. " +
+        "Use result_policy:'on-failure' (usually with execution_visibility:'silent') to post NOTHING while runs succeed and only a failed, blocked, interrupted or unreported run. " +
         "failure_notify:false hides failure posts but keeps errors in run history. delivery:'thread' sends results to delivery_thread (defaults to THIS thread), with a fresh agent session per fire. " +
         "Every task receives a structured outcome-report instruction automatically; pass `success_criteria` (optional goal, e.g. 'a draft reply exists in Gmail for every unread client email') when the user states what a successful run must produce — the agent then checks and reports against it; history exposes engine completion separately from agent-reported task success and connections. " +
         "schedules must fire no more often than the configured minimum interval (default 60 min). " +
@@ -73,7 +74,7 @@ export function register(server, ctx) {
         "(default 60) more the creator is DM'd and the chain closes; a ✅ at any time closes it.",
       inputSchema: {
         execution_visibility: z.enum(["visible", "silent"]).optional(),
-        result_policy: z.enum(["always", "on-result"]).optional(),
+        result_policy: z.enum(["always", "on-result", "on-failure"]).optional(),
         failure_notify: z.boolean().optional(),
         sudo: z.boolean().optional(),
         delivery_thread: z.string().optional(),
@@ -208,7 +209,7 @@ export function register(server, ctx) {
 
   server.registerTool("update_schedule", {
     description: "Update an existing task in THIS channel. To change its instructions, first read list_schedules with id, then pass the complete replacement prompt and expected_prompt (the exact old prompt); preserve unrelated instructions. Prompt/title/success_criteria changes require the creator or a gateway admin and apply to future fires. Never delete/recreate the task to edit its prompt. Visibility, result filtering, error notifications and delivery can also be changed. sudo:true opts an admin-owned ordinary task into gateway-host execution with permission bypass and an admin approval; sudo:false returns it to the container. Sudo configuration and edits require an admin. Supply expected_prompt for every edit that leaves sudo enabled. Sessions remain fresh per fire.",
-    inputSchema: { id: z.string(), prompt: z.string().optional(), expected_prompt: z.string().optional(), description: z.string().optional(), success_criteria: z.string().max(2000).optional(), execution_visibility: z.enum(["visible", "silent"]).optional(), result_policy: z.enum(["always", "on-result"]).optional(), failure_notify: z.boolean().optional(),
+    inputSchema: { id: z.string(), prompt: z.string().optional(), expected_prompt: z.string().optional(), description: z.string().optional(), success_criteria: z.string().max(2000).optional(), execution_visibility: z.enum(["visible", "silent"]).optional(), result_policy: z.enum(["always", "on-result", "on-failure"]).optional(), failure_notify: z.boolean().optional(),
       delivery: z.enum(["standard", "daily-thread", "channel", "dm-on-match", "thread"]).optional(), delivery_thread: z.string().optional(), sudo: z.boolean().optional() },
   }, async ({ id, prompt, expected_prompt, description, success_criteria, ...options }) => {
     const current = listForChannel(channelId).find((s) => s.id === id);
@@ -262,6 +263,6 @@ function validateTaskOptions(options, kind, channelId) {
 
 function optionsHint(s) {
   if (s.sudo) return `Run options: sudo on the gateway host with permission bypass; ${s.executionVisibility}, ${s.resultPolicy}, ${s.delivery}.\n`;
-  if (s.executionVisibility !== "silent" && s.resultPolicy !== "on-result" && s.delivery !== "thread" && s.failureNotify !== false) return "";
+  if (s.executionVisibility !== "silent" && s.resultPolicy === "always" && s.delivery !== "thread" && s.failureNotify !== false) return "";
   return `Run options: ${s.executionVisibility}, ${s.resultPolicy}, ${s.delivery}${s.deliveryThread ? ` (${s.deliveryThread})` : ""}; failure messages ${s.failureNotify ? "on" : "off"}.\n`;
 }

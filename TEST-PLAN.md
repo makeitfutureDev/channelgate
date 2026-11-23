@@ -1,5 +1,33 @@
 # ChannelGate — Test Plan
 
+## Unattended work: visible, hidden, or only on failure (2026-11-24)
+
+Automated: `node --test test/run-visibility.test.js test/api-run-outcomes.test.js test/automation-health.test.js`
+
+- [x] "result policy on-failure posts only runs that need attention": succeeded/no-op suppressed;
+      failed/blocked/interrupted/unreported delivered; on-result unchanged; refused with failure
+      notifications off and for reminders.
+- [x] "API visibility is validated, defaults to visible, and on-failure asks for the outcome
+      report": unknown value → 400; default `visible`; `hidden` has no Slack thread; `on-failure`
+      wraps the prompt with the outcome instruction.
+- [x] "the failure alert names the run, request, reason and broken connections".
+
+Live (both engines — `on-failure` depends on the agent's outcome report):
+
+- [ ] Fixture `cg-testing-claude-auto` and `cg-testing-codex-auto`, a channel token each. Per channel:
+      1. `{"message":"Reply OK","visibility":"hidden"}` → 202; no message appears in the channel;
+         `GET` shows `completed`, `visibility: "hidden"`.
+      2. `{"message":"Count files in this folder","visibility":"on-failure"}` → nothing posted;
+         `taskStatus: "succeeded"`.
+      3. `{"message":"Draft a reply to my latest unread Gmail","visibility":"on-failure"}` with the
+         channel's Gmail connection disconnected → exactly one top-level "⚠️ API run `…` was
+         blocked" alert naming the Gmail connection; no kickoff/thread.
+      4. `{"conversationKey":"k1","visibility":"hidden",…}` → 400.
+- [ ] Schedule: ask "every hour check unread Gmail, run silently and only tell us if it fails" →
+      `list_schedules` shows `executionVisibility: silent`, `resultPolicy: on-failure`; a healthy
+      fire posts nothing (run history `deliveryStatus: suppressed`); with Gmail disconnected a fire
+      posts the blocked result. Automations card reads "Silent start, posts only failures".
+
 ## API runs as automations, and success criteria (2026-11-24)
 
 Automated:

@@ -109,7 +109,7 @@ export function createSchedulesRouter() {
       const nextNotify = patch.notify ?? current.notify;
       const nextNotifyUserId = patch.notifyUserId ?? current.notifyUserId;
       if (nextNotify === "user" && !nextNotifyUserId) return res.status(400).json({ error: "choose a person to notify" });
-      for (const [key, allowed] of [["executionVisibility", ["visible", "silent"]], ["resultPolicy", ["always", "on-result"]]]) {
+      for (const [key, allowed] of [["executionVisibility", ["visible", "silent"]], ["resultPolicy", ["always", "on-result", "on-failure"]]]) {
         if (Object.hasOwn(req.body || {}, key)) {
           if (!allowed.includes(req.body[key])) return res.status(400).json({ error: `invalid ${key}` });
           patch[key] = req.body[key];

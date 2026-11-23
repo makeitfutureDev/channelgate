@@ -98,6 +98,7 @@ export function apiSourceRuns(channelId, sourceId, { isAdmin = false, userId = "
     costUsd: visibleCost(j, nowDate, start),
     connections: j.outcome?.connections || [],
     deliveryStatus: j.webhookPending ? "webhook pending" : j.deliveryPending ? "Slack delivery pending" : null,
+    posting: j.visibility === "hidden" ? "Hidden in chat" : j.visibility === "on-failure" ? (j.failureAlertedMs ? "Failure alert posted" : "Chat only on failure") : null,
     taskStatus: j.taskStatus || null,
   }));
 }
