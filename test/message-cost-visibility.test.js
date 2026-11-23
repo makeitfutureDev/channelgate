@@ -42,18 +42,18 @@ test("the global setting hides only cost from the shared Slack footer", () => {
 });
 
 
-test("the shared footer always puts effort after the model, omitting an unknown effort", () => {
+test("the shared footer always puts effort after the model, filling an unset effort with the level the run uses", () => {
   settings.saveSettings({ showMessageCost: false });
   const codex = { engine: "codex", model: "gpt-6.1-terra", durationMs: 26_000,
     usage: { input_tokens: 314_900, output_tokens: 562 }, contextTokens: 120_000, contextWindow: 475_000 };
   assert.equal(footerText({ ...codex, effort: "low" }), "gpt-6.1-terra · low · ctx: 120k / 475k, 25%");
   assert.match(footerText({ ...codex, effort: "none" }), /terra · none · ctx:/);
-  assert.match(footerText({ ...result, effort: "" }), /Opus 4\.8 · ctx:/);
+  assert.match(footerText({ ...result, effort: "" }), /Opus 4\.8 · high · ctx:/);
   settings.saveSettings({ showMessageCost: true });
-  assert.match(footerText({ ...result, effort: "" }), /Opus 4\.8 · \$0\.31 · ctx:/);
+  assert.match(footerText({ ...result, effort: "" }), /Opus 4\.8 · high · \$0\.31 · ctx:/);
   settings.saveSettings({ showMessageCost: false });
   for (const effort of [undefined, null, "", "  "]) {
-    assert.equal(footerText({ ...codex, effort }), "gpt-6.1-terra · ctx: 120k / 475k, 25%");
+    assert.equal(footerText({ ...codex, effort }), "gpt-6.1-terra · medium · ctx: 120k / 475k, 25%");
   }
 });
 
@@ -73,8 +73,8 @@ test("the footer drops duration and run token totals and shows the latest contex
   assert.doesNotMatch(audited, /482s|3\.7M|16\.4k|100%/);
   // Over the window reads above 100%; an unreported window is "?", never a guess.
   assert.equal(footerText({ engine: "claude", model: "claude-opus-4-6", primaryModel: "claude-opus-4-6", contextTokens: 230_000,
-    raw: { modelUsage: { "claude-opus-4-6": { contextWindow: 200_000 } } } }), "Opus 4.6 · ctx: 230k / 200k, 115%");
-  assert.equal(footerText({ engine: "claude", model: "claude-opus-5-5", contextTokens: 21_965 }), "Opus 5.5 · ctx: 22k / ?");
+    raw: { modelUsage: { "claude-opus-4-6": { contextWindow: 200_000 } } } }), "Opus 4.6 · high · ctx: 230k / 200k, 115%");
+  assert.equal(footerText({ engine: "claude", model: "claude-opus-5-5", contextTokens: 21_965 }), "Opus 5.5 · high · ctx: 22k / ?");
   // Whole thousands, no decimals; millions keep a decimal only when it is not zero.
   const ctxOf = (contextTokens, contextWindow) => footerText({ engine: "codex", model: "m", effort: "low", contextTokens, contextWindow });
   assert.equal(ctxOf(150_400, 167_600), "m · low · ctx: 150k / 168k, 90%");
@@ -82,7 +82,7 @@ test("the footer drops duration and run token totals and shows the latest contex
   assert.equal(ctxOf(1_100_000, 1_000_000), "m · low · ctx: 1.1M / 1M, 110%");
   assert.equal(ctxOf(640, 200_000), "m · low · ctx: 640 / 200k, 0%");
   // No model request (a run that failed first): no ctx segment at all.
-  assert.equal(footerText({ engine: "codex", model: "gpt-6.1-sol", usage: {} }), "gpt-6.1-sol");
+  assert.equal(footerText({ engine: "codex", model: "gpt-6.1-sol", usage: {} }), "gpt-6.1-sol · medium");
 });
 
 test("a resumed footer keeps the provider-reported current-message cost", () => {
@@ -94,7 +94,7 @@ test("a resumed footer keeps the provider-reported current-message cost", () => 
     usage: { input_tokens: 2_000, cache_read_input_tokens: 30_000, output_tokens: 400 },
     costUSD: 0.42,
   });
-  assert.equal(resumed, "Opus 4.8 · $0.42");
+  assert.equal(resumed, "Opus 4.8 · high · $0.42");
 });
 
 test("Admin settings accept message-cost visibility only as a boolean", () => {

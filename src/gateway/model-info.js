@@ -1,4 +1,4 @@
-import { engineLabel, harnessOf, modelsForEngine } from "../engines/registry.js";
+import { engineLabel, harnessOf, modelsForEngine, fallbackEffortFor } from "../engines/registry.js";
 import { harnessLabel } from "../engines/license-state.js";
 
 function firstNonEmpty(...values) {
@@ -8,16 +8,12 @@ function firstNonEmpty(...values) {
   return "";
 }
 
-// The effort a run actually uses: the configured one, else the model catalog's declared default
-// for that model (Codex discovery reports it). Unknown → "" and the label omits it — a status
-// never says "default effort". Shared by the live runner label and completed-reply statistics.
+// The effort a run actually uses: the configured one, else the same fallback the orchestrator
+// passes to the CLI (fallbackEffortFor). A label never says "default effort".
 export function effortLabel({ effort, engine = "", model = "" } = {}) {
   const set = firstNonEmpty(effort);
-  if (set) return set;
-  if (!engine || !model) return "";
-  try {
-    return modelsForEngine(engine).find((entry) => entry.value === String(model).trim())?.defaultEffort || "";
-  } catch { return ""; }
+  if (set || !engine) return set;
+  try { return fallbackEffortFor(engine, model); } catch { return ""; }
 }
 
 // The harness running a license ("Claude", "Codex") — what a live status names, never the
@@ -28,8 +24,14 @@ export function runtimeHarnessLabel(engine) {
 }
 
 // "Claude · Opus 5.5 (high)": harness, the real model, the real effort when known.
-export function runtimeStatusLabel({ engine = "", model = "", effort = "" } = {}, { display = false } = {}) {
+export function runtimeStatusLabel({ engine = "", model: configured = "", effort = "" } = {}, { display = false } = {}) {
   const harness = runtimeHarnessLabel(engine);
+  // Codex with no model chosen anywhere runs its catalog's first (priority-ordered) model. Claude
+  // reports its model at start-up instead (stream.js runtime_model), so it waits for that.
+  let model = configured;
+  if (!model && harnessOf(engine) === "codex") {
+    try { model = modelsForEngine(engine)[0]?.value || ""; } catch { model = ""; }
+  }
   if (!model) return harness;
   const name = display ? modelDisplayLabel(model, engine) : modelLabel({ engine, model });
   const level = effortLabel({ effort, engine, model });

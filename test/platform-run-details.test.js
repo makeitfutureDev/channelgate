@@ -124,7 +124,7 @@ test("Google Chat progress exposes current model and app names, coalesces bursts
   progress.event({ kind: "tool_result", name: "mcp__composio-agent__GMAIL_FETCH_EMAILS", status: "failed", result: "secret-output" });
   t.mock.timers.tick(3000); await flush();
   assert.equal(edits.length, 3);
-  assert.match(edits[2].text, /gpt-6\.1-sol · Error in composio-agent · GMAIL_FETCH_EMAILS/);
+  assert.match(edits[2].text, /gpt-6\.1-sol \(medium\) · Error in composio-agent · GMAIL_FETCH_EMAILS/);
   assert.doesNotMatch(edits[2].text, /secret/);
   progress.event({ kind: "thinking", summary: "secret-reasoning" });
   t.mock.timers.tick(60000); await flush(); assert.equal(edits.length, 3, "only one write in flight");

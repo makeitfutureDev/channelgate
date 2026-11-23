@@ -8,8 +8,10 @@
   pool stored went straight from its one Claude license to Codex's own sign-in and stopped there,
   while other approved licenses sat idle. A selection that lists specific licenses keeps its list.
 - The running/Stop label now names the harness and the real model (`Claude Code · Opus 5.5 (low)`)
-  instead of the license name, and never says `CLI default` or `default effort`: an unset model is
-  the one the CLI reports, an unset effort is the model's declared default or left out.
+  instead of the license name, and never says `CLI default` or `default effort`: a license with no
+  default of its own uses its harness's default model and effort, an unset model is the one the CLI
+  reports, and an unset effort is resolved to a concrete level the run is given (the model's
+  declared default, else Claude `high` / Codex `medium`).
 - Any engine license can now be limited to one conversation. In Settings → Engine licenses, a
   license's form has "Available in": every conversation, or one channel or DM. This is how a
   customer's own account in one channel is set up now, and it works for every kind of license on

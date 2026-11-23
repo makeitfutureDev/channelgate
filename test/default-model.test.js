@@ -63,3 +63,13 @@ test("default effort is independent per harness, safe for legacy settings, and c
     }
   }
 });
+
+test("a license with no default of its own inherits its harness's default model and effort", async () => {
+  const { ENGINE_IDS, harnessOf } = await import("../src/engines/registry.js");
+  const license = ENGINE_IDS.find((id) => harnessOf(id) === "codex" && id !== "codex");
+  if (!license) return;
+  saveSettings({ defaultCodexModel: "gpt-6.1-sol", defaultCodexEffort: "high" });
+  assert.equal(getDefaultModel(license), "gpt-6.1-sol");
+  assert.equal(getDefaultEffort(license), "high");
+  saveSettings({ defaultCodexModel: "", defaultCodexEffort: "" });
+});

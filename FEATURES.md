@@ -2447,8 +2447,10 @@ their existing delivery paths. This does not cancel already admitted work or gua
 
 - Reply statistics always show effort immediately after the model (for example,
   `gpt-6.1-terra · low · ctx: 120k / 475k, 25%`). The value comes from the answering
-  attempt, including retries and engine fallback; an unspecified level shows the model's declared
-  default effort when the model catalog knows it and is omitted otherwise — never `default effort`.
+  attempt, including retries and engine fallback; an unspecified level is never blank: a license
+  inherits its harness's gateway default effort, then the model's declared default (Codex catalog),
+  then the harness fallback (Claude `high`, Codex `medium`), and that level is PASSED to the CLI, so
+  the label is the effort the run really has.
 
 Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
 
@@ -2652,7 +2654,7 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 - Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
 
 
-Slack’s native running/Stop label shows the harness (Claude Code, Codex — never the license or account name), the real model and the effort when known (`Claude Code · Opus 5.5 (low)`), plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; an unset effort shows the model's declared default or is omitted, matching the final reply footer; a model the gateway left unset is filled in from the model the CLI reports at start-up (Claude's init event), never `CLI default`. The assistant status and loading line use the same label. Runtime selection and CLI flags are unchanged.
+Slack’s native running/Stop label shows the harness (Claude Code, Codex — never the license or account name), the real model and the effort when known (`Claude Code · Opus 5.5 (low)`), plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; an unset effort resolves to a concrete level that is passed to the CLI (license → harness default → model's declared default → harness fallback), matching the final reply footer; a license without its own default model inherits its harness's; a model the gateway left unset is filled in from the model the CLI reports at start-up (Claude's init event), never `CLI default`. The assistant status and loading line use the same label. Runtime selection and CLI flags are unchanged.
 
 Claude task lifecycle messages distinguish shell work from subagents: explicit non-agent tasks,
 including foreground and background `local_bash`, never create agent activity rows or the

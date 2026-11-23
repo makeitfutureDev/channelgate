@@ -315,6 +315,18 @@ const modelCatalog = createEngineModelCatalog(engineRegistry);
 export function refreshEngineModels(engine = "", options = {}) { return modelCatalog.refresh(engine, options); }
 export function modelsForEngine(engine) { return modelCatalog.snapshot(engine).models; }
 export function effortsForModel(engine, model = "") { return modelCatalog.effortsFor(engine, model); }
+// The effort a run uses when nobody chose one: the model catalog's declared default (Codex reports
+// one per model), else the harness's own fallback. Claude Code takes its default from the provider
+// per account, which the gateway cannot read, so a Claude run is given this level explicitly — the
+// effort a status shows is then the effort the run actually has.
+const HARNESS_FALLBACK_EFFORT = Object.freeze({ claude: "high", codex: "medium" });
+export function fallbackEffortFor(engine, model = "") {
+  const declared = modelsForEngine(engine).find((entry) => entry.value === String(model || "").trim())?.defaultEffort || "";
+  const efforts = effortsForModel(engine, model);
+  if (declared && efforts.includes(declared)) return declared;
+  const fallback = HARNESS_FALLBACK_EFFORT[harnessOf(engine)] || "";
+  return efforts.includes(fallback) ? fallback : "";
+}
 export function effortBelongsToModel(effort, engine, model = "") {
   const value = String(effort || "").trim().toLowerCase();
   return !value || effortsForModel(engine, model).includes(value);
