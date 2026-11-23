@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import express from "express";
 import { request as httpRequest } from "node:http";
 import { ensureTestEnv } from "./helpers.js";
+
+import { invalidateConversationMembers } from "../src/slack/members.js";
+// Tests change Slack membership mid-test; Slack reports that as a member event, which clears
+// the dashboard's membership cache. Mirror that here.
+class LiveMembers extends Map { set(k, v) { invalidateConversationMembers(k); return super.set(k, v); } }
+
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, getUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
@@ -97,7 +103,7 @@ test("reply Dashboard and private URL actions are registered and acknowledged", 
 const defer = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 async function fixture(t, options = {}) {
   let currentTime = Date.now(), team = "T_WORK", connected = true, base;
-  const roots = new Map(), members = new Map(), reads = [];
+  const roots = new Map(), members = new LiveMembers(), reads = [];
   const markerCalls = [];
   const client = { auth: { test: async () => ({ user_id: "B_GATEWAY" }) }, reactions: {
     add: async (args) => { markerCalls.push(["add", args]); return { ok: true }; },
@@ -720,6 +726,7 @@ test("revocation during the final membership recheck cannot race a completion wr
   const user = await f.login(), gate = defer(), started = defer(); let lookups = 0;
   f.client.conversations.members = async () => {
     if (++lookups === 2) { started.resolve(); await gate.promise; }
+    await null; invalidateConversationMembers("G_PRIVATE"); // keep every read live, as before the cache
     return { members: ["U_MINE"] };
   };
   const pending = f.request(user.url + "/api/completion", { method: "POST", headers: user.post, body: JSON.stringify({ channelId: "G_PRIVATE", threadTs: "100.000001", done: true }) });
@@ -938,6 +945,7 @@ test("history cannot index after channel access changes during the final private
   let checks = 0;
   f.client.conversations.members = async () => {
     if (++checks === 2) await saveChannelMeta(c.slug, { access: "none" });
+    await null; invalidateConversationMembers("G_HISTORY"); // keep every read live, as before the cache
     return { members: ["U_MINE"] };
   };
   const result = await f.request(session.url + "/api/history", { method: "POST", headers: session.post, body: "{}" });

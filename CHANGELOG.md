@@ -9,6 +9,10 @@
   failures. API runs report a task status (`taskStatus`, `outcome`) beside `status`, so a usage-limit
   refusal or broken connection no longer reads as "completed". Schedules and API runs accept an
   optional success criteria ("goal") that the agent checks and reports against.
+- Dashboard: Activity, Automations and the other dashboard lists load much faster for people in
+  many private channels — Slack membership is now remembered for up to a minute (cleared at once
+  when someone joins or leaves) instead of being re-fetched one channel at a time on every load.
+  Thread status stays live.
 - Dashboard: every page now uses the same wide layout; Skills moved into Settings; Automations can
   show only the conversations whose automations are failing; Subscriptions are grouped by harness.
 - A channel can now reach a private or local service — a LAN SSH/SFTP or FTP server, a NAS, an

@@ -2,6 +2,12 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { ensureTestEnv } from "./helpers.js";
+
+import { invalidateConversationMembers } from "../src/slack/members.js";
+// Tests change Slack membership mid-test; Slack reports that as a member event, which clears
+// the dashboard's membership cache. Mirror that here.
+class LiveMembers extends Map { set(k, v) { invalidateConversationMembers(k); return super.set(k, v); } }
+
 ensureTestEnv();
 const { getDb, toJson } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
@@ -33,7 +39,7 @@ beforeEach(async () => {
   for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) db.exec(`DELETE FROM ${table}`);
   await setUser("U_MINE", { approved: true, isAdmin: false });
   await setUser("U_OTHER", { approved: true, isAdmin: false });
-  roots = new Map(); members = new Map(); reads = [];
+  roots = new Map(); members = new LiveMembers(); reads = [];
   markerCalls = [];
   client = {
     auth: { test: async () => ({ user_id: "B_GATEWAY" }) },
@@ -505,9 +511,11 @@ test("temporary membership failures hide private rows and request automatic retr
   client.conversations.members = async () => { throw new Error("temporary membership API failure"); };
   const unavailable = await homeThreadsSnapshot(client, "U_MINE");
   assert.equal(unavailable.rows.length, 0); assert.equal(unavailable.unavailable, true);
+  invalidateConversationMembers("G_PRIVATE"); // Slack's member event clears the cache
   client.conversations.members = async () => ({ members: ["U_MINE"] });
   const recovered = await homeThreadsSnapshot(client, "U_MINE");
   assert.equal(recovered.rows.length, 1); assert.equal(recovered.unavailable, false);
+  invalidateConversationMembers("G_PRIVATE");
   client.conversations.members = async () => ({ members: [] });
   const revoked = await homeThreadsSnapshot(client, "U_MINE");
   assert.equal(revoked.rows.length, 0); assert.equal(revoked.unavailable, false, "verified nonmembership stays denied without retry");
@@ -1317,6 +1325,7 @@ test("transient membership failure during historical root recheck keeps discover
   getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, ts, "private-history");
   let calls = 0;
   client.conversations.members = async () => {
+    await null; invalidateConversationMembers("G_HISTORY"); // keep every read live, as before the cache
     if (++calls === 2) throw new Error("temporarily unavailable");
     return { members: ["U_MINE"] };
   };
