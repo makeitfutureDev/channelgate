@@ -1255,6 +1255,22 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
 
 → TEST-PLAN: Container process limit (2026-11-19).
 
+## Activity dashboard layout, error filter and harness groups (2026-11-24)
+
+- Every dashboard page (Calls, Automations, Skills, Subscriptions, every Settings section) shares
+  one width: up to 1800px, centered.
+- Skills is no longer a top-menu tab: it is the Settings → Skills section. `/activity/<id>/skills`
+  still serves it, rendered inside the Settings shell with the section list (Settings marked
+  current in the top menu); the Settings tab navigates there.
+- Automations has an **Only with errors** switch. The conversation picker then lists only the
+  conversations with an enabled automation whose LAST run failed, blocked or was interrupted,
+  most failing first; each option shows its failing count and each failing card says "Last run …"
+  in red. `/api/automations` carries `failing` per conversation.
+- Subscriptions groups its cards under one heading per harness (Claude Code, Codex) with a count;
+  each `/api/subscriptions` row now carries `harness` (the adapter's `cli`).
+
+→ TEST-PLAN: Activity dashboard layout, error filter and harness groups (2026-11-24).
+
 ## Activity Skills page (2026-11-20)
 
 The Activity dashboard has a **Skills** tab (`/activity/<session>/skills`) beside Automations. A

@@ -1837,6 +1837,22 @@ can still name it, resolves to the normal default instead of ending a turn or re
       recreating its container with `--pids-limit 4096` (`podman inspect --format
       '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
 
+## Activity dashboard layout, error filter and harness groups (2026-11-24)
+
+Engine-independent (dashboard rendering only). Regression: `test/activity-automations.test.js`
+(layout/filter/grouping case), `test/activity-skills.test.js`.
+
+1. Open Activity from Slack on a ~2000px-wide window. Visit Calls, Automations, Subscriptions and
+   each Settings section. Pass: all use the same wide content width; Connections is no wider than
+   the others.
+2. Top menu. Pass: no Skills tab; Settings → Skills opens the skills picker inside the Settings
+   layout with Skills highlighted; other section links return to Settings.
+3. Fixture: one conversation with an enabled schedule whose last run failed, one with only
+   succeeding runs. Automations → tick **Only with errors**. Pass: only the failing conversation
+   is listed with "· 1 failing"; its failing card shows "Last run failed"; unticking restores all.
+4. With Claude and Codex subscription licenses enabled, open Subscriptions. Pass: cards appear
+   under "Claude Code" and "Codex" headings with counts.
+
 ## Activity Skills page (2026-11-20)
 
 Regression: `test/activity-skills.test.js` covers the picker order and membership: "Only me", then the viewer's own

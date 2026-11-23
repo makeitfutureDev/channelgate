@@ -76,7 +76,7 @@ export function callHistoryBrowser(config, browser) {
 }
 
 export const CALL_HISTORY_CSS = `
-.calls-page{max-width:1000px;width:100%;margin:0 auto;padding:24px 20px}
+.calls-page{max-width:1800px;width:100%;margin:0 auto;padding:24px 20px}
 .calls-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .calls-copy,#calls-status{color:var(--muted);font-size:13px;margin:14px 0}
 .call-history-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:12px 0;overflow:hidden}
