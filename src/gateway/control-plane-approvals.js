@@ -26,9 +26,13 @@ const SECRET_ARGS = Object.freeze({ add_skill_source: ["token"] });
 const secretStash = new Map();
 let invoker = null;
 
-export function buildControlPlaneAction(ctx, { tool, args = {}, tier = "" } = {}) {
+// `requesterTier` (optional) is the authority the REQUESTER must still hold when the click is
+// applied, for a gate whose card tier is stricter than who may ask (a worker asks, an admin clicks).
+export function buildControlPlaneAction(ctx, { tool, args = {}, tier = "", requesterTier } = {}) {
   if (!CONTROL_PLANE_TIERS.includes(tier)) throw new Error(`Unknown approval tier "${tier}".`);
+  if (requesterTier !== undefined && !CONTROL_PLANE_TIERS.includes(requesterTier)) throw new Error(`Unknown requester tier "${requesterTier}".`);
   return {
+    ...(requesterTier !== undefined && requesterTier !== tier ? { requesterTier } : {}),
     kind: CONTROL_PLANE_ACTION,
     tool: String(tool || ""),
     args: { ...(args || {}) },
@@ -97,6 +101,7 @@ export async function executeControlPlaneApproval(record) {
   try {
     if (record?.status !== "executing" || action?.kind !== CONTROL_PLANE_ACTION || !action.tool || typeof action.args !== "object"
         || !CONTROL_PLANE_TIERS.includes(action.tier || "")
+        || (action.requesterTier !== undefined && !CONTROL_PLANE_TIERS.includes(action.requesterTier))
         || action.channelId !== record.channelId || action.slug !== record.slug || action.authorId !== record.authorId) {
       throw new Error("Invalid saved control-plane approval.");
     }
@@ -111,9 +116,10 @@ export async function executeControlPlaneApproval(record) {
     // posted is not evidence of holding the authority now.
     const requester = await rank(action.authorId, meta, entry.isDM);
     const tier = action.tier || "";
-    if (tier === "worker" && !(await isChannelWorker(action.channelId, action.slug, action.authorId))) throw new Error("The requester no longer has write access in this channel.");
-    if (tier === "admin" && !requester.admin) throw new Error("The requester is no longer an admin.");
-    if (tier === "manage" && !requester.manager) throw new Error("The requester no longer manages this channel.");
+    const asked = action.requesterTier ?? tier;
+    if (asked === "worker" && !(await isChannelWorker(action.channelId, action.slug, action.authorId))) throw new Error("The requester no longer has write access in this channel.");
+    if (asked === "admin" && !requester.admin) throw new Error("The requester is no longer an admin.");
+    if (asked === "manage" && !requester.manager) throw new Error("The requester no longer manages this channel.");
     if (!requester.admin && !requester.member) throw new Error("The requester is no longer authorized in this channel.");
     // The human factor: the admin UI's session IS an admin; a decision link is bound to the
     // requester and its route re-validates them on every POST; a chat click is checked here.

@@ -22,6 +22,7 @@
 // channels); those refusals are expected, carry no secret a person set, and are still counted.
 // Everything is counted per channel in memory for egressStatus().
 import { effectiveMeta } from "../effective-meta.js";
+import { privateDestinationsFor } from "./private-hosts.js";
 import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
@@ -240,6 +241,7 @@ async function policyForCtx(ctx) {
     mode: meta.allowNetwork === true ? "on" : "off",
     engineHosts: [...new Set([...engineHostsFor(), ...qwenHosts(), ...runHosts])],
     rawPassthrough: rawPassthroughFor(meta),
+    privateDestinations: privateDestinationsFor(meta),
   };
 }
 

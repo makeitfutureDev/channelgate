@@ -36,6 +36,7 @@ export const POLICY_KEYS = Object.freeze([
   "allowNetwork", // network egress for the channel's runs
   "rawNetwork", // raw sockets on the open bridge beside the egress proxy (admin escape)
   "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy
+  "egressPrivateHosts", // admin-approved private/loopback host:port@pinned-address destinations
   "cleanMode", // run bare (no MCP servers, no skills)
   "skillRuntimeSwap", // a skill's preferred model may switch the turn's engine/model
   "approvedEngines", // Enterprise channel harness approval policy
@@ -64,7 +65,7 @@ export const POLICY_KEYS = Object.freeze([
 
 // Keys whose value is a list. Reported as a sorted array of plain strings so a reordered list is
 // not a "change" and an MCP selection object never drags its transport/config fields into the row.
-const LIST_KEYS = new Set(["approvedEngines", "managers", "allowedUsers", "excludedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps", "egressRawHosts"]);
+const LIST_KEYS = new Set(["approvedEngines", "managers", "allowedUsers", "excludedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps", "egressRawHosts", "egressPrivateHosts"]);
 
 // A whole row's `changes` blob stays bounded: a 400-member allowedUsers list must not turn one
 // audit event into a document. Over the cap, list values collapse to their counts.

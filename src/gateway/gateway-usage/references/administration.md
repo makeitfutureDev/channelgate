@@ -180,6 +180,13 @@ These channel modes do not leave the container. The separate organization-admin-
   adds only that host:port, preserves existing grants, and never enables Network
   or permits private addresses. Omitting `port` retains the legacy 22/5432/6543 grant, which does not cover a custom SSH port. For port 32921, request `{host: "ssh.example.com", port: 32921}` and retry SSH with `-p 32921` and the ProxyCommand. A connection closing before authentication does not test the SSH key. Do not switch to `/sudo` just to bypass this approval. Point raw clients at the proxy — for `ssh`/`git@…`:
   `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
+  For a PRIVATE or LOOPBACK destination (LAN SSH/SFTP/FTP, NAS, internal API, an MCP server on
+  the gateway host) call `allow_channel_private_host({host, port})`: it pins the address the host
+  resolves to now and posts a card only an organization admin can approve. End the turn while it is
+  pending. A service on the gateway host's own loopback is then reached as
+  `host.channelgate.internal:<port>` (127.0.0.1 inside the container is the container itself);
+  raw protocols use the same `cg-egress-connect` ProxyCommand, http/https clients the usual proxy
+  env. Metadata, link-local and the gateway's admin port are never approvable.
   operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
   still succeed while it is off — that is not permission. If the switch is off and a task needs
   the network, say so and ask an admin to turn it on rather than working around it. The current
