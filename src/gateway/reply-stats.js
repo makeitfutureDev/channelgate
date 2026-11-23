@@ -1,7 +1,9 @@
 // Shared compact run statistics for chat replies. Surface-specific controls stay in their adapters.
 import { getShowMessageCost } from "../config/settings.js";
 import { normalizeUsage } from "./usage.js";
-import { contextUsageFor, effortLabel, modelLabel } from "./model-info.js";
+import { contextUsageFor, effortLabel, modelLabel, resolveCurrentModel } from "./model-info.js";
+
+const firstModel = (result) => String(result?.model || "").trim() || resolveCurrentModel(result);
 
 // Compact token counts for the footer, whole thousands by user request: 214 → "214",
 // 21965 → "22k", 167149 → "167k", 999600 → "1M". Millions keep one decimal only when it is not
@@ -23,7 +25,7 @@ export function contextText(result) {
 }
 
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
-// "gpt-6.1-sol · high · ctx: 167k / 475k, 35%" — model · effort (or "default effort") · cost
+// "gpt-6.1-sol · high · ctx: 167k / 475k, 35%" — model · effort (configured, else the model's declared default; omitted when unknown) · cost
 // (only when the admin enabled it; 2 decimals, no ~/est. markers) · context. No duration and no
 // run token totals: the summed input re-counts the history once per model call and says nothing
 // about how full the context is. The resume command never rides here as text — it lives in
@@ -33,7 +35,7 @@ export function footerText(result) {
   // is shown bare (same figure the usage ledger records).
   const est = result.costUSD == null ? normalizeUsage(result) : null;
   const usd = result.costUSD ?? est?.costUSD;
-  const parts = [modelLabel(result), effortLabel(result)];
+  const parts = [modelLabel(result), effortLabel({ effort: result.effort, engine: result.engine, model: firstModel(result) })].filter(Boolean);
   if (getShowMessageCost() && usd != null) parts.push(`$${usd.toFixed(2)}`);
   const ctx = contextText(result);
   if (ctx) parts.push(ctx);

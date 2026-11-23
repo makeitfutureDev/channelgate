@@ -2447,8 +2447,8 @@ their existing delivery paths. This does not cancel already admitted work or gua
 
 - Reply statistics always show effort immediately after the model (for example,
   `gpt-6.1-terra · low · ctx: 120k / 475k, 25%`). The value comes from the answering
-  attempt, including retries and engine fallback; an unspecified level reads `default effort`.
-  This describes the CLI-selected setting without claiming a numeric level or changing CLI flags.
+  attempt, including retries and engine fallback; an unspecified level shows the model's declared
+  default effort when the model catalog knows it and is omitted otherwise — never `default effort`.
 
 Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
 
@@ -2652,7 +2652,7 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 - Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
 
 
-Slack’s native running/Stop label always shows the resolved model and effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; an unset effort reads `default effort`, matching the final reply footer. The assistant status and loading line use the same label. Runtime selection and CLI flags are unchanged.
+Slack’s native running/Stop label shows the harness (Claude Code, Codex — never the license or account name), the real model and the effort when known (`Claude Code · Opus 5.5 (low)`), plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; an unset effort shows the model's declared default or is omitted, matching the final reply footer; a model the gateway left unset is filled in from the model the CLI reports at start-up (Claude's init event), never `CLI default`. The assistant status and loading line use the same label. Runtime selection and CLI flags are unchanged.
 
 Claude task lifecycle messages distinguish shell work from subagents: explicit non-agent tasks,
 including foreground and background `local_bash`, never create agent activity rows or the
@@ -4994,8 +4994,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `assistant.threads.setStatus` bridge, which is the only surface that accepts a phrase. The
   session's display name follows the resolved model, so Slack's control reads **Stop Opus 1M**
   or **Stop GPT-6.1 Sol** instead of the app name. Runtime changes update it immediately;
-  separate threads retain separate names. Before resolution it says **AI agent**, or the engine's
-  **CLI default** when no model is reported. This uses the per-session `username` override and
+  separate threads retain separate names. Before resolution it says **AI agent**, then the harness
+  alone (**Codex**) until the CLI reports the model it actually runs. This uses the per-session `username` override and
   requires `chat:write.customize` (add the scope and reinstall existing apps). A rejected override
   retries the same native lifecycle without customization, preserving Stop; a missing scope is
   retried after one minute without requiring a daemon restart. The global bot name is unchanged.

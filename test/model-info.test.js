@@ -117,3 +117,16 @@ test("Codex context uses the runtime-reported usable window from rollout request
   };
   assert.equal(contextWindowFor(result), 258_400);
 });
+
+test("a live runtime label names the harness, the real model and only a known effort", async () => {
+  const { runtimeStatusLabel, effortLabel } = await import("../src/gateway/model-info.js");
+  const { createStreamConsumer } = await import("../src/engines/stream.js");
+  assert.equal(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5", effort: "low" }), "Claude Code · Opus 5.5 (low)");
+  assert.equal(runtimeStatusLabel({ engine: "codex" }), "Codex");
+  assert.equal(effortLabel({}), "");
+  assert.doesNotMatch(runtimeStatusLabel({ engine: "claude", model: "claude-opus-5-5" }), /default/);
+  const events = [];
+  const consumer = createStreamConsumer({ onEvent: (e) => events.push(e) });
+  consumer.consume({ type: "system", subtype: "init", model: "claude-sonnet-5-5" });
+  assert.ok(events.some((e) => e.kind === "runtime_model" && e.model === "claude-sonnet-5-5"));
+});

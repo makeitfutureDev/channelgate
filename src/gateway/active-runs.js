@@ -271,7 +271,7 @@ export function activeRunForApi(run, { channels = {}, users = {} } = {}) {
     engine,
     engineName: engine ? engineLabel(engine) : "",
     model,
-    modelName: engine ? (model ? modelLabel({ engine, model }) : "CLI default") : "",
+    modelName: engine ? (model ? modelLabel({ engine, model }) : "") : "",
     startedAt: run.startedAt || null,
     attempts: run.attempts || 0,
   };

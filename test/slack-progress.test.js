@@ -186,19 +186,19 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
     "tool progress should use native assistant status"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Opus 4.8 1M (default effort)"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Claude Code · Opus 4.8 1M"),
     "the compact activity status should identify the resolved model"
   );
   assert.ok(
     calls.some((c) =>
       c[0] === "apiCall" &&
       c[1] === "assistant.threads.setStatus" &&
-      c[2].loading_messages?.[0] === "Opus 4.8 1M (default effort) · Gathering informat…"
+      c[2].loading_messages?.[0] === "Claude Code · Opus 4.8 1M · Gathering information…"
     ),
     "the prominent loading indicator should identify the resolved model"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Opus 4.8 1M (default effort)"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Claude Code · Opus 4.8 1M"),
     "later activity phases should retain the model"
   );
   assert.equal(calls.some((c) => c[0] === "postMessage"), false, "stream mode should not post activity log");
@@ -625,7 +625,7 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   assert.equal(applied.at(-1).status, "active", "native idle must be the last status write");
   const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
   assert.deepEqual(native.map((p) => [p.status, p.username]), [
-    ["processing", "AI agent"], ["active", "GPT-6.1 Sol (default effort)"],
+    ["processing", "AI agent"], ["active", "Codex · GPT-6.1 Sol"],
   ], "a coalesced terminal clear carries the latest model and cannot be followed by stale processing");
 });
 
@@ -645,11 +645,11 @@ test("an assistant-thread status line carries thinking summaries and the loading
 
   const statusCalls = calls.filter((c) => c[0] === "assistant.threads.setStatus");
   assert.ok(
-    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Opus 4.8 (default effort)"),
+    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Claude Code · Opus 4.8"),
     "the status should carry the reasoning gist"
   );
   assert.ok(
-    statusCalls.some((c) => (c[1].loading_messages || []).includes("Opus 4.8 (default effort) · Thinking — weighing t…")),
+    statusCalls.some((c) => (c[1].loading_messages || []).includes("Claude Code · Opus 4.8 · Thinking — weighing the …")),
     "the prominent loading line should mirror the live activity, model first"
   );
   assert.equal(statusCalls.at(-1)[1].status, "", "stopping the run clears the temporary status");
@@ -730,18 +730,18 @@ test("stream progress updates its model label when the runtime falls back to Cod
 
   const statuses = calls.filter((c) => c[0] === "assistant.threads.setStatus").map((c) => c[1].status);
   const loadingMessages = calls.filter((c) => c[0] === "assistant.threads.setStatus").flatMap((c) => c[1].loading_messages || []);
-  assert.ok(statuses.includes("is gathering information… · Sonnet 4.6 (default effort)"));
-  assert.ok(statuses.includes("is gathering information… · gpt-5.4 (default effort)"));
-  assert.ok(loadingMessages.includes("Sonnet 4.6 (default effort) · Gathering informati…"));
-  assert.ok(loadingMessages.includes("gpt-5.4 (default effort) · Gathering information…"));
+  assert.ok(statuses.includes("is gathering information… · Claude Code · Sonnet 4.6"));
+  assert.ok(statuses.includes("is gathering information… · Codex · gpt-5.4"));
+  assert.ok(loadingMessages.includes("Claude Code · Sonnet 4.6 · Gathering information…"));
+  assert.ok(loadingMessages.includes("Codex · gpt-5.4 · Gathering information…"));
   const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6 (default effort)"));
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4 (default effort)"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "Claude Code · Sonnet 4.6"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "Codex · GPT-5.4"));
   assert.equal(native.at(-1).status, "active");
-  assert.equal(native.at(-1).username, "GPT-5.4 (default effort)");
+  assert.equal(native.at(-1).username, "Codex · GPT-5.4");
 });
 
-test("a reused session starts with an honest generic name, then an engine default if no model is reported", async () => {
+test("a reused session starts with an honest generic name, then the harness until the CLI reports its real model", async () => {
   const calls = [];
   const client = {
     apiCall: async (method, payload) => calls.push([method, payload]),
@@ -757,10 +757,12 @@ test("a reused session starts with an honest generic name, then an engine defaul
   await cardReady();
   second.onRuntimeResolved({ engine: "codex" });
   await cardReady();
+  second.onEvent({ kind: "runtime_model", model: "gpt-6.1-sol" });
+  await cardReady();
   await second.stop();
   const names = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, p]) => [p.status, p.username]);
-  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M (default effort)"], ["active", "Opus 1M (default effort)"],
-    ["processing", "AI agent"], ["processing", "Codex CLI default (default effort)"], ["active", "Codex CLI default (default effort)"]]);
+  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Claude Code · Opus 1M"], ["active", "Claude Code · Opus 1M"],
+    ["processing", "AI agent"], ["processing", "Codex"], ["processing", "Codex · GPT-6.1 Sol"], ["active", "Codex · GPT-6.1 Sol"]]);
 });
 
 test("completed-run footer carries the fixed labelled menu: Files, Variables, Settings", async () => {
@@ -3125,13 +3127,13 @@ test("native Stop label carries resolved effort and live phases, then clears act
   await progress.stop();
   const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
   for (const phase of ["Thinking", "Using tools", "Writing"]) {
-    assert.ok(native.some((p) => p.status === "processing" && p.username === `GPT-6.1 Sol (low) · ${phase}`));
+    assert.ok(native.some((p) => p.status === "processing" && p.username === `Codex · GPT-6.1 Sol (low) · ${phase}`));
   }
   assert.equal(native.at(-1).status, "active");
-  assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+  assert.equal(native.at(-1).username, "Claude Code · Opus 4.8 (high)");
 });
 
-test("live runner replaces explicit effort with the CLI default on fallback", async () => {
+test("live runner drops an explicit effort on fallback and never says default", async () => {
   const calls = [];
   const client = {
     apiCall: async (method, payload) => calls.push([method, payload]),
@@ -3146,10 +3148,10 @@ test("live runner replaces explicit effort with the CLI default on fallback", as
     progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
     await cardReady();
     const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
-    assert.equal(native.at(-1).username, "GPT-6.1 Sol (default effort) · Using tools");
+    assert.equal(native.at(-1).username, "Codex · GPT-6.1 Sol · Using tools");
     const statuses = calls.filter(([method]) => method === "assistant.threads.setStatus").map(([, payload]) => payload);
-    assert.match(statuses.at(-1).status, /gpt-6\.1-sol \(default effort\)/);
-    assert.ok(statuses.at(-1).loading_messages.every((line) => line.includes("(default effort)")));
+    assert.match(statuses.at(-1).status, /Codex · gpt-6\.1-sol/);
+    assert.doesNotMatch(JSON.stringify(statuses.at(-1)), /default/);
     assert.doesNotMatch(JSON.stringify(statuses.at(-1)), /high/);
   } finally { await progress.stop(); }
 });

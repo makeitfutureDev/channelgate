@@ -85,5 +85,5 @@ test("active-run API projection keeps ordinary channel names", () => {
 test("active-run API projection identifies an unpinned CLI model", () => {
   const view = activeRunForApi({ id: "run-3", channelId: "C1", authorId: "U1", engine: "claude", model: "" });
   assert.equal(view.engineName, "Claude");
-  assert.equal(view.modelName, "CLI default");
+  assert.equal(view.modelName, "");
 });

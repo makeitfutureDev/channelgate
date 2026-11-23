@@ -7,8 +7,7 @@ import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CH
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { setAgentSessionStatus, nativeSessionStatus, SESSION_STATUS } from "./agent-sessions.js";
-import { effortLabel, modelLabel, modelDisplayLabel } from "../gateway/model-info.js";
-import { engineLabel } from "../engines/registry.js";
+import { runtimeStatusLabel } from "../gateway/model-info.js";
 import { describeSilence } from "../engines/watchdog.js";
 
 // Live feedback: while Claude runs, edit the placeholder every ~1.5s (Slack's chat.update rate
@@ -282,11 +281,24 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
       reassertTimer.unref?.();
     }
   };
+  let runtimeFacts = null;
+  // Harness (never the license/account name) · the real model · the real effort when known.
+  const applyRuntime = (facts) => {
+    runtimeFacts = facts;
+    runtime = runtimeStatusLabel(facts);
+    nativeName = runtimeStatusLabel(facts, { display: true });
+    render();
+  };
   return {
     onDelta: (t) => {
       if (t.trim()) setActivity("is putting it all together…");
     },
     onEvent: (e) => {
+      // The CLI reported the model it actually runs: it replaces "unknown", never a configured pick.
+      if (e.kind === "runtime_model") {
+        if (e.model && runtimeFacts && !runtimeFacts.model) applyRuntime({ ...runtimeFacts, model: e.model });
+        return;
+      }
       if (e.kind === "tool_use") setActivity(`is using ${toolLabel(e.name, e.target)}…`);
       else if (e.kind === "tool_result") {
         const label = toolLabel(e.name, e.target);
@@ -316,14 +328,7 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
     },
     onRuntimeResolved: ({ engine = "", model = "", effort = "" } = {}) => {
       if (!engine && !model) return;
-      runtime = model
-        ? modelLabel({ engine, model })
-        : `${engineLabel(engine) || engine} CLI default`;
-      nativeName = model ? modelDisplayLabel(model, engine) : runtime;
-      const effortText = effortLabel({ effort });
-      nativeName += ` (${effortText})`;
-      runtime += ` (${effortText})`;
-      render();
+      applyRuntime({ engine, model, effort });
     },
     afterMessageActivity,
     finish: () => setAgentSessionStatus(client, { channel, threadTs, channelSession, force: true, isCurrent }),
