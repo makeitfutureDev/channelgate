@@ -79,16 +79,27 @@ test("`Any license` reaches a license added after the channel was configured", a
   assert.equal(result.licenseSwitched, true);
 });
 
-test("a channel that selected one license never borrows another", async () => {
+test("a selection with no further licenses moves through every usable license of its harness", async () => {
   fresh();
-  const other = signedInLicense("Unselected seat");
+  const other = signedInLicense("Unlisted seat");
   await setUser("U_LIC_ONE", { name: "Lic One", approved: true, isAdmin: false });
   await channel("D_LIC_ONE", "lic-one");
 
   const result = await turn("D_LIC_ONE", "U_LIC_ONE", "CODEX_STUB_LIMIT_DEFAULT_LICENSE", "2003.010");
-  assert.equal(result.engine, "claude", "no pool: the existing cross-harness failover is all there is");
-  assert.notEqual(result.engine, other.id);
-  assert.equal(result.licenseSwitched, false);
+  assert.equal(result.engine, other.id, "an empty pool is every license this conversation may use");
+  assert.equal(result.licenseSwitched, true);
+});
+
+test("crossing to the other harness tries each of its licenses in turn", async () => {
+  fresh({ engine: "claude" });
+  const second = signedInLicense("Cross seat");
+  await setUser("U_LIC_CROSS", { name: "Lic Cross", approved: true, isAdmin: false });
+  await channel("D_LIC_CROSS", "lic-cross", { engine: "claude" });
+
+  const result = await turn("D_LIC_CROSS", "U_LIC_CROSS", "CLAUDE_STUB_LIMIT_FAIL_SAFE CODEX_STUB_LIMIT_DEFAULT_LICENSE", "2003.020");
+  assert.equal(result.engine, second.id, "Codex's own sign-in was limited, so its next license answered");
+  assert.match(result.content, /Claude(?: Code)? and Codex could not answer — using Cross seat/);
+  assert.match(result.content, /Codex stub reply/);
 });
 
 test("when every selected license is limited the turn crosses to the other harness, naming what was tried", async () => {
@@ -193,9 +204,8 @@ test("a signed-out first license hands the turn to the next selected license ins
   assert.ok(homes.length && homes.every((home) => home.endsWith(`.cg-licenses/${second.id}`)), `the signed-out license never started (${homes.join(", ")})`);
 });
 
-test("a signed-out license with no other selected license still fails closed, and never crosses to the other harness", async () => {
+test("a signed-out license with no other usable license still fails closed, and never crosses to the other harness", async () => {
   fresh();
-  signedInLicense("Not selected");
   await setUser("U_LIC_GATE1", { name: "Lic Gate One", approved: true, isAdmin: false });
   const entry = await channel("D_LIC_GATE1", "lic-gate-one");
   const before = backend.calls.spawn.length;
@@ -207,7 +217,7 @@ test("a signed-out license with no other selected license still fails closed, an
     assert.equal(error.details.alsoFailed, undefined);
     return true;
   });
-  assert.equal(backend.calls.spawn.length, before, "nothing started: not the unselected license, not Claude");
+  assert.equal(backend.calls.spawn.length, before, "nothing started: not Claude");
   assert.equal(await getSessionEngine(entry.slug, "2013.010"), "");
 });
 

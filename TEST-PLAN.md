@@ -1077,6 +1077,19 @@ automated cases are engine-independent. `LICENSE-31` is run once per harness, be
 which sign-in of that harness answers; `LICENSE-32` is Codex-only — Codex EU is the one shipped
 license whose name is its id written with a space.
 
+- [x] `test/engine-licenses-failover.test.js` "a selection with no further licenses moves through
+      every usable license of its harness" and "crossing to the other harness tries each of its
+      licenses in turn" (always runs): a Codex-default DM with no pool and an added signed-in
+      ChatGPT license is answered by that license when the default sign-in is limited; a
+      Claude-default DM whose Claude is limited crosses to Codex, whose own sign-in is limited
+      too, and is answered by the added Codex license with "Claude Code and Codex could not answer
+      — using Cross seat". `test/api-runs-harness.test.js` covers a not-signed-in Claude Extra in
+      the pool being stepped over on the way to Codex.
+- [ ] Live, Claude and Codex: in a test channel with no stored license pool and two signed-in
+      licenses per harness, exhaust (or simulate the limit of) the first Claude license and send
+      `hello`. Pass: the answer starts "Claude … hit its usage limit — using <second Claude
+      license>". Then with both Claude licenses limited: pass when the answer names the Codex
+      license that took over, and a limited Codex sign-in is followed by the next Codex license.
 - [x] `test/engine-licenses.test.js` "pickers get one shape …" (always runs): with two added
       ChatGPT sign-ins and an added Codex API-key license in a Claude-default conversation, a
       harness pick with no license step returns Codex's own sign-in plus the two sign-ins in
