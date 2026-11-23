@@ -3083,261 +3083,27 @@ function renderDmDetail(id) {
   detail.appendChild(card);
 }
 
-// ── Schedules ──────────────────────────────────────────────────────────────────
-let scheduleEditor = null;
-let scheduleRows = [];
-
-function scheduleDetail(label, value) {
-  return `<div class="schedule-detail"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`;
-}
-
-function scheduleTime(hour, minute) {
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function parseScheduleCron(cron) {
-  const [minute, hour, monthDay, month, weekDay] = String(cron || "").trim().split(/\s+/);
-  if ([minute, hour, monthDay, month, weekDay].some((part) => part === undefined) || month !== "*") return { frequency: "advanced" };
-  if (/^\d+$/.test(minute) && hour === "*" && monthDay === "*" && weekDay === "*") return { frequency: "hourly", minute };
-  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return { frequency: "advanced" };
-  const time = scheduleTime(hour, minute);
-  if (monthDay === "*" && weekDay === "*") return { frequency: "daily", time };
-  if (monthDay === "*" && weekDay === "1-5") return { frequency: "weekdays", time };
-  if (monthDay === "*" && /^[0-6]$/.test(weekDay)) return { frequency: "weekly", day: weekDay, time };
-  if (/^\d+$/.test(monthDay) && weekDay === "*") return { frequency: "monthly", monthDay, time };
-  return { frequency: "advanced" };
-}
-
-function friendlySchedule(schedule) {
-  if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
-  if (schedule.intervalDays) return `Every ${schedule.intervalDays} days · next ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
-  const parsed = parseScheduleCron(schedule.cron);
-  const at = parsed.time ? ` at ${parsed.time}` : "";
-  if (parsed.frequency === "daily") return `Daily${at}`;
-  if (parsed.frequency === "weekdays") return `Weekdays${at}`;
-  if (parsed.frequency === "weekly") return `Weekly on ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(parsed.day)]}${at}`;
-  if (parsed.frequency === "monthly") return `Monthly on day ${Number(parsed.monthDay)}${at}`;
-  if (parsed.frequency === "hourly") return `Hourly at :${String(parsed.minute).padStart(2, "0")}`;
-  return "Custom schedule";
-}
-
-function localDateTimeValue(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function syncScheduleTimingFields() {
-  const once = Boolean(scheduleEditor?.schedule.once);
-  const interval = Boolean(scheduleEditor?.schedule.intervalDays);
-  const frequency = document.getElementById("schedule-frequency").value;
-  document.getElementById("schedule-recurring-fields").hidden = once || interval;
-  document.getElementById("schedule-once-wrap").hidden = !once;
-  document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
-  document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
-  document.getElementById("schedule-time-wrap").hidden = once || ["hourly", "advanced"].includes(frequency);
-  document.getElementById("schedule-minute-wrap").hidden = once || frequency !== "hourly";
-  document.getElementById("schedule-cron-wrap").hidden = once || frequency !== "advanced";
-}
-
-function cronFromScheduleEditor() {
-  const frequency = document.getElementById("schedule-frequency").value;
-  const [hour = "0", minute = "0"] = document.getElementById("schedule-time").value.split(":");
-  if (frequency === "daily") return `${Number(minute)} ${Number(hour)} * * *`;
-  if (frequency === "weekdays") return `${Number(minute)} ${Number(hour)} * * 1-5`;
-  if (frequency === "weekly") return `${Number(minute)} ${Number(hour)} * * ${document.getElementById("schedule-day").value}`;
-  if (frequency === "monthly") return `${Number(minute)} ${Number(hour)} ${Number(document.getElementById("schedule-month-day").value)} * *`;
-  if (frequency === "hourly") return `${Number(document.getElementById("schedule-minute").value)} * * * *`;
-  return document.getElementById("schedule-modal-cron").value.trim();
-}
-
-function openScheduleEditor(schedule) {
-  const modal = document.getElementById("schedule-modal");
-  const prompt = document.getElementById("schedule-modal-prompt");
-  const error = document.getElementById("schedule-modal-error");
-  const status = schedule.lastRun
-    ? `${schedule.lastStatus || "unknown"} · ${new Date(schedule.lastRun).toLocaleString()}`
-    : "Never run";
-  scheduleEditor = { schedule };
-  document.getElementById("schedule-modal-title").textContent = schedule.description || "Automation details";
-  document.getElementById("schedule-modal-details").innerHTML = [
-    scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
-    scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
-    scheduleDetail("Status", status),
-    ...(schedule.intervalDays ? [scheduleDetail("Timing", friendlySchedule(schedule))] : []),
-  ].join("");
-  document.getElementById("schedule-modal-description").value = schedule.description || "";
-  document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
-  const parsed = parseScheduleCron(schedule.cron);
-  document.getElementById("schedule-frequency").value = parsed.frequency;
-  document.getElementById("schedule-time").value = parsed.time || "09:00";
-  document.getElementById("schedule-day").value = parsed.day || "1";
-  document.getElementById("schedule-month-day").value = parsed.monthDay || "1";
-  document.getElementById("schedule-minute").value = parsed.minute || "0";
-  document.getElementById("schedule-modal-cron").value = schedule.cron || "";
-  document.getElementById("schedule-modal-run-at").value = localDateTimeValue(schedule.runAt);
-  document.getElementById("schedule-modal-notify").value = schedule.notify || "channel";
-  document.getElementById("schedule-modal-notify-user").value = schedule.notifyUserId || "";
-  document.getElementById("schedule-modal-notify-user-wrap").hidden = schedule.notify !== "user";
-  const deliveryWrap = document.getElementById("schedule-modal-delivery-wrap");
-  deliveryWrap.hidden = schedule.kind === "reminder";
-  const delivery = document.getElementById("schedule-modal-delivery");
-  delivery.value = schedule.delivery || "standard";
-  delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
-  delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
-  document.getElementById("schedule-modal-thread").value = schedule.deliveryThread || "";
-  document.getElementById("schedule-modal-visibility").value = schedule.executionVisibility || "visible";
-  document.getElementById("schedule-modal-result-policy").value = schedule.resultPolicy || "always";
-  document.getElementById("schedule-modal-failure-notify").checked = schedule.failureNotify !== false;
-  document.getElementById("schedule-modal-sudo").checked = schedule.sudo === true;
-  document.getElementById("schedule-modal-sudo").disabled = Boolean(schedule.loop);
-  for (const field of document.querySelectorAll(".schedule-task-control")) field.hidden = schedule.kind === "reminder";
-  syncScheduleDeliveryFields();
-  prompt.value = schedule.prompt || "";
-  syncScheduleTimingFields();
-  error.textContent = "";
-  error.hidden = true;
-  modal.hidden = false;
-  prompt.focus();
-}
-
-function closeScheduleEditor() {
-  document.getElementById("schedule-modal").hidden = true;
-  document.getElementById("schedule-modal-error").hidden = true;
-  scheduleEditor = null;
-}
-
-async function saveScheduleEditor() {
-  if (!scheduleEditor) return;
-  const input = document.getElementById("schedule-modal-prompt");
-  const errorEl = document.getElementById("schedule-modal-error");
-  const save = document.getElementById("schedule-modal-save");
-  const prompt = input.value;
-  if (!prompt.trim()) {
-    errorEl.textContent = "Prompt cannot be empty.";
-    errorEl.hidden = false;
-    input.focus();
-    return;
-  }
-
-  save.disabled = true;
-  save.textContent = "Saving…";
-  errorEl.hidden = true;
-  try {
-    const schedule = scheduleEditor.schedule;
-    const body = {
-      prompt,
-      description: document.getElementById("schedule-modal-description").value.trim(),
-      enabled: document.getElementById("schedule-modal-enabled").checked,
-      notify: document.getElementById("schedule-modal-notify").value,
-      notifyUserId: document.getElementById("schedule-modal-notify-user").value,
-    };
-    // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
-    // another timezone cannot shift it (or turn a future task into an immediately due one).
-    if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
-    else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
-    if (schedule.kind !== "reminder") {
-      body.delivery = document.getElementById("schedule-modal-delivery").value;
-      body.deliveryThread = document.getElementById("schedule-modal-thread").value.trim();
-      body.executionVisibility = document.getElementById("schedule-modal-visibility").value;
-      body.resultPolicy = document.getElementById("schedule-modal-result-policy").value;
-      body.failureNotify = document.getElementById("schedule-modal-failure-notify").checked;
-      body.sudo = document.getElementById("schedule-modal-sudo").checked;
-    }
-    const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
-    Object.assign(scheduleEditor.schedule, result.schedule);
-    closeScheduleEditor();
-    await loadSchedules();
-  } catch (error) {
-    const modalError = document.getElementById("schedule-modal-error");
-    modalError.textContent = error.message || "Could not save the automation.";
-    modalError.hidden = false;
-    input.focus();
-  } finally {
-    save.disabled = false;
-    save.textContent = "Save automation";
-  }
-}
-
+// ── Automations ────────────────────────────────────────────────────────────────
+// The health board is ONE component shared with the Activity dashboard (src/web/automation-board.js,
+// served at /automation-board.js); the console only gives it the admin scope and its CSRF marker.
+let automationBoardMounted = null;
 async function loadSchedules() {
-  const { schedules } = await api("/api/schedules");
-  scheduleRows = schedules;
-  renderSchedules();
-}
-
-function renderSchedules() {
-  const wrap = document.getElementById("schedules");
-  const query = document.getElementById("schedule-search").value.trim().toLocaleLowerCase();
-  if (!scheduleRows.length) {
-    wrap.innerHTML = `<p class="hint">No schedules yet. In a channel, ask the bot something like "every weekday at 9am, post a standup reminder".</p>`;
-    return;
-  }
-  const schedules = scheduleRows.filter((schedule) => !query || [schedule.channelName, schedule.description, schedule.prompt, friendlySchedule(schedule), schedule.cron].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
-  if (!schedules.length) {
-    wrap.innerHTML = `<div class="card schedule-empty"><strong>No matching automations</strong><span>Try a channel, person, automation name, or timing.</span></div>`;
-    return;
-  }
-  const groups = {};
-  for (const s of schedules) (groups[s.channelName] ||= []).push(s);
-  wrap.innerHTML = "";
-  for (const [name, list] of Object.entries(groups)) {
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `<div class="card-head"><h3>${escapeHtml(name)}</h3><span class="badge">${list.length} job${list.length === 1 ? "" : "s"}</span></div>`;
-    for (const s of list) {
-      const row = document.createElement("div");
-      row.className = "sched-row";
-      // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
-      const latest = s.runSummary?.lastStartedAt || s.lastRun;
-      const lastStatus = s.runSummary?.lastStatus || s.lastStatus;
-      const runHtml = latest
-        ? `<span class="sched-run" title="${escapeHtml(automationStatusLabel(lastStatus))}"><span class="dot ${["ok", "found"].includes(lastStatus) ? "ok" : automationStatusTone(lastStatus)}"></span>${escapeHtml(automationStatusLabel(lastStatus))} · ${escapeHtml(new Date(latest).toLocaleString())}</span>`
-        : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
-      row.innerHTML = `
-        <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
-        <button type="button" class="sched-open" title="View details and edit prompt">
-          <span class="sched-friendly" title="${escapeHtml(s.cron || "")}">${escapeHtml(friendlySchedule(s))}</span>${s.cronValid || s.once ? "" : ' <span class="sched-badge">invalid</span>'}
-          <span class="sched-desc">${escapeHtml(s.description || s.prompt)}</span>
-          ${runHtml}
-        </button>
-        <span class="sched-saved">saved</span>
-        ${s.executionVisibility === "silent" ? '<span class="sched-badge">silent</span>' : ""}
-        ${s.sudo ? '<span class="sched-badge">sudo · gateway host</span>' : ""}
-        <button type="button" class="ghost sched-history">Runs${s.runSummary?.total ? ` · ${s.runSummary.total}` : ""}</button>
-        <button class="sched-del">Delete</button>`;
-      const savedFlash = row.querySelector(".sched-saved");
-      row.querySelector(".sched-open").addEventListener("click", () => openScheduleEditor(s));
-      row.querySelector(".sched-history").addEventListener("click", () => openScheduleHistory(s));
-      row.addEventListener("click", (e) => {
-        if (e.target.closest("input, select, button, label")) return;
-        openScheduleEditor(s);
-      });
-      // Brief "saved" flash next to the row on a successful autosave PUT (notify + enable).
-      const flashSaved = () => { savedFlash.classList.add("show"); setTimeout(() => savedFlash.classList.remove("show"), 1400); };
-      row.querySelector(".sched-enabled").addEventListener("change", async (e) => {
-        await api(`/api/schedules/${s.id}`, { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) });
-        flashSaved();
-      });
-      row.querySelector(".sched-del").addEventListener("click", async () => {
-        const ok = await confirmDialog({ title: "Delete this automation?", body: "The schedule is removed and stops running. This can't be undone.", confirmLabel: "Delete", danger: true });
-        if (!ok) return;
-        await api(`/api/schedules/${s.id}`, { method: "DELETE" });
-        loadSchedules();
-      });
-      card.appendChild(row);
+  if (automationBoardMounted) return automationBoardMounted;
+  automationBoardMounted = (async () => {
+    const board = await import("/automation-board.js");
+    if (!document.getElementById("automation-board-css")) {
+      const style = document.createElement("style");
+      style.id = "automation-board-css";
+      style.textContent = board.AUTOMATION_BOARD_CSS;
+      document.head.append(style);
     }
-    wrap.appendChild(card);
-  }
-}
-
-function syncScheduleDeliveryFields() {
-  document.getElementById("schedule-modal-thread-wrap").hidden = scheduleEditor?.schedule.kind === "reminder"
-    || document.getElementById("schedule-modal-delivery").value !== "thread";
+    board.automationBoardBrowser({ boardApi: "/api/automation-board", boardHeaders: { "X-CG-Request": "1" }, adminConsole: true }, window);
+  })().catch((error) => {
+    automationBoardMounted = null;
+    const host = document.getElementById("ab-root");
+    if (host) host.textContent = `Couldn’t load automations: ${error.message}`;
+  });
+  return automationBoardMounted;
 }
 
 let scheduleHistory = null;
@@ -3355,7 +3121,6 @@ function closeScheduleHistory() {
 }
 
 function openScheduleHistory(schedule = null) {
-  // Preserve unsaved editor values underneath the history dialog.
   clearInterval(scheduleHistoryTimer);
   scheduleHistory = { schedule, runs: [], before: null, loading: false, detailLoading: false, selectedRun: null };
   scheduleRunRequest++;
@@ -5342,16 +5107,6 @@ window.addEventListener("popstate", async () => {
 });
 
 // ── Static event wiring (elements always present in the DOM) ─────────────────────
-const scheduleModal = document.getElementById("schedule-modal");
-document.getElementById("schedule-modal-close").addEventListener("click", closeScheduleEditor);
-document.getElementById("schedule-modal-cancel").addEventListener("click", closeScheduleEditor);
-document.getElementById("schedule-modal-save").addEventListener("click", saveScheduleEditor);
-document.getElementById("schedule-modal-prompt").addEventListener("input", () => {
-  document.getElementById("schedule-modal-error").hidden = true;
-});
-document.getElementById("schedule-search").addEventListener("input", renderSchedules);
-document.getElementById("schedule-modal-delivery").addEventListener("change", syncScheduleDeliveryFields);
-document.getElementById("schedule-history-open").addEventListener("click", () => openScheduleHistory(scheduleEditor?.schedule));
 document.getElementById("schedule-history-all").addEventListener("click", () => openScheduleHistory());
 document.getElementById("schedule-history-close").addEventListener("click", closeScheduleHistory);
 document.getElementById("schedule-history-refresh").addEventListener("click", () => loadScheduleHistory());
@@ -5388,35 +5143,8 @@ document.getElementById("drivesync-sync-all").addEventListener("click", async ()
     button.disabled = false;
   }
 });
-// Same clear affordance as the users search: the × shows once there is a query, Escape clears.
-{
-  const search = document.getElementById("schedule-search");
-  const clear = document.getElementById("schedule-search-clear");
-  search.addEventListener("input", () => { clear.hidden = !search.value.trim(); });
-  search.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    search.value = "";
-    clear.hidden = true;
-    renderSchedules();
-  });
-  clear.addEventListener("click", () => {
-    search.value = "";
-    clear.hidden = true;
-    renderSchedules();
-    search.focus();
-  });
-}
-document.getElementById("schedule-frequency").addEventListener("change", syncScheduleTimingFields);
-document.getElementById("schedule-modal-notify").addEventListener("change", (event) => {
-  document.getElementById("schedule-modal-notify-user-wrap").hidden = event.target.value !== "user";
-});
-scheduleModal.addEventListener("click", (e) => {
-  if (e.target === scheduleModal) closeScheduleEditor();
-});
 document.addEventListener("keydown", (e) => {
-  if (!document.getElementById("schedule-history-modal").hidden && e.key === "Escape") { closeScheduleHistory(); return; }
-  if (!scheduleModal.hidden && e.key === "Escape") closeScheduleEditor();
+  if (!document.getElementById("schedule-history-modal").hidden && e.key === "Escape") closeScheduleHistory();
 });
 
 for (const b of document.querySelectorAll(".nav-item")) {

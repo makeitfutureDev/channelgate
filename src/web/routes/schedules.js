@@ -1,14 +1,14 @@
 // Schedule admin routes: list every cron job, edit one, delete one. Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { Router } from "express";
-import { getChannelsIndex, getUsers, isAdmin } from "../../config/store.js";
+import { getChannelsIndex, getUsers } from "../../config/store.js";
 import { getSchedules, updateSchedule, deleteSchedule } from "../../config/schedules.js";
-import { cronValid, minIntervalMinutes } from "../../util/cron.js";
-import { settingsForApi } from "../../config/settings.js";
+import { cronValid } from "../../util/cron.js";
 import { costHistoryStart } from "../../ee/cost-history.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
-import { validateScheduleOptions } from "../../config/schedule-options.js";
-import { normalizeSuccessCriteria } from "../../gateway/schedule-outcome.js";
+import { buildSchedulePatch } from "../../config/schedule-patch.js";
+import { automationBoard, automationRuns, updateAutomation, runAutomationNow, deleteAutomation, consoleChannel, ADMIN_CONSOLE_ACCESS } from "../../gateway/automations-view.js";
+import { adminSession } from "../auth.js";
 
 export function createSchedulesRouter() {
   const router = Router();
@@ -60,86 +60,38 @@ export function createSchedulesRouter() {
     } catch (e) { next(e); }
   });
 
+  // ── Automation health board ──────────────────────────────────────────────────
+  // The same board and actions the Activity dashboard serves its members, with the admin
+  // console's scope: every conversation on every platform, every DM, host-access rows included.
+  const consoleUser = (req) => adminSession(req)?.account?.userId || "";
+  router.get("/automation-board/board", async (req, res, next) => {
+    try {
+      res.json(await automationBoard(ADMIN_CONSOLE_ACCESS, consoleUser(req), { days: Number(req.query.days) || 7, adminConsole: true }));
+    } catch (e) { next(e); }
+  });
+  const boardAction = (fn) => async (req, res, next) => {
+    try {
+      const entry = await consoleChannel(String(req.params.channelId));
+      res.json(await fn(entry, String(req.params.scheduleId).slice(0, 64), req));
+    } catch (e) {
+      if (e.userFacing || [400, 403, 404, 409, 429, 503].includes(e.status)) return res.status(e.status || 400).json({ error: e.userFacing ? e.message : e.status === 404 ? "That automation no longer exists." : "Not allowed." });
+      next(e);
+    }
+  };
+  router.get("/automation-board/:channelId/:scheduleId/runs", boardAction((entry, id, req) => ({ runs: automationRuns(ADMIN_CONSOLE_ACCESS, entry, id, consoleUser(req)) })));
+  router.post("/automation-board/:channelId/:scheduleId/update", boardAction(async (entry, id, req) => {
+    const schedule = await updateAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id, req.body || {}, { allowSudo: true });
+    return { ok: true, enabled: schedule.enabled !== false };
+  }));
+  router.post("/automation-board/:channelId/:scheduleId/run", boardAction((entry, id, req) => runAutomationNow(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id)));
+  router.post("/automation-board/:channelId/:scheduleId/delete", boardAction((entry, id, req) => ({ ok: deleteAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id) })));
+
   router.put("/schedules/:id", async (req, res, next) => {
     try {
       const current = getSchedules().find((schedule) => schedule.id === req.params.id);
       if (!current) return res.status(404).json({ error: "unknown schedule" });
-      const patch = {};
-      if (Object.hasOwn(req.body || {}, "sudo")) {
-        if (typeof req.body.sudo !== "boolean") return res.status(400).json({ error: "sudo must be a boolean" });
-        patch.sudo = req.body.sudo;
-      }
-      if ((patch.sudo ?? current.sudo) && !(await isAdmin(current.createdBy))) {
-        return res.status(400).json({ error: "A sudo schedule's creator must currently be an organization admin." });
-      }
-      if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
-      if (Object.hasOwn(req.body || {}, "cron")) {
-        if (typeof req.body.cron !== "string" || !cronValid(req.body.cron)) {
-          return res.status(400).json({ error: "enter a valid five-field cron schedule" });
-        }
-        const floor = settingsForApi().scheduleMinIntervalMinutes;
-        const gap = minIntervalMinutes(req.body.cron);
-        if (gap !== null && gap < floor) return res.status(400).json({ error: `cron fires every ~${gap} min; minimum is ${floor} min` });
-        patch.cron = req.body.cron;
-      }
-      if (Object.hasOwn(req.body || {}, "runAt")) {
-        if (!current.once) return res.status(400).json({ error: "run time can only be changed for one-time schedules" });
-        const parsed = new Date(req.body.runAt);
-        if (typeof req.body.runAt !== "string" || !req.body.runAt || Number.isNaN(parsed.getTime())) {
-          return res.status(400).json({ error: "enter a valid run date and time" });
-        }
-        patch.runAt = parsed.toISOString();
-      }
-      if (Object.hasOwn(req.body || {}, "prompt")) {
-        if (typeof req.body.prompt !== "string" || !req.body.prompt.trim()) {
-          return res.status(400).json({ error: "prompt cannot be empty" });
-        }
-        patch.prompt = req.body.prompt;
-      }
-      if (typeof req.body?.description === "string") patch.description = req.body.description;
-      if (Object.hasOwn(req.body || {}, "successCriteria")) {
-        try { patch.successCriteria = normalizeSuccessCriteria(req.body.successCriteria); }
-        catch (error) { return res.status(400).json({ error: error.message }); }
-      }
-      if (Object.hasOwn(req.body || {}, "notify") && !["channel", "user", "none"].includes(req.body.notify)) {
-        return res.status(400).json({ error: "invalid notification setting" });
-      }
-      if (["channel", "user", "none"].includes(req.body?.notify)) patch.notify = req.body.notify;
-      if (typeof req.body?.notifyUserId === "string") patch.notifyUserId = req.body.notifyUserId.replace(/[<@>]/g, "").trim();
-      const nextNotify = patch.notify ?? current.notify;
-      const nextNotifyUserId = patch.notifyUserId ?? current.notifyUserId;
-      if (nextNotify === "user" && !nextNotifyUserId) return res.status(400).json({ error: "choose a person to notify" });
-      for (const [key, allowed] of [["executionVisibility", ["visible", "silent"]], ["resultPolicy", ["always", "on-result", "on-failure"]]]) {
-        if (Object.hasOwn(req.body || {}, key)) {
-          if (!allowed.includes(req.body[key])) return res.status(400).json({ error: `invalid ${key}` });
-          patch[key] = req.body[key];
-        }
-      }
-      if (Object.hasOwn(req.body || {}, "failureNotify")) {
-        if (typeof req.body.failureNotify !== "boolean") return res.status(400).json({ error: "failureNotify must be a boolean" });
-        patch.failureNotify = req.body.failureNotify;
-      }
-      if (Object.hasOwn(req.body || {}, "deliveryThread")) {
-        if (typeof req.body.deliveryThread !== "string" || req.body.deliveryThread.length > 500 || /[\r\n\x00]/.test(req.body.deliveryThread)) return res.status(400).json({ error: "enter a valid delivery thread ID" });
-        patch.deliveryThread = req.body.deliveryThread;
-      }
-      if (Object.hasOwn(req.body || {}, "delivery") && !["standard", "daily-thread", "channel", "dm-on-match", "thread"].includes(req.body.delivery)) {
-        return res.status(400).json({ error: "invalid delivery setting" });
-      }
-      if (["standard", "daily-thread", "channel", "dm-on-match", "thread"].includes(req.body?.delivery)) {
-        if (req.body.delivery === "thread" && current.kind === "reminder") return res.status(400).json({ error: "existing-thread delivery requires a task schedule" });
-        if (req.body.delivery === "daily-thread" && (current.kind === "reminder" || current.once)) {
-          return res.status(400).json({ error: "daily-thread delivery requires a recurring task schedule" });
-        }
-        if (req.body.delivery === "dm-on-match" && (current.kind === "reminder" || !current.createdBy || !current.matchPrefix)) {
-          return res.status(400).json({ error: "DM on match requires a task with a creator and a match prefix" });
-        }
-        patch.delivery = req.body.delivery;
-        patch.dailyThreadDate = "";
-        patch.dailyThreadTs = "";
-      }
-      const optionsError = validateScheduleOptions({ ...current, ...patch });
-      if (optionsError) return res.status(400).json({ error: optionsError });
+      const { patch, error } = await buildSchedulePatch(current, req.body || {}, { allowSudo: true });
+      if (error) return res.status(400).json({ error });
       const updated = updateSchedule(req.params.id, patch, current);
       if (!updated) return res.status(409).json({ error: "The schedule changed while it was being edited. Reload and retry." });
       res.json({ ok: true, schedule: updated });

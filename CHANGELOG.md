@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Automations is now a health board, the same page in the admin console and in every member's
+  Activity dashboard: what didn't run or didn't arrive comes first, each automation shows its last
+  30 runs as run + delivery, a plain-language problem and numbered fix steps, with views, filters,
+  search and a 24h/7d/30d window. Creators (and admins) can pause, edit and **Run now** from the
+  page; everyone else who can see an automation gets a read-only view.
 - API runs can be `hidden` (nothing posted in chat) or `on-failure` (one alert only when a run
   fails or is blocked); scheduled tasks can send results only when they fail or are blocked.
 - Automations now include HTTP API runs: each channel API token (and, for admins, the

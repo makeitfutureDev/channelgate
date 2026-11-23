@@ -33,7 +33,7 @@ import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from
 import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
-import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation } from "../gateway/automations-view.js";
+import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation, automationBoard, updateAutomation, runAutomationNow } from "../gateway/automations-view.js";
 import { PERSONAL_SKILLS_ID, channelSkillsView, personalSkillsView, saveSkillSelection, skillChannels } from "../gateway/skills-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { apiTokenChannels, apiTokenChannelView, createDashboardApiToken, revokeDashboardApiToken } from "../gateway/api-tokens-view.js";
@@ -187,7 +187,7 @@ export function createActivityRouter({
   });
   // Settings carries a variable value (up to 16 KB) or an email account; everything else is tiny.
   const smallJson = express.json({ limit: "8kb" }), settingsJson = express.json({ limit: "48kb" });
-  router.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/api\/settings$/.test(req.path) ? settingsJson : smallJson)(req, res, next));
+  router.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/api\/(?:settings|automations\/[^/]+\/[^/]+\/update)$/.test(req.path) ? settingsJson : smallJson)(req, res, next));
   const authorize = async (session) => {
     if (!session || session.expiresAt <= now() || session.origin !== baseFor(getBaseUrl())?.origin) throw Object.assign(new Error("Activity expired"), { status: 401 });
     const user = await getUser(session.ownerId);
@@ -609,6 +609,16 @@ export function createActivityRouter({
       return res.json({ channels: data });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
+  // The health board: every automation the viewer may see, with its verdict and fix steps.
+  router.get("/:id/api/automations/board", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const access = await accessContext(client, session.ownerId);
+      const board = await automationBoard(access, session.ownerId, { days: Number(req.query.days) || 7, botName: await agentName(client).catch(() => "") });
+      await context(req);
+      return res.json(board);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
   router.get("/:id/api/automations/:channelId", async (req, res) => {
     try {
       const { session, client } = await context(req);
@@ -629,6 +639,26 @@ export function createActivityRouter({
       return res.json({ runs });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
+  // Edit / pause / resume, and Run now: only the creator, an admin, or the DM's owner (an
+  // automation runs as its creator). Validation errors are shown to the person; access errors are not.
+  for (const [action, handler] of [
+    ["update", (access, ownerId, entry, id, req) => updateAutomation(access, ownerId, entry, id, req.body || {}).then((schedule) => ({ ok: true, enabled: schedule.enabled !== false }))],
+    ["run", (access, ownerId, entry, id) => runAutomationNow(access, ownerId, entry, id)],
+  ]) {
+    router.post(`/:id/api/automations/:channelId/:scheduleId/${action}`, async (req, res) => {
+      try {
+        const { session, client } = await context(req);
+        if (!csrfOk(req, session)) return unavailable(res, 403);
+        const access = await accessContext(client, session.ownerId);
+        const entry = await checkedChannel(access, session.ownerId, req.params.channelId);
+        await context(req);
+        return res.json(await handler(access, session.ownerId, entry, String(req.params.scheduleId).slice(0, 64), req));
+      } catch (error) {
+        if (error.userFacing) return res.status(error.status || 400).json({ error: error.message });
+        return unavailable(res, error.status || 503);
+      }
+    });
+  }
   router.post("/:id/api/automations/:channelId/:scheduleId/delete", async (req, res) => {
     try {
       const { session, client } = await context(req);

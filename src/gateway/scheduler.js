@@ -688,6 +688,25 @@ export function tick(nowMs = Date.now(), runOptions = {}) {
   return Promise.allSettled(started);
 }
 
+// "Run now" from a dashboard: one immediate execution outside the cron, recorded with trigger
+// "manual". It is the same runSchedule path (same author, same delivery, same attempt budget for a
+// one-time task), so it never bypasses a gate the cron path applies. Refuses — never queues —
+// while the automation is already executing or holding an undelivered result, and respects the
+// fan-out ceiling. Returns at once; the run continues in the background.
+export function runScheduleNow(id, { by = "", runOptions = {} } = {}) {
+  const sched = getSchedules().find((s) => s.id === id);
+  const refuse = (status, message) => { throw Object.assign(new Error(message), { status, userFacing: true }); };
+  if (!sched) refuse(404, "That automation no longer exists.");
+  if (isLoopRow(sched) || sched.loop) refuse(400, "A thread loop runs in its own thread and can't be started from here.");
+  if (running.has(sched.id) || needsRecovery(sched)) refuse(409, "This automation is already running or still delivering its last result.");
+  if (running.size >= MAX_CONCURRENT_SCHED) refuse(429, `${MAX_CONCURRENT_SCHED} automations are already running. Try again in a minute.`);
+  if (!automationTarget(slackRef, sched.channelId)) refuse(503, "The chat platform for this conversation is not connected right now.");
+  logEvent("schedule_run_now", { id: sched.id, channel: sched.channelId, by: String(by || "").slice(0, 64) });
+  const started = runSchedule({ ...sched, trigger: "manual", triggeredBy: by }, runOptions)
+    .catch((error) => console.error("[scheduler] run-now failed:", error.message));
+  return { started: true, done: started };
+}
+
 // Reset the module's tick bookkeeping (tests only — the daemon has exactly one scheduler).
 export function resetSchedulerState() {
   lastTickMs = null;

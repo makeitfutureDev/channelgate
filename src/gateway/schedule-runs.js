@@ -12,11 +12,13 @@ const terminal = (status) => !["queued", "running"].includes(status);
 export function createScheduleRun(sched) {
   const now = Date.now();
   const db = getDb();
+  const manual = sched.trigger === "manual";
   db.prepare("DELETE FROM schedule_runs WHERE started_ms < ? AND status NOT IN ('queued', 'running')").run(now - RETENTION_DAYS * 86400_000);
   const run = { id: randomUUID(), scheduleId: sched.id, channelId: sched.channelId,
     description: safeText(sched.description || "Scheduled task", 200),
-    scheduledAt: sched.lastCronFireMs ? new Date(sched.lastCronFireMs).toISOString() : sched.runAt || new Date(now).toISOString(),
-    schedulingDelayMs: Math.max(0, now - (sched.lastCronFireMs || Date.parse(sched.runAt) || now)),
+    scheduledAt: manual ? new Date(now).toISOString() : sched.lastCronFireMs ? new Date(sched.lastCronFireMs).toISOString() : sched.runAt || new Date(now).toISOString(),
+    schedulingDelayMs: manual ? 0 : Math.max(0, now - (sched.lastCronFireMs || Date.parse(sched.runAt) || now)),
+    trigger: manual ? "manual" : "schedule", ...(manual && sched.triggeredBy ? { triggeredBy: safeText(sched.triggeredBy, 64) } : {}),
     startedAt: new Date(now).toISOString(), completedAt: null, lastActivityAt: new Date(now).toISOString(),
     status: "queued", engineStatus: "not-started", taskStatus: "unreported", deliveryStatus: "pending",
     engine: "", model: "", summary: "", connections: [], events: [], durationMs: 0,
@@ -77,6 +79,12 @@ export function listScheduleRuns({ scheduleId, channelId, limit = 50, before } =
   const count = Number(limit);
   args.push(Number.isFinite(count) ? Math.max(1, Math.min(100, Math.floor(count))) : 50);
   return db.prepare(`SELECT data FROM schedule_runs ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY rowid DESC LIMIT ?`).all(...args).map((r) => fromJson(r.data, {}));
+}
+
+// Every run of one automation started at or after `sinceMs`, newest first (bounded).
+export function scheduleRunsSince({ scheduleId, channelId, sinceMs, limit = 500 }) {
+  return getDb().prepare("SELECT data FROM schedule_runs WHERE schedule_id = ? AND channel_id = ? AND started_ms >= ? ORDER BY started_ms DESC LIMIT ?")
+    .all(scheduleId, channelId, Math.floor(Number(sinceMs) || 0), Math.max(1, Math.min(2000, Math.floor(limit)))).map((r) => fromJson(r.data, {}));
 }
 
 // Output-only view: internal readers and update paths always retain original accounting.

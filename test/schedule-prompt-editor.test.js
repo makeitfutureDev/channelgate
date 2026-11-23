@@ -147,41 +147,15 @@ test("automation listings resolve a DM slug to the person's display name", async
   assert.equal(body.schedules.find((item) => item.channelId === "DDMPERSON").channelName, "DM · Ada Lovelace");
 });
 
-test("the Automations page provides a dedicated accessible prompt editor modal", () => {
+test("the admin Automations view mounts the shared health board, not a separate editor", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-
-  assert.match(html, /id="schedule-modal" class="modal" hidden/);
-  assert.match(html, /class="modal-card schedule-card"[^>]*role="dialog"[^>]*aria-modal="true"/);
-  assert.match(html, /id="schedule-modal-title"/);
-  assert.match(html, /id="schedule-modal-close"[^>]*aria-label="Close"/);
-  assert.match(html, /id="schedule-modal-details"/);
-  assert.match(html, /id="schedule-search"/);
-  assert.match(html, /id="schedule-frequency"/);
-  assert.match(html, /id="schedule-modal-description"/);
-  assert.match(html, /id="schedule-modal-notify"/);
-  assert.match(html, /id="schedule-modal-delivery"/);
-  assert.match(html, /textarea id="schedule-modal-prompt"/);
-  assert.match(html, /id="schedule-modal-error"[^>]*role="alert"/);
-  assert.match(html, /id="schedule-modal-cancel"/);
-  assert.match(html, /id="schedule-modal-save"/);
-});
-
-test("automation row activation and modal saves preserve control isolation and prompt drafts", () => {
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-
-  assert.match(client, /function openScheduleEditor\(schedule\)/);
-  assert.match(client, /schedule-modal-prompt[\s\S]*?\.value = schedule\.prompt \|\| ""/);
-  assert.match(client, /<button type="button" class="sched-open"/);
-  assert.match(client, /querySelector\("\.sched-open"\)\.addEventListener\("click", \(\) => openScheduleEditor\(s\)\)/);
-  assert.match(client, /row\.addEventListener\("click", \(e\) => \{[\s\S]*?closest\("input, select, button, label"\)[\s\S]*?openScheduleEditor\(s\)/);
-  assert.match(client, /function friendlySchedule\(schedule\)/);
-  assert.match(client, /function cronFromScheduleEditor\(\)/);
-  assert.match(client, /schedule-search[\s\S]*?addEventListener\("input", renderSchedules\)/);
-  assert.match(client, /body: JSON\.stringify\(body\)/);
-  assert.match(client, /Object\.assign\(scheduleEditor\.schedule, result\.schedule\)/);
-  assert.match(client, /catch \(error\) \{[\s\S]*?schedule-modal-error[\s\S]*?error\.message/);
-  assert.match(client, /if \(e\.target === scheduleModal\) closeScheduleEditor\(\)/);
-  assert.match(client, /e\.key === "Escape"[\s\S]*?closeScheduleEditor\(\)/);
+  assert.match(html, /<section id="view-schedules"[\s\S]*?id="ab-root"/);
+  assert.doesNotMatch(html, /id="schedule-modal"/);
+  assert.match(html, /id="schedule-history-modal"/); // the all-runs history (deleted automations too) stays
+  assert.match(client, /import\("\/automation-board\.js"\)/);
+  assert.match(client, /boardApi: "\/api\/automation-board", boardHeaders: \{ "X-CG-Request": "1" \}, adminConsole: true/);
+  assert.doesNotMatch(client, /function openScheduleEditor/);
 });
 
 test("automation prompt editing has visible row, modal, saving, and error states", () => {

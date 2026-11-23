@@ -41,6 +41,7 @@ import { runUpdateSmoke } from "../gateway/update-smoke.js";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
 import { renderShell, shellContentSecurityPolicy } from "./assets.js";
+import { automationBoardModuleSource } from "./automation-board.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 import { searchAgentDirectory } from "../gateway/agent-directory.js";
 import { requestSkillSwap } from "../gateway/skill-runtime.js";
@@ -551,6 +552,13 @@ export function createWebApp({
   app.get(["/", "/index.html"], sendAdminShell);
   app.get(ADMIN_VIEW_PATHS, sendAdminShell);
   app.get(ADMIN_CONVERSATION_PATH_RE, sendAdminShell);
+  // The Automations health board is one component shared with the Activity dashboard, which
+  // inlines it; the admin console imports the same source as a module from here.
+  const boardModule = automationBoardModuleSource();
+  app.get("/automation-board.js", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.type("application/javascript").send(boardModule);
+  });
 
   // A Cloudflare tunnel sits in front, so a new deploy was being hidden behind stale cached JS. Two
   // layers now prevent that: the content stamp on every asset URL (src/web/assets.js) makes a
