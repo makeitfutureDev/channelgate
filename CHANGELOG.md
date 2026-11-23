@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A turn whose license hits its usage limit now tries every other license of the same harness
+  that the conversation may use, even when nobody chose "Any license" — then, if failover to the
+  other harness is on, each license of that harness one by one. Before, a conversation with no
+  pool stored went straight from its one Claude license to Codex's own sign-in and stopped there,
+  while other approved licenses sat idle. A selection that lists specific licenses keeps its list.
 - Any engine license can now be limited to one conversation. In Settings → Engine licenses, a
   license's form has "Available in": every conversation, or one channel or DM. This is how a
   customer's own account in one channel is set up now, and it works for every kind of license on

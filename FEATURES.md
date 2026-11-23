@@ -1152,7 +1152,9 @@ unchanged.
 - **A selection is a license plus, optionally, more licenses of the same harness**
   (`src/gateway/license-pool.js`). The first license is the `engine` field every level already
   stores; beside it sits a pool: nothing, **Any license** (every license of the harness the
-  conversation may use, including ones added later) or an ordered list. It exists on the gateway
+  conversation may use, including ones added later) or an ordered list. At run time an empty pool
+  means **Any license**: a turn moves through every license of its harness that is switched on,
+  approved for the channel and available in it, unless the selection names an explicit list. It exists on the gateway
   default (`engine` + `enginePool`), a channel or DM (`engine` + `licensePool`), a thread pin and
   a run-API call (`harness` + `licenses`). A pool never crosses harnesses; writers refuse one that
   does.
@@ -1171,7 +1173,9 @@ unchanged.
   model somebody picked is skipped rather than answered by another model, and a license that is
   not signed in is stepped over. Only after the selection is exhausted does the existing
   cross-harness failover apply — unpinned conversations only, under the same *failover* setting
-  and ask-before-switching mode, and never to a harness the channel has not approved. A turn that
+  and ask-before-switching mode, and never to a harness the channel has not approved. Crossing
+  harnesses also goes license by license: the other harness's own sign-in first, then each of its
+  other licenses usable in the conversation, a license known to be limited tried last. A turn that
   fails after trying several licenses names them.
 - **A channel is locked to licenses or to whole harnesses.** The Enterprise *Approved harnesses*
   policy (`meta.approvedEngines`, `src/gateway/channel-engines.js`) accepts a license id or

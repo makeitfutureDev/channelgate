@@ -59,7 +59,7 @@ import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
 import { codexHarnessFor } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
-import { licensePoolCandidates, readLicensePool } from "./license-pool.js";
+import { LICENSE_POOL_ANY, licensePoolCandidates, readLicensePool, selectableLicenses } from "./license-pool.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -818,9 +818,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // The MORE licenses of that harness this turn may move to when the license fails
   // (license-pool.js). A selection is one thing — a license and its alternatives — so the pool
   // comes from the same level that named the license, never mixed across levels.
-  const licensePool = overrides?.engine && ENGINES.includes(overrides.engine) ? readLicensePool(overrides.licensePool)
+  // A selection that names no further licenses moves through EVERY license of its harness this
+  // conversation may use ("any"): the enabled, approved, conversation-available ones, filtered live
+  // by licensePoolCandidates. An explicit list keeps its own order.
+  const licensePool = (overrides?.engine && ENGINES.includes(overrides.engine) ? readLicensePool(overrides.licensePool)
     : threadEngine ? await getThreadLicensePool(entry.slug, threadKey)
-      : channelEngine ? readLicensePool(meta.licensePool) : getEnginePool();
+      : channelEngine ? readLicensePool(meta.licensePool) : getEnginePool()) || LICENSE_POOL_ANY;
   // The harness that selection was made for. A turn that ends up on the OTHER harness (a thread
   // continuing on the harness its session was born under, a switched-off harness substituted)
   // runs without the pool: "any" would otherwise become every license of a harness nobody chose.
@@ -1836,7 +1839,15 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   //      gateway setting allows it.
   const pickedModel = [threadModel, overrides?.model, meta.model].find((m) => m && modelBelongsToEngine(m, engine)) || "";
   const poolEngines = licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pickedModel });
-  const crossEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "" : "";
+  // The other harness, license by license: its own default sign-in first, then every other license
+  // of it this conversation may use, in registry order (the runner tries limited ones last).
+  const crossEngines = getEngineFallback() && !runtimePinned
+    ? [...new Set(fallbackTargets(engine).flatMap((id) => {
+      const usable = selectableLicenses(harnessOf(id), channelMeta);
+      return usable.includes(id) ? [id, ...usable] : usable;
+    }))].filter((id) => !sameHarness(id, engine))
+    : [];
+  const crossEngine = crossEngines[0] || "";
   // `fallbackPolicy` is the caller's word on WHO decides a switch of HARNESS: "auto" (or nothing —
   // every unattended origin) switches here; "ask" (a watched Slack thread, Settings →
   // engineFallbackMode) throws the replay-safe failure back with `details.askFallback` so the
@@ -1845,7 +1856,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // has failed. `canAsk` — a person is watching, so a failure nothing could answer may also be
   // handed back as a choice.
   const askEngine = crossEngine && fallbackPolicy === "ask" ? crossEngine : "";
-  const fallbackQueue = [...poolEngines, ...(crossEngine && !askEngine ? [crossEngine] : [])];
+  const fallbackQueue = [...poolEngines, ...(crossEngine && !askEngine ? crossEngines : [])];
   const fallbackEngine = fallbackQueue[0] || askEngine;
   const askFallback = Boolean(askEngine) && !poolEngines.length;
   const canAsk = Boolean(crossEngine) && (fallbackPolicy === "ask" || fallbackPolicy === "auto");
@@ -1885,7 +1896,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         const kind = replaySafeFallbackKind(error, candidate);
         if (kind === "authentication") await rememberAuthFailure(candidate);
         else if (kind === "usage_limit") engineLimitedUntil.set(`${candidate}::${entry.slug}`, Date.now() + LIMIT_COOLDOWN_MS);
-        const untouched = !attempt.spawned || error?.details?.replaySafe === true;
+        const untouched = !attempt.spawned || error?.details?.replaySafe === true || error?.details?.runtimeCredential === true;
         if (!untouched || candidate === order.at(-1)) throw Object.assign(error, { fallbackTried: tried });
         console.warn(`[gateway] ${candidate} could not take over in ${entry.slug} (${error.message}) — trying the next one`);
       }
