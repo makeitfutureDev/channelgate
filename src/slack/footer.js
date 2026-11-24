@@ -13,6 +13,7 @@ import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-ex
 import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
 import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
 import { REPLY_CALL_ACTION_ID } from "./call-button.js";
+import { slackThreadSudoOn, sudoOffButton } from "./sudo-button.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
@@ -125,10 +126,15 @@ export function callButton(channelId, threadTs, authorId = "") {
   };
 }
 
-// The fixed menu, in this order, or nothing (no channel to bind to).
-export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
+// The fixed menu, in this order, or nothing (no channel to bind to). A thread in `/sudo` posture
+// LEADS with 🔓 Sudo off (slack/sudo-button.js), read live at render time, so every answer there
+// shows the host posture and a one-click way back to the container. `sudo` overrides the live read
+// (tests, or a caller that already knows the state).
+export function menuButtons({ channel = "", threadTs = "", authorId = "", sudo } = {}) {
   if (!channel) return [];
+  const sudoOn = typeof sudo === "boolean" ? sudo : slackThreadSudoOn(channel, threadTs);
   return [
+    ...(sudoOn ? [sudoOffButton(channel, threadTs, authorId)] : []),
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId),
@@ -169,8 +175,8 @@ export function reviewFileButtons(result, { channel = "", threadTs = "", authorI
   }));
 }
 
-export function footerButtons(result, { channel = "", threadTs = "", authorId = "" } = {}) {
-  const menu = menuButtons({ channel, threadTs, authorId });
+export function footerButtons(result, { channel = "", threadTs = "", authorId = "", sudo } = {}) {
+  const menu = menuButtons({ channel, threadTs, authorId, sudo });
   if (!menu.length) return [];
   return [...menu, ...reviewFileButtons(result, { channel, threadTs, authorId })];
 }

@@ -4328,6 +4328,13 @@ Regression: `test/channel-database.test.js`, `services/vpn-image/test_query.py`,
   subsequent turns execute directly on the gateway host as the daemon OS user. `/sudo status`
   reports the posture and `/sudo off` returns future turns to the channel container. The command
   refuses to cross the boundary while that thread has running or queued work.
+- While a thread is in sudo, every reply menu there LEADS with a red **🔓 Sudo off** button, and
+  the "Sudo enabled" notice carries it too, so the host posture is visible on every answer. The
+  state is read live when the menu renders (other threads of the channel never show it). A click
+  re-checks the clicker's current organization-admin status, refuses while the thread has running
+  or queued work, retires the idle host process, audit-logs `sudo_thread_changed` with
+  `via: "button"` and announces "Sudo disabled … turned off by @admin" in the thread. A stale
+  button on an already-off thread only says so. (`src/slack/sudo-button.js`)
 - `/sudo <message>` (or `/sudo on <message>`) enables sudo and sends that same request to the
   selected engine on the host. Later turns stay in sudo until `/sudo off`. An already enabled
   thread accepts further inline requests. Prompt newlines/spacing and current or inherited thread

@@ -77,6 +77,7 @@ import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
 import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor, wasAttachmentDelivered } from "./download.js";
 
 import { buildResumeCommand, footerButtons, footerText, resumeCommandReply } from "./footer.js";
+import { SUDO_DISABLED_TEXT, sudoOffButton } from "./sudo-button.js";
 import { postNoticeWithMenu } from "./deliver.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
 import { renameAgentSession } from "./agent-sessions.js";
@@ -831,9 +832,19 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await setThreadSudo(entry.slug, threadKey, next);
         abortPooled(runKey); // retire an idle process created on the other side of the boundary
         await logEvent("sudo_thread_changed", { channel: event.channel, author: event.user, slug: entry.slug, threadKey, enabled: next });
-        await reply(next
-          ? `⚠️ *Sudo enabled for this thread.* ${sudo.task ? "This request and later admin messages run" : "From the next message, the agent runs"} directly on the gateway host as the daemon OS user, with the host filesystem, processes, HOME, commands, and network available. There is no channel-container boundary. Only organization admins may message this thread; everyone else is rejected. Use \`/sudo off\` to return to the container.`
-          : "✅ Sudo disabled for this thread. New turns return to the channel's normal container runtime. Only organization admins may have used the thread while sudo was enabled.");
+        if (next) {
+          // The notice carries the same 🔓 Sudo off button every reply menu in this thread leads with.
+          const text = `⚠️ *Sudo enabled for this thread.* ${sudo.task ? "This request and later admin messages run" : "From the next message, the agent runs"} directly on the gateway host as the daemon OS user, with the host filesystem, processes, HOME, commands, and network available. There is no channel-container boundary. Only organization admins may message this thread; everyone else is rejected. Use \`/sudo off\` or the 🔓 Sudo off button to return to the container.`;
+          await client.chat.postMessage({
+            channel: event.channel, ...threadOpts, text,
+            blocks: [
+              { type: "section", text: { type: "mrkdwn", text } },
+              { type: "actions", elements: [sudoOffButton(event.channel, replyTs || "", event.user)] },
+            ],
+          });
+        } else {
+          await reply(SUDO_DISABLED_TEXT);
+        }
       } else if (!sudo.task) {
         await reply(next ? "⚠️ Sudo is already ON for this thread." : "Sudo is already OFF for this thread.");
       }
