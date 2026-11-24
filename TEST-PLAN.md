@@ -12549,8 +12549,9 @@ placeholders and `--network none`).
       remain unexecuted until release validation.
 - [x] Unit: the hourly login watch DMs every admin ONCE per UTC day per message class — the same
       class on the same day is silent, the next day notifies again, a class change (expiring →
-      missing) is news the same day, and a healthy login sends nothing and clears the class so a
-      later expiry notifies afresh; an expiring login's DM names the kind, the config dir, the UTC
+      missing) is news the same day, returning to either already delivered class stays quiet, and a
+      healthy login sends nothing and clears the marker so a later expiry notifies afresh; an
+      expiring login's DM names the kind, the config dir, the UTC
       expiry and the remedy and carries no token material or fingerprint, a missing login's DM
       carries the resolver's own remedy list; one admin whose DM fails does not stop the others (and
       does not re-spam the ones who heard it), a tick that reached nobody stays due, a throwing

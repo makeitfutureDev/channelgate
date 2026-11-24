@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The Claude login watch remembers both daily warnings, so switching repeatedly between an
+  expiring and a missing login no longer sends duplicate admin messages.
 - A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
   the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
   thread to its container.

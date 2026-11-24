@@ -39,8 +39,8 @@ export const CLAUDE_LOGIN_WATCH_FIRST_DELAY_MS = 60 * 1000;
 
 // Durable "already told the admins today" marker, in the same shared `_meta` key-value table the
 // legacy-import flag and the follow-up digest slots use (no migration needed). One row, holding
-// "<class>:<utc-day>" — being in SQLite rather than process memory is the whole point: a daemon
-// restarted every hour must not DM every hour.
+// one "<class>:<utc-day>" line for each class delivered today. Older single-class rows are
+// already valid. Keeping the marker in SQLite prevents a restart from repeating alerts.
 export const CLAUDE_LOGIN_ALERT_META_KEY = "claude_login_alert";
 
 export function utcDayKey(atMs) {
@@ -53,15 +53,16 @@ export function formatAlertMark(alertClass, day) {
 
 /**
  * The per-day decision, pure over the stored marker. Two message CLASSES ("expiring" | "missing"):
- * a class change is news even on a day we already wrote, and a healthy login resets the marker so
- * the next expiry notifies again.
+ * each class has its own daily warning, and a healthy login resets the marker so the next
+ * expiry notifies again.
  * @returns {{send:boolean, mark:string}} `mark` is what should be persisted after a successful send.
  */
 export function decideLoginAlert({ mark = "", alertClass = "", day = "" } = {}) {
   if (!alertClass) return { send: false, mark: "" };
   const next = formatAlertMark(alertClass, day);
-  if (String(mark || "") === next) return { send: false, mark: next };
-  return { send: true, mark: next };
+  const deliveredToday = String(mark || "").split("\n").filter((entry) => entry.endsWith(`:${day}`));
+  if (deliveredToday.includes(next)) return { send: false, mark };
+  return { send: true, mark: [...deliveredToday, next].join("\n") };
 }
 
 /**

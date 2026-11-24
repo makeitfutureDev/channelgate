@@ -6257,9 +6257,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (kind + config dir), when it dies in UTC *and* in the gateway's local timezone, and the fix (sign
   in with `claude` on the gateway host; the gateway picks it up on its next turn, no restart). The
   log line is written on every tick; only the DM is rationed, and the "already told them today"
-  marker lives in the database, so a daemon restarted hourly cannot spam. A class change (expiring →
-  missing) is news the same day, and a login that goes healthy again clears the class so the next
-  expiry notifies afresh. One unreachable admin never costs the others their alert, and a tick that
+  marker lives in the database, so a daemon restarted hourly cannot spam. Each alert class (expiring
+  or missing) is sent once per UTC day, even if the login alternates between them. Recovery clears
+  the marker so the next expiry notifies afresh. One unreachable admin never costs the others their alert, and a tick that
   reached nobody stays due. Disabling Claude suppresses credential resolution, watch warnings and
   admin DMs on the next tick, without restart; it clears the reminder marker so re-enabling Claude
   reports an unresolved login again. No token material ever rides the DM. → TEST-PLAN: Engines.
