@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- If Slack redelivers a recently completed message after a gateway restart, the gateway recognizes
+  it and avoids starting another paid turn.
+
 - In Slack, a license fallback warning stays with the answer when the agent starts with a
   tool call. The live progress card appears above that answer.
 - When both harnesses fail, Slack’s retry card shows a readable reason even when the second

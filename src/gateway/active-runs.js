@@ -19,6 +19,7 @@ import { getDirectory } from "../slack/directory.js";
 import { recordUsage, createUsageBank } from "./usage.js";
 import { maybeDiagnoseRunError } from "./diagnosis.js";
 import { modelLabel } from "./model-info.js";
+import { recordCompletedSlackMessage } from "../slack/message-receipts.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
@@ -142,6 +143,32 @@ export function clearActiveRun(id) {
   }
 }
 
+// Commit a terminal native message and its recovery-row retirement together. A failed commit
+// leaves the row recoverable. Choice transfers and other nonterminal cleanup use clearActiveRun.
+export function finishActiveRun(id) {
+  const db = getDb();
+  let row;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      row = db.prepare("DELETE FROM active_runs WHERE id = ? RETURNING data").get(id);
+      if (row) {
+        const rec = fromJson(row.data, {});
+        recordCompletedSlackMessage(db, rec.channelId, rec.slackMessageTs);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } catch (error) {
+    console.warn("[slack] could not retire the terminal run:", error.code || "database error");
+    return false;
+  }
+  if (row) announceChange();
+  return true;
+}
+
 // Busy-thread messages waiting for a Slack steer/queue click use the same durable table as active
 // turns, distinguished by `awaitingChoice`. Keeping the pending row here lets one atomic
 // transaction replace it with the accepted active-run row, so there is no restart loss window
@@ -223,7 +250,7 @@ export function clearActiveRunHandles(handles = []) {
   let cleared = 0;
   for (const handle of handles) {
     if (!handle?.runId) continue;
-    clearActiveRun(handle.runId);
+    finishActiveRun(handle.runId);
     cleared++;
   }
   return cleared;
@@ -460,7 +487,7 @@ export async function recoverRuns(stale, {
   await logEvent("run_recover_begin", { count: batch.length });
   await Promise.all(batch.map(async ({ rec, id, runKey, handle, acquired }) => {
     if (handle.aborted || handle.controller.signal.aborted) {
-      clearActiveRun(id);
+      finishActiveRun(id);
       runQueue.release(runKey, handle);
       return;
     }
@@ -468,7 +495,7 @@ export async function recoverRuns(stale, {
     if (attempts > MAX_RECOVER_ATTEMPTS) {
       // The attempt cap is this turn's explicit terminal failure — only now is its row deleted.
       recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: true });
-      clearActiveRun(id);
+      finishActiveRun(id);
       runQueue.release(runKey, handle);
       await logEvent("run_recover_giveup", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
       try {
@@ -515,7 +542,7 @@ export async function recoverRuns(stale, {
     let keepRow = false;
     const markTerminal = () => {
       terminal = true;
-      clearActiveRun(id);
+      finishActiveRun(id);
     };
     // Idempotent, pre-delivery accounting for this replay (see createUsageBank).
     const bankUsage = createUsageBank(usageRecorder);
@@ -697,7 +724,7 @@ export async function recoverRuns(stale, {
       const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
       if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
       runQueue.release(runKey, handle);
-      if (!keepRow && shouldClearActiveRun({ terminal, forceStopping: forceStopping() })) clearActiveRun(id);
+      if (!terminal && !keepRow && shouldClearActiveRun({ forceStopping: forceStopping() })) clearActiveRun(id);
     }
   }));
   await logEvent("run_recover_done", { count: batch.length });

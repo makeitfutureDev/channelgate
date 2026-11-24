@@ -5761,7 +5761,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   leaving active work and other waiters intact. Controls retire on pickup and remain usable for
   waits longer than ten minutes; stale, repeated and foreign clicks cannot change started work.
   Accepted messages and explicit steering order survive restarts; cancelled messages never replay.
-  Exact-message dedupe prevents a Slack redelivery from creating a second turn. Old pending
+  The gateway keeps up to 10,000 terminal Slack message receipts for seven days. A redelivery
+  that matches a receipt, including after a restart, cannot start another turn. Old pending
   Steer/Queue/Cancel cards remain resolvable after an upgrade. `/next <task>` remains an alias for
   queuing. Admin API and selected private browser links use the same waiting-turn controls.
   → TEST-PLAN: In-thread commands; `test/busy-thread-choice.test.js`, `test/util.test.js`,

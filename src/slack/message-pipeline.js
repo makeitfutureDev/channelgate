@@ -35,7 +35,7 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { contextUsageFor } from "../gateway/model-info.js";
 
-import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
+import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, finishActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
 import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
@@ -87,6 +87,7 @@ import { busyThreadChoices, steerActiveRun, postQueuedMessageControls, retireQue
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.js";
 
+import { hasCompletedSlackMessage } from "./message-receipts.js";
 import { pendingForkThreads, pendingForkSources } from "./fork-state.js";
 import { createForkThread, forkLicensePool } from "./fork-thread.js";
 
@@ -1643,6 +1644,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     const runId = `${runKey}::${event.ts}`;
     handle.runId = runId;
     const acceptedRun = {
+      ...(dedupeTrigger ? { slackMessageTs: event.ts || event.event_ts } : {}),
       channelId: event.channel,
       slug: entry.slug,
       workspaceId: teamId,
@@ -1669,7 +1671,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       if (!accepted) throw new Error("This harness choice is no longer available. Send the message again if it still needs attention.");
     } else {
       // Hydration can yield long enough for a duplicate event to overtake this one.
-      if (runQueue.hasRun(runKey, runId)) return;
+      if (runQueue.hasRun(runKey, runId) || (dedupeTrigger && hasCompletedSlackMessage(event.channel, event.ts || event.event_ts))) return;
       recordActiveRun(runId, acceptedRun);
     }
 
@@ -1737,7 +1739,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       runQueue.release(runKey, handle); // bail-out is a no-op if the stop already dequeued us
       // Deliberate user stop is terminal. A forced daemon exit keeps the accepted turn's durable
       // row so boot recovery can replay it instead of losing a queued message at the drain edge.
-      if (handle.aborted) clearActiveRun(runId);
+      if (handle.aborted) finishActiveRun(runId);
       return;
     }
 
@@ -1751,7 +1753,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     let terminal = false;
     const markTerminal = () => {
       terminal = true;
-      clearActiveRun(runId);
+      finishActiveRun(runId);
     };
     // Idempotent, pre-delivery accounting for this turn (see createUsageBank): the tokens are
     // spent the moment the run resolves, on every branch below, and exactly once.
@@ -1849,6 +1851,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // Durable in-flight marker: if the daemon restarts mid-run, boot recovery re-runs this exact
       // turn (same threadKey → resumes the session). Deleted in the finally on normal completion.
       const promotedRun = {
+        ...(acceptedRun.slackMessageTs ? { slackMessageTs: acceptedRun.slackMessageTs } : {}),
         channelId: event.channel,
         slug: entry.slug,
         workspaceId: teamId,
@@ -2118,7 +2121,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // Per-turn terminal state wins over the global shutdown phase: a delivered answer, reported
       // error, steering completion, or explicit stop must never replay merely because force-stop
       // flipped before this finally ran. Only genuinely interrupted work remains recoverable.
-      if (shouldClearActiveRun({ terminal, forceStopping: isForceStopping() })) clearActiveRun(runId);
+      if (!terminal && shouldClearActiveRun({ forceStopping: isForceStopping() })) clearActiveRun(runId);
       runQueue.release(runKey, handle); // clears ONLY this turn's entry; promotes the next queued one
     }
   } catch (outer) {

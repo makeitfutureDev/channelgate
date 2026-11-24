@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { createRunRecovery, membershipAdmitsRecovery, recordActiveRun, takeStaleRuns, clearActiveRun, listActiveRuns } = await import("../src/gateway/active-runs.js");
+const { hasCompletedSlackMessage } = await import("../src/slack/message-receipts.js");
 const { runQueue } = await import("../src/slack/message-lifecycle.js");
 const { createSlackManager } = await import("../src/slack/manager.js");
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
@@ -95,15 +96,17 @@ test("stop before reconnect cancels the reserved replay without resurrecting its
 });
 
 test("reconnect resumes once without another boot, including concurrent connection notifications", async () => {
-  const r = rec("reconnect"); let calls = 0; const release = deferred();
+  const r = { ...rec("reconnect"), slackMessageTs: "4000.200" }; let calls = 0; const release = deferred();
   const s = setup([r], async () => { calls++; await release.promise; return answer; });
   await s.recovery.start(); assert.equal(calls, 0);
   const first = s.connect(); const second = s.connect(); await tick();
   assert.equal(calls, 1);
+  assert.equal(hasCompletedSlackMessage(r.channelId, r.slackMessageTs), false);
   release.resolve(); await Promise.all([first, second]); await tick();
   await s.connect();
   assert.equal(calls, 1);
   assert.equal(s.delivered.length, 1);
+  assert.equal(hasCompletedSlackMessage(r.channelId, r.slackMessageTs), true);
   s.recovery.unsubscribe();
 });
 

@@ -9773,6 +9773,11 @@ do not establish live model compliance. This changes guidance only, not resolver
 
 ## Incomplete turns and restart recovery
 
+- [x] CTR-12 automated regression in `test/duplicate-delivery.test.js` and `test/recovery-queue.test.js`.
+  A fresh receiver rejects a completed message while accepting another message or channel.
+  Explicit retries and unfinished recovery still run. Receipt storage is atomic with recovery-row
+  retirement and bounded by age and count.
+
 - Restart recovery waits for Slack membership (2026-11-19). Automated (`test/recovery-queue.test.js`):
   "boot order: a Slack-channel survivor is replayed after the real membership pass…" wires the real
   membership sweep, the real membership gate and the run recovery the way `src/server.js` does,
