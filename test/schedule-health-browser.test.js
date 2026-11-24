@@ -38,6 +38,10 @@ test("automation UI saves reporting controls and exposes silent run logs after d
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}/automations`);
   await page.locator(".ab-card").getByRole("heading", { name: fixture.description, exact: true }).click();
+  const detailHeader = page.locator(".ab-detail-title");
+  await detailHeader.getByRole("heading", { name: new RegExp(fixture.description) }).waitFor();
+  const hostAccessBadge = detailHeader.locator(".ab-sudo");
+  assert.equal(await hostAccessBadge.count(), 0, "ordinary schedules display no host-access badge");
   await page.getByRole("tab", { name: "Settings" }).click();
   await page.getByLabel(/Silent start/).check();
   await page.getByRole("combobox", { name: "Post", exact: true }).selectOption("on-result");
@@ -52,7 +56,8 @@ test("automation UI saves reporting controls and exposes silent run logs after d
   assert.deepEqual([stored.executionVisibility, stored.resultPolicy, stored.delivery, stored.deliveryThread, stored.failureNotify], ["silent", "on-result", "thread", "1790355659.378439", false]);
   assert.equal(stored.sudo, true);
   await page.getByRole("tab", { name: "Overview" }).click();
-  await page.getByText("Host access", { exact:true }).first().waitFor();
+  await hostAccessBadge.waitFor({ state: "visible" });
+  assert.equal(await hostAccessBadge.textContent(), "Host access");
   await page.locator("#schedule-history-all").click();
   await page.locator(".schedule-run-row").click();
   await page.locator("#schedule-history-detail h4").first().waitFor();
