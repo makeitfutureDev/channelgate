@@ -23,19 +23,15 @@ const server = await new Promise((resolve) => { const value = app.listen(0, "127
 after(() => { server.closeAllConnections(); server.close(); });
 const base = `http://127.0.0.1:${server.address().port}`;
 
-test("channel Codex login API requires an admin session and a CSRF marker", async () => {
-  const url = `${base}/api/channels/${id}/codex-login`;
-  assert.equal((await fetch(url)).status, 401);
+test("the retired channel Codex sign-in route is gone (a channel account is a license limited to the channel)", async () => {
   const login = await fetch(`${base}/api/login`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "codex-login-web-test" }),
   });
-  const cookie = login.headers.get("set-cookie").split(";")[0];
-  assert.equal((await fetch(url, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ method: "api-key", key: "sk-test-example-123456789" }) })).status, 403);
-  const headers = { cookie, "content-type": "application/json", "x-cg-request": "1" };
-  assert.equal((await fetch(`${base}/api/channels/UNKNOWN/codex-login`, { headers })).status, 404);
-  const invalid = await fetch(url, { method: "POST", headers, body: JSON.stringify({ method: "api-key", key: "invalid" }) });
-  assert.equal(invalid.status, 400);
-  assert.equal((await fetch(url, { headers })).status, 200);
+  const headers = { cookie: login.headers.get("set-cookie").split(";")[0], "content-type": "application/json", "x-cg-request": "1" };
+  for (const method of ["GET", "POST", "DELETE"]) {
+    const response = await fetch(`${base}/api/channels/${id}/codex-login`, { method, headers, ...(method === "POST" ? { body: JSON.stringify({ method: "device" }) } : {}) });
+    assert.equal(response.status, 404, method);
+  }
 });
 
 test("shared gateway Codex login API is admin-only and rejects invalid key input", async () => {
@@ -55,7 +51,7 @@ test("shared gateway Codex login API is admin-only and rejects invalid key input
   assert.equal("file" in state, false);
 });
 
-test("attaching a channel Codex login preserves the selected harness and model", async () => {
+test("a channel can no longer opt into the legacy channel Codex account", async () => {
   const login = await fetch(`${base}/api/login`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "codex-login-web-test" }),
   });
@@ -66,7 +62,7 @@ test("attaching a channel Codex login preserves the selected harness and model",
   });
   assert.equal(saved.status, 200);
   const meta = await getChannelMeta(entry.slug);
-  assert.equal(meta.codexAuthSource, "channel");
+  assert.equal(meta.codexAuthSource, "gateway", "the legacy switch is ignored; add a license limited to this channel instead");
   assert.equal(meta.engine, "claude");
   assert.equal(meta.model, "claude-sonnet-5");
   assert.equal(meta.effort, "high");

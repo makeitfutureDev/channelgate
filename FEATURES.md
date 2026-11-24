@@ -1,5 +1,55 @@
 # ChannelGate — Features
 
+## A channel's own account is a license limited to it (2026-11-24)
+
+Channel settings → Runtime no longer has the *Connect a Codex account for this channel* block
+(gateway licenses vs. "Add this channel's own account", ChatGPT or OpenAI API key). In its place,
+**Licenses for this channel** lists every engine license limited to this conversation — harness,
+name, kind/type, status, with **Sign in**, **Edit**, **Verify** and **Remove** — and an **Add a
+license for this channel** button. That button opens the SAME add form as Settings → Engine
+licenses (one implementation: `mountLicensesManager` in `public/admin-licenses.js`, mounted with
+`scope: { channelId }`), with a **Harness** choice (Claude Code or Codex), every kind that harness
+offers (a ChatGPT or Claude sign-in, an API key or custom server, Amazon Bedrock, Google Vertex AI,
+Microsoft Azure) and "Available in" locked to this channel. A link opens Settings → Engine
+licenses, where a channel license can also be widened to every conversation. Adding one needs the
+same Enterprise entitlement as before (`channelCodexLogin`); without it the button is disabled and
+existing licenses stay listed and removable.
+
+- **The gateway's own Codex sign-in** (the *Default gateway Codex login* block in Settings →
+  Engine & runtime) moved onto the shipped Codex license's row in Settings → Engine licenses:
+  **Sign in** opens the same ChatGPT device / OpenAI API key controls (`/api/gateway/codex-login`,
+  unchanged).
+- **Existing channel accounts are migrated once at boot** (`src/gateway/channel-codex-migration.js`,
+  flagged `channel_codex_licenses_v1` in `_meta`; the license chosen per channel is recorded under
+  `channel_codex_license:<channelId>` first, so a crash mid-way reuses it). For every channel whose
+  meta says `codexAuthSource: "channel"`:
+  - a **ChatGPT** sign-in becomes a *ChatGPT sign-in* (`codex-login`) license limited to the
+    channel, named "Codex · <channel>", its type taken from the plan the sign-in reports. The
+    login directory (`engine-state/codex-channels/<hash>`) is **renamed** to the license's sign-in
+    directory (`engine-state/licenses/<id>`) — the same `auth.json` and refresh token, so nobody
+    signs in again and no second copy can rotate the first out;
+  - an **OpenAI API key** sign-in becomes an *API key* (`codex-api`) license on the OpenAI API,
+    limited to the channel, holding that key (write-only, like every license key); the directory
+    moves with it and the key file inside it is removed. (A ChatGPT sign-in license refuses an
+    API-key login, which is why this becomes a provider license.);
+  - **no sign-in**: no license; the channel stops naming the retired harness.
+  Then the channel's default, license pool and approved-harness lock, its thread pins and thread
+  pools, its session stamps and its schedules name the new license id instead of `codex-channel`,
+  and `codexAuthSource` returns to `gateway`. A thread resumed on the new license in a container
+  first copies its rollout from the old in-container directory (`~/.codex-channel`, and `~/.codex`
+  for threads older than the 2026-11-13 split) into the license's own (`~/.cg-licenses/<id>`)
+  — the same bounded, no-clobber helper as before (`preserveMigratedChannelCodexHistory`). The
+  channel account's own optional MCP selections (`allowedChannelCodexMcps`) do not carry over: a
+  license runs without the host account's MCP configuration, like every added license.
+  A channel that cannot be moved keeps the legacy harness, which still runs, and the pass retries
+  on the next boot.
+- **Retired:** the channel sign-in routes (`GET/POST/DELETE /api/channels/:id/codex-login` — 404
+  now) and their sign-in functions; the channel settings save accepts `codexAuthSource: "gateway"`
+  only (a request for `"channel"` is ignored). The `codex-channel` adapter stays registered as the
+  read-only legacy path for a channel the migration could not move; Slack/Teams settings still show
+  its status there.
+  → TEST-PLAN: A channel's own account is a license limited to it.
+
 ## ROI of automations, API runs and skills (2026-11-24)
 
 Every automation, every API source and every skill can carry two numbers a person enters: the
@@ -265,8 +315,9 @@ license is unchanged: how it is added, signed in, verified, switched on and off,
   channel sign-in* entitlement (`channelCodexLogin`; `src/ee/` is unchanged). Without it a limit
   cannot be set or moved (403), and a license that is already limited runs nowhere until the limit
   is cleared — clearing is always allowed.
-- **The shipped "Codex (channel account)"** — the sign-in a channel's own members start from the
-  channel's settings — keeps working as before and is not converted. An administrator can replace
+- **The shipped "Codex (channel account)"** — superseded 2026-11-24: channel accounts are migrated
+  to licenses limited to their channel and the channel settings block is gone (see "A channel's
+  own account is a license limited to it" above). Before that it kept working and was not converted. An administrator can replace
   it per channel by adding a ChatGPT sign-in license limited to that channel; that license is
   signed in from Settings → Engine licenses.
   → TEST-PLAN: Engine licenses limited to one conversation.

@@ -97,12 +97,30 @@ export async function copyLegacyChannelCodexHistory({ sourceRoot, destinationRoo
 export async function preserveChannelCodexHistory(ctx, { timeoutMs = 30_000 } = {}) {
   const target = ctx?.target;
   if (!target?.meta?.codexChannelLegacyHistory || target.backend !== "container") return null;
+  return copyHistoryInContainer(ctx, { sourceRoot: `${target.container?.home || "/home/agent"}/.codex`,
+    destinationRoot: target.container?.codexChannelHome || `${target.container?.home || "/home/agent"}/.codex-channel` }, { timeoutMs });
+}
+
+// A channel's own Codex account that became a license (gateway/channel-codex-migration.js): a
+// thread resumed on that license finds its rollout in the license's own directory, copied from
+// the legacy channel-account directory and, for the oldest threads, the shared `~/.codex`.
+export async function preserveMigratedChannelCodexHistory(ctx, { licenseId, destinationRoot, timeoutMs = 30_000 } = {}) {
+  const target = ctx?.target;
+  if (!licenseId || target?.meta?.codexChannelLicense !== licenseId || target.backend !== "container") return null;
+  const home = target.container?.home || "/home/agent";
+  const sources = [`${home}/.codex-channel`, ...(target.meta.codexChannelLegacyHistory ? [`${home}/.codex`] : [])];
+  const results = [];
+  for (const sourceRoot of sources) results.push(await copyHistoryInContainer(ctx, { sourceRoot, destinationRoot }, { timeoutMs }));
+  return results;
+}
+
+async function copyHistoryInContainer(ctx, { sourceRoot, destinationRoot }, { timeoutMs }) {
+  const target = ctx.target;
   const ids = [!ctx.session?.fresh ? ctx.session?.id : "", ctx.runtime?.forkSourceSessionId].filter(Boolean);
   if (!ids.length) return null;
   const signal = ctx.runtime?.signal;
   signal?.throwIfAborted();
-  const options = { sourceRoot: `${target.container?.home || "/home/agent"}/.codex`,
-    destinationRoot: target.container?.codexChannelHome || `${target.container?.home || "/home/agent"}/.codex-channel`, sessionIds: ids };
+  const options = { sourceRoot, destinationRoot, sessionIds: ids };
   const source = `(${copyLegacyChannelCodexHistory.toString()})(${JSON.stringify(options)}).then(r=>process.stdout.write(JSON.stringify(r))).catch(e=>{process.stderr.write(e.message);process.exitCode=1})`;
   const child = target.runtime.spawn(target, { cmd: "node", args: ["--input-type=module", "-e", source], cwd: ctx.cwd || target.cwd,
     stdio: ["ignore", "pipe", "pipe"], detached: false, kind: "helper", runId: newRunId("run") });

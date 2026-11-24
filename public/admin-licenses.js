@@ -456,6 +456,19 @@ const CODEX_LOGIN_MARKUP = `
   <div class="ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" hidden><button type="button" class="ch-codex-key-save" hidden></button></div>
   <em class="state ch-codex-api-note" hidden></em>`;
 
+// The gateway's own Codex sign-in (the shipped "Default sign-in" of Codex) takes either method:
+// a ChatGPT device sign-in or an OpenAI API key, through the same controls.
+const GATEWAY_CODEX_LOGIN_MARKUP = `
+  <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
+  <div class="ch-codex-login-status state">Checking sign-in…</div>
+  <div class="ch-codex-device-section" hidden>
+    <div class="ch-codex-device-code" hidden><a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a><span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span></div>
+    <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
+  </div>
+  <div class="row-actions ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Gateway OpenAI API key"><button type="button" class="btn ch-codex-key-save">Save API key</button></div>
+  <em class="state ch-codex-api-note" hidden>OpenAI bills API key use separately from a ChatGPT subscription.</em>
+  <div class="row-actions"><button type="button" class="ghost lic-signin-close">Close</button></div>`;
+
 export function mountLicensesManager({
   root,
   api,
@@ -471,7 +484,14 @@ export function mountLicensesManager({
   reload = async () => {},
   versionMoved = () => {},
   conversations = async () => [],
+  scope = null,
+  gatewayCodexLogin = null,
 }) {
+  // scope       { channelId, label } — the manager drawn inside ONE conversation's settings: it
+  //             lists only the licenses limited to that conversation, and its add/edit form is
+  //             the same form with the limit locked to it (and a harness choice for a new one).
+  // gatewayCodexLogin  { url, onComplete } — the gateway's own Codex sign-in, offered as "Sign in"
+  //             on the shipped Codex license's row.
   // root        where the groups are drawn
   // state()     { manifests, enabled } — the engine manifest and the engineEnabled map
   // health(id)  the health check of a license the gateway ships with (its status column)
@@ -506,7 +526,7 @@ export function mountLicensesManager({
   let removed = []; // the shipped licenses an administrator removed: [{ id, harness, label }]
   let loadError = "";
   let loads = 0;
-  let places = []; // [{ id, label }] the conversations a license can be limited to
+  let places = scope ? [{ id: scope.channelId, label: scope.label || scope.channelId }] : []; // [{ id, label }] the conversations a license can be limited to
   const placeLabel = (id) => places.find((place) => place.id === id)?.label || "";
   // What a row and a form call a limit. A stored limit that names no conversation is still a
   // limit: the license runs nowhere until one is chosen.
@@ -544,7 +564,7 @@ export function mountLicensesManager({
       loadError = "";
       // Names only matter when a license is limited or a form is open; a list that cannot be
       // loaded leaves the ids, which still say that the license is limited.
-      if (licenses.some((license) => license.channelLimited)) places = list(await Promise.resolve().then(conversations).catch(() => places));
+      if (!scope && licenses.some((license) => license.channelLimited)) places = list(await Promise.resolve().then(conversations).catch(() => places));
       if (ticket !== loads) return;
     } catch (error) {
       if (ticket !== loads) return;
@@ -683,22 +703,25 @@ export function mountLicensesManager({
 
   // The device-code sign-in of a Codex license: the same controls, and the same code path, as the
   // gateway's and a channel's own Codex login — only the URL differs.
-  function openSignIn(license, harness) {
+  function openSignIn(license, harness, { url = "", onComplete = () => {} } = {}) {
     const el = make("div", "ch-codex-login lic-panel");
-    el.innerHTML = CODEX_LOGIN_MARKUP;
+    // A license's own sign-in is a ChatGPT device sign-in only (an API key is another license
+    // kind); the gateway's own Codex sign-in also takes an API key.
+    el.innerHTML = url ? GATEWAY_CODEX_LOGIN_MARKUP : CODEX_LOGIN_MARKUP;
     const title = make("strong", "", `Sign in ${license.label}`);
     el.prepend(title);
     const method = el.querySelector(".ch-codex-login-method");
-    el.querySelector(".lic-signin-start").addEventListener("click", () => {
+    el.querySelector(".lic-signin-start")?.addEventListener("click", () => {
       method.value = "device";
       method.dispatchEvent(new Event("change", { bubbles: false }));
     });
     el.querySelector(".lic-signin-close").addEventListener("click", () => { closePanel(); paint(); });
     panel = { id: license.id, el };
     paint();
-    mountCodexLogin(el, `/api/engine-licenses/${encodeURIComponent(license.id)}/login`, {
+    mountCodexLogin(el, url || `/api/engine-licenses/${encodeURIComponent(license.id)}/login`, {
       onComplete: () => {
         say(harness, `${license.label} is signed in.`);
+        onComplete();
         if (panel?.id === license.id) closePanel();
         void afterMutation();
       },
@@ -742,6 +765,17 @@ export function mountLicensesManager({
     const typeLabel = (id) => list(catalog?.types).find((type) => type.id === id)?.label || id;
     const manifest = license ? list(state().manifests).find((m) => m.id === license.id) : null;
 
+    // Inside one conversation's settings a NEW license first picks its harness; switching it
+    // reopens this same form for the other harness's kinds.
+    let harnessField = null;
+    if (scope && !license) {
+      const harnessSelect = make("select", "lic-harness");
+      const choices = list(catalog?.harnesses).filter((h) => list(catalog?.kinds).some((kind) => kind.harness === h.id));
+      harnessSelect.replaceChildren(...choices.map((h) => option(h.id, h.label)));
+      harnessSelect.value = harness;
+      harnessSelect.addEventListener("change", () => { closeForm(); openForm(harnessSelect.value); });
+      harnessField = field("Harness", harnessSelect, "Claude Code or Codex: which CLI runs on this license.");
+    }
     const kindSelect = make("select", "lic-kind");
     kindSelect.replaceChildren(...(license ? [option(license.kind, license.kindLabel || license.kind)] : kinds.map((kind) => option(kind.id, kind.label))));
     kindSelect.disabled = Boolean(license);
@@ -763,6 +797,13 @@ export function mountLicensesManager({
     const limitSelect = make("select", "lic-channel");
     const limitWas = license?.channelLimited ? license.channelId || BROKEN_LIMIT : "";
     const paintLimit = () => {
+      if (scope) {
+        // Locked to this conversation. Widening a license happens under Settings → Licenses.
+        limitSelect.replaceChildren(option(scope.channelId, scope.label || scope.channelId));
+        limitSelect.value = scope.channelId;
+        limitSelect.disabled = true;
+        return;
+      }
       const picked = limitSelect.options.length ? limitSelect.value : limitWas;
       limitSelect.replaceChildren(option("", "Every conversation"), ...places.map((place) => option(place.id, place.label)));
       if (limitWas === BROKEN_LIMIT) limitSelect.append(option(BROKEN_LIMIT, "A conversation that no longer resolves — choose one"));
@@ -770,7 +811,7 @@ export function mountLicensesManager({
       limitSelect.value = picked;
     };
     paintLimit();
-    Promise.resolve().then(conversations).then((rows) => { places = list(rows); paintLimit(); }).catch(() => {});
+    if (!scope) Promise.resolve().then(conversations).then((rows) => { places = list(rows); paintLimit(); }).catch(() => {});
 
     const urlInput = make("input", "lic-base-url");
     urlInput.type = "url";
@@ -893,7 +934,8 @@ export function mountLicensesManager({
       const body = { label: nameInput.value, type: typeSelect.value };
       if (!license) body.kind = kind;
       // Sent only when it was changed: an untouched limit is never rewritten by an edit.
-      if (limitSelect.value !== limitWas && limitSelect.value !== BROKEN_LIMIT) body.channelId = limitSelect.value;
+      if (scope) { if (!license || license.channelId !== scope.channelId) body.channelId = scope.channelId; }
+      else if (limitSelect.value !== limitWas && limitSelect.value !== BROKEN_LIMIT) body.channelId = limitSelect.value;
       // A credential leaves its box before the request does; it is in this one body and nowhere else.
       const typedKey = keyInput.value;
       const typedAccount = accountInput.value;
@@ -930,11 +972,14 @@ export function mountLicensesManager({
     const actions = make("div", "row-actions");
     actions.append(save, button("Cancel", "ghost lic-cancel", () => { closeForm(); paint(); }), formState);
     el.append(
-      make("strong", "", license ? `Edit ${license.label}` : `Add a ${harnessLabelOf(state().manifests, harness) || list(catalog?.harnesses).find((h) => h.id === harness)?.label || harness} license`),
+      make("strong", "", license ? `Edit ${license.label}` : scope ? `Add a license for ${scope.label || "this channel"}` : `Add a ${harnessLabelOf(state().manifests, harness) || list(catalog?.harnesses).find((h) => h.id === harness)?.label || harness} license`),
+      ...(harnessField ? [harnessField] : []),
       kindField,
       field("Name", nameInput, "How this license is listed in every picker."),
       field("Type", typeSelect),
-      field("Available in", limitSelect, "Every conversation, or one conversation only: a license limited to one runs there (and in the code channels opened from it), is offered nowhere else and can never be the gateway default. Limiting a license needs Enterprise."),
+      field("Available in", limitSelect, scope
+        ? "Only this conversation (and the code channels opened from it). To make it available elsewhere, edit it under Settings → Licenses. Licenses limited to one conversation need Enterprise."
+        : "Every conversation, or one conversation only: a license limited to one runs there (and in the code channels opened from it), is offered nowhere else and can never be the gateway default. Limiting a license needs Enterprise."),
       apiFields,
       defaults,
       actions,
@@ -964,7 +1009,8 @@ export function mountLicensesManager({
     const nameEl = make("span", "lic-name", record?.label || licenseLabelOf(manifest));
     // The one shipped license with no account of its own: say whose account it runs on.
     if (!record && manifest.channelScoped) nameEl.title = "Each channel signs in with its own ChatGPT account (the channel's settings → Runtime) and runs Codex on that account instead of the gateway's sign-in.";
-    toggle.append(input, " ", nameEl);
+    if (scope) toggle.append(make("span", "lic-harness-label", `${harnessLabelOf(state().manifests, harness) || harness} · `), nameEl);
+    else toggle.append(input, " ", nameEl);
     const note = record ? "" : builtinNote(manifest);
     if (note) toggle.append(make("em", "state", note));
     // A provider license says where it runs as well as how it is billed: "Amazon Bedrock · API".
@@ -997,6 +1043,9 @@ export function mountLicensesManager({
         button("Remove", "clear-tok lic-remove", () => remove(record, harness)),
       );
     } else {
+      if (gatewayCodexLogin && manifest.defaultLicense && harness === "codex") {
+        actions.append(button("Sign in", "clear-tok lic-signin", () => openSignIn({ id, label: licenseLabelOf(manifest) }, harness, gatewayCodexLogin)));
+      }
       const jump = openBuiltin(manifest);
       if (jump) actions.append(button("Settings", "clear-tok lic-settings", jump));
       // Every license the gateway ships with can be named. The harness's own sign-in is never
@@ -1026,7 +1075,35 @@ export function mountLicensesManager({
     return row;
   }
 
+  // One conversation's own licenses: the same rows, the same forms and panels, nothing else.
+  function paintScoped() {
+    const { manifests } = state();
+    const own = licenses.filter((license) => license.channelId === scope.channelId);
+    const group = make("div", "lic-group lic-scoped");
+    const head = make("div", "lic-group-head");
+    const atMax = catalog?.max != null && licenses.length >= catalog.max;
+    const add = button("Add a license for this channel", "ghost lic-add", () => openForm(list(catalog?.kinds).some((kind) => kind.harness === "codex") ? "codex" : list(catalog?.kinds)[0]?.harness));
+    add.disabled = !catalog || atMax || !list(catalog?.kinds).length;
+    add.title = atMax ? `No more than ${catalog.max} licenses can be stored.` : "";
+    head.append(make("strong", "lic-group-title", "Licenses for this channel"), add);
+    const rows = make("div", "lic-rows");
+    // A record the manifest does not list yet (just added, not yet reloaded) still gets its row.
+    rows.append(...own.map((record) => licenseRow(list(manifests).find((m) => m.id === record.id) || { id: record.id, harness: record.harness, label: record.label }, record, { onCount: 0 })));
+    if (!own.length && !loadError) rows.append(make("div", "state lic-empty", "No license is limited to this channel. It runs on the gateway's licenses."));
+    group.append(head, rows);
+    for (const notice of notices.values()) {
+      const line = make("div", `state lic-notice${notice.bad ? " bad" : ""}`, notice.text);
+      line.setAttribute("role", "status");
+      group.append(line);
+    }
+    if (form && !form.id) group.append(form.el);
+    if (panel && !own.some((license) => license.id === panel.id)) closePanel();
+    if (form?.id && !own.some((license) => license.id === form.id)) closeForm();
+    root.replaceChildren(group, ...(loadError ? [make("div", "state lic-notice bad", loadError)] : []));
+  }
+
   function paint() {
+    if (scope) { paintScoped(); return; }
     const { manifests, enabled } = state();
     if (!list(manifests).length) return;
     // What the whole gateway can run on: not a channel's own sign-in, not a license limited to one conversation.

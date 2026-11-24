@@ -18,7 +18,7 @@ carries `harness`, `harnessLabel`, `licenseLabel` and `builtin`.
 | Qwen EU (Claude Code) | `qwen-eu` | Claude Code | Opt-in provider endpoint (Alibaba Cloud Model Studio, EU region) |
 | Default sign-in | `codex` | Codex | The gateway's own Codex login |
 | Codex EU | `codex-eu` | Codex | Opt-in dedicated ChatGPT login |
-| Codex (channel account) | `codex-channel` | Codex | One conversation's own Codex login; exists only in that conversation; Enterprise |
+| Codex (channel account) | `codex-channel` | Codex | Legacy: one conversation's own Codex login. Migrated at boot to a license limited to that conversation (2026-11-24); remains only for a channel that could not be moved; Enterprise |
 | ChatGPT sign-in (admin-added) | `codex-lic-<8 hex>` | Codex | Types: subscription, business, enterprise, education |
 | Claude sign-in (admin-added) | `claude-lic-<8 hex>` | Claude Code | Types: subscription, business, enterprise; signed in with a command on the gateway host |
 | API key or custom server (admin-added) | `claude-api-<8 hex>` | Claude Code | The Anthropic API or any `https://` server that speaks the Anthropic Messages API; key as `x-api-key` or bearer |

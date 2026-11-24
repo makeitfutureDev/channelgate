@@ -11,7 +11,6 @@ const { decideSkillSwap, setSkillModelFrontmatter, withSkillRuntimeHeader } = aw
 const { getThreadSkillModel, setThreadSkillModel } = await import("../src/gateway/thread-engine.js");
 const { autoApproveUser, getAutoApprovalPolicy } = await import("../src/gateway/user-auto-approval.js");
 const { codexLoginCandidatesFor } = await import("../src/gateway/channel-codex-auth.js");
-const { startChannelCodexLogin } = await import("../src/gateway/channel-codex-login.js");
 const { listEngineMcps, listCodexRuntimeMcps } = await import("../src/gateway/mcp-discovery.js");
 const { runCodex } = await import("../src/engines/codex.js");
 const { createAccessToken, createUserAccessToken, verifyAccessToken, revokeAccessToken } = await import("../src/gateway/skills/tokens.js");
@@ -52,9 +51,6 @@ test("selected controls stop using saved Enterprise configuration after downgrad
     assert.throws(() => saveSettings({ userAutoApprovalEnabled: true }), enterpriseDenied);
     assert.throws(() => codexLoginCandidatesFor(channel), enterpriseDenied);
     assert.equal(codexLoginCandidatesFor({ codexAuthSource: "gateway" }), null);
-    let spawned = false;
-    assert.throws(() => startChannelCodexLogin(channel.channelId, "device", { spawnImpl() { spawned = true; } }), enterpriseDenied);
-    assert.equal(spawned, false);
     await assert.rejects(listEngineMcps("codex", { channelId: channel.channelId }), enterpriseDenied);
     await assert.rejects(listCodexRuntimeMcps({ channelId: channel.channelId, spawnImpl() { assert.fail("must not discover dedicated apps"); } }), enterpriseDenied);
     await assert.rejects(runCodex({ target: { meta: channel, runtime: { spawn() { assert.fail("downgraded dedicated login must not spawn"); } } }, cwd: process.env.CG_WORKSPACE_DIR, prompt: "blocked" }), enterpriseDenied);
