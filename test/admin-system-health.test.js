@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHealthPoller, forecastCopy, healthBytes, healthChart, storageSeverity } from "../public/admin-system-health.js";
+import { createHealthPoller, forecastCopy, harnessHealthMarkup, healthBytes, healthChart, storageSeverity } from "../public/admin-system-health.js";
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function harness(request) {
@@ -19,37 +19,38 @@ function harness(request) {
 test("health polling stops off-page/hidden/paused, and manual refresh scans hardware while paused", async () => {
   const h = harness();
   h.controller.enter(); await settle();
-  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls.length, 5);
+  assert.ok(h.calls.some((call) => call.url === "/api/health"));
   assert.deepEqual([...h.timers.values()].map((timer) => timer.ms), [5000]);
   h.tick(); await settle();
-  assert.equal(h.calls.length, 5);
+  assert.equal(h.calls.length, 6);
   h.controller.togglePause();
   assert.equal(h.timers.size, 0);
   h.controller.refresh(); await settle();
-  assert.equal(h.calls.length, 9);
+  assert.equal(h.calls.length, 11);
   assert.equal(h.calls.at(-1).url, "/api/system-health/hardware/refresh");
   assert.equal(h.calls.at(-1).options.method, "POST");
   assert.equal(h.timers.size, 0);
   h.controller.togglePause(); await settle();
   h.setVisible(false); assert.equal(h.timers.size, 0);
   const count = h.calls.length;
-  h.setVisible(true); await settle(); assert.equal(h.calls.length, count + 4);
+  h.setVisible(true); await settle(); assert.equal(h.calls.length, count + 5);
   h.controller.leave(); assert.equal(h.timers.size, 0);
   h.setVisible(false); h.setVisible(true); await settle();
-  assert.equal(h.calls.length, count + 4);
+  assert.equal(h.calls.length, count + 5);
 });
 
 test("range change never overlaps requests or accepts an outdated response", async () => {
   const releases = [];
   const h = harness((url) => new Promise((resolve) => releases.push(() => resolve({ url, marker: "old" }))));
   h.controller.enter(); await settle();
-  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls.length, 5);
   h.controller.setRange("24h"); await settle();
-  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls.length, 5);
   assert.ok(h.calls.every((call) => call.options.signal.aborted));
   releases.splice(0).forEach((release) => release()); await settle();
-  assert.equal(h.calls.length, 8);
-  assert.match(h.calls[5].url, /range=24h/);
+  assert.equal(h.calls.length, 10);
+  assert.match(h.calls[6].url, /range=24h/);
   assert.equal(h.updates.at(-1).current, null);
   assert.equal(h.updates.at(-1).history, null);
   releases.splice(0).forEach((release) => release()); await settle();
@@ -109,4 +110,17 @@ test("storage thresholds and forecast distinguish missing evidence from zero", (
   assert.match(forecastCopy({ status: "insufficient_history", observedDays: 1 }).detail, /Not enough/);
   assert.match(forecastCopy({ status: "growing", daysToFull: 10, bytesPerDay: 1024 ** 3, observedDays: 8 }).title, /10 days/);
   assert.match(forecastCopy({ status: "stable", observedDays: 8 }).title, /No projected/);
+});
+
+test("harness panel shows session count and enabled license status with escaped diagnostic text", () => {
+  const health = { warmSessions: 0, engines: {
+    active: { available: true, version: "2.1", auth: { expiring: "Expires soon" } },
+    lost: { available: true, auth: { known: true, authenticated: false, detail: "Sign in <again>" } },
+    missing: { available: false, reason: "CLI missing" }, disabled: { enabled: false },
+  } };
+  const html = harnessHealthMarkup(health, (id) => `License <${id}>`);
+  for (const expected of ["Warm sessions · 0", "License &lt;active&gt;", "2.1", "Expires soon", "Signed out", "Sign in &lt;again&gt;", "Unavailable", "CLI missing"]) assert.ok(html.includes(expected));
+  assert.doesNotMatch(html, /disabled|<again>/);
+  assert.match(harnessHealthMarkup(health, String, "Request failed"), /status unavailable/);
+  assert.match(harnessHealthMarkup({}, String), /No enabled harnesses/);
 });

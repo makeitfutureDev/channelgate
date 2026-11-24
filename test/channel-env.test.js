@@ -79,7 +79,7 @@ test("the env card is exempt from the conversation card's unsaved-changes tracki
   // Each of the three dirty-trackers (conversation card, DM/template card, Settings page) exempts it.
   assert.match(client, /\[data-pane="instructions"\], \[data-pane="memory"\], \.detail-savebar, \.checks-filter, \.skill-assignment-filters, \$\{SELF_SAVING_CONTROLS\}/);
   assert.match(client, /\.detail-savebar, \.checks-filter, \$\{SELF_SAVING_CONTROLS\}`\)\) mark\(\)/);
-  assert.match(client, /\.settings-savebar, \.checks-filter, \.setbar, \$\{SELF_SAVING_CONTROLS\}/);
+  assert.match(client, /\.checks-filter, \$\{SELF_SAVING_CONTROLS\}`\)\) markSettingsDirty\(\)/);
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   assert.match(html, /<div class="setcard channel-env-card">/);
 });

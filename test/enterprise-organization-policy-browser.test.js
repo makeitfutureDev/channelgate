@@ -1,4 +1,5 @@
 // Disposable real API + browser state. Set CG_BROWSER_MODULE to the installed Playwright module.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -37,6 +38,7 @@ test("organization instruction licensing preserves values, locks editing and sup
   await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.value === "Saved organization rule.");
   await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.readOnly === true);
   assert.match(await page.locator("#organization-instructions-entitlement").textContent(), /remain active/);
+  await openSetting(page, field);
   await page.locator("#clear-organization-instructions").click();
   assert.equal(await field.inputValue(), "");
   const response = page.waitForResponse(r => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
@@ -46,6 +48,7 @@ test("organization instruction licensing preserves values, locks editing and sup
   testLicenseEnv({ tier: "enterprise" });
   await page.reload();
   await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.readOnly === false);
+  await openSetting(page, field);
   await field.fill("Updated Enterprise policy.");
   const saved = page.waitForResponse(r => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
   await page.locator("#save-settings").click();

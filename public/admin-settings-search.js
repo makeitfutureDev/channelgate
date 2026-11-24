@@ -1,94 +1,36 @@
-// Pure, DOM-free matching rules behind the Settings page search box.
-//
-// The settings page is ONE long scrolling page: every section and every card stays in the DOM and
-// the search only decides what is *visible*. app.js builds the index from the DOM once (title +
-// labels + descriptions + option text per card) and re-asks this module on every keystroke, so the
-// matching rules can be regression-tested without a browser.
-
-// Fold the typographic characters the admin markup actually uses (curly quotes, en/em dashes,
-// non-breaking spaces) onto their ASCII forms so typing "daemon's" or "org-default" from a normal
-// keyboard still matches text written with ’ and —.
+// Search only display metadata supplied by the navigator. Scores keep a field name above
+// an incidental mention in setup instructions, while terms may span the category and field.
 export function normalizeText(value) {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/[\u2018\u2019\u02bc]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2010-\u2015\u2212]/g, "-")
-    .replace(/[\u00a0\u2007\u202f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value ?? "").normalize("NFKD").replace(/\p{M}/gu, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()
+    .replace(/['’]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
-// Whitespace-separated terms, AND-ed. Two terms that differ only by case or punctuation style
-// collapse into one so "Slack  slack" doesn't cost two passes.
 export function searchTerms(query) {
-  const normalized = normalizeText(query);
-  if (!normalized) return [];
-  return [...new Set(normalized.split(" ").filter(Boolean))];
+  return [...new Set(normalizeText(query).split(" ").filter(Boolean))];
 }
 
-// One card's searchable haystack. The section's own title and description are folded in, so
-// "connection" surfaces every card under Connection even when the word appears nowhere in the card.
-export function cardHaystack(card = {}) {
-  return normalizeText([card.sectionTitle, card.sectionDesc, card.title, card.text].filter(Boolean).join(" "));
-}
-
-export function cardMatches(card, terms) {
-  if (!terms.length) return true;
-  const haystack = card.haystack || cardHaystack(card);
-  return terms.every((term) => haystack.includes(term));
-}
-
-// The one call the UI makes per keystroke. `index` is an array of
-// { id, section, sectionTitle, sectionDesc, title, text } — one entry per .setcard (plus any
-// non-card block that should survive filtering, e.g. the Slack status banner, which carries its
-// section's text so it stays with its section).
-//
-// Returns which card ids and which sections stay visible. An empty query is reported as
-// `active: false` with everything visible, which is what restores the untouched page.
-export function filterSettings(index = [], query = "") {
+export function rankSettings(entries, query) {
   const terms = searchTerms(query);
-  const cards = new Map();
-  const sections = new Map();
-  let matched = 0;
-
-  for (const entry of index) {
-    const hit = cardMatches(entry, terms);
-    cards.set(entry.id, hit);
-    if (!sections.has(entry.section)) sections.set(entry.section, 0);
-    if (hit) {
-      matched += 1;
-      sections.set(entry.section, sections.get(entry.section) + 1);
+  if (!terms.length) return [];
+  const phrase = terms.join(" ");
+  const hits = [];
+  for (const entry of entries) {
+    const title = normalizeText(entry.title);
+    const keywords = normalizeText(entry.keywords);
+    const help = normalizeText(entry.text);
+    const path = normalizeText(entry.path);
+    let score = title === phrase ? 100 : title.includes(phrase) ? 35 : 0;
+    let localHit = false;
+    let matches = true;
+    for (const term of terms) {
+      if (title.includes(term)) { score += 16; localHit = true; }
+      else if (keywords.includes(term)) { score += 9; localHit = true; }
+      else if (help.includes(term)) { score += 3; localHit = true; }
+      else if (path.includes(term)) score++;
+      else { matches = false; break; }
     }
+    if (matches && (localHit || entry.isCard)) hits.push({ entry, score });
   }
-
-  return {
-    query: String(query ?? ""),
-    terms,
-    active: terms.length > 0,
-    cards,
-    sections,
-    matched,
-    total: index.length,
-    // Only a non-empty query can produce "nothing to show" — an empty index means the page hasn't
-    // been indexed yet, and blanking it then would hide settings that are perfectly fine.
-    empty: terms.length > 0 && index.length > 0 && matched === 0,
-  };
-}
-
-// Scroll-spy: given each section's offset inside the scroller and the current scroll position,
-// pick the section the reader is actually looking at. The section whose top has passed the
-// (bar-adjusted) reading line wins; before the first one has, the first section wins; scrolled to
-// the very bottom the last VISIBLE section wins, so a short trailing section can still light up.
-export function activeSectionFor(sections = [], scrollTop = 0, viewportHeight = 0, scrollHeight = 0) {
-  const visible = sections.filter((section) => section && section.visible !== false);
-  if (!visible.length) return null;
-  const atBottom = scrollHeight > 0 && scrollTop + viewportHeight >= scrollHeight - 2;
-  if (atBottom) return visible[visible.length - 1].id;
-  let active = visible[0].id;
-  for (const section of visible) {
-    if (section.top <= scrollTop) active = section.id;
-    else break;
-  }
-  return active;
+  return hits.sort((a, b) => b.score - a.score).map(({ entry }) => entry);
 }

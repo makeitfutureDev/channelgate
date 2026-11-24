@@ -1,3 +1,4 @@
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -32,13 +33,14 @@ test("optional harness settings expose terminal setup and persist independent ac
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
   const cards = page.locator(".terminal-harness-card");
-  await cards.first().waitFor();
+  await cards.first().waitFor({ state: "attached" });
   assert.equal(await cards.count(), 2);
   const eu = cards.nth(0);
   const bedrock = cards.nth(1);
   assert.match(await eu.locator('[data-role="command"]').textContent(), /CODEX_HOME=.*login --device-auth/);
   assert.match(await bedrock.locator('[data-role="description"]').textContent(), /\/setup-bedrock.*API key.*not supported/);
   for (const card of [eu, bedrock]) {
+    await openSetting(page, card);
     const command = await card.locator('[data-role="command"]').textContent();
     await card.locator('[data-role="copy-command"]').click();
     await page.waitForFunction((el) => el.textContent === "Copied", await card.locator('[data-role="copy-state"]').elementHandle());
@@ -64,10 +66,13 @@ test("optional harness settings expose terminal setup and persist independent ac
   const bedrockToggle = toggles.filter({ hasText: "Claude Extra" }).locator("input");
   assert.equal(await euToggle.isChecked(), false);
   assert.equal(await bedrockToggle.isChecked(), false);
+  await openSetting(page, euToggle);
   await euToggle.check();
   await bedrockToggle.check();
+  await openSetting(page, eu);
   await eu.locator('[data-role="default-model"]').selectOption("gpt-6-sol");
   await eu.locator('[data-role="default-effort"]').selectOption("high");
+  await openSetting(page, bedrock);
   await bedrock.locator('[data-role="default-model"]').selectOption("sonnet");
   await bedrock.locator('[data-role="default-effort"]').selectOption("medium");
   const response = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
@@ -78,7 +83,7 @@ test("optional harness settings expose terminal setup and persist independent ac
   assert.equal(getDefaultModel("codex-eu"), "gpt-6-sol");
   assert.equal(getDefaultEffort("claude-bedrock"), "medium");
   await page.reload();
-  await cards.first().waitFor();
+  await cards.first().waitFor({ state: "attached" });
   assert.equal(await euToggle.isChecked(), true);
   assert.equal(await bedrockToggle.isChecked(), true);
   assert.equal(await eu.locator('[data-role="default-model"]').inputValue(), "gpt-6-sol");

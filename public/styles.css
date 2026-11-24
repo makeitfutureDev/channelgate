@@ -206,7 +206,7 @@ code {
 
 /* Content column fills the window width — the master-detail panes, tables, and the settings
    view then use the whole screen instead of stranding a scrollbar mid-screen with dead space to
-   its right. Individual views keep their own readable inner caps (e.g. .setbody stays 640px). */
+   its right. Individual views choose their own inner layout. */
 .cards { max-width: 1000px; }
 
 /* ── Detail sub-tabs (General / Users / MCP / Skills / …) ───────────────────── */
@@ -857,24 +857,17 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .drawer-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .drawer .tokchip .empty { color: var(--faint); }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   Settings: ONE long page. A sticky header holds only search, while a left rail
-   holds section jump links (scroll-spy marks the one you're reading); every section
-   is stacked below it and always in the DOM, so the single global savebar keeps
-   persisting all of them and the search only decides what is VISIBLE.
-   ══════════════════════════════════════════════════════════════════════════ */
-.setpage { display: flex; flex-direction: column; }
-
-/* Full-bleed sticky header: negative margins cancel the view's 32px padding so the bar spans the
-   page and cards scroll UNDER it, not beside it. */
+/* Settings uses the view's existing scroller. Keep the category rail and global actions
+   in reach while long editors (templates, model rates and setup guides) are expanded. */
+.setpage { min-height: calc(100% - 58px); }
 .setbar {
-  /* -26px is the view's own top padding (same trick as .settings-savebar's bottom: -26px): the bar
-     pins flush with the top of the scroll view, so nothing shows through the padding strip. */
   position: sticky; top: -26px; z-index: 6;
-  display: flex; align-items: center;
-  margin: 0 -32px 20px; padding: 12px 32px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  margin: -26px -32px 20px; padding: 16px 32px;
   background: var(--bg); border-bottom: 1px solid var(--line-soft);
 }
+
+.setbar h2 { margin: 0; font-size: 20px; }
 
 /* ── Search ────────────────────────────────────────────────────────────────── */
 .setsearch { position: relative; width: min(420px, 100%); min-width: 200px; display: flex; align-items: center; }
@@ -899,40 +892,55 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Both hints share the same corner, and `hidden` must beat the display above it. */
 .setsearch-clear[hidden], .setsearch-kbd[hidden] { display: none; }
 
-/* ── Left jump rail (scroll-spy) ───────────────────────────────────────────── */
-.setlayout { display: grid; grid-template-columns: 168px minmax(0, 640px); gap: 28px; align-items: start; }
-.setnav { position: sticky; top: 48px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.setnav a { position: relative; padding: 7px 11px; border-radius: 7px; font-size: 12.5px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.setlayout { display: grid; grid-template-columns: 182px minmax(0, 1fr); gap: clamp(20px, 2.5vw, 42px); align-items: start; scroll-margin-top: 60px; }
+.setnav { position: sticky; top: 58px; display: grid; gap: 18px; max-height: calc(100dvh - 150px); overflow-y: auto; }
+.setnav > div { display: grid; gap: 2px; }
+.setnav strong { padding: 0 10px 4px; color: var(--faint); text-transform: uppercase; font-size: 10px; letter-spacing: .1em; }
+.setnav a { padding: 7px 10px; border-radius: 6px; font-size: 12.5px; color: var(--muted); text-decoration: none; }
 .setnav a:hover { background: var(--panel); color: var(--ink); }
-.setnav a.on { background: var(--panel-2); color: var(--ink); }
-.setnav a.on::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--orange); }
-.setnav a.dz { color: var(--danger); }
-/* A section with no search hits stays clickable-looking but recedes. */
-.setnav a.dim { opacity: .35; }
+.setnav a[aria-current] { background: var(--panel-2); box-shadow: inset 2px 0 var(--orange); color: var(--ink); }
+#settings-category { display: none; }
 
-/* ── Sections ──────────────────────────────────────────────────────────────── */
-.setcontent, .setbody { min-width: 0; }
-.setbody { max-width: 640px; display: flex; flex-direction: column; gap: 34px; }
-.setsec { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 80px; }
-.setsec-head { display: flex; flex-direction: column; gap: 4px; }
-.setsec-head h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
-.setsec-head h3::after { content: ""; display: block; width: 26px; height: 2px; border-radius: 2px; background: var(--orange); margin-top: 7px; }
-.setsec-desc { margin: 0; font-size: 11.5px; color: var(--faint); line-height: 1.5; }
-#set-system .setsec-head h3::after { background: var(--danger); }
-
-/* Search hides, never unmounts — the one Save still persists every field underneath. */
-.setbody .filtered-out { display: none; }
-.setnoresults { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.setcontent, .setbody, .setsec > * { min-width: 0; }
+.setsec { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); align-items: start; gap: 12px; }
+.setsec-head { grid-column: 1 / -1; margin: 0 0 8px; }
+.setsec-head h3, #settings-result-count { margin: 0 0 5px; font-size: 18px; font-weight: 600; letter-spacing: -.015em; }
+.setsec-desc { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+#view-settings [hidden] { display: none !important; }
+.setsec > details.setcard { padding: 0 18px; min-width: 0; }
+.setsec > .setcard[open], .setsec > .admin-access-card { grid-column: 1 / -1; }
+.setsec > .setcard[open] { padding-bottom: 18px; }
+.setsec > .setcard > summary {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; position: relative;
+  min-height: 65px; box-sizing: border-box; padding: 12px 20px 12px 0; cursor: pointer; list-style: none;
+}
+.setsec > .setcard > summary::-webkit-details-marker { display: none; }
+.setsec > .setcard > summary::after {
+  content: ""; position: absolute; right: 2px; top: calc(50% - 4px); width: 6px; height: 6px;
+  border-bottom: 1.5px solid var(--muted); border-right: 1.5px solid var(--muted); transform: rotate(45deg);
+}
+.setsec > .setcard[open] > summary { border-bottom: 1px solid var(--line-soft); margin-bottom: 16px; }
+.setsec > .setcard[open] > summary::after { transform: rotate(225deg); }
+.setsec > .setcard > summary h4 { margin: 0; align-self: center; font-size: 14px; }
+.setsec > .setcard > summary:hover h4 { color: var(--orange); }
+.setcard-hint { grid-column: 1 / -1; font-size: 12px; margin-top: 3px; color: var(--muted); }
+.setcard-state { grid-column: 2; grid-row: 1; align-self: center; font-size: 11px; color: var(--muted); padding-left: 8px; }
+.setcard-state[data-tone=ok] { color: var(--ok); }
+.setcard-state[data-tone=error] { color: var(--danger); }
+.setsec .setcard > .desc { max-width: 95ch; }
+.setsec .setcard h4 .state { font-weight: 400; }
+.setsec .setcard .field:last-child, .setsec .setcard .toggle:last-child { margin-bottom: 0; }
+.setfield-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(300px, 45%)), 1fr)); gap: 0 20px; align-items: start; }
+.setfield-grid > .field { min-width: 0; }
+.setsec .rates-table { max-width: 100%; }
+#settings-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 8px; margin-top: 15px; }
+#settings-results button { display: grid; gap: 4px; align-content: start; min-width: 0; text-align: left; padding: 12px 16px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; }
+#settings-results button:is(:hover, :focus-visible) { border-color: var(--orange); }
+#settings-results small { font: 11px var(--font); color: var(--muted); }
+#settings-results strong { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.setting-found { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 4px; }
+.setnoresults { margin: 10px 0; color: var(--muted); }
 .setnoresults .linkish { background: none; border: none; padding: 0; color: var(--orange); font: inherit; cursor: pointer; }
-
-/* Deep-linked control (e.g. API docs → the run-API token): a brief orange edge so the eye lands. */
-@keyframes setpulse { from { box-shadow: 0 0 0 2px var(--orange-soft), 0 0 0 1px var(--orange); } to { box-shadow: none; } }
-.setcard.pulse { animation: setpulse 1.9s ease-out; }
-@media (prefers-reduced-motion: reduce) { .setcard.pulse { animation: none; box-shadow: 0 0 0 1px var(--orange); } }
-
-.setcard .field:last-child { margin-bottom: 0; }
-.setcard .toggle:last-child { margin-bottom: 0; }
-.setcard h4 .state { font-weight: 400; text-transform: none; letter-spacing: 0; }
 .dz-foot { margin-top: 8px; min-height: 16px; }
 .dz-row .saved { margin-left: 8px; }
 
@@ -1023,11 +1031,11 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .userlayout { flex-direction: column; }
   .userlayout .drawer { width: 100%; position: static; }
   .setsearch { width: 100%; }
-  .setlayout { display: flex; flex-direction: column; gap: 20px; }
-  .setnav { position: static; width: 100%; flex-direction: row; flex-wrap: wrap; }
-  .setnav a.on::before { left: 11px; right: 11px; top: auto; bottom: 2px; width: auto; height: 2px; }
+  .setlayout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .setnav { display: none; }
+  #settings-category { display: block; width: 100%; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 9px; font: inherit; }
   .setcontent { width: 100%; }
-  .setbody { max-width: none; }
+
 }
 @media (max-width: 600px) {
   .dash-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1324,6 +1332,11 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .sh-ranges button[aria-pressed=true] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 -2px 0 var(--orange); }
 .sh-charts { display: grid; grid-template-columns: minmax(0,1.7fr) minmax(280px,1fr); gap: 12px; }
 .sh-panel { min-width: 0; padding: 17px 18px 15px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel-dark); }
+.sh-harnesses { margin-top: 12px; }
+.sh-harness-list { list-style: none; display: grid; grid-template-columns: repeat(auto-fit,minmax(min(190px,100%),1fr)); gap: 10px 16px; padding: 12px 0 0; margin: 0; }
+.sh-harness-list li { display: flex; align-items: baseline; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.sh-harness-list li span:not(.dot), .sh-harness-list small { display: block; color: var(--muted); }
+.sh-harness-list small { margin-top: 3px; }
 .sh-panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
 .sh-card-head { align-items: flex-start; margin-bottom: 8px; }
 .sh-card-head h3 { margin-bottom: 3px; }

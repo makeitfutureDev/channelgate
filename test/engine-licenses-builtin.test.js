@@ -4,6 +4,7 @@
 // license — the dedicated logins and the provider table (Qwen, Qwen EU, Codex EU, Claude Extra, the
 // channel-account Codex) — can be removed and restored. Removed means: off whatever the enable map
 // says, listed nowhere, its own credential deleted, the id still registered.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -373,6 +374,7 @@ test("the admin UI: Rename on a sign-in, Remove on every other shipped license, 
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${listener.address().port}/settings`);
   const manager = page.locator("#engine-enabled-box");
+  await openSetting(page, manager);
   const row = (id) => manager.locator(`.lic-row[data-license="${id}"]`);
   await row("qwen").waitFor();
 
