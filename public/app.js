@@ -4150,6 +4150,13 @@ function paintSettings(s) {
   document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
   document.getElementById("set-perplexity-session-token").value = "";
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";
+  // Keep a provider the operator opened or closed by hand across a save/repaint.
+  const manualDisclosures = new Map();
+  for (const card of document.querySelectorAll("details[data-engine-id]")) {
+    if (card.open !== (ENGINE_ENABLED[card.dataset.engineId] !== false)) {
+      manualDisclosures.set(card.dataset.engineId, card.open);
+    }
+  }
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
   // Before the licenses paint: they annotate an opt-in license whose provider key is still missing.
@@ -4328,6 +4335,9 @@ function paintSettings(s) {
   SETTINGS_SNAPSHOT = s;
   SETTINGS_VERSION = s?.settingsVersion ? String(s.settingsVersion) : "";
   refreshFeatureCards();
+  for (const card of document.querySelectorAll("details[data-engine-id]")) {
+    if (manualDisclosures.has(card.dataset.engineId)) card.open = manualDisclosures.get(card.dataset.engineId);
+  }
   SETTINGS_BASELINE = readSettingsForm();
 }
 
