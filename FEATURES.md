@@ -9038,7 +9038,7 @@ are retired, bullet by bullet; everything else stands.
   Explicit Stop and AbortError also defeat legacy text-based continuation. Automatic-recovery and
   both-engine failure notices unwrap provider JSON into readable sentences.
 - **Responsive Stop controls:** “stop the loop” and “Stop the check loop now” cancel through the
-  early control path. Loop rows disappear synchronously before Slack calls; status clearing and
+  early control path. Stop signals each active and queued turn’s controller and removes loop rows synchronously before Slack calls; status clearing and
   unrelated acknowledgements cannot block another stopped thread’s notice. Stream cleanup gets a
   one-second foreground grace, continues draining afterward, and marks delivered text partial.
   Slack can still throttle the acknowledgement API itself. `run_stopped` records each affected

@@ -2,6 +2,7 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Slack Stop now also signals queued turns’ cancellation controllers when clearing a busy thread or channel.
 - A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
   the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
   thread to its container.

@@ -87,7 +87,7 @@ test("Stop cancels loops and accounts every active/queued turn before throttled 
   const threads = ["9100.501", "9100.502"];
   const handles = threads.map((thread) => ({ runId: `stop-account-${thread}`, controller: new AbortController() }));
   for (let i = 0; i < threads.length; i++) await runQueue.acquire(`${slug}::${threads[i]}`, handles[i]);
-  const queued = { runId: "stop-account-queued" };
+  const queued = { runId: "stop-account-queued", controller: new AbortController() };
   const queuedReady = runQueue.acquire(`${slug}::${threads[0]}`, queued);
   armLoop({ channelId: CHANNEL, slug, threadTs: threads[0], authorId: USER,
     wakeup: { kind: "loop_wakeup", mode: "interval", cron: "*/5 * * * *", prompt: "Check fixture" } });
@@ -98,7 +98,7 @@ test("Stop cancels loops and accounts every active/queued turn before throttled 
   try {
     const stopped = stopRunsInChannel(client, CHANNEL, slug, USER);
     assert.equal(threadLoops(CHANNEL, threads[0]).length, 0, "loop deleted synchronously before Slack");
-    assert.ok(handles.every((h) => h.controller.signal.aborted));
+    assert.ok([...handles, queued].every((h) => h.controller.signal.aborted), "Stop signals all accepted handles before Slack settles");
     await stopped;
     await queuedReady;
     assert.equal(client.posted.filter((m) => m.text === "🛑 Stopped.").length, 2, "both notices bypass a stuck status clear");
