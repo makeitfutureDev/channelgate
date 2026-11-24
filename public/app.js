@@ -389,6 +389,7 @@ function loadView(name, { refreshIdentity = true } = {}) {
   if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
   if (name === "skills") loadSkills().catch(() => {}); // always refresh
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
+  if (name === "roi") loadRoi().catch(() => {});
   if (name === "audit") loadAudit().catch(() => {}); // always refresh
   if (name === "dashboard") loadDashboard().catch(() => {}); // always refresh
 }
@@ -3086,10 +3087,11 @@ function renderDmDetail(id) {
 // ── Automations ────────────────────────────────────────────────────────────────
 // The health board is ONE component shared with the Activity dashboard (src/web/automation-board.js,
 // served at /automation-board.js); the console only gives it the admin scope and its CSRF marker.
-let automationBoardMounted = null;
-async function loadSchedules() {
-  if (automationBoardMounted) return automationBoardMounted;
-  automationBoardMounted = (async () => {
+// The ROI page is the same component in its "roi" mode, mounted into its own root.
+const boardMounts = new Map();
+function mountBoard(rootId, extra, what) {
+  if (boardMounts.has(rootId)) return boardMounts.get(rootId);
+  const mounted = (async () => {
     const board = await import("/automation-board.js");
     if (!document.getElementById("automation-board-css")) {
       const style = document.createElement("style");
@@ -3097,14 +3099,17 @@ async function loadSchedules() {
       style.textContent = board.AUTOMATION_BOARD_CSS;
       document.head.append(style);
     }
-    board.automationBoardBrowser({ boardApi: "/api/automation-board", boardHeaders: { "X-CG-Request": "1" }, adminConsole: true }, window);
+    board.automationBoardBrowser({ boardApi: "/api/automation-board", boardHeaders: { "X-CG-Request": "1" }, adminConsole: true, roiHref: "/roi", boardHref: "/automations", rootId, ...extra }, window);
   })().catch((error) => {
-    automationBoardMounted = null;
-    const host = document.getElementById("ab-root");
-    if (host) host.textContent = `Couldn’t load automations: ${error.message}`;
+    boardMounts.delete(rootId);
+    const host = document.getElementById(rootId);
+    if (host) host.textContent = `Couldn’t load ${what}: ${error.message}`;
   });
-  return automationBoardMounted;
+  boardMounts.set(rootId, mounted);
+  return mounted;
 }
+const loadSchedules = () => mountBoard("ab-root", {}, "automations");
+const loadRoi = () => mountBoard("roi-root", { page: "roi" }, "ROI");
 
 let scheduleHistory = null;
 let scheduleHistoryRequest = 0;

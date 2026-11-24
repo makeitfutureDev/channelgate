@@ -146,6 +146,17 @@ export function setScheduleRunsAcknowledged({ scheduleId, channelId, runIds, by 
     .run(new Date().toISOString(), safeText(by.id, 64), safeText(by.name, 120), scheduleId, channelId, JSON.stringify(ids)).changes);
 }
 
+// What ROI needs from one automation's ledger since `sinceMs`, aggregated in SQL so a
+// high-frequency automation is counted in full: every run, the runs that did their job
+// (roi.js roiCounts: succeeded / nothing to do / completed, and the answer not lost) and the spend.
+export function roiRunTotals({ scheduleId, channelId, sinceMs }) {
+  const row = getDb().prepare(`SELECT count(*) AS runs,
+      sum(CASE WHEN status IN ('succeeded', 'no-op', 'completed') AND COALESCE(json_extract(data, '$.deliveryStatus'), '') <> 'failed' THEN 1 ELSE 0 END) AS counted,
+      sum(COALESCE(json_extract(data, '$.costUsd'), 0)) AS cost
+    FROM schedule_runs WHERE schedule_id = ? AND channel_id = ? AND started_ms >= ?`).get(scheduleId, channelId, Math.floor(Number(sinceMs) || 0));
+  return { runs: Number(row?.runs) || 0, counted: Number(row?.counted) || 0, costUsd: Number(row?.cost) || 0 };
+}
+
 // Output-only view: internal readers and update paths always retain original accounting.
 export function visibleScheduleRun(run, historyStart = costHistoryStart()) {
   if (!run || costVisibleAt(run.completedAt ?? run.startedAt, new Date(), historyStart)) return run;

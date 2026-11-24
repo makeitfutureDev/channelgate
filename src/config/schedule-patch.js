@@ -6,6 +6,7 @@ import { cronValid, minIntervalMinutes } from "../util/cron.js";
 import { settingsForApi } from "./settings.js";
 import { validateScheduleOptions } from "./schedule-options.js";
 import { normalizeSuccessCriteria } from "../gateway/schedule-outcome.js";
+import { roiMinutes, roiRate } from "../gateway/roi.js";
 
 const DELIVERIES = ["standard", "daily-thread", "channel", "dm-on-match", "thread"];
 const has = (body, key) => Object.hasOwn(body, key);
@@ -49,6 +50,13 @@ export async function buildSchedulePatch(current, rawBody, { allowSudo = false }
   }
   if (has(body, "successCriteria")) {
     try { patch.successCriteria = normalizeSuccessCriteria(body.successCriteria); }
+    catch (error) { return { error: error.message }; }
+  }
+  // ROI inputs (gateway/roi.js): minutes of work one successful run saves, and what an hour of
+  // that work costs. Empty or 0 clears the value.
+  for (const [key, parse] of [["roiMinutes", roiMinutes], ["roiHourlyRate", roiRate]]) {
+    if (!has(body, key)) continue;
+    try { patch[key] = parse(body[key]); }
     catch (error) { return { error: error.message }; }
   }
   if (has(body, "notify")) {

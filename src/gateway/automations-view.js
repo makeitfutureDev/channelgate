@@ -4,7 +4,8 @@
 // on every request; a schedule row is always looked up INSIDE the checked channel.
 import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../config/store.js";
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
-import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount } from "./schedule-runs.js";
+import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount, roiRunTotals } from "./schedule-runs.js";
+import { roiOf, roiTotals, roiAssignments, getDefaultRoiRate, setRoiAssignment, roiMinutes, roiRate } from "./roi.js";
 import { automationHealth, currentProblem, fixSteps, openProblem, runProblem } from "./automation-health.js";
 import { logEvent } from "../util/logger.js";
 import { buildSchedulePatch } from "../config/schedule-patch.js";
@@ -243,6 +244,21 @@ export async function acknowledgeAutomation(access, userId, entry, scheduleId, b
   return { ok: true, acknowledged: undo ? 0 : changed, restored: undo ? changed : 0 };
 }
 
+// The ROI inputs of one automation: minutes of work a successful run saves, and what an hour of
+// that work costs. A schedule's are part of the schedule (the same owner rule as any edit); an
+// API source has no row, so whoever may see it — an admin or the token's creator — sets them.
+export async function setAutomationRoi(access, userId, entry, scheduleId, body = {}) {
+  const input = { minutes: roiMinutes(body?.minutesSaved), rate: roiRate(body?.hourlyRate) };
+  if (isApiSource(scheduleId)) {
+    if (!apiVisible(access, userId, entry, scheduleId)) throw Object.assign(new Error("Not found"), { status: 404 });
+    setRoiAssignment("api", entry.channelId, scheduleId, input, userId);
+  } else {
+    await updateAutomation(access, userId, entry, scheduleId, { roiMinutes: input.minutes, roiHourlyRate: input.rate });
+  }
+  await logEvent("automation_roi_set", { id: String(scheduleId).slice(0, 64), channel: entry.channelId, by: String(userId || "").slice(0, 64), minutes: input.minutes, rate: input.rate }).catch(() => {});
+  return { ok: true, minutesSaved: input.minutes, hourlyRate: input.rate };
+}
+
 export async function runAutomationNow(access, userId, entry, scheduleId) {
   const s = ownedSchedule(access, userId, entry, scheduleId);
   const { runScheduleNow } = await import("./scheduler.js");
@@ -275,13 +291,14 @@ function scheduleFacts(s, { access, userId, users, now, entry }) {
     notify: s.notify || "channel", notifyUserId: s.notifyUserId || "", failureNotify: s.failureNotify !== false,
     hasMatchPrefix: Boolean(s.matchPrefix), deliveryThread: s.deliveryThread || "", sudo: s.sudo === true,
     createdBy: s.createdBy || "", createdByName: users[s.createdBy]?.name || "", mine: Boolean(userId) && s.createdBy === userId,
-    canEdit: may, canDelete: may, canRunNow: may && !s.loop, canAcknowledge: may,
+    canEdit: may, canDelete: may, canRunNow: may && !s.loop, canAcknowledge: may, canEditRoi: may,
+    roiInput: { minutes: s.roiMinutes, rate: s.roiHourlyRate },
   };
 }
 
 // What only an API SOURCE knows: the credential behind it. It has no schedule to edit, run or
 // delete; whoever may see it (an admin, or the token's creator) may acknowledge its errors.
-function apiFacts(src, { userId, users }) {
+function apiFacts(src, { userId, users, entry, apiRoi }) {
   return {
     schedule: null, id: src.id, kind: "API", trigger: "api", once: false,
     title: src.title, instructions: "", successCriteria: "", recurrence: apiRecurrence(src),
@@ -289,23 +306,26 @@ function apiFacts(src, { userId, users }) {
     enabled: true, delivery: "", deliveryWords: "API caller", posting: "", resultPolicy: "always", executionVisibility: "visible",
     notify: "none", notifyUserId: "", failureNotify: Boolean(src.createdBy), hasMatchPrefix: false, deliveryThread: "", sudo: false,
     createdBy: src.createdBy, createdByName: users[src.createdBy]?.name || "", mine: Boolean(userId) && src.createdBy === userId,
-    canEdit: false, canDelete: false, canRunNow: false, canAcknowledge: true, revoked: src.revoked,
+    canEdit: false, canDelete: false, canRunNow: false, canAcknowledge: true, canEditRoi: true, revoked: src.revoked,
+    roiInput: apiRoi.get(`${entry.channelId}\n${src.id}`) || { minutes: 0, rate: 0 },
   };
 }
 
 // The ONE board item, whatever starts the automation: a per-trigger facts block (above) over the
 // same ledger reads, the same health verdict and the same fix steps.
 function boardItem(facts, conv, ctx) {
-  const { schedule, once, ...shown } = facts;
+  const { schedule, once, roiInput, ...shown } = facts;
   const runs = listScheduleRuns({ scheduleId: facts.id, channelId: conv.channelId, limit: 30 }).map((r) => visibleScheduleRun(r, ctx.historyStart));
   const windowRuns = scheduleRunsSince({ scheduleId: facts.id, channelId: conv.channelId, sinceMs: ctx.sinceMs }).map((r) => visibleScheduleRun(r, ctx.historyStart));
   const health = automationHealth(schedule, runs, windowRuns);
   const engineRun = runs.find((r) => r.engine || r.model);
   const sum = (key) => windowRuns.reduce((n, r) => n + (Number(r[key]) || 0), 0);
+  const worth = roiRunTotals({ scheduleId: facts.id, channelId: conv.channelId, sinceMs: ctx.roiSinceMs });
   return {
     ...shown, channelId: conv.channelId, conversation: conv.name, personal: conv.personal,
     engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
     ...health,
+    roi: roiOf({ minutes: roiInput.minutes, rate: roiInput.rate, defaultRate: ctx.defaultRate, counted: worth.counted, costUsd: worth.costUsd }),
     fix: health.problem ? fixSteps(health.problem.key, { kind: facts.kind, once, botName: ctx.botName }) : [],
     // The run API's limits as this source met them inside the window. The cap is gateway-wide.
     ...(facts.trigger === "api" ? { limits: { cap: API_MAX_INFLIGHT, inFlight: runs.filter((r) => ["queued", "running"].includes(r.status)).length,
@@ -316,11 +336,16 @@ function boardItem(facts, conv, ctx) {
 // Every automation the viewer may see, with its health verdict, plus the board's totals.
 // `adminConsole` is the admin UI: every conversation on every platform, every DM, sudo rows.
 // Otherwise it is exactly the Activity dashboard's rule (automationChannels above).
-export async function automationBoard(access, userId, { days = 7, now = new Date(), adminConsole = false, botName = "" } = {}) {
-  const windowDays = BOARD_WINDOWS.includes(Number(days)) ? Number(days) : 7;
+export async function automationBoard(access, userId, { days = 7, now = new Date(), adminConsole = false, botName = "", windows = BOARD_WINDOWS } = {}) {
+  const windowDays = windows.includes(Number(days)) ? Number(days) : windows.includes(7) ? 7 : windows[0];
   const sinceMs = now.getTime() - windowDays * 86400_000;
   const users = await getUsers();
   const historyStart = costHistoryStart();
+  // ROI never sets value against spend it may not show: where the plan's cost history starts
+  // inside the window, ROI counts from there (and says so) instead of from the window's start.
+  const roiSinceMs = historyStart ? Math.max(sinceMs, historyStart.getTime()) : sinceMs;
+  const defaultRate = getDefaultRoiRate();
+  const apiRoi = roiAssignments("api");
   const automations = [];
   const conversations = [];
   let live = null;
@@ -343,7 +368,7 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
       name = adminConsole ? (users[owner]?.name ? `DM · ${users[owner].name}` : "Direct message") : "Your direct messages";
     } else name = `#${String(await activityChannelName(entry)).replace(/^#+/, "")}`;
     const conv = { channelId: entry.channelId, name, personal: dm };
-    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName, liveApiRuns };
+    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName, liveApiRuns, roiSinceMs, defaultRate, apiRoi };
     const items = [...sources.map((src) => boardItem(apiFacts(src, ctx), conv, ctx)), ...shown.map((s) => boardItem(scheduleFacts(s, ctx), conv, ctx))];
     automations.push(...items);
     conversations.push({ ...conv, count: items.length, attention: items.filter((a) => a.attention).length });
@@ -358,6 +383,7 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
     viewer: { isAdmin: access.user?.isAdmin === true, adminConsole, userId: userId || "" },
     windowDays, generatedAt: now.toISOString(), botName,
     kpis: { ...totals, costUsd: Math.round(totals.costUsd * 100) / 100, successRate: totals.judged ? totals.succeeded / totals.judged : null },
+    roi: { ...roiTotals(automations.map((a) => a.roi)), defaultRate, since: new Date(roiSinceMs).toISOString(), limited: roiSinceMs > sinceMs },
     counts, attention: automations.filter((a) => a.attention).length,
     conversations: conversations.sort((a, b) => b.attention - a.attention || a.name.localeCompare(b.name)),
     automations,

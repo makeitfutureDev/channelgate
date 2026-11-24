@@ -7,7 +7,8 @@ import { cronValid } from "../../util/cron.js";
 import { costHistoryStart } from "../../ee/cost-history.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { buildSchedulePatch } from "../../config/schedule-patch.js";
-import { automationBoard, automationRuns, updateAutomation, runAutomationNow, acknowledgeAutomation, deleteAutomation, consoleChannel, ADMIN_CONSOLE_ACCESS } from "../../gateway/automations-view.js";
+import { automationBoard, automationRuns, updateAutomation, runAutomationNow, acknowledgeAutomation, deleteAutomation, consoleChannel, setAutomationRoi, ADMIN_CONSOLE_ACCESS } from "../../gateway/automations-view.js";
+import { roiOverview, setSkillRoi, setDefaultRate } from "../../gateway/roi-view.js";
 import { adminSession } from "../auth.js";
 
 export function createSchedulesRouter() {
@@ -80,6 +81,18 @@ export function createSchedulesRouter() {
       next(e);
     }
   };
+  // ROI: the same page and inputs as the Activity dashboard, over every conversation.
+  router.get("/automation-board/roi", async (req, res, next) => {
+    try { res.json(await roiOverview(ADMIN_CONSOLE_ACCESS, consoleUser(req), { days: Number(req.query.days) || 30, adminConsole: true })); }
+    catch (e) { next(e); }
+  });
+  for (const [name, handler] of [["skill", setSkillRoi], ["default", setDefaultRate]]) {
+    router.post(`/automation-board/roi/${name}`, async (req, res, next) => {
+      try { res.json(await handler(ADMIN_CONSOLE_ACCESS, consoleUser(req), req.body || {})); }
+      catch (e) { if (e.userFacing) return res.status(e.status || 400).json({ error: e.message }); next(e); }
+    });
+  }
+  router.post("/automation-board/:channelId/:scheduleId/roi", boardAction((entry, id, req) => setAutomationRoi(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id, req.body || {})));
   router.get("/automation-board/:channelId/:scheduleId/runs", boardAction((entry, id, req) => ({ runs: automationRuns(ADMIN_CONSOLE_ACCESS, entry, id, consoleUser(req)) })));
   router.post("/automation-board/:channelId/:scheduleId/update", boardAction(async (entry, id, req) => {
     const schedule = await updateAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id, req.body || {}, { allowSudo: true });
