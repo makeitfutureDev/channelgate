@@ -87,6 +87,20 @@ export function scheduleRunsSince({ scheduleId, channelId, sinceMs, limit = 500 
     .all(scheduleId, channelId, Math.floor(Number(sinceMs) || 0), Math.max(1, Math.min(2000, Math.floor(limit)))).map((r) => fromJson(r.data, {}));
 }
 
+// Mark runs as acknowledged (a person looked at the error and handled it), or clear the mark.
+// The run's own outcome is never rewritten: history stays truthful, only the health verdict
+// stops treating it as an open problem. Bounded to one automation inside one conversation.
+export function setScheduleRunsAcknowledged({ scheduleId, channelId, runIds, by = null }) {
+  const ids = [...new Set((runIds || []).filter((id) => typeof id === "string" && id.length <= 64))].slice(0, 2000);
+  if (!ids.length) return 0;
+  const db = getDb();
+  const scope = "schedule_id = ? AND channel_id = ? AND id IN (SELECT value FROM json_each(?))";
+  if (!by) return Number(db.prepare(`UPDATE schedule_runs SET data = json_remove(data, '$.acknowledgedAt', '$.acknowledgedBy', '$.acknowledgedByName') WHERE ${scope}`)
+    .run(scheduleId, channelId, JSON.stringify(ids)).changes);
+  return Number(db.prepare(`UPDATE schedule_runs SET data = json_set(data, '$.acknowledgedAt', ?, '$.acknowledgedBy', ?, '$.acknowledgedByName', ?) WHERE ${scope}`)
+    .run(new Date().toISOString(), safeText(by.id, 64), safeText(by.name, 120), scheduleId, channelId, JSON.stringify(ids)).changes);
+}
+
 // Output-only view: internal readers and update paths always retain original accounting.
 export function visibleScheduleRun(run, historyStart = costHistoryStart()) {
   if (!run || costVisibleAt(run.completedAt ?? run.startedAt, new Date(), historyStart)) return run;
@@ -116,7 +130,9 @@ export function scheduleRunSummary(scheduleId, channelId, historyStart = costHis
     if (r.cost !== null) summary.totalCostUsd = (summary.totalCostUsd || 0) + r.cost;
     if (r.last_started && (!summary.lastStartedAt || r.last_started > summary.lastStartedAt)) summary.lastStartedAt = r.last_started;
   }
-  summary.lastStatus = listScheduleRuns({ scheduleId, channelId, limit: 1 })[0]?.status || null;
+  const last = listScheduleRuns({ scheduleId, channelId, limit: 1 })[0];
+  summary.lastStatus = last?.status || null;
+  summary.lastAcknowledged = Boolean(last?.acknowledgedAt);
   summary.successRate = finished ? (summary.succeeded + summary.noOp) / finished : null;
   return summary;
 }

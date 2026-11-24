@@ -189,6 +189,34 @@ export function automationBoardBrowser(config, browser) {
     if (state.detail === keyOf(a)) state.detail = null;
     await act(a, "delete", {}, "Deleted “" + a.title + "”.");
   }
+  // Acknowledge: the error was looked at and handled, so the automation shows healthy again.
+  // The run history keeps every outcome; only the verdict changes.
+  async function acknowledge(a, opts) {
+    const { runId, undo, quiet } = opts || {};
+    const key = keyOf(a) + ":acknowledge";
+    if (state.busy.has(key)) return false;
+    state.busy.add(key); if (!quiet) paint();
+    try {
+      const out = await request(itemPath(a, "acknowledge"), { method: "POST", body: JSON.stringify({ ...(runId ? { runId } : {}), ...(undo ? { undo: true } : {}) }) });
+      if (!quiet) {
+        toast(undo ? "The error is open again." : runId ? "Error acknowledged." : out.acknowledged > 1 ? plural(out.acknowledged, "error") + " acknowledged on “" + a.title + "”." : "“" + a.title + "” is marked as handled.", "ok");
+        await load(true);
+        if (state.runs.has(keyOf(a))) void loadRuns(a, true);
+      }
+      return true;
+    } catch (error) { toast(error.message, "fail"); return false; }
+    finally { state.busy.delete(key); if (!quiet) paint(); }
+  }
+  async function acknowledgeMany(items) {
+    const yes = await confirmBox({ title: "Acknowledge " + plural(items.length, "automation") + "?",
+      body: "Marks every open error on " + (items.length === 1 ? "“" + items[0].title + "”" : "these automations") + " as handled, so they show healthy until a new run fails. Nothing runs, and the run history keeps the errors.", ok: "Acknowledge" });
+    if (!yes) return;
+    let done = 0;
+    for (const a of items) if (await acknowledge(a, { quiet: true })) done += 1;
+    if (done) toast(plural(done, "automation") + " marked as handled.", "ok");
+    await load(true);
+  }
+  const ackBusy = (a) => state.busy.has(keyOf(a) + ":acknowledge");
   function doFixAction(a, action) {
     if (action === "run-now") return runNow(a);
     if (action === "enable") return setEnabled(a, true);
@@ -277,8 +305,9 @@ export function automationBoardBrowser(config, browser) {
     for (let i = 0; i < pad; i++) { top.append(h("i", { class: "c-empty" })); bottom.append(h("i", { class: "c-empty" })); }
     for (const c of cells) {
       const title = stamp(c.at) + " · " + (RUN_LABEL[c.status] || c.status || "Run") + " · " + (DELIVERY_LABEL[c.deliveryStatus] || "No delivery");
-      top.append(h("i", { class: "c-" + c.run, title }));
-      bottom.append(h("i", { class: "c-" + c.delivery, title }));
+      const t = c.ack ? title + " · Acknowledged" : title;
+      top.append(h("i", { class: "c-" + c.run + (c.ack ? " is-ack" : ""), title: t }));
+      bottom.append(h("i", { class: "c-" + c.delivery + (c.ack ? " is-ack" : ""), title: t }));
     }
     wrap.append(top, bottom, h("div", { class: "ab-strip-axis" }, h("span", { text: cells.length ? shortDate(cells[0].at) : "No runs yet" }), h("span", { text: cells.length ? "latest" : "" })));
     return wrap;
@@ -301,6 +330,7 @@ export function automationBoardBrowser(config, browser) {
     if (a.canRunNow) items.push(["play", "Run now", () => runNow(a)]);
     items.push(["edit", a.canEdit ? "Edit" : "View settings", () => openDetail(a, "settings")]);
     items.push(["clock", "Runs", () => openDetail(a, "runs")]);
+    if (a.canAcknowledge && (a.problem || a.openErrors)) items.push(["check", a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error", () => acknowledge(a)]);
     if (config.teamId && /^[CDG][A-Z0-9]+$/.test(a.channelId)) items.push(["ext", "Open in Slack", () => browser.open("https://app.slack.com/client/" + encodeURIComponent(config.teamId) + "/" + encodeURIComponent(a.channelId), "_blank", "noopener")]);
     if (a.canDelete) items.push(["trash", "Delete", () => remove(a), true]);
     const details = h("details", { class: "ab-menu", onclick: (e) => e.stopPropagation() });
@@ -343,6 +373,8 @@ export function automationBoardBrowser(config, browser) {
       actions.append(h("button", { type: "button", class: "ab-btn ab-primary", disabled: !may || state.busy.has(keyOf(a) + ":" + (primary.action === "run-now" ? "run" : "update")),
         title: may ? "" : "Only the creator or an admin can do this", onclick: (e) => { e.stopPropagation(); void doFixAction(a, primary.action); } }, primary.label));
     }
+    if (a.problem && a.canAcknowledge) actions.append(h("button", { type: "button", class: "ab-btn", disabled: ackBusy(a), title: "Already handled? Mark the error as acknowledged so it shows healthy again",
+      onclick: (e) => { e.stopPropagation(); void acknowledge(a); } }, icon("check"), "Acknowledge"));
     actions.append(toggle(a) || "", menu(a));
     foot.append(actions);
     el.append(foot);
@@ -438,6 +470,7 @@ export function automationBoardBrowser(config, browser) {
   }
   function toolbar() {
     const view = VIEWS.find((v) => v.id === state.view) || VIEWS[0];
+    const bulk = state.board ? visibleItems().filter((a) => a.problem && a.canAcknowledge) : [];
     const seg = h("div", { class: "ab-seg", role: "group", "aria-label": "Time window" });
     for (const [d, label] of [[1, "24h"], [7, "7d"], [30, "30d"]]) seg.append(h("button", { type: "button", class: state.days === d ? "is-active" : "", "aria-pressed": String(state.days === d),
       onclick: () => { state.days = d; try { store?.setItem("cg-ab-days", String(d)); } catch { /* ignore */ } void load(true); } }, label));
@@ -445,6 +478,7 @@ export function automationBoardBrowser(config, browser) {
     for (const [v, label] of [["urgent", "Most urgent"], ["next", "Next run"], ["success", "Lowest success"], ["cost", "Most expensive"], ["name", "Name"]]) sort.append(h("option", { value: v, selected: state.sort === v }, label));
     return h("div", { class: "ab-toolbar" }, h("h2", { class: "ab-view-title" }, icon(view.icon), view.label),
       h("span", { class: "ab-key", title: "Each square is one run: top row the run, bottom row its delivery" }, h("i", { class: "c-ok" }), h("i", { class: "c-ok" }), " run / delivery"),
+      bulk.length ? h("button", { type: "button", class: "ab-btn ab-small", title: "Mark every open error in this list as handled", onclick: () => acknowledgeMany(bulk) }, icon("check"), "Acknowledge all (" + bulk.length + ")") : null,
       seg, sort, h("button", { type: "button", class: "ab-icon-btn", title: "Refresh", "aria-label": "Refresh", onclick: () => load(true) }, icon("refresh")));
   }
   let listHost = null;
@@ -476,6 +510,14 @@ export function automationBoardBrowser(config, browser) {
   function fact(label, ...value) { return h("div", { class: "ab-fact" }, h("dt", { text: label }), h("dd", {}, ...value)); }
   function issueCard(a) {
     if (!a.problem) {
+      const ack = a.acknowledgement;
+      if (ack && a.health !== "paused") {
+        return h("section", { class: "ab-panel ab-issue ab-issue-ok" }, h("p", { class: "ab-eyebrow ab-t-ok" }, icon("check"), "Error acknowledged"),
+          h("h3", { text: "Marked as handled" }),
+          h("p", { text: "The last run’s error (" + ack.label + ") was acknowledged" + (ack.byName ? " by " + ack.byName : "") + " " + rel(ack.at) + ". The automation shows healthy until a new run fails." }),
+          a.canAcknowledge ? h("div", { class: "ab-row" }, h("button", { type: "button", class: "ab-btn", disabled: ackBusy(a), onclick: () => acknowledge(a, { runId: ack.runId, undo: true }) }, "Undo"),
+            h("button", { type: "button", class: "ab-btn", onclick: () => openDetail(a, "runs") }, "Open runs")) : null);
+      }
       return h("section", { class: "ab-panel ab-issue ab-issue-ok" }, h("p", { class: "ab-eyebrow ab-t-ok" }, icon("check"), "No open issue"),
         h("h3", { text: a.health === "paused" ? "Paused" : a.lastRun ? "Running as expected" : "Waiting for its first run" }),
         h("p", { text: a.health === "paused" ? "Nothing runs until it is turned back on." + (a.lastRun ? " Its last run " + (RUN_LABEL[a.lastRun.status] || a.lastRun.status).toLowerCase() + " " + rel(a.lastRun.startedAt) + "." : "")
@@ -500,6 +542,11 @@ export function automationBoardBrowser(config, browser) {
       h("p", { class: "ab-issue-when" }, a.problem.since ? "Since " + stamp(a.problem.since) : "", a.streak > 1 ? " · " + plural(a.streak, "run") + " in a row" : "", a.lastRun?.id ? h("code", { text: a.lastRun.id.slice(0, 8) }) : null),
       h("p", { class: "ab-issue-msg", text: a.problem.message }),
       a.fix?.length ? h("p", { class: "ab-side-label", text: "How to fix" }) : null, steps,
+      a.canAcknowledge ? h("div", { class: "ab-ack" },
+        h("div", {}, h("h4", { text: "Already handled?" }), h("p", { text: "Acknowledge the error to put the automation back to healthy. Nothing runs, and the run stays in the history. A new failure opens it again." })),
+        h("div", { class: "ab-row" },
+          a.lastRun?.id && a.openErrors > 1 ? h("button", { type: "button", class: "ab-btn", disabled: ackBusy(a), onclick: () => acknowledge(a, { runId: a.lastRun.id }) }, "Acknowledge latest") : null,
+          h("button", { type: "button", class: "ab-btn ab-primary", disabled: ackBusy(a), onclick: () => acknowledge(a) }, icon("check"), a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error"))) : null,
       !a.canEdit && a.kind !== "API" ? h("p", { class: "ab-note", text: "Only " + (a.createdByName || "the person who created it") + " or an admin can change or run this automation, because it runs with their accounts." }) : null);
   }
   function keyFacts(a) {
@@ -524,16 +571,22 @@ export function automationBoardBrowser(config, browser) {
     const list = h("ul", { class: "ab-runs" });
     for (const r of entry.runs) {
       const open = state.openRun === r.id;
-      const row = h("li", { class: "ab-run" + (open ? " is-open" : "") });
-      row.append(h("button", { type: "button", class: "ab-run-head", "aria-expanded": String(open), onclick: () => { state.openRun = open ? "" : r.id; paint(); } },
+      const row = h("li", { class: "ab-run" + (open ? " is-open" : "") + (r.acknowledgedAt && r.problem ? " is-ack" : "") });
+      const line = h("div", { class: "ab-run-line" });
+      row.append(line);
+      line.append(h("button", { type: "button", class: "ab-run-head", "aria-expanded": String(open), onclick: () => { state.openRun = open ? "" : r.id; paint(); } },
         pill(RUN_LABEL[r.status] || r.status || "Run", runTone(r.status)),
         r.deliveryStatus && DELIVERY_LABEL[r.deliveryStatus] ? pill(DELIVERY_LABEL[r.deliveryStatus], deliveryTone(r.deliveryStatus)) : h("span"),
         h("span", { class: "ab-run-when", text: stamp(r.startedAt) }),
         h("span", { class: "ab-mono", text: r.durationMs ? dur(r.durationMs) : "" }),
         h("span", { class: "ab-mono", text: typeof r.costUsd === "number" ? money(r.costUsd) : "" }),
         h("span", { class: "ab-run-trigger", text: r.trigger === "manual" ? "Run now" : r.trigger === "schedule" ? "Scheduled" : "" })));
+      if (r.problem && r.acknowledgedAt) line.append(h("span", { class: "ab-run-ack", title: "Acknowledged" + (r.acknowledgedByName ? " by " + r.acknowledgedByName : "") + " · " + stamp(r.acknowledgedAt) }, icon("check"), "Acknowledged",
+        a.canAcknowledge ? h("button", { type: "button", class: "ab-link", disabled: ackBusy(a), "aria-label": "Reopen this run's error", onclick: () => acknowledge(a, { runId: r.id, undo: true }) }, "Undo") : null));
+      else if (r.problem && a.canAcknowledge) line.append(h("button", { type: "button", class: "ab-btn ab-small ab-run-ack-btn", disabled: ackBusy(a), title: "Mark this run's error as handled", onclick: () => acknowledge(a, { runId: r.id }) }, icon("check"), "Acknowledge"));
       if (open) {
         const body = h("div", { class: "ab-run-body" });
+        if (r.problem && r.acknowledgedAt) body.append(h("p", { class: "ab-muted", text: "Acknowledged" + (r.acknowledgedByName ? " by " + r.acknowledgedByName : "") + " on " + stamp(r.acknowledgedAt) + "." }));
         if (r.error) body.append(h("p", { class: "ab-run-error" }, h("b", { text: (r.errorKind ? r.errorKind.replaceAll("_", " ") : "Error") + ": " }), r.error));
         if (r.summary) body.append(h("p", { class: "ab-run-summary", text: r.summary }));
         body.append(h("dl", { class: "ab-run-facts" },
@@ -695,7 +748,9 @@ export function automationBoardBrowser(config, browser) {
       tabs.append(h("button", { type: "button", role: "tab", class: state.tab === id ? "is-active" : "", "aria-selected": String(state.tab === id), onclick: () => { state.tab = id; if (id !== "settings") void loadRuns(a); paint(); } },
         label, count !== null && count !== undefined ? h("em", { text: String(count) }) : null, id === "overview" && a.problem ? h("em", { class: "ab-bg-" + tone, text: "1" }) : null));
     }
-    const body = state.tab === "runs" ? h("section", { class: "ab-panel" }, h("div", { class: "ab-row ab-between" }, h("h3", { text: "Recent runs" }), h("button", { type: "button", class: "ab-btn ab-small", onclick: () => loadRuns(a, true) }, icon("refresh"), "Refresh")), runList(a))
+    const body = state.tab === "runs" ? h("section", { class: "ab-panel" }, h("div", { class: "ab-row ab-between" }, h("h3", { text: "Recent runs" }), h("div", { class: "ab-row" },
+      a.canAcknowledge && a.openErrors ? h("button", { type: "button", class: "ab-btn ab-small", disabled: ackBusy(a), onclick: () => acknowledge(a) }, icon("check"), a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error") : null,
+      h("button", { type: "button", class: "ab-btn ab-small", onclick: () => loadRuns(a, true) }, icon("refresh"), "Refresh"))), runList(a))
       : state.tab === "settings" ? settingsForm(a)
         : h("div", { class: "ab-overview" }, issueCard(a), keyFacts(a));
     return h("div", { class: "ab-detail" },
@@ -861,6 +916,11 @@ export const AUTOMATION_BOARD_CSS = `
 .ab-fact{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px}.ab-fact dt{color:var(--ab-faint)}.ab-fact dd{margin:0;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}.ab-fact code{font-size:11.5px;color:var(--ab-muted)}
 .ab-clip{white-space:pre-wrap;color:var(--ab-muted)}
 .ab-runs{list-style:none;margin:10px 0 0;padding:0}.ab-run{border-top:1px solid var(--ab-line)}
+.ab-run-line{display:flex;align-items:center;gap:8px}.ab-run-line .ab-run-head{flex:1;min-width:0}
+.ab-run-ack{display:inline-flex;align-items:center;gap:5px;color:var(--ab-ok);font-size:12px;font-weight:600;white-space:nowrap;padding-right:4px}.ab-run-ack .ab-link{font-weight:500;font-size:12px}
+.ab-run-ack-btn{white-space:nowrap;flex:none}.ab-run.is-ack .ab-run-head .ab-pill{opacity:.55}
+.ab-strip .is-ack{opacity:.35}
+.ab-ack{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--ab-line)}.ab-ack h4{margin:0 0 2px;font-size:14px}.ab-ack p{margin:0;color:var(--ab-muted);font-size:13px;max-width:560px}
 .ab-run-head{display:grid;grid-template-columns:120px 150px minmax(140px,1fr) 70px 80px 80px;gap:10px;align-items:center;width:100%;padding:10px 4px;border:0;background:none;cursor:pointer;text-align:left}
 .ab-run-head:hover{background:var(--hover,rgba(238,242,238,.04))}.ab-run-when{color:var(--ab-ink)}.ab-run-trigger{color:var(--ab-faint);font-size:12px}
 .ab-run-body{padding:4px 4px 16px 8px;display:flex;flex-direction:column;gap:10px}
@@ -889,7 +949,8 @@ export const AUTOMATION_BOARD_CSS = `
 @media (max-width:1100px){.ab-hero{grid-template-columns:minmax(0,1fr)}.ab-stats{grid-template-columns:repeat(2,1fr)}.ab-stat-strip{grid-column:1/-1}.ab-stat{border-left:0;border-top:1px solid var(--ab-line)}.ab-stat:first-child{border-top:0}.ab-overview{grid-template-columns:1fr}}
 @media (max-width:860px){.ab-page{padding:16px 12px 40px}.ab-body{grid-template-columns:minmax(0,1fr)}.ab-eyebrow{flex-wrap:wrap}.ab-card{padding:12px 12px 12px 14px}.ab-rate{min-width:0}.ab-key{display:none}.ab-overview{grid-template-columns:minmax(0,1fr)}.ab-stats{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.ab-side{position:static}.ab-views{flex-direction:row;overflow-x:auto}.ab-views>.ab-side-label{display:none}.ab-view{flex:none}.ab-filters{display:none}
   .ab-card-head{grid-template-columns:auto minmax(0,1fr) auto}.ab-card-strip{grid-column:1/-1;grid-row:2;overflow:hidden}.ab-meta,.ab-card-foot{padding-left:0}.ab-detail-top{grid-template-columns:auto minmax(0,1fr)}.ab-detail-actions{grid-column:1/-1;justify-content:flex-start}
-  .ab-run-head{grid-template-columns:auto auto 1fr}.ab-run-head .ab-mono,.ab-run-trigger{display:none}}
+  .ab-run-head{grid-template-columns:auto auto 1fr}.ab-run-head .ab-mono,.ab-run-trigger{display:none}
+  .ab-run-line{flex-wrap:wrap;gap:0}.ab-run-line .ab-run-head{flex-basis:100%}.ab-run-ack,.ab-run-ack-btn{margin:-4px 0 10px 4px}}
 @media (max-width:520px){.ab-strip-row{grid-template-columns:repeat(30,minmax(2px,7px));gap:2px}.ab-hero{padding:16px}.ab-headline{font-size:20px}.ab-card-head{gap:10px;grid-template-columns:minmax(0,1fr) auto}.ab-card-head>.ab-kind{display:none}.ab-rate span{font-size:10px}.ab-card-actions{margin-left:0;width:100%}.ab-card-actions .ab-primary{flex:1;justify-content:center}.ab-toolbar .ab-select{flex:1}}
 `;
 

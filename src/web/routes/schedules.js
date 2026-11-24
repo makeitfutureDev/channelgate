@@ -7,7 +7,7 @@ import { cronValid } from "../../util/cron.js";
 import { costHistoryStart } from "../../ee/cost-history.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { buildSchedulePatch } from "../../config/schedule-patch.js";
-import { automationBoard, automationRuns, updateAutomation, runAutomationNow, deleteAutomation, consoleChannel, ADMIN_CONSOLE_ACCESS } from "../../gateway/automations-view.js";
+import { automationBoard, automationRuns, updateAutomation, runAutomationNow, acknowledgeAutomation, deleteAutomation, consoleChannel, ADMIN_CONSOLE_ACCESS } from "../../gateway/automations-view.js";
 import { adminSession } from "../auth.js";
 
 export function createSchedulesRouter() {
@@ -83,6 +83,7 @@ export function createSchedulesRouter() {
     const schedule = await updateAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id, req.body || {}, { allowSudo: true });
     return { ok: true, enabled: schedule.enabled !== false };
   }));
+  router.post("/automation-board/:channelId/:scheduleId/acknowledge", boardAction((entry, id, req) => acknowledgeAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id, req.body || {})));
   router.post("/automation-board/:channelId/:scheduleId/run", boardAction((entry, id, req) => runAutomationNow(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id)));
   router.post("/automation-board/:channelId/:scheduleId/delete", boardAction((entry, id, req) => ({ ok: deleteAutomation(ADMIN_CONSOLE_ACCESS, consoleUser(req), entry, id) })));
 
