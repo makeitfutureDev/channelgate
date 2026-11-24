@@ -2967,6 +2967,16 @@ test("a gateway preface followed by tool work keeps the progress card above the 
   assert.equal(streamedMarkdown(calls), NOTE + "The test command is npm test.");
 });
 
+test("a completed gateway-warning-only reply is already nonempty", async () => {
+  for (const note of [NOTE, ""]) {
+    const calls = [];
+    const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000001.200000", { authorId: "U_NOTE" });
+    if (note) progress.onEvent({ kind: "answer_note", scope: "gateway", text: note });
+    await progress.finalize({ content: note });
+    assert.equal(streamedMarkdown(calls), note || "_(empty response)_");
+  }
+});
+
 test("a tool-only turn still delivers its whole answer under the note", async () => {
   const calls = [];
   const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000001.000000", { authorId: "U_NOTE", dir: null });

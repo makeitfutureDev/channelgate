@@ -1307,7 +1307,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         if (rawLen === 0) {
           // Fence-safe split (a raw slice could cut mid-line/mid-``` and corrupt everything after).
           const parts = chunkMrkdwn(full, MAX_SLACK_CHARS);
-          oneShot = parts[0] || "_(empty response)_";
+          oneShot = parts[0] || (prefaceParts.length ? "" : "_(empty response)_");
           overflow = parts.slice(1).join("\n");
           if (overflow) oneShot += "\n\n…_(continued below)_";
         } else if (result?.answerless && full && pending !== streamed) {
@@ -1342,7 +1342,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
             // If nothing was streamed live, send the answer's first part now so the stream never
             // finalizes with no content (which the API rejects). Resolve mentions in it too; the
             // requester tag rides here when there's no overflow to carry it.
-            ...(rawLen === 0 ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
+            ...(rawLen === 0 && (oneShot || tag) ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
             ...(rawLen > 0 && fence ? { markdown_text: `\n${fence.marker}` } : {}),
           };
           // The streamed message IS the reply: seal the toolbox, remove any retired copy and put
