@@ -6,7 +6,7 @@ import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../conf
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
 import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount, roiRunTotals, runTotalsSince } from "./schedule-runs.js";
 import { roiOf, roiTotals, roiAssignments, getDefaultRoiRate, setRoiAssignment, roiMinutes, roiRate } from "./roi.js";
-import { automationHealth, currentProblem, fixSteps, openProblem, runProblem } from "./automation-health.js";
+import { automationHealth, currentProblem, fixSteps, openProblem, runProblem, runThread } from "./automation-health.js";
 import { logEvent } from "../util/logger.js";
 import { buildSchedulePatch } from "../config/schedule-patch.js";
 import { costHistoryStart } from "../ee/cost-history.js";
@@ -175,7 +175,7 @@ export function automationRuns(access, entry, scheduleId, userId = "") {
     if (s && !visible(s, access)) throw Object.assign(new Error("Automation denied"), { status: 403 });
   }
   return listScheduleRuns({ scheduleId, channelId: entry.channelId, limit: 30 })
-    .map((r) => visibleScheduleRun(r)).map((r) => ({ ...Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] ?? null])), problem: runProblem(r) }));
+    .map((r) => visibleScheduleRun(r)).map((r) => ({ ...Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] ?? null])), thread: runThread(r) || null, problem: runProblem(r) }));
 }
 
 // The automation a viewer may CHANGE: visible to them, and theirs to change. An automation runs as
@@ -340,7 +340,7 @@ function boardItem(facts, conv, ctx) {
 // Every automation the viewer may see, with its health verdict, plus the board's totals.
 // `adminConsole` is the admin UI: every conversation on every platform, every DM, sudo rows.
 // Otherwise it is exactly the Activity dashboard's rule (automationChannels above).
-export async function automationBoard(access, userId, { days = 7, now = new Date(), adminConsole = false, botName = "", windows = BOARD_WINDOWS } = {}) {
+export async function automationBoard(access, userId, { days = 7, now = new Date(), adminConsole = false, botName = "", teamId = "", windows = BOARD_WINDOWS } = {}) {
   const windowDays = windows.includes(Number(days)) ? Number(days) : windows.includes(7) ? 7 : windows[0];
   const sinceMs = now.getTime() - windowDays * 86400_000;
   const users = await getUsers();
@@ -390,6 +390,8 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
   return {
     viewer: { isAdmin: access.user?.isAdmin === true, adminConsole, userId: userId || "" },
     windowDays, generatedAt: now.toISOString(), botName,
+    // The Slack workspace, so a row can open its conversation or its last run in the Slack app.
+    teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId || "")) ? String(teamId) : "",
     kpis: { ...totals, costUsd: Math.round(totals.costUsd * 100) / 100, successRate: totals.judged ? totals.succeeded / totals.judged : null },
     totals: { days: BOARD_TOTAL_DAYS, runs: month.runs, costUsd: Math.round(month.costUsd * 100) / 100,
       costSince: new Date(costSinceMs).toISOString(), costLimited: costSinceMs > monthSinceMs },

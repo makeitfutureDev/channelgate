@@ -333,6 +333,43 @@ export function automationBoardBrowser(config, browser) {
     const tone = r === null ? "idle" : r >= 0.9 ? "ok" : r >= 0.6 ? "warn" : "fail";
     return h("div", { class: "ab-rate" }, h("strong", { class: "ab-t-" + tone, text: pct(r) }), h("span", { text: state.days === 1 ? "24h success" : state.days + "d success" }));
   }
+  // The row's AI cost in the selected window (what the "Most expensive" sort orders by); the
+  // tooltip adds the fixed 30-day figure the headline totals are made of.
+  function costCell(a) {
+    const k = a.stats;
+    const tip = [plural(k.runs, "run") + " in this window" + (k.runs ? ", avg " + money(k.costUsd / k.runs) + " / run" : ""),
+      a.month ? "Last 30 days: " + money(a.month.costUsd, 2) + " over " + plural(a.month.runs, "run") : "",
+      a.lastRun && typeof a.lastRun.costUsd === "number" ? "Last run: " + money(a.lastRun.costUsd) : ""].filter(Boolean).join("\n");
+    return h("div", { class: "ab-rate ab-cost", title: tip }, h("strong", { text: money(k.costUsd, 2) }), h("span", { text: (state.days === 1 ? "24h" : state.days + "d") + " AI cost" }));
+  }
+  // Slack deep links: the conversation, or a run's thread, opened in the Slack app; Ctrl/⌘-click
+  // opens the web client instead. Only bare Slack ids are linked; Slack enforces access on open.
+  const teamOf = () => [config.teamId, state.board?.teamId].find((t) => typeof t === "string" && /^[A-Z0-9]{2,32}$/.test(t)) || "";
+  const slackConv = (id) => typeof id === "string" && /^[CDG][A-Z0-9]{1,32}$/.test(id);
+  const slackTs = (ts) => typeof ts === "string" && /^\d{6,12}\.\d{1,9}$/.test(ts);
+  function slackUrls(channelId, thread) {
+    const team = teamOf();
+    if (!team || !slackConv(channelId)) return null;
+    const ts = slackTs(thread) ? thread : "";
+    return {
+      app: "slack://channel?team=" + team + "&id=" + channelId + (ts ? "&message=" + ts + "&thread_ts=" + ts : ""),
+      web: "https://app.slack.com/client/" + team + "/" + channelId + (ts ? "/thread/" + channelId + "-" + ts : ""),
+      thread: Boolean(ts),
+    };
+  }
+  function openSlack(urls, web) {
+    if (web) browser.open(urls.web, "_blank", "noopener");
+    else browser.location.href = urls.app;
+  }
+  function slackLink(channelId, thread, label) {
+    const urls = slackUrls(channelId, thread);
+    if (!urls) return null;
+    return h("a", { class: "ab-link ab-slack", href: urls.app, rel: "noopener noreferrer",
+      title: (urls.thread ? "Open this run's thread in the Slack app" : "Open the conversation in the Slack app") + " · Ctrl/⌘-click opens it in the browser",
+      onclick: (e) => { e.stopPropagation(); if (e.ctrlKey || e.metaKey) { e.preventDefault(); openSlack(urls, true); } } }, icon("ext"), label);
+  }
+  // The last run's own thread when it has one, else its conversation.
+  const lastRunLink = (a) => a.lastRun ? slackLink(a.channelId, a.lastRun.thread, a.lastRun.thread ? "Open last run" : "Open in Slack") : null;
   function toggle(a) {
     const busy = state.busy.has(keyOf(a) + ":update");
     if (a.kind === "API") return null;
@@ -347,7 +384,10 @@ export function automationBoardBrowser(config, browser) {
     items.push(["edit", a.canEdit ? "Edit" : "View settings", () => openDetail(a, "settings")]);
     items.push(["clock", "Runs", () => openDetail(a, "runs")]);
     if (a.canAcknowledge && (a.problem || a.openErrors)) items.push(["check", a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error", () => acknowledge(a)]);
-    if (config.teamId && /^[CDG][A-Z0-9]+$/.test(a.channelId)) items.push(["ext", "Open in Slack", () => browser.open("https://app.slack.com/client/" + encodeURIComponent(config.teamId) + "/" + encodeURIComponent(a.channelId), "_blank", "noopener")]);
+    const conv = slackUrls(a.channelId, "");
+    const last = a.lastRun && slackUrls(a.channelId, a.lastRun.thread);
+    if (last?.thread) items.push(["ext", "Open last run in Slack", () => openSlack(last)]);
+    if (conv) items.push(["ext", "Open conversation in Slack", () => openSlack(conv)]);
     if (a.canDelete) items.push(["trash", "Delete", () => remove(a), true]);
     const details = h("details", { class: "ab-menu", onclick: (e) => e.stopPropagation() });
     details.append(h("summary", { class: "ab-icon-btn", "aria-label": "More actions for " + a.title, title: "More actions" }, icon("dots")));
@@ -377,12 +417,12 @@ export function automationBoardBrowser(config, browser) {
     const head = h("div", { class: "ab-card-head" },
       h("div", { class: "ab-kind" }, icon(kindIcon(a.kind))),
       h("div", { class: "ab-card-title" }, h("h3", { text: a.title }), statusPill(a), asideNote(a) ? h("span", { class: "ab-aside", text: asideNote(a) }) : null),
-      h("div", { class: "ab-card-strip" }, strip(a.strip)), successCell(a));
+      h("div", { class: "ab-card-strip" }, strip(a.strip)), h("div", { class: "ab-figs" }, successCell(a), costCell(a)));
     el.append(head, metaLine(a));
     const foot = h("div", { class: "ab-card-foot" });
     if (a.problem) foot.append(h("p", { class: "ab-problem ab-t-" + (a.health === "broken" ? "fail" : "warn") }, icon(a.problem.outcome === "delivery" ? "inbox" : a.problem.key === "blocked" ? "alert" : "x"),
-      h("span", { text: a.problem.message }), a.problem.code && !["execution", "delivery", "failed"].includes(a.problem.code) ? h("code", { text: a.problem.code }) : null));
-    else if (a.lastRun) foot.append(h("p", { class: "ab-last" }, "Last run " + rel(a.lastRun.startedAt) + " · " + (RUN_LABEL[a.lastRun.status] || a.lastRun.status) + (a.lastRun.deliveryStatus ? " · " + (DELIVERY_LABEL[a.lastRun.deliveryStatus] || a.lastRun.deliveryStatus) : "")));
+      h("span", { text: a.problem.message }), a.problem.code && !["execution", "delivery", "failed"].includes(a.problem.code) ? h("code", { text: a.problem.code }) : null, lastRunLink(a)));
+    else if (a.lastRun) foot.append(h("p", { class: "ab-last" }, "Last run " + rel(a.lastRun.startedAt) + " · " + (RUN_LABEL[a.lastRun.status] || a.lastRun.status) + (a.lastRun.deliveryStatus ? " · " + (DELIVERY_LABEL[a.lastRun.deliveryStatus] || a.lastRun.deliveryStatus) : ""), lastRunLink(a)));
     else foot.append(h("p", { class: "ab-last" }, a.nextRun ? "Hasn't run yet. First run " + rel(a.nextRun) + "." : "No runs recorded yet."));
     const actions = h("div", { class: "ab-card-actions" });
     const primary = a.problem ? primaryAction(a) : null;
@@ -783,6 +823,8 @@ export function automationBoardBrowser(config, browser) {
         if (r.duplicates) body.append(h("p", { class: "ab-muted", text: plural(r.duplicates, "repeated call") + " with the same idempotency key answered with this run instead of starting another." }));
         if (r.request) body.append(h("p", { class: "ab-run-summary" }, h("b", { text: "Request: " }), r.request));
         if (r.summary) body.append(h("p", { class: "ab-run-summary", text: r.summary }));
+        const runLink = r.thread ? slackLink(a.channelId, r.thread, "Open this run in Slack") : null;
+        if (runLink) body.append(h("p", { class: "ab-run-open" }, runLink));
         body.append(h("dl", { class: "ab-run-facts" },
           fact("Run id", h("code", { text: r.id })),
           fact("Engine", [r.engine, r.model].filter(Boolean).join(" · ") || "—"),
@@ -1065,6 +1107,7 @@ export const AUTOMATION_BOARD_CSS = `
 .ab-problem code{font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid currentColor;opacity:.85;white-space:nowrap}
 .ab-last{color:var(--ab-muted)}
 .ab-card-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.ab-figs{display:flex;gap:16px;align-items:center}.ab-cost strong{color:var(--ab-ink);font-variant-numeric:tabular-nums}.ab-slack{text-decoration:none;font-size:12.5px;font-weight:600;white-space:nowrap;margin-left:auto}.ab-slack:hover{text-decoration:underline}.ab-run-open{margin:6px 0}.ab-run-open .ab-slack{margin-left:0}
 .ab-rate{text-align:right;min-width:72px}.ab-rate strong{display:block;font-size:18px;font-weight:700}.ab-rate span{font-size:11px;color:var(--ab-faint)}
 /* run strip */
 .ab-strip{display:flex;flex-direction:column;gap:3px}

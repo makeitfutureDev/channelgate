@@ -139,6 +139,16 @@ Engine-independent (board, verdicts, filters, permissions — no engine turn):
    KPI line below, never the two tiles; on the 30d window the tiles equal that line's runs and
    spend; a member's tiles count only the conversations their board shows. Regression: "the
    board's 30-day totals count every run and its AI cost, whatever window is selected".
+2b. Row cost and Slack link: with a delivered automation A and an automation B whose last run
+   failed before delivering, open Automations (admin console and Activity → Automations) on 7d.
+   Pass: every card shows "$… · 7d AI cost" beside its success %, equal to the Spent stat on its
+   detail page; hovering shows runs, avg per run and the last-30-days cost; switching to 30d
+   changes the figure and the label. Click **Open last run** on A: the Slack desktop app opens A's
+   result thread; on B it opens the thread the run announced itself in. Ctrl/⌘-click opens the
+   same thread in the web client. The ⋯ menu's "Open conversation in Slack" opens the channel,
+   and Runs → a run → "Open this run in Slack" opens that run's thread. Regressions: "each row
+   carries its own window cost and a link target for its last run", "a run records the thread it
+   works in, so a failed run can still be opened from the board".
 3. Pause A with its switch. Pass: it moves to Paused, `list_schedules` shows it disabled; turn it
    back on from the Paused card.
 4. Edit A in Settings (rename, change time to weekdays 09:15, delivery "Post in the channel").

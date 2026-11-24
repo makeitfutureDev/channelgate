@@ -127,6 +127,27 @@ test("the board's 30-day totals count every run and its AI cost, whatever window
   assert.deepEqual(runs.runTotalsSince({ scheduleId: mine.id, channelId: "CBOARD1", sinceMs: 0, historyStart: null }), { runs: 2, costUsd: 0.75 });
 });
 
+test("each row carries its own window cost and a link target for its last run", async () => {
+  const { mine, personal } = await fixtureConversations();
+  const access = { user: { isAdmin: false }, allows: async (e) => ["CBOARD1", "DBOARD1", "DBOARD2"].includes(e.channelId) };
+  // The latest run announced itself in a thread and failed before delivering anything.
+  const failed = runs.createScheduleRun(mine);
+  runs.updateScheduleRun(failed.id, { status: "failed", error: "Make API 401 unauthorized", costUsd: 0.05, thread: "1764000000.000100", completedAt: new Date().toISOString() });
+  // A delivered run links to where its answer went, ahead of its announcement.
+  const delivered = runs.createScheduleRun(personal);
+  runs.updateScheduleRun(delivered.id, { status: "succeeded", deliveryStatus: "delivered", deliveryThread: "1764000000.000300", thread: "1764000000.000200", completedAt: new Date().toISOString() });
+  const board = await view.automationBoard(access, "U_ANA", { days: 7, teamId: "T0TEAM1" });
+  assert.equal(board.teamId, "T0TEAM1");
+  const digest = board.automations.find((a) => a.id === mine.id);
+  assert.equal(digest.stats.costUsd, 0.8); // the row's cost in the selected window
+  assert.equal(digest.lastRun.thread, "1764000000.000100"); assert.equal(digest.lastRun.costUsd, 0.05);
+  assert.equal(board.automations.find((a) => a.id === personal.id).lastRun.thread, "1764000000.000300");
+  assert.equal(view.automationRuns(access, { channelId: "CBOARD1" }, mine.id, "U_ANA")[0].thread, "1764000000.000100");
+  // A run with no thread (a channel post, a headless API run) has nothing to open but its conversation.
+  assert.equal(health.runThread({}), "");
+  assert.equal((await view.automationBoard(access, "U_ANA", { teamId: "not a team" })).teamId, "");
+});
+
 test("the admin console sees every conversation, every DM by name and host-access rows", async () => {
   await fixtureConversations();
   const board = await view.automationBoard(view.ADMIN_CONSOLE_ACCESS, "", { adminConsole: true });
@@ -256,12 +277,13 @@ test("admin console routes: board, edit, validation errors, unknown automation",
   await setUser("U_TIB", { name: "Tiberiu Socaci", role: "admin" });
   const app = express();
   app.use(express.json());
-  app.use(createAdminRouter());
+  app.use(createAdminRouter({ slack: { snapshot: () => ({ teamId: "T0ADMIN" }) } }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const board = await (await fetch(`${base}/automation-board/board?days=30`)).json();
     assert.equal(board.windowDays, 30); assert.equal(board.viewer.adminConsole, true);
+    assert.equal(board.teamId, "T0ADMIN"); // the console can open rows in the Slack app too
     const target = board.automations.find((a) => a.title === "Invoice reminders");
     const res = await fetch(`${base}/automation-board/${target.channelId}/${target.id}/update`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false, resultPolicy: "on-failure" }) });
     assert.equal(res.status, 200);
@@ -289,5 +311,8 @@ test("the shared component ships as one module for the admin console and inline 
   // Server text is only ever assigned as text: the one innerHTML is the constant icon table.
   const body = automationBoardBrowser.toString();
   assert.equal((body.match(/innerHTML/g) || []).length, 1);
+  // Slack links open the app (a slack:// deep link to the run's thread), never an arbitrary URL.
+  assert.match(body, /"slack:\/\/channel\?team=" \+ team \+ "&id=" \+ channelId/);
+  assert.match(body, /"&message=" \+ ts \+ "&thread_ts=" \+ ts/);
   assert.match(body, /span\.innerHTML = "<svg viewBox='0 0 16 16'>" \+ \(ICONS\[name\] \|\| ""\) \+ "<\/svg>"/);
 });

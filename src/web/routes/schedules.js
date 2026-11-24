@@ -11,7 +11,7 @@ import { automationBoard, automationRuns, updateAutomation, runAutomationNow, ac
 import { roiOverview, setSkillRoi, setDefaultRate } from "../../gateway/roi-view.js";
 import { adminSession } from "../auth.js";
 
-export function createSchedulesRouter() {
+export function createSchedulesRouter({ slack } = {}) {
   const router = Router();
 
   // ── Schedules ────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ export function createSchedulesRouter() {
   const consoleUser = (req) => adminSession(req)?.account?.userId || "";
   router.get("/automation-board/board", async (req, res, next) => {
     try {
-      res.json(await automationBoard(ADMIN_CONSOLE_ACCESS, consoleUser(req), { days: Number(req.query.days) || 7, adminConsole: true }));
+      res.json(await automationBoard(ADMIN_CONSOLE_ACCESS, consoleUser(req), { days: Number(req.query.days) || 7, adminConsole: true, teamId: slack?.snapshot?.().teamId || "" }));
     } catch (e) { next(e); }
   });
   const boardAction = (fn) => async (req, res, next) => {

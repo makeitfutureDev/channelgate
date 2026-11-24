@@ -309,7 +309,8 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           escalationStyle: sched.escalationStyle || "thread",
         });
       }
-      updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered." });
+      updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered.",
+        ...(posted?.messageId ? { thread: String(posted.messageId) } : {}) });
       appendScheduleRunEvent(run.id, { kind: "delivered" });
       updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok" });
       retireOneTime(sched); // the reminder is posted — that IS this schedule's delivery
@@ -363,7 +364,9 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       }
       sched.executionState = "running";
       updateSchedule(sched.id, { executionState: "running", executionThread: threadTs });
-      updateScheduleRun(run.id, { status: "running", engineStatus: "running" });
+      // Where this run talks in its conversation (the announcement or loop thread), so the board can
+      // open it even when the run fails before anything is delivered.
+      updateScheduleRun(run.id, { status: "running", engineStatus: "running", ...(threadTs ? { thread: String(threadTs) } : {}) });
       appendScheduleRunEvent(run.id, { kind: "agent_requested" });
       result = await runMessage({
         channelId: sched.channelId,
