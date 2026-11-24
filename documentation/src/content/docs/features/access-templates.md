@@ -7,7 +7,7 @@ Access templates provide a repeatable starting configuration. An administrator c
 
 ## Configure a starting policy
 
-Open **Settings → Access templates** in your instance's admin interface. Review the new-channel template and the separate direct-message templates for users and administrators.
+Open **Conversations → Templates** and choose **New channel template**, **User DM template**, or **Admin DM template**. Each template has its own **Save changes** button.
 
 A template can include the mode's underlying flags, Auto, Lean, network access, selected MCP tools, skills, and engine/model defaults. These selections do not approve a person or bypass conversation membership and access checks.
 

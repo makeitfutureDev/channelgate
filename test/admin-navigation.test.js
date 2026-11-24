@@ -23,6 +23,7 @@ const EXPECTED = {
   schedules: "/automations",
   roi: "/roi",
   audit: "/activity",
+  variables: "/variables",
   skills: "/skills",
   api: "/api-docs",
   settings: "/settings",
@@ -94,6 +95,13 @@ test("channel, DM, and group detail paths round-trip to selection keys", () => {
     assert.deepEqual(conversationRouteForPath(`${path}/`), { kind, channelId, key });
     assert.equal(viewForPath(path), "channels");
   }
+  for (const id of ["channel", "user", "admin"]) {
+    const path = pathForConversation("template", id);
+    assert.equal(path, `/conversations/template/${id}`);
+    assert.deepEqual(conversationRouteForPath(path), { kind: "template", template: id, key: "tpl:" + id });
+    assert.equal(viewForPath(path), "channels");
+  }
+  assert.equal(pathForConversation("template", "unknown"), "/conversations");
   assert.equal(pathForConversation("unknown", "C123"), "/conversations");
   assert.equal(pathForConversation("channel", "bad/id"), "/conversations");
   assert.equal(conversationRouteForPath("/conversations/channel/bad/id"), null);
@@ -120,7 +128,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 after(() => server.close());
 
 test("direct visits and refreshes serve the admin shell at every page path", async () => {
-  const paths = [...ADMIN_VIEW_PATHS, "/conversations/channel/C123", "/conversations/dm/D456", "/conversations/group/G789"];
+  const paths = [...ADMIN_VIEW_PATHS, "/conversations/channel/C123", "/conversations/dm/D456", "/conversations/group/G789", "/conversations/template/user"];
   for (const path of paths) {
     const response = await fetch(base + path);
     assert.equal(response.status, 200, path);
@@ -131,7 +139,7 @@ test("direct visits and refreshes serve the admin shell at every page path", asy
 });
 
 test("unknown paths still return 404 instead of silently opening Overview", async () => {
-  for (const path of ["/not-an-admin-page", "/conversations/unknown/C123", "/conversations/channel/bad/id"]) {
+  for (const path of ["/not-an-admin-page", "/conversations/unknown/C123", "/conversations/channel/bad/id", "/conversations/template/unknown"]) {
     const response = await fetch(base + path);
     assert.equal(response.status, 404, path);
   }

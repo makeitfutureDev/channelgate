@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHealthPoller, forecastCopy, harnessHealthMarkup, healthBytes, healthChart, storageSeverity } from "../public/admin-system-health.js";
+import { createHealthPoller, forecastCopy, harnessHealthMarkup, healthBytes, healthChart, slackHealthMarkup, storageSeverity } from "../public/admin-system-health.js";
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function harness(request) {
@@ -123,4 +123,13 @@ test("harness panel shows session count and enabled license status with escaped 
   assert.doesNotMatch(html, /disabled|<again>/);
   assert.match(harnessHealthMarkup(health, String, "Request failed"), /status unavailable/);
   assert.match(harnessHealthMarkup({}, String), /No enabled harnesses/);
+});
+
+
+test("Slack health identifies the bot and distinguishes pending, offline and failed requests", () => {
+  assert.match(slackHealthMarkup({ slack: { connected: true, user: "<bot>" } }), /Connected as @&lt;bot&gt;/);
+  assert.match(slackHealthMarkup({ slack: { connected: true } }), /Slack · Connected</);
+  assert.match(slackHealthMarkup({ slack: { status: "disconnected" } }), /dot off.*disconnected/);
+  assert.match(slackHealthMarkup(null), /Checking/);
+  assert.match(slackHealthMarkup({}, "Request failed"), /Status unavailable/);
 });

@@ -1,6 +1,6 @@
 import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Channel skill templates: "this channel follows the Development template". A template is data
-// (a row: explicit skill slugs and/or categories) edited under Settings → Access Templates; the
+// (a row: explicit skill slugs and/or categories) edited under Skills → Templates; the
 // four seeded ones exist so a fresh deployment has something to assign, and admins add more.
 //
 // A conversation is ASSIGNED a template (`meta.skillTemplate`, a live link): its effective channel

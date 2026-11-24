@@ -20,7 +20,7 @@ Effective precedence is **channel → personal → organization**, with the chan
 
 ## Add or rotate a credential
 
-Open `/secrets` or **Settings → Variables** in Slack, choose the scope, and use **Add/update**. The admin UI exposes channel variables, organization secrets under integrations, and personal secrets on user records.
+Open `/secrets` or **Settings → Variables** in Slack, choose the scope, and use **Add/update**. The admin UI exposes channel variables, organization secrets under **Variables**, and personal secrets on user records.
 
 For example, save the project's `SUPABASE_ACCESS_TOKEN` in the channel scope, then request a permitted CLI action. Enter the token in the private credential form, not in a channel message or an agent-created file. Listings reveal names and configured/masked state, not a usable value.
 

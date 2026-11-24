@@ -128,7 +128,7 @@ name), so customer skills are prefixed with the customer.
 
 **Development**, **Sales**, **Marketing** and **Management** are seeded; each is a named skill
 set — explicit catalog skills (a checklist) plus every catalog skill in its categories — edited
-under Settings → Access Templates → *Skill templates*, where admins add more (Support, Legal, …).
+under Skills → *Templates*, where admins add more (Support, Legal, …).
 
 A conversation **follows** one template: Conversations → Tools → *Skill template* (or
 `set_channel_skill_template` from chat). Its channel tier is the

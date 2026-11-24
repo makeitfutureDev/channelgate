@@ -368,9 +368,6 @@ export function createChannelsRouter({
     }
   });
 
-  // The org DM templates are now edited under Settings → Access Templates and persist via the settings
-  // PUT above (see the `body.dmTemplates` block); there's no longer a dedicated dm-templates route.
-
   // ── Channels ────────────────────────────────────────────────────────────────
   router.get("/channels", async (_req, res, next) => {
     try {

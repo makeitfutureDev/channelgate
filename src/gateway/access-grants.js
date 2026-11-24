@@ -161,7 +161,7 @@ export function skippedSkillGrantsWarning(skipped = []) {
     const shared = skipped.filter((entry) => entry.tier === tier);
     if (!shared.length) continue;
     const where = tier === "thread" ? "this thread's skills" : tier === "channel" ? "this conversation's skills" : "the organization's skills";
-    lines.push(`⚠️ Skipped ${shared.length === 1 ? "a skill" : `${shared.length} skills`} in ${where}: ${shared.map(item).join(", ")} — a personal skill loads only for its author. An admin can remove ${it(shared.length)} in ${tier === "organization" ? "Settings → organization grants" : tier === "thread" ? "this thread's settings" : "this conversation's settings"}, or the author can make ${it(shared.length)} an organization skill. Continuing without ${it(shared.length)}.`);
+    lines.push(`⚠️ Skipped ${shared.length === 1 ? "a skill" : `${shared.length} skills`} in ${where}: ${shared.map(item).join(", ")} — a personal skill loads only for its author. An admin can remove ${it(shared.length)} in ${tier === "organization" ? "Skills → Organization" : tier === "thread" ? "this thread's settings" : "this conversation's settings"}, or the author can make ${it(shared.length)} an organization skill. Continuing without ${it(shared.length)}.`);
   }
   return `${lines.join("\n")}\n\n`;
 }

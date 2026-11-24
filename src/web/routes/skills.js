@@ -51,7 +51,7 @@ import { parseRepoUrl } from "../../gateway/skills/git-sync.js";
 import { publishRevision, publishTarget, publishSource } from "../../gateway/skills/publish.js";
 import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessToken, TOKEN_SCOPES } from "../../gateway/skills/tokens.js";
 import { foreignPersonalSkillError, newForeignPersonalSkillGrants, resolveAccessGrants } from "../../gateway/access-grants.js";
-import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
+import { getSettingsVersion, getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { getUsers, getChannelMeta, listChannels } from "../../config/store.js";
 import { listSkillFolderIssues } from "../../gateway/skills/folder-issues.js";
@@ -191,6 +191,7 @@ export function createSkillsRouter() {
     if (!skill) return res.status(404).json({ error: "skill not found" });
     const b = req.body || {};
     validateSkillGovernanceChange(skill, b);
+    const from = getSettingsVersion();
     if (b.enabled === false) {
       revokeSkillsFromOrg([skill.slug]);
       excludeSkill(skill.slug);
@@ -204,7 +205,7 @@ export function createSkillsRouter() {
         grantSkillsToOrg([skill.slug]);
       } else revokeSkillsFromOrg([skill.slug]);
     }
-    res.json(await synced({ ok: true, skill: skillToApi(getSkill(skill.slug)) }));
+    res.json(await synced({ ok: true, skill: skillToApi(getSkill(skill.slug)), settingsVersion: { from, to: getSettingsVersion() } }));
   }));
 
   router.get("/skills/catalog/:slug", guard(async (req, res) => {
@@ -479,13 +480,17 @@ export function createSkillsRouter() {
   router.post("/skills/org/grant", guard(async (req, res) => {
     const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
     if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
-    res.json(await synced({ ok: true, ...grantSkillsToOrg(slugs) }));
+    const from = getSettingsVersion();
+    const result = grantSkillsToOrg(slugs);
+    res.json(await synced({ ok: true, ...result, settingsVersion: { from, to: getSettingsVersion() } }));
   }));
 
   router.post("/skills/org/revoke", guard(async (req, res) => {
     const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
     if (!slugs.length) return res.status(400).json({ error: "slugs is required" });
-    res.json(await synced({ ok: true, ...revokeSkillsFromOrg(slugs) }));
+    const from = getSettingsVersion();
+    const result = revokeSkillsFromOrg(slugs);
+    res.json(await synced({ ok: true, ...result, settingsVersion: { from, to: getSettingsVersion() } }));
   }));
 
   // ── Access tokens for /mcp/skills ─────────────────────────────────────────────────────────

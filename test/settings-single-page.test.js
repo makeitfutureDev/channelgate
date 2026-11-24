@@ -18,7 +18,7 @@ test("each settings deep link has one named category in a navigation group", () 
   });
   assert.equal(sections.length, new Set(sections).size);
   // Old URLs are also used by Activity, provider setup, and admin identity enrollment.
-  for (const key of ["connection", "appearance", "agent", "engine-licenses", "templates", "integrations", "license", "access", "admin-access", "system"]) {
+  for (const key of ["connection", "appearance", "agent", "engine-licenses", "calls", "messaging", "integrations", "license", "access", "admin-access", "system"]) {
     assert.ok(sections.includes(key), `#set-${key} is still addressable`);
   }
 });
@@ -28,7 +28,9 @@ test("chat setup is collapsed and optional feature cards point to their own acti
   const setup = [...connection.matchAll(/<details([^>]*)>\s*<summary><h4>([^<]+)<\/h4>/g)];
   assert.equal(setup.length, 3);
   for (const [, attributes] of setup) assert.doesNotMatch(attributes, /\bopen\b/);
-  for (const [, attributes, body] of html.matchAll(/<details([^>]*data-feature-toggle="[^"]+"[^>]*)>([\s\S]*?)<\/details>/g)) {
+  const features = [...html.matchAll(/<article([^>]*data-feature-toggle="[^"]+"[^>]*)>([\s\S]*?)<\/article>/g)];
+  assert.ok(features.length >= 7);
+  for (const [, attributes, body] of features) {
     const id = /data-feature-toggle="([^"]+)"/.exec(attributes)[1];
     assert.match(body, new RegExp(`<input(?=[^>]*id="${id}")(?=[^>]*type="checkbox")[^>]*>`), id);
   }

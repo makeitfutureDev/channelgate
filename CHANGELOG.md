@@ -4,7 +4,10 @@
 
 - Redesigned admin Settings with grouped categories, compact platform connections, and
   full-width layouts. Search now opens individual fields across categories, including settings
-  inside closed cards. Harness versions, sign-in diagnostics and warm sessions appear in System health.
+  inside closed cards. Messages and Calls have separate categories with directly editable controls.
+  Conversation defaults now live in Conversations → Templates, shared grants and skill templates
+  in Skills, and organization variables in Variables. System health shows Slack and harness status.
+  Existing organization-wide run tokens are managed on the API page.
 - Composio script relay (SDK mode): scripts in a channel container can now call Composio tools
   without any Composio API key. Each turn gets a short-lived grant; the gateway runs every call as
   the requester's or the channel's identity, with app policy, account checks and the Slack

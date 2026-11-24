@@ -7,9 +7,9 @@ The HTTP run API starts agent work without an incoming chat message. Use it from
 
 ## Configure authentication
 
-In the admin website, open **Settings → System** and generate the run API token. **Save** it, then copy it into your automation's secure credential store. The **API** page shows the installation's base URL and request examples.
+In the conversation where runs should appear, ask the agent to create an API token. You can also create one in the Activity dashboard under **Settings → API tokens**. Copy it into your automation’s credential store when it is shown. The admin **API** page lists tokens and request examples.
 
-Send `X-API-Key` or `Authorization: Bearer`. This key can access `/api/runs`; it cannot read general admin settings or the file browser. Its runs nevertheless act as the fixed administrative API principal, so protect it as a credential that can launch work.
+Send the token in either the `X-API-Key` or `Authorization: Bearer` header. Runs use the token owner’s current permissions in that conversation. If a deprecated organization-wide key exists, admins can find it under **API**.
 
 ## Start and inspect a run
 
@@ -22,7 +22,7 @@ curl 'https://gateway.example.com/api/runs' \
 
 A fresh request returns `202` with `jobId` and `statusUrl`. Request `GET /api/runs/<jobId>` with the same authentication to retrieve status, result, error, duration, and recorded cost. `POST /api/runs/<jobId>/stop` requests cancellation; `GET /api/runs` lists recent jobs.
 
-Omit `channel` for the headless `api` workspace. Supply a Slack channel ID, slug, or name to create a real thread when Slack delivery is available. If kickoff cannot post, the run can fall back to headless execution; inspect `slackThread` in the response.
+With a channel token, you can omit `channel`. If supplied, it must identify the token’s conversation.
 
 ## Automation safeguards
 

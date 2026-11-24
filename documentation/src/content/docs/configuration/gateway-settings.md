@@ -11,23 +11,26 @@ Sign in to the admin web interface and open **Settings**. Use **Search settings�
 
 | Section | What it controls |
 | --- | --- |
-| Connection | Slack, Microsoft Teams, Google Chat, public URL, approval links |
-| Agent defaults | Engine licenses and which are switched on, the default harness, license, model and effort, failover, instructions, memory, scheduling limits |
-| Access Templates | Starting conversation settings and reusable skill assignments |
-| Integrations | Shared environment variables, Composio mode and endpoint |
-| License | The ChannelGate product license key, verification state, conversation message allowance |
-| Access & security | Organization grants, default conversation access, model-change policy, container runtime |
-| System | Admin authentication, run API token, reconnect and restart controls |
+| Chat connections | Slack, Microsoft Teams and Google Chat setup and connection controls |
+| Messages / Calls | Replies, reactions, voice notes and approvals in Messages. Browser and iPhone calls in Calls |
+| Integrations / Appearance | Composio, email, Drive sync, public file links and gateway branding |
+| Agent defaults / Engine licenses | Default harness, model, effort, instructions and concurrency. Provider credentials and sign-ins under Engine licenses |
+| Schedules & reminders | Schedule limits and quiet-thread reminders |
+| Access & security / Admin access | New-channel access, trusted apps and administrator sign-in |
+| License & usage | Product license, monthly usage and model rates |
+| Gateway & runtime | Public URL, proxy and containers, resets and restart |
+
+Open **Variables** for global environment variables, **Conversations → Templates** for channel and DM defaults, and **Skills** for organization grants and skill templates. **System health** shows Slack and harness status. **API** lists channel tokens and any existing deprecated organization-wide token.
 
 ## Choose a starting policy
 
 1. Configure at least one chat platform and one working engine login.
 2. Set the default harness and model under **Agent defaults → Engine & runtime**. When the harness has more than one usable license, also choose the default **License**.
 3. Review **Access & security → Default channel access** before adding the bot to new conversations.
-4. Review the channel and DM templates under **Access Templates**. A new channel's template can include Worker, Auto, and network access; a user's DM has its own template.
+4. Review the channel and DM templates under **Conversations → Templates**. A new channel's template can include Worker, Auto, and network access; a user's DM has its own template.
 5. Save and send a small test request from an approved account.
 
-Two settings use the word license. The **License** section holds the ChannelGate product license key, which sets the installation's tier and limits; see [license keys and limits](/docs/features/licensing). An engine license is a provider credential for Claude Code or Codex. Administrators add, verify, switch off, and remove engine licenses with the engine settings; see [engine licenses](/docs/features/engine-licenses).
+Two settings use the word license. The **License & usage** section holds the ChannelGate product license key, which sets the installation's tier and limits; see [license keys and limits](/docs/features/licensing). An engine license is a provider credential for Claude Code or Codex. Administrators add, verify, switch off, and remove engine licenses with the engine settings; see [engine licenses](/docs/features/engine-licenses).
 
 An example organization instruction is:
 
