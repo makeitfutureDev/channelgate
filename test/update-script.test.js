@@ -33,7 +33,8 @@ test("runner preflight enforces the real runtime floor and gates candidates on t
   assert.doesNotMatch(runner, /nodeMajor < 20/);
   // A candidate is only accepted after the same verification set CI runs, not `npm test` alone.
   assert.match(runner, /"run", "check:static"/);
-  assert.match(runner, /runCommand\("npm", \["test"\]/);
+  assert.match(runner, /runCommand\("npm", \["test", "--", `--test-concurrency=\$\{concurrency\}`\]/);
+  assert.match(runner, /HOME: testHome/);
 });
 
 test("optional provisioning retains Whisper, workspace migration, and gated rclone behavior", () => {
