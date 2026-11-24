@@ -81,12 +81,17 @@ test("the next UTC day notifies again", () => {
   });
 });
 
-test("a class change notifies even on a day already marked", () => {
+test("each class notifies once even if the login alternates classes on the same day", () => {
   const mark = formatAlertMark("expiring", DAY_KEY);
-  assert.deepEqual(decideLoginAlert({ mark, alertClass: "missing", day: DAY_KEY }), {
-    send: true,
-    mark: `missing:${DAY_KEY}`,
-  });
+  const changed = decideLoginAlert({ mark, alertClass: "missing", day: DAY_KEY });
+  assert.equal(changed.send, true);
+  for (const alertClass of ["missing", "expiring"]) {
+    assert.equal(decideLoginAlert({ mark: changed.mark, alertClass, day: DAY_KEY }).send, false);
+    assert.deepEqual(decideLoginAlert({ mark: changed.mark, alertClass, day: "2026-09-03" }), {
+      send: true,
+      mark: `${alertClass}:2026-09-03`,
+    });
+  }
 });
 
 test("a healthy login sends nothing and clears the stored class", () => {
@@ -191,7 +196,9 @@ test("a missing login uses the resolver's reason, and a healthy one resets the c
   login = operatorLogin(NOW + 2 * DAY);
   await claudeLoginWatchTick(opts);
   assert.equal(sent.length, 2);
-  assert.equal(store.get(), `expiring:${DAY_KEY}`);
+  login = missingLogin();
+  assert.equal((await claudeLoginWatchTick(opts)).notified, false);
+  assert.equal(sent.length, 2);
 
   // Signed in again: nothing said, and the marker is cleared so a later expiry notifies afresh.
   login = operatorLogin(NOW + 25 * DAY);

@@ -4,7 +4,8 @@
 
 - When both harnesses fail, Slack’s retry card shows a readable reason even when the second
   provider returns a long JSON error.
-
+- The Claude login watch remembers both daily warnings, so switching repeatedly between an
+  expiring and a missing login no longer sends duplicate admin messages.
 - A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
   the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
   thread to its container.
