@@ -54,7 +54,7 @@ test("Activity columns move, resize and keep comments in a real browser", { skip
 
   // All six Actions buttons fit on one desktop line, including the optional call link.
   const actionsOnOneLine = () => page.locator("#threads tr:first-child .actions").evaluate((cell) => {
-    const boxes = [...cell.querySelectorAll("a,button")].map((button) => button.getBoundingClientRect());
+    const boxes = [...cell.querySelectorAll("a,button")].flatMap((button) => [...button.getClientRects()]);
     const bounds = cell.getBoundingClientRect();
     return boxes.length === 6 && boxes.every((box) => Math.abs(box.top - boxes[0].top) < 1
       && box.left >= bounds.left && box.right <= bounds.right);
