@@ -4,8 +4,8 @@
 // on every request; a schedule row is always looked up INSIDE the checked channel.
 import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../config/store.js";
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
-import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged } from "./schedule-runs.js";
-import { automationHealth, fixSteps, openProblem, runProblem } from "./automation-health.js";
+import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount } from "./schedule-runs.js";
+import { automationHealth, currentProblem, fixSteps, openProblem, runProblem } from "./automation-health.js";
 import { logEvent } from "../util/logger.js";
 import { buildSchedulePatch } from "../config/schedule-patch.js";
 import { costHistoryStart } from "../ee/cost-history.js";
@@ -14,7 +14,7 @@ import { parseCron } from "../util/cron.js";
 import { daemonTimeZone, isUtcZone, zonedStamp } from "../util/timezone.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { activityChannelName } from "../slack/home-threads.js";
-import { apiSourcesForChannel, apiSourceRuns, API_SOURCE_PREFIX } from "./api-run-history.js";
+import { apiSourcesForChannel, apiSourceVisible, isApiSource, API_MAX_INFLIGHT } from "./api-run-history.js";
 
 // The synthetic conversation of channel-less API runs (api-runs.js API_CHANNEL_ID). Admin-only.
 const API_CHANNEL_ID = "cg-api";
@@ -85,7 +85,7 @@ export async function automationChannels(access, userId) {
   for (const entry of await listChannels()) {
     if (entry.channelId === API_CHANNEL_ID) {
       const sources = access.user?.isAdmin === true ? apiSources(access, userId, API_CHANNEL_ID) : [];
-      if (sources.length) out.push({ channelId: API_CHANNEL_ID, name: "API runs without a conversation", personal: false, count: sources.length, failing: sources.filter(apiFailing).length });
+      if (sources.length) out.push({ channelId: API_CHANNEL_ID, name: "API runs without a conversation", personal: false, count: sources.length, failing: failingCount([], sources, API_CHANNEL_ID) });
       continue;
     }
     if (platformOfConversation(entry.channelId) !== "slack") continue;
@@ -101,26 +101,20 @@ export async function automationChannels(access, userId) {
     const meta = dm ? await getChannelMeta(entry.slug) : null;
     if (dm && meta?.dmUserId && meta.dmUserId !== userId) continue; // only the viewer's OWN DM
     const name = String(await activityChannelName(entry)).replace(/^#+/, "");
-    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${name}`, personal: dm, count, failing: failingCount(shown, entry.channelId) + sources.filter(apiFailing).length });
+    out.push({ channelId: entry.channelId, name: dm ? "Your direct messages (personal)" : `#${name}`, personal: dm, count, failing: failingCount(shown, sources, entry.channelId) });
   }
   return out.sort((a, b) => Number(b.personal) - Number(a.personal) || b.count - a.count || a.name.localeCompare(b.name));
 }
 
-// A run that ended badly: the automations an admin should look at first.
-export const FAILED_RUN_STATUSES = new Set(["failed", "blocked", "interrupted"]);
-// Enabled automations whose LAST run failed (a paused one is not asking for attention).
-function failingCount(schedules, channelId) {
+// Automations with a problem right now — the board's own verdict (automation-health.js
+// currentProblem) over each one's latest settled run, schedules and API sources alike.
+function failingCount(schedules, sources, channelId) {
   const latest = latestScheduleRuns(channelId);
-  return schedules.filter((s) => {
-    if (s.enabled === false) return false;
-    const last = latest.get(s.id);
-    return FAILED_RUN_STATUSES.has(last?.status) && !last.acknowledged;
-  }).length;
+  return schedules.filter((s) => currentProblem(s, latest.get(s.id) || null)).length +
+    sources.filter((src) => currentProblem(null, latest.get(src.id) || null)).length;
 }
 
 const visible = (s, access) => !s.sudo || access.user?.isAdmin === true;
-// An API source asks for attention when its latest finished run failed.
-const apiFailing = (source) => FAILED_RUN_STATUSES.has(source.runs.lastStatus);
 
 // Throws 403 unless the viewer may see this conversation right now.
 export async function checkedChannel(access, userId, channelId) {
@@ -141,21 +135,24 @@ const canDelete = (s, access, userId, entry) => access.user?.isAdmin === true ||
 
 export function channelAutomations(access, userId, entry, now = new Date()) {
   const historyStart = costHistoryStart();
+  // One summary for both triggers: the same ledger, the same counting rule.
+  const counts = (id) => {
+    const summary = scheduleRunSummary(id, entry.channelId, historyStart);
+    return { total: summary.total, running: summary.live, lastStatus: summary.lastStatus, lastStartedAt: summary.lastStartedAt, successRate: summary.successRate, costUsd: summary.totalCostUsd ?? 0 };
+  };
   const api = apiSources(access, userId, entry.channelId).map((src) => ({ id: src.id, title: src.title,
-    instructions: "", kind: "API", recurrence: src.revoked ? "Started by HTTP API calls · token revoked" : "Started by HTTP API calls",
-    enabled: true, nextRun: null, createdBy: "", mine: false, canDelete: false,
-    runs: { total: src.runs.total, running: src.runs.running, lastStatus: src.runs.lastStatus, lastStartedAt: src.runs.lastStartedAt, successRate: src.runs.successRate, costUsd: src.runs.costUsd } }));
+    instructions: "", kind: "API", trigger: "api", recurrence: apiRecurrence(src),
+    enabled: true, nextRun: null, createdBy: src.createdBy, mine: Boolean(userId) && src.createdBy === userId, canDelete: false, runs: counts(src.id) }));
   if (entry.synthetic) return api;
   return api.concat(listForChannel(entry.channelId).filter((s) => visible(s, access)).map((s) => {
     const next = scheduleNextRun(s, now);
-    const summary = scheduleRunSummary(s.id, entry.channelId, historyStart);
     return { id: s.id, title: s.description || (s.kind === "reminder" ? "Reminder" : "Scheduled task"),
-      instructions: String(s.prompt || "").slice(0, 4000), successCriteria: String(s.successCriteria || "").slice(0, 2000), kind: s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task",
+      instructions: String(s.prompt || "").slice(0, 4000), successCriteria: String(s.successCriteria || "").slice(0, 2000), kind: kindOf(s), trigger: "scheduled",
       recurrence: recurrenceWords(s), posting: postingWords(s), enabled: s.enabled !== false, nextRun: next ? zonedStamp(next) : null,
-      createdBy: s.createdBy || "", mine: s.createdBy === userId, canDelete: canDelete(s, access, userId, entry),
-      runs: { total: summary.total, lastStatus: summary.lastStatus, lastStartedAt: summary.lastStartedAt, successRate: summary.successRate } };
+      createdBy: s.createdBy || "", mine: s.createdBy === userId, canDelete: canDelete(s, access, userId, entry), runs: counts(s.id) };
   }));
 }
+const apiRecurrence = (src) => `Started by HTTP API calls · ${src.credential}${src.revoked ? " (revoked)" : ""}`;
 
 // How a task shows in chat, in words (schedule options executionVisibility + resultPolicy).
 function postingWords(s) {
@@ -167,11 +164,15 @@ function postingWords(s) {
 
 const RUN_FIELDS = ["id", "status", "startedAt", "completedAt", "durationMs", "summary", "error", "engine", "model", "costUsd", "deliveryStatus", "taskStatus",
   "errorKind", "deliveryAttempts", "tokensIn", "tokensOut", "toolUseCount", "trigger", "scheduledAt", "engineStatus", "outcomeSource", "connections", "events", "eventsDropped",
-  "acknowledgedAt", "acknowledgedByName"];
+  "acknowledgedAt", "acknowledgedByName", "deliveryError", "duplicates", "rejectedCount", "request"];
+const apiVisible = (access, userId, entry, sourceId) => apiSourceVisible(entry.channelId, sourceId, { isAdmin: access.user?.isAdmin === true, userId });
 export function automationRuns(access, entry, scheduleId, userId = "") {
-  if (scheduleId.startsWith(API_SOURCE_PREFIX)) return apiSourceRuns(entry.channelId, scheduleId, { isAdmin: access.user?.isAdmin === true, userId });
-  const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
-  if (s && !visible(s, access)) throw Object.assign(new Error("Automation denied"), { status: 403 });
+  if (isApiSource(scheduleId)) {
+    if (!apiVisible(access, userId, entry, scheduleId)) throw Object.assign(new Error("Automation denied"), { status: 403 });
+  } else {
+    const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
+    if (s && !visible(s, access)) throw Object.assign(new Error("Automation denied"), { status: 403 });
+  }
   return listScheduleRuns({ scheduleId, channelId: entry.channelId, limit: 30 })
     .map((r) => visibleScheduleRun(r)).map((r) => ({ ...Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] ?? null])), problem: runProblem(r) }));
 }
@@ -180,7 +181,7 @@ export function automationRuns(access, entry, scheduleId, userId = "") {
 // its creator, so letting anyone else rewrite or start it would run their words with the
 // creator's identity and connections. Admins, the creator, and the owner of a DM may.
 function ownedSchedule(access, userId, entry, scheduleId) {
-  if (scheduleId.startsWith(API_SOURCE_PREFIX)) throw Object.assign(new Error("API runs are started by their API token; revoke the token to stop them."), { status: 400, userFacing: true });
+  if (isApiSource(scheduleId)) throw Object.assign(new Error("API runs are started by their API token; revoke the token to stop them."), { status: 400, userFacing: true });
   const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
   if (!s || !visible(s, access)) throw Object.assign(new Error("Not found"), { status: 404 });
   if (!canDelete(s, access, userId, entry)) throw Object.assign(new Error("Only the person who created this automation, or an admin, can change it."), { status: 403, userFacing: true });
@@ -188,7 +189,7 @@ function ownedSchedule(access, userId, entry, scheduleId) {
 }
 
 export function deleteAutomation(access, userId, entry, scheduleId) {
-  if (scheduleId.startsWith(API_SOURCE_PREFIX)) throw Object.assign(new Error("API runs are not deletable; revoke the token instead"), { status: 404 });
+  if (isApiSource(scheduleId)) throw Object.assign(new Error("API runs are not deletable; revoke the token instead"), { status: 404 });
   return deleteSchedule(ownedSchedule(access, userId, entry, scheduleId).id, entry.channelId);
 }
 
@@ -208,9 +209,13 @@ export async function updateAutomation(access, userId, entry, scheduleId, body, 
 // automation back on), so the board shows it healthy again. `runId` acknowledges ONE run;
 // without it every open error of the automation is acknowledged, plus a schedule-level verdict
 // (undeliverable, interrupted). `undo` clears one run's acknowledgement. Same rule as editing:
-// hiding an error from the creator is a change to their automation.
+// hiding an error from the creator is a change to their automation. An API source follows its
+// own visibility rule: whoever may see its runs (an admin, or the token's creator) may
+// acknowledge them; it has no schedule row, so there is no schedule-level verdict to mark.
 export async function acknowledgeAutomation(access, userId, entry, scheduleId, body = {}) {
-  const s = ownedSchedule(access, userId, entry, scheduleId);
+  const api = isApiSource(scheduleId);
+  if (api && !apiVisible(access, userId, entry, scheduleId)) throw Object.assign(new Error("Not found"), { status: 404 });
+  const s = api ? { id: scheduleId } : ownedSchedule(access, userId, entry, scheduleId);
   const runId = body?.runId === undefined || body?.runId === null || body?.runId === "" ? "" : body.runId;
   if (typeof runId !== "string" || runId.length > 64) throw Object.assign(new Error("Invalid run."), { status: 400, userFacing: true });
   const undo = body?.undo === true;
@@ -230,7 +235,7 @@ export async function acknowledgeAutomation(access, userId, entry, scheduleId, b
   const changed = setScheduleRunsAcknowledged({ scheduleId: s.id, channelId: entry.channelId, runIds: ids, by: undo ? null : by });
   // The schedule-level verdict follows the newest run: acknowledged with "all", or with that run.
   const touchesState = !runId || runId === newest?.id;
-  if (touchesState) {
+  if (touchesState && !api) {
     const acknowledgedStatus = undo ? null : String(s.lastStatus || "") || null;
     if ((s.acknowledgedStatus ?? null) !== acknowledgedStatus) updateSchedule(s.id, { acknowledgedStatus });
   }
@@ -252,17 +257,13 @@ export const BOARD_WINDOWS = [1, 7, 30];
 
 function kindOf(s) { return s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task"; }
 
-function scheduleItem(s, conv, ctx) {
-  const { access, userId, users, now, sinceMs, historyStart, entry, botName } = ctx;
-  const runs = listScheduleRuns({ scheduleId: s.id, channelId: conv.channelId, limit: 30 }).map((r) => visibleScheduleRun(r, historyStart));
-  const windowRuns = scheduleRunsSince({ scheduleId: s.id, channelId: conv.channelId, sinceMs }).map((r) => visibleScheduleRun(r, historyStart));
-  const health = automationHealth(s, runs, windowRuns);
+// What only a SCHEDULE knows about itself: its timing, its chat delivery, who may change it.
+function scheduleFacts(s, { access, userId, users, now, entry }) {
   const next = scheduleNextRun(s, now);
   const may = canDelete(s, access, userId, entry);
   const kind = kindOf(s);
-  const engineRun = runs.find((r) => r.engine || r.model);
   return {
-    id: s.id, channelId: conv.channelId, conversation: conv.name, personal: conv.personal, kind,
+    schedule: s, id: s.id, kind, trigger: "scheduled", once: isOneTime(s),
     title: s.description || (s.kind === "reminder" ? "Reminder" : "Scheduled task"),
     instructions: String(s.prompt || "").slice(0, 20_000), successCriteria: String(s.successCriteria || "").slice(0, 2000),
     recurrence: recurrenceWords(s),
@@ -275,29 +276,40 @@ function scheduleItem(s, conv, ctx) {
     hasMatchPrefix: Boolean(s.matchPrefix), deliveryThread: s.deliveryThread || "", sudo: s.sudo === true,
     createdBy: s.createdBy || "", createdByName: users[s.createdBy]?.name || "", mine: Boolean(userId) && s.createdBy === userId,
     canEdit: may, canDelete: may, canRunNow: may && !s.loop, canAcknowledge: may,
-    engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
-    ...health,
-    fix: health.problem ? fixSteps(health.problem.key, { kind, once: isOneTime(s), botName }) : [],
   };
 }
 
-function apiItem(src, conv, ctx) {
-  const { access, userId, sinceMs } = ctx;
-  const runs = apiSourceRuns(conv.channelId, src.id, { isAdmin: access.user?.isAdmin === true, userId, limit: 30 });
-  const windowRuns = runs.filter((r) => Date.parse(r.startedAt) >= sinceMs);
-  const health = automationHealth(null, runs, windowRuns);
-  const engineRun = runs.find((r) => r.engine || r.model);
+// What only an API SOURCE knows: the credential behind it. It has no schedule to edit, run or
+// delete; whoever may see it (an admin, or the token's creator) may acknowledge its errors.
+function apiFacts(src, { userId, users }) {
   return {
-    id: src.id, channelId: conv.channelId, conversation: conv.name, personal: conv.personal, kind: "API",
-    title: src.title, instructions: "", successCriteria: "",
-    recurrence: src.revoked ? "Started by HTTP API calls · token revoked" : "Started by HTTP API calls",
+    schedule: null, id: src.id, kind: "API", trigger: "api", once: false,
+    title: src.title, instructions: "", successCriteria: "", recurrence: apiRecurrence(src),
     timing: { cron: "", once: false, runAt: null, intervalDays: 0, loop: false }, nextRun: null, nextRunText: null,
     enabled: true, delivery: "", deliveryWords: "API caller", posting: "", resultPolicy: "always", executionVisibility: "visible",
-    notify: "none", notifyUserId: "", failureNotify: false, hasMatchPrefix: false, deliveryThread: "", sudo: false,
-    createdBy: "", createdByName: "", mine: false, canEdit: false, canDelete: false, canRunNow: false, canAcknowledge: false,
+    notify: "none", notifyUserId: "", failureNotify: Boolean(src.createdBy), hasMatchPrefix: false, deliveryThread: "", sudo: false,
+    createdBy: src.createdBy, createdByName: users[src.createdBy]?.name || "", mine: Boolean(userId) && src.createdBy === userId,
+    canEdit: false, canDelete: false, canRunNow: false, canAcknowledge: true, revoked: src.revoked,
+  };
+}
+
+// The ONE board item, whatever starts the automation: a per-trigger facts block (above) over the
+// same ledger reads, the same health verdict and the same fix steps.
+function boardItem(facts, conv, ctx) {
+  const { schedule, once, ...shown } = facts;
+  const runs = listScheduleRuns({ scheduleId: facts.id, channelId: conv.channelId, limit: 30 }).map((r) => visibleScheduleRun(r, ctx.historyStart));
+  const windowRuns = scheduleRunsSince({ scheduleId: facts.id, channelId: conv.channelId, sinceMs: ctx.sinceMs }).map((r) => visibleScheduleRun(r, ctx.historyStart));
+  const health = automationHealth(schedule, runs, windowRuns);
+  const engineRun = runs.find((r) => r.engine || r.model);
+  const sum = (key) => windowRuns.reduce((n, r) => n + (Number(r[key]) || 0), 0);
+  return {
+    ...shown, channelId: conv.channelId, conversation: conv.name, personal: conv.personal,
     engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
     ...health,
-    fix: health.problem ? fixSteps(health.problem.key, { kind: "API" }) : [],
+    fix: health.problem ? fixSteps(health.problem.key, { kind: facts.kind, once, botName: ctx.botName }) : [],
+    // The run API's limits as this source met them inside the window. The cap is gateway-wide.
+    ...(facts.trigger === "api" ? { limits: { cap: API_MAX_INFLIGHT, inFlight: runs.filter((r) => ["queued", "running"].includes(r.status)).length,
+      inFlightAll: ctx.liveApiRuns(), rejected: sum("rejectedCount"), deduplicated: sum("duplicates") } } : {}),
   };
 }
 
@@ -311,6 +323,8 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
   const historyStart = costHistoryStart();
   const automations = [];
   const conversations = [];
+  let live = null;
+  const liveApiRuns = () => live ?? (live = liveApiRunCount(now.getTime()));
   for (const entry of await listChannels()) {
     const isApi = entry.channelId === API_CHANNEL_ID;
     if (isApi && access.user?.isAdmin !== true) continue;
@@ -329,21 +343,21 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
       name = adminConsole ? (users[owner]?.name ? `DM · ${users[owner].name}` : "Direct message") : "Your direct messages";
     } else name = `#${String(await activityChannelName(entry)).replace(/^#+/, "")}`;
     const conv = { channelId: entry.channelId, name, personal: dm };
-    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName };
-    const items = [...sources.map((src) => apiItem(src, conv, ctx)), ...shown.map((s) => scheduleItem(s, conv, ctx))];
+    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName, liveApiRuns };
+    const items = [...sources.map((src) => boardItem(apiFacts(src, ctx), conv, ctx)), ...shown.map((s) => boardItem(scheduleFacts(s, ctx), conv, ctx))];
     automations.push(...items);
     conversations.push({ ...conv, count: items.length, attention: items.filter((a) => a.attention).length });
   }
   const totals = automations.reduce((t, a) => {
-    t.runs += a.stats.runs; t.finished += a.stats.finished; t.succeeded += a.stats.succeeded; t.failed += a.stats.failed;
+    t.runs += a.stats.runs; t.finished += a.stats.finished; t.judged += a.stats.judged; t.succeeded += a.stats.succeeded; t.failed += a.stats.failed;
     t.notDelivered += a.stats.notDelivered; t.costUsd += a.stats.costUsd; return t;
-  }, { runs: 0, finished: 0, succeeded: 0, failed: 0, notDelivered: 0, costUsd: 0 });
+  }, { runs: 0, finished: 0, judged: 0, succeeded: 0, failed: 0, notDelivered: 0, costUsd: 0 });
   const counts = { broken: 0, degraded: 0, healthy: 0, paused: 0 };
   for (const a of automations) counts[a.health] += 1;
   return {
     viewer: { isAdmin: access.user?.isAdmin === true, adminConsole, userId: userId || "" },
     windowDays, generatedAt: now.toISOString(), botName,
-    kpis: { ...totals, costUsd: Math.round(totals.costUsd * 100) / 100, successRate: totals.finished ? totals.succeeded / totals.finished : null },
+    kpis: { ...totals, costUsd: Math.round(totals.costUsd * 100) / 100, successRate: totals.judged ? totals.succeeded / totals.judged : null },
     counts, attention: automations.filter((a) => a.attention).length,
     conversations: conversations.sort((a, b) => b.attention - a.attention || a.name.localeCompare(b.name)),
     automations,

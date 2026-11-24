@@ -42,6 +42,9 @@ function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) 
     outcome: job.outcome || null,
     successCriteria: job.successCriteria || null,
     visibility: job.visibility || "visible",
+    name: job.name || null,
+    // Where the webhook stands: null without one, else pending / delivered / failed.
+    webhookDelivery: job.webhook ? (job.webhookPending === false ? "delivered" : job.webhookAttempts ? "failed" : "pending") : null,
     model: job.model || null,
   };
 }
@@ -64,8 +67,8 @@ export function createRunsRouter({ slack } = {}) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome, visibility } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome, visibility, slack, principal: tokenPrincipal(req) });
+      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome, visibility, name } = req.body ?? {};
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, licenses, model, effort, mode, idempotencyKey, conversationKey, successCriteria, reportOutcome, visibility, name, slack, principal: tokenPrincipal(req) });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({

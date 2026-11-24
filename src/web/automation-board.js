@@ -15,7 +15,7 @@ export function automationBoardBrowser(config, browser) {
   const remembered = Number(store?.getItem("cg-ab-days"));
   const state = {
     board: null, error: "", loading: true, days: [1, 7, 30].includes(remembered) ? remembered : 7,
-    view: "attention", q: "", sort: "urgent", conv: new Set(), kind: new Set(), problem: new Set(), owner: new Set(),
+    view: "attention", q: "", sort: "urgent", conv: new Set(), trigger: new Set(), kind: new Set(), problem: new Set(), owner: new Set(),
     detail: null, tab: "overview", runs: new Map(), openRun: "", busy: new Set(),
   };
 
@@ -83,7 +83,7 @@ export function automationBoardBrowser(config, browser) {
   const pct = (r) => r === null || r === undefined ? "—" : Math.round(r * 100) + "%";
   const dur = (ms) => { const s = Math.round((ms || 0) / 1000); return s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s"; };
   const initials = (name) => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
-  const RUN_LABEL = { succeeded: "Succeeded", "no-op": "Nothing to do", failed: "Failed", blocked: "Blocked", interrupted: "Interrupted", unreported: "Unreported", skipped: "Skipped", running: "Running", queued: "Queued" };
+  const RUN_LABEL = { succeeded: "Succeeded", "no-op": "Nothing to do", failed: "Failed", blocked: "Blocked", interrupted: "Interrupted", unreported: "Unreported", completed: "Completed", skipped: "Skipped", running: "Running", queued: "Queued" };
   const DELIVERY_LABEL = { delivered: "Delivered", suppressed: "Not posted (by rule)", pending: "Pending", failed: "Not delivered" };
   const HEALTH_LABEL = { broken: "Broken", degraded: "Degraded", healthy: "Healthy", paused: "Paused" };
   const runTone = (s) => s === "succeeded" || s === "no-op" ? "ok" : s === "running" || s === "queued" ? "live" : s === "blocked" || s === "unreported" ? "warn" : s === "failed" || s === "interrupted" ? "fail" : "idle";
@@ -274,9 +274,12 @@ export function automationBoardBrowser(config, browser) {
     { id: "paused", label: "Paused", icon: "pause", test: (a) => a.health === "paused" },
     { id: "all", label: "Everything", icon: "layers", test: () => true },
   ];
+  const TRIGGER_LABEL = { api: "API", scheduled: "Scheduled" };
+  const triggerOf = (a) => TRIGGER_LABEL[a.trigger] || "Scheduled";
   const owner = (a) => a.createdByName || (a.kind === "API" ? "API" : a.createdBy ? "Unknown person" : "—");
   function facetsMatch(a, skip) {
     if (skip !== "conv" && state.conv.size && !state.conv.has(a.channelId)) return false;
+    if (skip !== "trigger" && state.trigger.size && !state.trigger.has(triggerOf(a))) return false;
     if (skip !== "kind" && state.kind.size && !state.kind.has(a.kind)) return false;
     if (skip !== "problem" && state.problem.size && !state.problem.has(a.problem?.label || "No problem")) return false;
     if (skip !== "owner" && state.owner.size && !state.owner.has(owner(a))) return false;
@@ -454,6 +457,7 @@ export function automationBoardBrowser(config, browser) {
     const filters = h("div", { class: "ab-filters" }, h("p", { class: "ab-side-label", text: "Filter" }),
       facet("Conversation", "conv", counts("conv", (a) => [a.channelId, a.conversation])),
       facet("Problem", "problem", counts("problem", (a) => [a.problem?.label || "No problem", a.problem?.label || "No problem"])),
+      facet("Trigger", "trigger", counts("trigger", (a) => [triggerOf(a), triggerOf(a)])),
       facet("Type", "kind", counts("kind", (a) => [a.kind, a.kind])),
       facet("Created by", "owner", counts("owner", (a) => [owner(a), owner(a)])));
     return h("aside", { class: "ab-side" }, h("div", { class: "ab-search-wrap" }, icon("search"), search), views, filters);
@@ -462,10 +466,10 @@ export function automationBoardBrowser(config, browser) {
     const out = h("div", { class: "ab-chips" });
     const add = (key, value, label) => out.append(h("button", { type: "button", class: "ab-chip", "aria-label": "Remove filter " + label, onclick: () => { state[key].delete(value); paint(); } }, label, h("b", { text: "×" })));
     for (const v of state.conv) add("conv", v, state.board.conversations.find((c) => c.channelId === v)?.name || v);
-    for (const key of ["problem", "kind", "owner"]) for (const v of state[key]) add(key, v, v);
+    for (const key of ["problem", "trigger", "kind", "owner"]) for (const v of state[key]) add(key, v, v);
     if (state.q) out.append(h("button", { type: "button", class: "ab-chip", onclick: () => { state.q = ""; paint(); } }, "“" + state.q + "”", h("b", { text: "×" })));
     if (!out.childNodes.length) return null;
-    out.append(h("button", { type: "button", class: "ab-link", onclick: () => { for (const k of ["conv", "problem", "kind", "owner"]) state[k].clear(); state.q = ""; paint(); } }, "Clear all"));
+    out.append(h("button", { type: "button", class: "ab-link", onclick: () => { for (const k of ["conv", "problem", "trigger", "kind", "owner"]) state[k].clear(); state.q = ""; paint(); } }, "Clear all"));
     return out;
   }
   function toolbar() {
@@ -538,7 +542,7 @@ export function automationBoardBrowser(config, browser) {
     });
     return h("section", { class: "ab-panel ab-issue ab-issue-" + tone },
       h("div", { class: "ab-issue-top" }, h("p", { class: "ab-eyebrow ab-t-" + tone }, icon(a.problem.outcome === "delivery" ? "inbox" : "x"), a.problem.label), pill("Open", tone)),
-      h("h3", { text: a.problem.outcome === "delivery" ? "The answer didn’t reach " + a.conversation : a.problem.label }),
+      h("h3", { text: a.problem.key === "webhook_failed" ? "The result didn’t reach the caller’s webhook" : a.problem.outcome === "delivery" ? "The answer didn’t reach " + a.conversation : a.problem.label }),
       h("p", { class: "ab-issue-when" }, a.problem.since ? "Since " + stamp(a.problem.since) : "", a.streak > 1 ? " · " + plural(a.streak, "run") + " in a row" : "", a.lastRun?.id ? h("code", { text: a.lastRun.id.slice(0, 8) }) : null),
       h("p", { class: "ab-issue-msg", text: a.problem.message }),
       a.fix?.length ? h("p", { class: "ab-side-label", text: "How to fix" }) : null, steps,
@@ -563,11 +567,22 @@ export function automationBoardBrowser(config, browser) {
       fact("Average cost", avg === null ? "—" : money(avg) + " / run"),
       a.instructions ? fact("Instructions", h("span", { class: "ab-clip", text: a.instructions.slice(0, 280) + (a.instructions.length > 280 ? "…" : "") })) : null));
   }
+  // The run API's limits as this source met them: how close it runs to the cap, and what the
+  // gateway refused or answered without starting anything.
+  function limitsPanel(a) {
+    const l = a.limits;
+    if (!l) return null;
+    const win = state.days === 1 ? "last 24 hours" : "last " + state.days + " days";
+    return h("aside", { class: "ab-panel ab-facts" }, h("h3", { text: "API limits" }), h("dl", {},
+      fact("In flight now", l.inFlight + " from this source", h("small", { text: " · " + l.inFlightAll + " of " + l.cap + " across the gateway" })),
+      fact("Rejected at the limit", h("span", { class: l.rejected ? "ab-t-fail" : "", text: String(l.rejected) }), h("small", { text: " " + win })),
+      fact("Deduplicated", String(l.deduplicated), h("small", { text: " repeated calls, " + win }))));
+  }
   function runList(a) {
     const entry = state.runs.get(keyOf(a));
     if (!entry || entry.loading) return h("p", { class: "ab-muted", text: "Loading runs…" });
     if (entry.error) return h("p", { class: "ab-t-fail", text: entry.error });
-    if (!entry.runs.length) return h("p", { class: "ab-muted", text: a.kind === "API" ? "No API runs in the last 7 days." : "No runs recorded in the last 90 days." });
+    if (!entry.runs.length) return h("p", { class: "ab-muted", text: a.kind === "API" ? "No API runs recorded in the last 90 days." : "No runs recorded in the last 90 days." });
     const list = h("ul", { class: "ab-runs" });
     for (const r of entry.runs) {
       const open = state.openRun === r.id;
@@ -580,7 +595,7 @@ export function automationBoardBrowser(config, browser) {
         h("span", { class: "ab-run-when", text: stamp(r.startedAt) }),
         h("span", { class: "ab-mono", text: r.durationMs ? dur(r.durationMs) : "" }),
         h("span", { class: "ab-mono", text: typeof r.costUsd === "number" ? money(r.costUsd) : "" }),
-        h("span", { class: "ab-run-trigger", text: r.trigger === "manual" ? "Run now" : r.trigger === "schedule" ? "Scheduled" : "" })));
+        h("span", { class: "ab-run-trigger", text: r.trigger === "manual" ? "Run now" : r.trigger === "schedule" ? "Scheduled" : r.trigger === "api" ? "API call" : "" })));
       if (r.problem && r.acknowledgedAt) line.append(h("span", { class: "ab-run-ack", title: "Acknowledged" + (r.acknowledgedByName ? " by " + r.acknowledgedByName : "") + " · " + stamp(r.acknowledgedAt) }, icon("check"), "Acknowledged",
         a.canAcknowledge ? h("button", { type: "button", class: "ab-link", disabled: ackBusy(a), "aria-label": "Reopen this run's error", onclick: () => acknowledge(a, { runId: r.id, undo: true }) }, "Undo") : null));
       else if (r.problem && a.canAcknowledge) line.append(h("button", { type: "button", class: "ab-btn ab-small ab-run-ack-btn", disabled: ackBusy(a), title: "Mark this run's error as handled", onclick: () => acknowledge(a, { runId: r.id }) }, icon("check"), "Acknowledge"));
@@ -588,6 +603,10 @@ export function automationBoardBrowser(config, browser) {
         const body = h("div", { class: "ab-run-body" });
         if (r.problem && r.acknowledgedAt) body.append(h("p", { class: "ab-muted", text: "Acknowledged" + (r.acknowledgedByName ? " by " + r.acknowledgedByName : "") + " on " + stamp(r.acknowledgedAt) + "." }));
         if (r.error) body.append(h("p", { class: "ab-run-error" }, h("b", { text: (r.errorKind ? r.errorKind.replaceAll("_", " ") : "Error") + ": " }), r.error));
+        if (r.deliveryError) body.append(h("p", { class: "ab-run-error" }, h("b", { text: "Webhook: " }), r.deliveryError));
+        if (r.rejectedCount) body.append(h("p", { class: "ab-muted", text: plural(r.rejectedCount, "call") + " refused here because the run API was at its limit of concurrent runs." }));
+        if (r.duplicates) body.append(h("p", { class: "ab-muted", text: plural(r.duplicates, "repeated call") + " with the same idempotency key answered with this run instead of starting another." }));
+        if (r.request) body.append(h("p", { class: "ab-run-summary" }, h("b", { text: "Request: " }), r.request));
         if (r.summary) body.append(h("p", { class: "ab-run-summary", text: r.summary }));
         body.append(h("dl", { class: "ab-run-facts" },
           fact("Run id", h("code", { text: r.id })),
@@ -752,7 +771,7 @@ export function automationBoardBrowser(config, browser) {
       a.canAcknowledge && a.openErrors ? h("button", { type: "button", class: "ab-btn ab-small", disabled: ackBusy(a), onclick: () => acknowledge(a) }, icon("check"), a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error") : null,
       h("button", { type: "button", class: "ab-btn ab-small", onclick: () => loadRuns(a, true) }, icon("refresh"), "Refresh"))), runList(a))
       : state.tab === "settings" ? settingsForm(a)
-        : h("div", { class: "ab-overview" }, issueCard(a), keyFacts(a));
+        : h("div", { class: "ab-overview" }, issueCard(a), h("div", { class: "ab-side-stack" }, keyFacts(a), limitsPanel(a)));
     return h("div", { class: "ab-detail" },
       h("button", { type: "button", class: "ab-link ab-back", onclick: closeDetail }, icon("back"), "All automations"),
       h("section", { class: "ab-panel ab-detail-head ab-edge-" + tone },
@@ -874,6 +893,7 @@ export const AUTOMATION_BOARD_CSS = `
 .ab-strip-row i{height:8px;border-radius:2px;background:var(--ab-line)}
 .ab-strip-big .ab-strip-row{grid-template-columns:repeat(30,minmax(6px,12px))}.ab-strip-big .ab-strip-row i{height:12px}
 .ab-strip .c-ok{background:var(--ab-ok)}.ab-strip .c-noop{background:color-mix(in srgb,var(--ab-ok) 55%,transparent)}.ab-strip .c-fail{background:var(--ab-fail)}.ab-strip .c-warn{background:var(--ab-warn)}
+.ab-strip .c-done{background:color-mix(in srgb,var(--ab-idle) 70%,transparent)}.ab-side-stack{display:grid;gap:16px;align-content:start}
 .ab-strip .c-live{background:var(--ab-live)}.ab-strip .c-skip{background:color-mix(in srgb,var(--ab-idle) 45%,transparent)}.ab-strip .c-quiet{background:color-mix(in srgb,var(--ab-idle) 35%,transparent)}
 .ab-strip .c-none{background:var(--ab-line)}.ab-strip .c-empty{background:color-mix(in srgb,var(--ab-line) 45%,transparent)}
 .ab-strip-axis{display:flex;justify-content:space-between;font-family:var(--mono,monospace);font-size:10px;color:var(--ab-faint)}

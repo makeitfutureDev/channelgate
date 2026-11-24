@@ -93,6 +93,56 @@ API runs and scheduled tasks can now stay out of the conversation unless somethi
 - **Automations page** shows how a task posts ("Silent start, posts only failures") and, on each API
   run row, "Hidden in chat" / "Chat only on failure" / "Failure alert posted".
 
+## One run ledger for schedules and API runs (2026-11-24)
+
+Scheduled automations and HTTP API runs still EXECUTE apart (`src/gateway/scheduler.js`,
+`src/gateway/api-runs.js`), but are now recorded, classified and read as one thing.
+
+- **One ledger.** Every API run writes a row into `schedule_runs` through the helpers schedules
+  use (`createAutomationRun`, `src/gateway/schedule-runs.js`): the row id is the job id,
+  `schedule_id` is the source (`api:<token id>` or `api:org-key`, plus `~<name>` when the call
+  names itself) and `trigger` is `api`. No migration. `api_jobs` remains the 7-day store behind
+  `GET /api/runs/:id`; the ledger keeps 90 days. A row holds a redacted 300-character excerpt of
+  the request, never the full prompt, the answer or the webhook URL. Jobs stored before this
+  change are folded into the ledger once at boot (`backfillApiRunLedger`). Source:
+  `src/gateway/api-run-history.js`.
+- **One recorder** (`src/gateway/automation-run-recorder.js`). `recordTaskOutcome` and
+  `recordRunEvent` moved out of the scheduler; both executors call them, so API runs get the event
+  timeline, error kinds, token counts and tool counts schedules had. One posting rule
+  (`resultPosts`, `src/gateway/schedule-outcome.js`) decides "does this result post / alert" for a
+  schedule's result policy and for an API run's `visibility`.
+- **One board builder.** `apiItem` / `scheduleItem` are gone: `boardItem` builds every automation
+  from a small per-trigger facts block (`scheduleFacts`, `apiFacts`) over the same ledger reads.
+  API sources therefore have the full problem categories, fix steps, the 30-run strip, the
+  24h/7d/30d window and **Acknowledge** (for whoever may see the source: an admin or the token's
+  creator). They still cannot be edited, run or deleted from the page.
+- **One definition of "has a problem"** (`currentProblem`, `src/gateway/automation-health.js`):
+  the conversation list's failing count, the board and the alerts all ask it, over each
+  automation's latest settled run.
+- **"Completed" is not a problem.** A run that was never asked to report (no `reportOutcome`, no
+  `successCriteria`) is recorded as `completed`: finished, not judged. It is neutral on the board,
+  counts in neither side of the success rate and never extends a failure streak. Only a report that
+  was requested and is missing is `unreported`. The HTTP response is unchanged (`taskStatus:
+  "unreported"` with `outcome.source: "none"`).
+- **Webhook delivery** uses the ledger's delivery states: `pending` until the first attempt,
+  `delivered`, or `failed` after an attempt was refused (the retries continue). A failed webhook
+  is its own problem, "Webhook not delivered", with the endpoint's error beside the run's outcome
+  rather than replacing it. `GET /api/runs/:id` adds `webhookDelivery`.
+- **Page additions.** A **Trigger** filter (Scheduled / API). An optional `name` on
+  `POST /api/runs` (≤ 80 characters) groups calls into their own automation; without it calls
+  group by token. An **API limits** panel per source: runs in flight (this source, and gateway-wide
+  against the cap of 25), calls rejected at the cap (HTTP 429, one aggregated "Rejected at the run
+  limit" row per source per ten minutes) and calls deduplicated by `idempotencyKey`.
+- **Failure alerts after three in a row**, for both triggers (`alertFailureStreak`): one direct
+  message to the automation's owner — the schedule's creator, or the API token's creator — when
+  the third consecutive failure settles; nothing more until a success resets the streak. A
+  schedule with failure notices off, `/loop` rows and organization-key sources alert nobody.
+- **Visibility.** API rows keep the API-token rule everywhere the ledger is read:
+  `get_schedule_runs` and the admin schedule history list scheduled runs only unless a source is
+  named, and a named API source or run answers only an admin or the token's creator.
+
+→ TEST-PLAN: One run ledger for schedules and API runs (2026-11-24).
+
 ## API runs as automations, and success criteria (2026-11-24)
 
 HTTP API runs were invisible to the dashboard and their `completed` status only said the engine
@@ -123,6 +173,8 @@ optional **goal**.
   runs of tokens they created. Channel-less runs appear for admins as "API runs without a
   conversation". API sources cannot be deleted (revoke the token). Source:
   `src/gateway/api-run-history.js`, `src/gateway/automations-view.js`.
+  Superseded in part the same day by "One run ledger for schedules and API runs" above: the
+  history is the shared 90-day ledger, and a run never asked to report is `completed`.
 
 ## Engine licenses: a license limited to one conversation (2026-11-23)
 

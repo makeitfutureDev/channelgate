@@ -65,9 +65,18 @@ export function classifyScheduleResult(result = {}) {
 export const HEALTHY_OUTCOMES = new Set(["succeeded", "no-op"]);
 export const needsAttention = (status) => !HEALTHY_OUTCOMES.has(status || "unreported");
 
+// The ONE rule for "does this finished run post in chat?", for both triggers. A schedule states it
+// with `resultPolicy` + `failureNotify`; an API run's `visibility` maps onto the same policy
+// (apiPostingRule). `never` exists only through that mapping: a hidden API run posts nothing.
+export function resultPosts({ resultPolicy = "always", failureNotify = true } = {}, status = "unreported") {
+  if (resultPolicy === "never") return false;
+  if (resultPolicy === "on-result" && status === "no-op") return false;
+  if (resultPolicy === "on-failure" && !needsAttention(status)) return false;
+  if (failureNotify === false && needsAttention(status)) return false;
+  return true;
+}
+export const apiPostingRule = (visibility) => ({ resultPolicy: visibility === "hidden" ? "never" : visibility === "on-failure" ? "on-failure" : "always" });
+
 export function suppressScheduleResult(sched, result) {
-  const status = result?.automationOutcome?.status || "unreported";
-  return (sched.resultPolicy === "on-result" && status === "no-op") ||
-    (sched.resultPolicy === "on-failure" && !needsAttention(status)) ||
-    (sched.failureNotify === false && !["succeeded", "no-op"].includes(status));
+  return !resultPosts(sched, result?.automationOutcome?.status || "unreported");
 }

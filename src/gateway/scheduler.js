@@ -1,4 +1,3 @@
-import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Daemon-side cron runner. Every minute it reads the schedule store (which the scheduler MCP
 // server may have just written from a gated AI run) and fires any enabled schedule whose cron
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
@@ -13,6 +12,7 @@ import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loop
 import { logEvent } from "../util/logger.js";
 import { automationPrompt, classifyScheduleResult, suppressScheduleResult } from "./schedule-outcome.js";
 import { createScheduleRun, getScheduleRun, updateScheduleRun, appendScheduleRunEvent } from "./schedule-runs.js";
+import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
 import { redactLogValue } from "../util/redact.js";
 import { normalizeUsage, createUsageBank } from "./usage.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
@@ -370,13 +370,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
         authorId: sched.createdBy,
         text: loopTick ? sched.prompt : automationPrompt(sched.prompt, { successCriteria: sched.successCriteria }),
         onRuntimeResolved: (runtime) => updateScheduleRun(run.id, { engine: runtime.engine || "", model: runtime.model || "" }),
-        onEvent: (event) => {
-          if (["tool_use", "tool_result", "thinking", "quiet", "agent_activity"].includes(event?.kind)) {
-            const current = getScheduleRun(run.id);
-            if (!current.agentStartedAt) updateScheduleRun(run.id, { agentStartedAt: new Date().toISOString() });
-          }
-          if (["tool_use", "tool_result", "thinking", "quiet", "notice", "engine_note", "run_queued", "agent_activity"].includes(event?.kind)) appendScheduleRunEvent(run.id, event);
-        },
+        onEvent: (event) => recordRunEvent(run.id, event),
         threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
         // Session keys stay fresh per fire; billing follows a known delivery thread.
         // Silent first fires have no chat root yet: retain one logical identity per run.
@@ -432,6 +426,11 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     }
   } finally {
     running.delete(sched.id);
+    // Three failures in a row: tell the creator once, by DM (the same rule API runs use).
+    if (run && client && sched.createdBy && !isLoopRow(sched)) {
+      await alertFailureStreak({ scheduleId: sched.id, channelId: sched.channelId, title: sched.description || sched.prompt || "Scheduled task",
+        enabled: sched.failureNotify !== false, notify: (text) => postDirectMessage(client, { userId: sched.createdBy, text }) });
+    }
     // Release the DURABLE claim too. runDueForMinute stamps `running: true` on a one-time schedule
     // before starting it, but nothing ever cleared it: a failure, or a postpone because Slack was
     // down, left the surviving row flagged as running forever — a task the UI shows as permanently
@@ -444,18 +443,6 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       }
     }
   }
-}
-
-function recordTaskOutcome(id, result) {
-  const previous = getScheduleRun(id);
-  const o = result.automationOutcome || { status: "unreported", summary: "Task outcome not reported.", connections: [], source: "unreported" };
-  const usage = normalizeUsage(result);
-  const refused = runAdmissionRefusalKind(result);
-  updateScheduleRun(id, { status: o.status, taskStatus: o.status, engineStatus: refused ? (result.engineStarted ? "failed" : "not-started") : result.interrupted ? "interrupted" : result.engineError || result.completed === false ? "failed" : "completed",
-    summary: o.summary, connections: o.connections, outcomeSource: o.source, engine: result.engine || "", model: result.runtimeModel || result.model || "",
-    durationMs: result.durationMs || 0, tokensIn: usage.inTok, tokensOut: usage.outTok, costUsd: usage.costUSD, costEstimated: usage.estimated,
-    toolUseCount: Number(result.toolUseCount) || 0, completedAt: previous?.completedAt || new Date().toISOString(), ...(o.errorKind ? { errorKind: o.errorKind } : {}) });
-  appendScheduleRunEvent(id, { kind: "task_outcome" });
 }
 
 async function finishScheduleDelivery(client, sched, result, threadTs) {

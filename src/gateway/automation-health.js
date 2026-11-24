@@ -14,6 +14,7 @@ export const PROBLEMS = Object.freeze({
   undeliverable: { label: "Bot removed / channel archived", outcome: "delivery" },
   delivery_failed: { label: "Delivery failed", outcome: "delivery" },
   delivery_retrying: { label: "Delivery retrying", outcome: "delivery" },
+  webhook_failed: { label: "Webhook not delivered", outcome: "delivery" },
   transport: { label: "Platform disconnected", outcome: "delivery" },
   interrupted: { label: "Interrupted by restart", outcome: "run" },
   blocked: { label: "Blocked", outcome: "run" },
@@ -29,6 +30,7 @@ export const PROBLEMS = Object.freeze({
   resources: { label: "Container resources exhausted", outcome: "run" },
   attempts: { label: "Out of attempts", outcome: "run" },
   deferred: { label: "Not started (deferred)", outcome: "run" },
+  rejected: { label: "Rejected at the run limit", outcome: "run" },
   agent_failed: { label: "Agent reported failure", outcome: "run" },
   failed: { label: "Run failed", outcome: "run" },
   unreported: { label: "Outcome not reported", outcome: "run" },
@@ -44,7 +46,8 @@ const acknowledged = (run) => Boolean(run?.acknowledgedAt);
 // The problem one finished run shows, or null for a clean run.
 export function runProblem(run) {
   if (!run || LIVE.has(run.status)) return null;
-  if (run.deliveryStatus === "failed") {
+  // A caller's webhook is judged after the run itself (below): a failed run is the bigger fact.
+  if (run.deliveryStatus === "failed" && run.delivery !== "webhook") {
     if (UNDELIVERABLE.test(text(run))) return "undeliverable";
     if (/transport is not connected/i.test(text(run))) return "transport";
     return "delivery_failed";
@@ -64,8 +67,10 @@ export function runProblem(run) {
     return "failed";
   }
   if (run.status === "skipped" && run.errorKind === "deferred") return "deferred";
+  if (run.status === "skipped" && run.errorKind === "rejected") return "rejected";
   if (run.status === "skipped" && /transport is not connected/i.test(text(run))) return "transport";
   if (run.status === "unreported") return "unreported";
+  if (run.deliveryStatus === "failed") return "webhook_failed";
   if (run.deliveryStatus === "pending" && Number(run.deliveryAttempts) > 1) return "delivery_retrying";
   return null;
 }
@@ -78,7 +83,7 @@ export function openProblem(run) {
 // One square of the two-row strip: top = run, bottom = delivery.
 export function stripCell(run) {
   const s = run.status;
-  const runTone = s === "succeeded" ? "ok" : s === "no-op" ? "noop" : LIVE.has(s) ? "live" : s === "skipped" ? "skip"
+  const runTone = s === "succeeded" ? "ok" : s === "no-op" ? "noop" : s === "completed" ? "done" : LIVE.has(s) ? "live" : s === "skipped" ? "skip"
     : s === "blocked" || s === "unreported" ? "warn" : BAD_RUN.has(s) ? "fail" : "skip";
   const d = run.deliveryStatus;
   const deliveryTone = d === "delivered" ? "ok" : d === "failed" ? "fail" : d === "pending" ? (LIVE.has(s) ? "live" : "warn") : d === "suppressed" ? "quiet" : "none";
@@ -91,6 +96,8 @@ export function failureStreak(runs) {
   for (const run of runs) {
     if (LIVE.has(run.status)) continue;
     if (run.status === "skipped" && run.errorKind !== "deferred") continue;
+    // A run nobody asked to judge says nothing either way: it neither extends nor ends a streak.
+    if (run.status === "completed" && run.deliveryStatus !== "failed") continue;
     if (!openProblem(run)) break;
     n += 1;
   }
@@ -99,41 +106,55 @@ export function failureStreak(runs) {
 
 export function windowStats(runs) {
   const finished = runs.filter((r) => !LIVE.has(r.status) && r.status !== "skipped");
+  // "completed" finished without anyone asking for a task report: it counts as a run, never as
+  // a success or a failure, so only JUDGED runs can move the success rate.
+  const judged = finished.filter((r) => r.status !== "completed" || r.deliveryStatus === "failed");
   // Success means the work was done AND its answer arrived (or was held back by rule).
-  const good = finished.filter((r) => (r.status === "succeeded" || r.status === "no-op") && r.deliveryStatus !== "failed").length;
+  const good = judged.filter((r) => (r.status === "succeeded" || r.status === "no-op") && r.deliveryStatus !== "failed").length;
   const cost = runs.reduce((sum, r) => sum + (typeof r.costUsd === "number" ? r.costUsd : 0), 0);
   return {
     runs: runs.length,
     finished: finished.length,
+    judged: judged.length,
     succeeded: good,
     failed: finished.filter((r) => BAD_RUN.has(r.status)).length,
     notDelivered: runs.filter((r) => r.deliveryStatus === "failed").length,
     costUsd: Math.round(cost * 10000) / 10000,
-    successRate: finished.length ? good / finished.length : null,
+    successRate: judged.length ? good / judged.length : null,
   };
 }
 
-// The verdict for one automation. `schedule` is the stored row (null for API sources); `runs`
-// are its newest runs (newest first); `windowRuns` the runs inside the board's time window.
-export function automationHealth(schedule, runs, windowRuns = runs) {
-  const latest = runs.find((r) => !LIVE.has(r.status) && !(r.status === "skipped" && !r.errorKind)) || null;
-  const running = runs.some((r) => LIVE.has(r.status));
-  const streak = failureStreak(runs);
-  const stats = windowStats(windowRuns);
+// The latest run that can say something about an automation: finished, and not a plain skip.
+export const settledRun = (run) => Boolean(run) && !LIVE.has(run.status) && !(run.status === "skipped" && !run.errorKind);
+
+// The ONE definition of "this automation has a problem right now", from its stored row (null for
+// an API source) and its latest settled run. The channel list, the board and the failure alerts
+// all ask this; the board alone adds "flaky", which needs a whole window of runs.
+export function currentProblem(schedule, latest) {
   const state = String(schedule?.executionState || "");
   const lastStatus = String(schedule?.lastStatus || "");
   const enabled = schedule ? schedule.enabled !== false : true;
   // A schedule-level verdict (undeliverable, interrupted) stays acknowledged until the scheduler
   // writes a different status, which only a new run or a new archival does.
   const stateAcknowledged = Boolean(schedule?.acknowledgedStatus) && schedule.acknowledgedStatus === lastStatus;
+  if (schedule && !stateAcknowledged && (state === "undeliverable" || /^undeliverable:|^paused: channel archived/.test(lastStatus))) return "undeliverable";
+  if (schedule && !stateAcknowledged && !enabled && state === "interrupted") return "interrupted";
+  return enabled ? openProblem(latest) : null;
+}
+
+// The verdict for one automation. `schedule` is the stored row (null for API sources); `runs`
+// are its newest runs (newest first); `windowRuns` the runs inside the board's time window.
+export function automationHealth(schedule, runs, windowRuns = runs) {
+  const latest = runs.find(settledRun) || null;
+  const running = runs.some((r) => LIVE.has(r.status));
+  const streak = failureStreak(runs);
+  const stats = windowStats(windowRuns);
+  const enabled = schedule ? schedule.enabled !== false : true;
   // Acknowledged failures no longer make the automation look flaky; the stats above stay honest.
   const open = windowStats(windowRuns.filter((r) => !(acknowledged(r) && runProblem(r))));
-  let key = null;
+  let key = currentProblem(schedule, latest);
   let since = null;
-  if (schedule && !stateAcknowledged && (state === "undeliverable" || /^undeliverable:|^paused: channel archived/.test(lastStatus))) key = "undeliverable";
-  else if (schedule && !stateAcknowledged && !enabled && state === "interrupted") key = "interrupted";
-  else if (enabled) key = openProblem(latest);
-  if (!key && enabled && open.finished >= 3 && open.successRate !== null && open.successRate < 0.8) key = "flaky";
+  if (!key && enabled && open.judged >= 3 && open.successRate !== null && open.successRate < 0.8) key = "flaky";
   if (key) {
     // When this problem started: the oldest run of the current streak, else the latest run.
     const first = runs.filter((r) => !LIVE.has(r.status)).slice(0, Math.max(1, streak)).at(-1);
@@ -166,6 +187,8 @@ function problemMessage(key, run, schedule, streak) {
   switch (key) {
     case "undeliverable": return "The gateway can no longer post in this conversation: the bot was removed or the channel was archived. Runs that finish are not posted.";
     case "delivery_failed": return `The run finished but its answer could not be posted${detail ? `: ${detail}` : "."}`;
+    case "webhook_failed": return `The run finished, but the caller's webhook did not accept the result${run?.deliveryError ? ` (${run.deliveryError})` : ""}. The result is still available from GET /api/runs/${run?.id || "<job id>"}.`;
+    case "rejected": return `The gateway refused ${Number(run?.rejectedCount) > 1 ? `${run.rejectedCount} calls` : "a call"} because too many API runs were already in flight. Nothing ran for ${Number(run?.rejectedCount) > 1 ? "them" : "it"}.`;
     case "delivery_retrying": return `The answer is saved and the gateway is retrying the post every minute (attempt ${Number(run?.deliveryAttempts) || 2}).`;
     case "transport": return "The chat platform for this conversation was not connected when the automation was due.";
     case "interrupted": return "The gateway restarted while this automation was running. It was paused because external actions (emails, updates) may already have happened.";
@@ -228,6 +251,14 @@ export function fixSteps(key, { kind = "Task", once = false, botName = "" } = {}
       { title: "Run it again", action: "run-now" },
     ],
     attempts: [{ title: once ? "Schedule it again" : "Run it again", body: "Every allowed attempt failed. Read the last run first.", action: once ? "edit" : "run-now" }],
+    webhook_failed: [
+      { title: "Check the webhook URL answers with 2xx", body: "The gateway posts the result once when the run ends and tries again after a gateway restart. Open the run to read what the endpoint answered.", action: "open-runs" },
+      { title: "Fetch the result yourself", body: "GET /api/runs/<job id> returns the same result for 7 days." },
+    ],
+    rejected: [
+      { title: "Slow the caller down", body: "Send fewer runs at once, or retry a 429 answer after a short wait. The limit counts every API run on this gateway." },
+      { title: "Use an idempotency key", body: "A retry with the same idempotencyKey returns the original run instead of starting another." },
+    ],
     deferred: [{ title: "No action needed", body: "Too many automations were due at once, so this one waited. It runs in the next free minute." }],
     agent_failed: [
       { title: "Read why the agent says it failed", action: "open-runs" },
@@ -243,6 +274,7 @@ export function fixSteps(key, { kind = "Task", once = false, botName = "" } = {}
       { title: "Tighten the instructions", action: "edit" },
     ],
   };
+  if (kind === "API" && key === "unreported") return [{ title: "Read the run's answer", body: "The call asked for an outcome report (reportOutcome, successCriteria or visibility \"on-failure\"), and the agent's answer ended without a valid one.", action: "open-runs" }];
   const out = steps[key] || [];
   return kind === "API" ? out.filter((s) => !["run-now", "edit", "enable", "pause"].includes(s.action)).map((s) => ({ ...s })) : out;
 }

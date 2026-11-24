@@ -2,6 +2,15 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Automations: HTTP API runs and scheduled automations now share one run history. API runs get
+  everything schedules had — 90 days of runs, the full list of problem types with fix steps,
+  **Acknowledge**, and the event timeline. A new **Trigger** filter separates Scheduled from API.
+  An API run that was never asked to report an outcome shows as **Completed** instead of as a
+  problem. A webhook that was not accepted shows as "Webhook not delivered". Each API source has
+  a limits panel (runs in flight, calls rejected at the limit, repeated calls deduplicated).
+  `POST /api/runs` accepts an optional `name` to group calls into their own automation, and
+  `GET /api/runs/:id` returns `name` and `webhookDelivery`. After three failures in a row the
+  owner of a schedule or API token gets one direct message.
 - Dashboard: Activity loads the newest 100 conversations per tab (plus everything working,
   waiting or pinned) with a **Load more** button, instead of up to a thousand at once. Tab counts
   still show the full totals.
