@@ -2067,7 +2067,9 @@ can still name it, resolves to the normal default instead of ending a turn or re
 
 - Automated: `test/container-process-limit.test.js` — "a container Podman lists as running whose
   process is gone is removed and recreated" (injected `pidAlive` reports the init pid dead →
-  `rm` then `create`, the log names the pid).
+  `rm` then `create`, the log names the pid); "a container stuck \"stopping\" with its process
+  gone is removed and recreated" and "a container still genuinely stopping (process alive) is
+  refused as before".
 - Live (engine-independent — the container lifecycle runs before any engine): on a system-unit
   install (Arise), send a DM message so its container is up, `systemctl restart channelgate`,
   confirm `podman ps` (as the service user) still lists the container `Up` while its

@@ -659,18 +659,17 @@ export function createContainerLifecycle({
           + `(cg.install=${info.labels[LABEL_INSTALL] || "none"}). Remove or rename it by hand — the gateway will not touch it.`,
         );
       }
-      if (info.exists && !["running", "exited", "created", "stopped"].includes(info.status)) {
-        throw new Error(`container ${name} is ${info.status} — the gateway will not use it. Inspect it by hand.`);
-      }
-
-      // Podman can report a container "running" whose processes are gone: on a system-service
-      // install the containers share the unit's cgroup, so systemd kills them on every gateway
-      // restart without Podman recording it, and every exec then fails "is not running". Its
-      // host init pid is the truth; a dead one is removed and recreated (HOME volume kept).
-      if (info.exists && info.status === "running" && info.pid > 1 && !pidAlive(info.pid)) {
-        log(`[container] ${name} is listed as running but its process ${info.pid} is gone — removing and recreating it`);
+      // Podman can report a container "running" or "stopping" whose processes are gone: on a
+      // system-service install the containers share the unit's cgroup, so systemd kills them on a
+      // gateway restart (even mid-stop) without Podman recording it, and every exec then fails.
+      // Its host init pid is the truth; a dead one is removed and recreated (HOME volume kept).
+      if (info.exists && ["running", "stopping"].includes(info.status) && info.pid > 1 && !pidAlive(info.pid)) {
+        log(`[container] ${name} is listed as ${info.status} but its process ${info.pid} is gone — removing and recreating it`);
         await removeContainer(caps, name, { preserveLeases: true });
         info = { exists: false, status: "missing" };
+      }
+      if (info.exists && !["running", "exited", "created", "stopped"].includes(info.status)) {
+        throw new Error(`container ${name} is ${info.status} — the gateway will not use it. Inspect it by hand.`);
       }
 
       let recreate = false;
