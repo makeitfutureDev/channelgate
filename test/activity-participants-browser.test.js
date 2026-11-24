@@ -41,7 +41,8 @@ test("Activity Hide/Hidden/Show works for participants on desktop and phone, inc
     await openActivityRowActions(page, root.text);
     await page.getByRole("button", { name: "Hide: " + root.text, exact: true }).click();
     await page.waitForFunction(() => !globalThis.document.querySelector("#pinned-threads tr") && !globalThis.document.querySelector("#threads tr"));
-    assert.equal(await page.locator('#filters button[data-filter="active"] span').textContent(), "0");
+    // Row visibility updates optimistically; the server snapshot supplies the tab counts.
+    await page.locator('#filters button[data-filter="active"] span').filter({ hasText: /^0$/ }).waitFor({ state: "attached" });
     await selectActivityFilter(page, "hidden");
     const show = page.getByRole("button", { name: "Show: " + root.text, exact: true });
     await openActivityRowActions(page, root.text);
