@@ -794,6 +794,13 @@ export function getPublicFileLinksEnabled() {
   return Boolean(getSettings().publicFileLinksEnabled);
 }
 
+// IMAP/SMTP email accounts (gateway/email-accounts.js). OFF by default: an admin turns it on in
+// Settings before anyone sees the Email accounts sections, can connect a mailbox, or a run gets the
+// email tools. Stored accounts are kept while it is off and come back when it is switched on.
+export function getEmailAccountsEnabled() {
+  return getSettings().emailAccountsEnabled === true;
+}
+
 // Scheduled two-way Google Drive sync (see gateway/drivesync.js). Dormant unless enabled AND a
 // service-account key file is set AND rclone is installed. Auth is a Workspace service account; the
 // key file is a PATH (not a secret) and the subject is an email — neither is masked.
@@ -1437,6 +1444,7 @@ export function settingsForApi() {
     memoryReviewModel: getMemoryReviewModel(),
     memoryReviewNotify: getMemoryReviewNotify(),
     publicFileLinksEnabled: getPublicFileLinksEnabled(),
+    emailAccountsEnabled: getEmailAccountsEnabled(),
     driveSyncEnabled: getDriveSyncEnabled(),
     driveSyncKeyFile: getDriveSyncKeyFile(),
     hasDriveSyncKeyJson: Boolean(getDriveSyncKeyJson()), // the raw key is NEVER returned to the client

@@ -5260,6 +5260,16 @@ Engine-independent: none of this is reachable from an engine turn.
   conversation receives neither variable. Restore/remove the fixture variables and retain only
   value-free evidence. Live execution and private QA registry updates remain pending access.
 
+## Email accounts admin switch (2026-11-24)
+
+- Automated: `test/email-accounts-switch.test.js` — off by default: no email tools registered,
+  channel and personal saves refused, no Email accounts link in Settings; on: tools and link return.
+- Live (engine-independent UI, then Claude and Codex): with the switch off, open Slack ⚙️ Settings
+  → MCP and → You and the Activity Settings page as a member — no Email accounts section; ask
+  "list my email accounts" in a test channel on Claude and on Codex — the run has no email tool.
+  Turn it on in Settings, reload — sections reappear and previously stored accounts are listed;
+  the same prompt lists them on both engines. Pass: all four observations match.
+
 ## Email accounts (2026-10-22)
 
 ### Regression

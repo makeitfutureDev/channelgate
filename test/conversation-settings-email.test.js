@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 const { createConversationSettingsGrantUrl, createConversationSettingsRouter, resetConversationSettingsStateForTests } = await import('../src/web/conversation-settings.js');
 const { setEmailAccountVerifierForTests } = await import('../src/gateway/email-account-store.js');
 const { upsertChannelEntry, defaultChannelMeta, saveChannelMeta, getChannelMeta, setUser, getUser } = await import('../src/config/store.js');

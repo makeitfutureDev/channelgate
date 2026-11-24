@@ -15,6 +15,7 @@ import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { openConfinedFile } from "../../gateway/confined-file.js";
 import { ensureRealDir, writeStreamNoFollow } from "../../gateway/safe-fs.js";
 import { getUser } from "../../config/store.js";
+import { getEmailAccountsEnabled } from "../../config/settings.js";
 import { resolveEmailAccountsForRun, selectEmailAccount } from "../../gateway/email-accounts.js";
 import * as mailClient from "../../gateway/email-client.js";
 import { formatBytes } from "../../util/bounded-bytes.js";
@@ -45,8 +46,11 @@ function renderMessages(result) {
 export function register(server, ctx) {
   const { createdBy, text, principalTrusted, loadMeta, slug } = ctx;
   const client = ctx.emailClient || mailClient;
+  // An admin switch (Settings → Email accounts): off means no email tool at all.
+  if (!getEmailAccountsEnabled()) return;
 
   async function accountsForRun() {
+    if (!getEmailAccountsEnabled()) return [];
     const meta = await loadMeta();
     const user = principalTrusted && createdBy ? await getUser(createdBy) : null;
     return resolveEmailAccountsForRun({ channelList: meta?.emailAccounts, userList: user?.emailAccounts, principalTrusted: Boolean(principalTrusted && createdBy) });

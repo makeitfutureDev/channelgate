@@ -3,7 +3,7 @@
 // authenticated owner only and goes through the same stores as Slack Settings → You, so
 // validation, audit lines and live-relay revocation cannot differ between surfaces. Secret
 // values are write-only: the snapshot carries configured/last4 facts and never a value.
-import { getComposioMode, userNudgesEnabled } from "../config/settings.js";
+import { getComposioMode, getEmailAccountsEnabled, userNudgesEnabled } from "../config/settings.js";
 import { getUser, setUser } from "../config/store.js";
 import { userReplyMentionsEnabled, userVoiceAutoStartEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
@@ -92,7 +92,7 @@ export async function userSettingsSnapshot(userId) {
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },
-      email: email.map((account) => ({ name: account.name, address: account.address, displayName: account.displayName || "",
+      email: !getEmailAccountsEnabled() ? [] : email.map((account) => ({ name: account.name, address: account.address, displayName: account.displayName || "",
         imap: account.imap, smtp: account.smtp, sendEnabled: account.sendEnabled !== false, verifiedAt: account.verifiedAt || "" })),
     },
     mcps: {
@@ -200,6 +200,7 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       return { notice: `Removed my-${name.toLowerCase()}. Runs stop receiving it, including any in progress.` };
     }
     case "email.save": {
+      if (!getEmailAccountsEnabled()) fail("Email accounts are turned off on this gateway.");
       const fields = { name: str(input.name, 80) };
       for (const key of EMAIL_FIELDS) if (input[key] !== undefined && input[key] !== null) fields[key] = String(input[key]).slice(0, 1024);
       if (input.sendEnabled !== undefined) fields.sendEnabled = input.sendEnabled === true;

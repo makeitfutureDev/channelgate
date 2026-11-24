@@ -9,6 +9,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCESS_USER_LISTS, accessSettingsSnapshot } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
+import { getEmailAccountsEnabled } from "../config/settings.js";
 import { nextCronRun } from "../util/cron.js";
 import { daemonTimeZone, zonedStamp } from "../util/timezone.js";
 import { composioInventoryBlocks } from "./composio-inventory-view.js";
@@ -1011,6 +1012,7 @@ function connectionRows(snapshot, state, scope, opts) {
   else blocks.push(context(list.length ? "🔒 Managers change these. Add your own under *You*." : "_None._ Managers add them here; add your own under *You*."));
   // Email accounts — masked rows (name, address, servers); passwords never reach the snapshot.
   // The conversation's follow the custom MCP gate (a manager's call); a person's own are theirs.
+  if (!getEmailAccountsEnabled()) return blocks;
   blocks.push(header("Email accounts"));
   const accounts = (scope === "c" ? snapshot.emailAccounts?.channel : snapshot.emailAccounts?.personal) || [];
   const canEditEmail = scope === "p" || Boolean(opts.canManageCustomMcp);

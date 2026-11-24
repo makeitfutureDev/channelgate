@@ -1019,6 +1019,11 @@
                   </label>
                 </div>
                 <div class="setcard">
+                  <h4>Email accounts (IMAP/SMTP)</h4>
+                  <p class="desc">Lets people connect a mailbox by its IMAP and SMTP settings — to a conversation or for themselves — and gives runs the email tools for those accounts. While off, the <strong>Email accounts</strong> sections are hidden on every surface, new accounts cannot be connected and runs get no email tools; accounts already stored are kept and return when it is switched back on.</p>
+                  <label class="toggle"><input type="checkbox" id="set-email-accounts-enabled" /> <strong>Enable email accounts</strong> — off hides them from everyone.</label>
+                </div>
+                <div class="setcard">
                   <h4>Public file links</h4>
                   <p class="desc">Lets a conversation mint a <strong>temporary public download URL</strong> for one file in its own working folder — anyone holding the link can fetch it with no login. Two uses: handing a file to an API that ingests by URL (a few minutes, capped fetches), and sending a person a link (duration chosen per link, <strong>48 hours maximum</strong>). Links are re-checked on every fetch against this switch, their expiry, their fetch count and the file's continued presence inside the channel folder; turning this off kills every outstanding link immediately. Requires <strong>Public URL</strong> (above) to be set. Destinations reachable through Composio do not need this — those files are staged directly into Composio storage and never published.</p>
                   <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>

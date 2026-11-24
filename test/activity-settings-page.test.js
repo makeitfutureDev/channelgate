@@ -38,7 +38,7 @@ function browser(fetchImpl, { hash = "", emailPage = false } = {}) {
   const elements = { "theme-toggle": new Element("button"), "settings-panel": new Element(), "settings-nav": new Element("nav"), "settings-status": new Element() };
   const document = { documentElement: new Element("html"), getElementById: (id) => elements[id], createElement: (tag) => new Element(tag) };
   const requests = [];
-  const page = activityPage({ sessionId: "session", csrf: "fixture-csrf", view: "settings", emailPage });
+  const page = activityPage({ sessionId: "session", csrf: "fixture-csrf", view: "settings", emailPage, emailAccounts: true });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
   vm.runInNewContext(script, {

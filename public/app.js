@@ -4125,6 +4125,7 @@ function readSettingsForm() {
     noResponseReminderHours: Number(document.getElementById("set-nudge-hours").value) || undefined,
     defaultNudges: document.getElementById("set-default-nudges").checked,
     publicFileLinksEnabled: document.getElementById("set-public-file-links-enabled").checked,
+    emailAccountsEnabled: document.getElementById("set-email-accounts-enabled").checked,
     driveSyncEnabled: document.getElementById("set-drivesync-enabled").checked,
     driveSyncKeyFile: document.getElementById("set-drivesync-keyfile").value,
     ...(document.getElementById("set-drivesync-keyjson").value.trim() ? { driveSyncKeyJson: document.getElementById("set-drivesync-keyjson").value } : {}),
@@ -4298,6 +4299,7 @@ function paintSettings(s) {
   document.getElementById("set-nudge-hours").value = s.noResponseReminderHours ?? 24;
   document.getElementById("set-default-nudges").checked = s.defaultNudges === true;
   document.getElementById("set-public-file-links-enabled").checked = s.publicFileLinksEnabled === true;
+  document.getElementById("set-email-accounts-enabled").checked = s.emailAccountsEnabled === true;
   document.getElementById("set-drivesync-enabled").checked = s.driveSyncEnabled === true;
   // Pasted key is write-only: never echo it; show set/not-set + the service-account email to share with.
   document.getElementById("set-drivesync-keyjson").value = "";

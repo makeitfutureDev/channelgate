@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 
 const {
   buildChannelSettingsView,
