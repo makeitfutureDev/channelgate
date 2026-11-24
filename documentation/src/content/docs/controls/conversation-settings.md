@@ -300,3 +300,13 @@ applies on the next turn when the container is recreated; it does not change oth
 **Scope and result:** An administrator removes that additional mount from the current
 conversation. Removal narrows access and needs no additional approval card. It takes effect on
 the next turn; the host folder's files and other conversations' mounts are preserved.
+
+## get_channel_approved_harnesses
+
+Call with `{}` to see which harnesses and licenses people can select with `/model` in this conversation. Organization admins also receive the IDs they can use to change the list.
+
+## set_channel_approved_harnesses
+
+An organization admin on Enterprise can replace this conversation’s list by passing `approved`. Use `"all"` to remove the restriction, or supply a list that includes the conversation’s current license.
+
+For example, `{"approved":["harness:claude","codex"]}` allows every Claude license, including future additions, and the default Codex sign-in. Use `harness:codex` for every Codex license, or select individual licenses by ID or name. The list takes effect at the next engine launch and applies to license pool moves and fallback.

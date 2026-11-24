@@ -127,3 +127,15 @@ Slack-only tools are unavailable in Teams and Google Chat.
 **Scope and result:** Revokes the named link in the current conversation and returns its file path and completed fetch count, or a no-such-link/already-expired notice.
 
 **Limits:** An ID learned from another conversation cannot be revoked here. Revocation does not recall completed downloads.
+
+## conversation_history
+
+Read messages from the current Teams or Google Chat conversation when its connector supports history. Pass `{"thread":"current","limit":30}` to read the current thread, use a thread ID from an earlier result, or omit `thread` to read across the conversation. The default limit is 30 messages and the maximum is 200.
+
+Messages appear oldest first, with author, time, and attachment names. Conversation-wide results identify each message’s thread. When the connector supports downloading attachments, the result includes the message ID needed to retrieve a file.
+
+## conversation_download_file
+
+Pass the `message` ID from a history result to retrieve an earlier attachment in this conversation. Include the returned `thread` ID for a reply and the `file` name to select among multiple attachments. The connector saves the attachment in the current thread’s uploads folder and returns its local path.
+
+The connector checks current conversation access and the platform’s file permissions. A Google Drive share in Google Chat or a Teams file outside the allowed SharePoint drives returns a reason the download could not proceed.
