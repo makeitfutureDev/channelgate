@@ -8028,12 +8028,13 @@ are retired, bullet by bullet; everything else stands.
   admin UI (lazy-loaded on first open, saved with its own button via `GET`/`PUT
   /api/channels/:id/memory`). Warns when folder memory is toggled off for the channel. → TEST-PLAN: Admin UI.
 - Admin Settings groups categories under **Workspace**, **Agents** and **Administration**. Each
-  category has its own link and a compact selector on phones. Everyday controls open directly.
+  category has a jump link on one continuous page. The category rail follows scrolling, and
+  phones have a sticky category selector. Cards stack in one column, with paired fields side
+  by side on wide screens. Enabled features expose their controls and disabled features stay compact.
   **Messages** covers replies, reactions, voice notes and approvals. **Calls** covers browser
   voice calls and incoming iPhone calls.
-  Slack, Google Chat and Teams show connection status with setup collapsed. Optional features show
-  their state and expose dependent fields when enabled. Desktop forms and search results use the
-  available width. One global Save preserves pending edits across categories.
+  Slack, Google Chat and Teams show connection status with setup collapsed. One global Save
+  preserves pending edits across categories.
 - Settings search (`/` or Ctrl/⌘-K) finds fields, options, setup steps and actions across
   categories. Each result shows its location and opens the matching control or its prerequisite.
   Typing a search or opening a result leaves the form clean. Credential values stay out of search.

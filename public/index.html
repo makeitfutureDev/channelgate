@@ -462,11 +462,11 @@
                   <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 4 8 8M12 4l-8 8"/></svg>
                 </button>
               </div>
+              <select id="settings-category" aria-label="Settings category"></select>
             </header>
 
             <div class="setlayout">
               <nav class="setnav" id="settings-nav" aria-label="Settings categories"></nav>
-              <select id="settings-category" aria-label="Settings category"></select>
               <div class="setcontent">
                 <div id="settings-search-panel" hidden>
                   <h3 id="settings-result-count" role="status"></h3>
@@ -741,26 +741,28 @@
                 </details>
               </section>
 
-              <section class="setsec" id="set-messaging" data-sec="messaging" data-group="Workspace" aria-labelledby="set-messaging-h" hidden>
+              <section class="setsec" id="set-messaging" data-sec="messaging" data-group="Workspace" aria-labelledby="set-messaging-h">
                 <header class="setsec-head"><h3 id="set-messaging-h">Messages</h3></header>
-                <article class="setcard reaction-settings">
+                <article class="setcard">
                   <h4>Message activation reactions</h4>
                   <p class="desc">Separate trigger emoji with commas. Leave a list blank to use the platform default.</p>
-                  <label class="field">
-                    <span>Slack activation emoji</span>
-                    <input id="set-mention-reactions" type="text" placeholder="robot_face" />
-                    <em class="state">Use Slack emoji names, such as <code>robot_face</code>.</em>
-                  </label>
-                  <label class="field">
-                    <span>Microsoft Teams activation emoji</span>
-                    <input id="set-teams-mention-reactions" type="text" placeholder="hearteyesrobot, alien, like, smilerobot" />
-                    <em class="state">Use Teams shortcuts or Unicode emoji. Group and channel triggers require Teams reaction events.</em>
-                  </label>
-                  <label class="field">
-                    <span>Google Chat activation emoji</span>
-                    <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
-                    <em class="state">Requires a Google Chat reaction events topic.</em>
-                  </label>
+                  <div class="setfield-grid">
+                    <label class="field">
+                      <span>Slack activation emoji</span>
+                      <input id="set-mention-reactions" type="text" placeholder="robot_face" />
+                      <em class="state">Use Slack emoji names, such as <code>robot_face</code>.</em>
+                    </label>
+                    <label class="field">
+                      <span>Microsoft Teams activation emoji</span>
+                      <input id="set-teams-mention-reactions" type="text" placeholder="hearteyesrobot, alien, like, smilerobot" />
+                      <em class="state">Use Teams shortcuts or Unicode emoji. Group and channel triggers require Teams reaction events.</em>
+                    </label>
+                    <label class="field">
+                      <span>Google Chat activation emoji</span>
+                      <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
+                      <em class="state">Requires a Google Chat reaction events topic.</em>
+                    </label>
+                  </div>
                 </article>
                 <article class="setcard">
                   <h4>Slack replies</h4>
@@ -792,7 +794,7 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-calls" data-sec="calls" data-group="Workspace" aria-labelledby="set-calls-h" hidden>
+              <section class="setsec" id="set-calls" data-sec="calls" data-group="Workspace" aria-labelledby="set-calls-h">
                 <header class="setsec-head"><h3 id="set-calls-h">Calls</h3></header>
                 <article data-feature-toggle="set-voice-calls-enabled" class="setcard" id="voice-calls-card">
                   <header class="feature-head"><h4>Voice calls <small>Beta</small></h4><label class="feature-switch"><input type="checkbox" id="set-voice-calls-enabled" aria-label="Enable Voice calls" /><span class="setcard-state"></span></label></header>
@@ -827,49 +829,50 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-integrations" data-sec="integrations" data-group="Workspace" aria-labelledby="set-integrations-h" hidden>
+              <section class="setsec" id="set-integrations" data-sec="integrations" data-group="Workspace" aria-labelledby="set-integrations-h">
                 <header class="setsec-head"><h3 id="set-integrations-h">Apps &amp; integrations</h3></header>
                 <article class="setcard">
                   <h4>Composio connection mode</h4>
                   <p class="desc">Switching modes never deletes saved personal or channel tokens.</p>
-                  <label class="field">
-                    <span>Mode</span>
-                    <select id="set-composio-mode">
-                      <option value="personal">Personal tokens — existing behavior</option>
-                      <option value="sdk">SDK — Enterprise · Beta</option>
-                    </select>
-                    <em class="state" id="composio-mode-help"></em>
-                  </label>
-                  <label class="field" id="composio-sdk-key-field" data-mode-control="set-composio-mode">
-                    <span>Composio SDK API key · Enterprise · Beta <em class="state" id="composio-sdk-key-state"></em></span>
-                    <input id="set-composio-sdk-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
-                  </label>
+                  <div class="setfield-grid">
+                    <label class="field">
+                      <span>Mode</span>
+                      <select id="set-composio-mode">
+                        <option value="personal">Personal tokens — existing behavior</option>
+                        <option value="sdk">SDK — Enterprise · Beta</option>
+                      </select>
+                      <em class="state" id="composio-mode-help"></em>
+                    </label>
+                    <label class="field" id="composio-personal-url-field" data-mode-control="set-composio-mode">
+                      <span>Personal-mode Composio MCP URL</span>
+                      <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
+                    </label>
+                    <label class="field" id="composio-sdk-key-field" data-mode-control="set-composio-mode">
+                      <span>Composio SDK API key · Enterprise · Beta <em class="state" id="composio-sdk-key-state"></em></span>
+                      <input id="set-composio-sdk-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
+                      <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
+                    </label>
+                  </div>
                   <div id="composio-sdk-policy" data-mode-control="set-composio-mode" hidden>
                     <label class="toggle"><input class="csdk-multi" type="checkbox" checked /> Allow multiple accounts per app</label>
                     <p class="desc">Use account aliases to select between multiple connections.</p>
-                    <label class="field">
-                      <span>Maximum accounts per app</span>
-                      <input class="csdk-max" type="number" min="2" max="10" step="1" value="5" />
-                    </label>
-                    <label class="field">
-                      <span>Available apps</span>
-                      <select id="set-composio-app-mode" class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
-                    </label>
-                    <label class="field csdk-app-list" data-mode-control="set-composio-app-mode" hidden>
-                      <span>Allowed app slugs</span>
-                      <textarea class="csdk-apps" rows="3" placeholder="gmail, slack, custom_aioutreach"></textarea>
-                      <em class="state">Separate toolkit slugs with commas or spaces. An empty selection blocks every app.</em>
-                    </label>
+                    <div class="setfield-grid">
+                      <label class="field">
+                        <span>Maximum accounts per app</span>
+                        <input class="csdk-max" type="number" min="2" max="10" step="1" value="5" />
+                      </label>
+                      <label class="field">
+                        <span>Available apps</span>
+                        <select id="set-composio-app-mode" class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
+                      </label>
+                      <label class="field csdk-app-list" data-mode-control="set-composio-app-mode" hidden>
+                        <span>Allowed app slugs</span>
+                        <textarea class="csdk-apps" rows="3" placeholder="gmail, slack, custom_aioutreach"></textarea>
+                        <em class="state">Separate toolkit slugs with commas or spaces. An empty selection blocks every app.</em>
+                      </label>
+                    </div>
                     <p class="desc">Changes apply to new SDK sessions. Existing connections are kept.</p>
                   </div>
-                </article>
-                <article class="setcard">
-                  <h4>MCP server URLs</h4>
-                  <label class="field">
-                    <span>Personal-mode Composio MCP URL</span>
-                    <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
-                  </label>
                 </article>
                 <article data-feature-toggle="set-email-accounts-enabled" class="setcard">
                   <header class="feature-head"><h4>Email accounts (IMAP/SMTP)</h4><label class="feature-switch"><input type="checkbox" id="set-email-accounts-enabled" aria-label="Enable Email accounts (IMAP/SMTP)" /><span class="setcard-state"></span></label></header>
@@ -879,19 +882,25 @@
                   <header class="feature-head"><h4>Google Drive sync <small>Enterprise</small></h4><label class="feature-switch"><input type="checkbox" id="set-drivesync-enabled" aria-label="Enable Google Drive sync" /><span class="setcard-state"></span></label></header>
                   <p class="desc">Sync linked conversation folders with Google Drive using rclone.</p>
                   <div class="feature-fields" hidden>
-                  <label class="field">
-                    <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — share each linked folder with this account.</span>
-                    <textarea id="set-drivesync-keyjson" rows="4" placeholder='{ "type": "service_account", "project_id": "…", "private_key": "…", "client_email": "…@….iam.gserviceaccount.com" }'></textarea>
-                  </label>
-                  <label class="toggle"><input type="checkbox" id="clear-drivesync-keyjson" /> Remove the stored key</label>
-                  <label class="field">
-                    <span>Or a host key-file path</span>
-                    <input id="set-drivesync-keyfile" type="text" placeholder="/etc/channelgate/drive-sa.json" />
-                  </label>
-                  <label class="field">
-                    <span>Impersonate subject (optional) — a Workspace user email for domain-wide delegation</span>
-                    <input id="set-drivesync-subject" type="text" placeholder="drive-bot@yourdomain.com" />
-                  </label>
+                  <div class="setfield-grid">
+                    <div>
+                      <label class="field">
+                        <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — share each linked folder with this account.</span>
+                        <textarea id="set-drivesync-keyjson" rows="4" placeholder='{ "type": "service_account", "project_id": "…", "private_key": "…", "client_email": "…@….iam.gserviceaccount.com" }'></textarea>
+                      </label>
+                      <label class="toggle"><input type="checkbox" id="clear-drivesync-keyjson" /> Remove the stored key</label>
+                    </div>
+                    <div>
+                      <label class="field">
+                        <span>Or a host key-file path</span>
+                        <input id="set-drivesync-keyfile" type="text" placeholder="/etc/channelgate/drive-sa.json" />
+                      </label>
+                      <label class="field">
+                        <span>Impersonate subject (optional) — a Workspace user email for domain-wide delegation</span>
+                        <input id="set-drivesync-subject" type="text" placeholder="drive-bot@yourdomain.com" />
+                      </label>
+                    </div>
+                  </div>
                   <div class="setfield-grid">
                     <label class="field">
                       <span>Sync interval (minutes)</span>
@@ -936,7 +945,7 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-appearance" data-sec="appearance" data-group="Workspace" aria-labelledby="set-appearance-h" hidden>
+              <section class="setsec" id="set-appearance" data-sec="appearance" data-group="Workspace" aria-labelledby="set-appearance-h">
                 <header class="setsec-head"><h3 id="set-appearance-h">Appearance</h3></header>
                 <article class="setcard" data-setkey="logo color icon dock chrome app branding">
                   <h4>ChannelGate logo color</h4>
@@ -951,7 +960,7 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-agent" data-sec="agent" data-group="Agents" aria-labelledby="set-agent-h" hidden>
+              <section class="setsec" id="set-agent" data-sec="agent" data-group="Agents" aria-labelledby="set-agent-h">
                 <header class="setsec-head"><h3 id="set-agent-h">Agent defaults</h3></header>
                 <article class="setcard">
                   <h4>Engine &amp; runtime</h4>
@@ -1029,14 +1038,16 @@
                     <button type="button" id="clear-organization-instructions" class="ghost">Clear organization instructions</button>
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-agentmemory" /> Enable folder-scoped conversation memory</label>
-                  <label class="field">
-                    <span>Turns between memory reviews (0 = off)</span>
-                    <input id="set-memory-review-every" type="number" min="0" step="1" placeholder="5" />
-                  </label>
-                  <label class="field">
-                    <span>Memory review model (Claude)</span>
-                    <input id="set-memory-review-model" type="text" placeholder="haiku" />
-                  </label>
+                  <div class="setfield-grid">
+                    <label class="field">
+                      <span>Turns between memory reviews (0 = off)</span>
+                      <input id="set-memory-review-every" type="number" min="0" step="1" placeholder="5" />
+                    </label>
+                    <label class="field">
+                      <span>Memory review model (Claude)</span>
+                      <input id="set-memory-review-model" type="text" placeholder="haiku" />
+                    </label>
+                  </div>
                   <label class="toggle"><input type="checkbox" id="set-memory-review-notify" /> Post a message when a review saves new memories</label>
                 </article>
                 <article class="setcard">
@@ -1047,7 +1058,7 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-engine-licenses" data-sec="engine-licenses" data-group="Agents" aria-labelledby="set-engine-licenses-h" hidden>
+              <section class="setsec" id="set-engine-licenses" data-sec="engine-licenses" data-group="Agents" aria-labelledby="set-engine-licenses-h">
                 <header class="setsec-head"><h3 id="set-engine-licenses-h">Engine licenses</h3></header>
                 <details open class="setcard">
                   <summary><h4>Licenses the gateway may use</h4><span class="setcard-hint">Enabled licenses and sign-ins</span></summary>
@@ -1106,7 +1117,7 @@
                 </details>
               </section>
 
-              <section class="setsec" id="set-automation" data-sec="automation" data-group="Agents" aria-labelledby="set-automation-h" hidden>
+              <section class="setsec" id="set-automation" data-sec="automation" data-group="Agents" aria-labelledby="set-automation-h">
                 <header class="setsec-head"><h3 id="set-automation-h">Schedules &amp; reminders</h3></header>
                 <article class="setcard">
                   <h4>Schedules &amp; nudges</h4>
@@ -1133,7 +1144,7 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-access" data-sec="access" data-group="Administration" aria-labelledby="set-access-h" hidden>
+              <section class="setsec" id="set-access" data-sec="access" data-group="Administration" aria-labelledby="set-access-h">
                 <header class="setsec-head"><h3 id="set-access-h">Access &amp; security</h3></header>
                 <article class="setcard">
                   <h4>Default channel access</h4>
@@ -1156,12 +1167,12 @@
                 </article>
               </section>
 
-              <section class="setsec" id="set-admin-access" data-sec="admin-access" data-group="Administration" aria-labelledby="set-admin-access-h" hidden>
+              <section class="setsec" id="set-admin-access" data-sec="admin-access" data-group="Administration" aria-labelledby="set-admin-access-h">
                 <header class="setsec-head"><h3 id="set-admin-access-h">Admin access</h3></header>
                 <div class="setcard admin-access-card" id="admin-access"></div>
               </section>
 
-              <section class="setsec" id="set-license" data-sec="license" data-group="Administration" aria-labelledby="set-license-h" hidden>
+              <section class="setsec" id="set-license" data-sec="license" data-group="Administration" aria-labelledby="set-license-h">
                 <header class="setsec-head"><h3 id="set-license-h">License &amp; usage</h3></header>
                 <article class="setcard">
                   <h4>License <em class="state" id="license-state-chip"></em></h4>
@@ -1215,7 +1226,7 @@
                 </details>
               </section>
 
-              <section class="setsec" id="set-system" data-sec="system" data-group="Administration" aria-labelledby="set-system-h" hidden>
+              <section class="setsec" id="set-system" data-sec="system" data-group="Administration" aria-labelledby="set-system-h">
                 <header class="setsec-head"><h3 id="set-system-h">Gateway &amp; runtime</h3></header>
                 <article class="setcard">
                   <h4>Public URL</h4>
