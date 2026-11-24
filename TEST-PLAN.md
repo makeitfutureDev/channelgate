@@ -3895,7 +3895,15 @@ Slack icon, and the action buttons became icons.
   channel is retired once (no delivery, `undeliverable`, row enabled, one `schedule_paused`, no run
   rows on later minutes); a due cron in an archived channel neither runs nor posts and runs again
   after un-archiving; a `channel_not_found` delivery error retires the saved result (run delivery
-  `failed`/`delivery`) while a `ratelimited` error keeps retrying.
+  `failed`/`delivery`) while a `ratelimited` error keeps retrying; across five later cron fires
+  (day 0 09:00 and 09:01, days 1–3 09:00) a due and a saved-result schedule in an archived channel
+  each keep `paused: channel archived…` after every fire and log exactly one `schedule_paused`
+  (QA AUT-ARCHIVED-RETIRE-01, red before the fix: the status alternated and a second event was logged).
+  Live acceptance (engine-independent scheduler state; repeat the isolated driver with
+  `engine` claude and codex): remove the bot from a disposable registered channel holding a due
+  task, a saved result and a running checkpoint; advance the due minute, restart, advance a
+  further day; pass only with one `schedule_paused` per schedule, no spawn or post, then a normal
+  run on the next due minute after the re-invite.
 - Live (Codex, pending): in a Codex channel with a thread long enough to be compacted (Atlas
   `int-hubexo-nordics` reproduced it on 0.162.1), click Fork on a reply with no cutoff. Pass: the
   child thread opens, the first bot message carries "could not fork the source thread's native

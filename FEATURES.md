@@ -2488,9 +2488,10 @@ a queued native fork carries the same descriptor.
 
 A schedule whose channel is archived (the bot was removed) neither runs nor delivers: on its due
 minute, or when it holds a saved result or an interrupted execution, the saved state is retired with
-`executionState: "undeliverable"` and `lastStatus: "undeliverable: channel archived (bot removed)"`,
-the row stays enabled with a `paused: channel archived…` status written once per archival
-(`schedule_paused` event), and it runs again on its next due minute after the bot is re-invited.
+`executionState: "undeliverable"` (the run ledger records delivery `failed` with the reason
+"channel archived (bot removed)"), the row stays enabled with a `paused: channel archived…` status
+written once per archival (one `schedule_paused` event, kept across later cron fires of the archived
+channel), and it runs again on its next due minute after the bot is re-invited.
 A permanent Slack delivery error on a saved result (`channel_not_found`, `not_in_channel`,
 `is_archived`) retires that result the same way, marking the run's delivery `failed`
 (`errorKind: "delivery"`), instead of retrying every minute; transient errors keep the saved result

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A schedule in an archived channel keeps its paused status and logs one pause event per
+  archival, instead of a new pause event on every other cron fire.
+
 - If Slack redelivers a recently completed message after a gateway restart, the gateway recognizes
   it and avoids starting another paid turn.
 

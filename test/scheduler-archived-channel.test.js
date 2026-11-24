@@ -108,3 +108,25 @@ test("a permanent Slack delivery error retires the saved result while a transien
   assert.equal(transientAttempts, 2, "a transient failure is retried on the next minute");
   assert.ok(saved(transient.id).pendingDelivery, "the saved result is kept for retry");
 });
+
+test("an archived channel logs one schedule_paused per archival across repeated cron fires", async () => {
+  // QA AUT-ARCHIVED-RETIRE-01: every claimed cron minute is queued, so each later fire re-retired the
+  // row, overwrote the paused status with "undeliverable: …" and logged schedule_paused again on
+  // every other fire.
+  const ch = await channel({ archived: true });
+  const due = fixture(ch, { description: "due" });
+  const kept = fixture(ch, { description: "saved" });
+  store.updateSchedule(kept.id, { lastCronFireMs: base - 24 * 60 * MIN, executionState: "completed", pendingDelivery: { content: "saved" } });
+  const pausedFor = (id) => getDb().prepare("SELECT count(*) AS c FROM events WHERE event = 'schedule_paused' AND json_extract(data, '$.id') = ?").get(id).c;
+  const opts = { runner: async () => assert.fail("must not execute"), deliver: async () => assert.fail("must not deliver") };
+  for (const at of [base, base + MIN, base + 24 * 60 * MIN, base + 2 * 24 * 60 * MIN, base + 3 * 24 * 60 * MIN]) {
+    await scheduler.tick(at, opts);
+    for (const row of [due, kept]) assert.match(saved(row.id).lastStatus, /^paused: channel archived/, `${row.description} keeps the paused status`);
+  }
+  for (const row of [due, kept]) {
+    assert.equal(pausedFor(row.id), 1, `${row.description}: one schedule_paused for one archival`);
+    assert.equal(saved(row.id).executionState, "undeliverable");
+    assert.equal(saved(row.id).enabled, true);
+  }
+  assert.equal(posts.length, 0);
+});

@@ -37,7 +37,7 @@ const firedThisMinute = new Map(); // id -> minute key, to avoid double-fire wit
 const PERMANENT_DELIVERY_ERROR = /\b(channel_not_found|not_in_channel|is_archived|channel_is_archived)\b/;
 const ARCHIVED_STATUS = "paused: channel archived (bot removed) — re-invite the bot to resume";
 
-function retireUndeliverable(sched, reason) {
+function retireUndeliverable(sched, reason, lastStatus = `undeliverable: ${reason}`) {
   if (sched.activeRunId) {
     updateScheduleRun(sched.activeRunId, { deliveryStatus: "failed", errorKind: "delivery", error: reason });
     appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_abandoned" });
@@ -45,7 +45,8 @@ function retireUndeliverable(sched, reason) {
   sched.pendingDelivery = null;
   sched.executionState = "undeliverable";
   sched.activeRunId = null;
-  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `undeliverable: ${reason}`,
+  sched.lastStatus = lastStatus;
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus,
     executionState: "undeliverable", pendingDelivery: null, executionThread: null, activeRunId: null });
 }
 
@@ -54,9 +55,12 @@ function retireUndeliverable(sched, reason) {
 // saved result or an interrupted execution is retired the same way a permanent delivery failure
 // is; the status is written once per archival, not once per minute.
 async function pauseForArchivedChannel(sched) {
-  if (needsRecovery(sched)) retireUndeliverable(sched, "channel archived (bot removed)");
-  if (sched.lastStatus === ARCHIVED_STATUS) return;
-  updateSchedule(sched.id, { lastStatus: ARCHIVED_STATUS });
+  const alreadyPaused = sched.lastStatus === ARCHIVED_STATUS;
+  // The ledger keeps the explicit reason; the row keeps the paused status so the next fire still
+  // recognises this archival instead of re-pausing (and re-logging) every other cron minute.
+  if (needsRecovery(sched)) retireUndeliverable(sched, "channel archived (bot removed)", ARCHIVED_STATUS);
+  else if (!alreadyPaused) updateSchedule(sched.id, { lastStatus: ARCHIVED_STATUS });
+  if (alreadyPaused) return;
   await logEvent("schedule_paused", { id: sched.id, channel: sched.channelId, slug: sched.slug, reason: "channel_archived" });
 }
 
