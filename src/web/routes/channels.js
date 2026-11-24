@@ -68,9 +68,8 @@ import {
   withChannelMembershipLock,
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
-import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
-import { engineLabel, modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
-import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
+import { channelCodexHome } from "../../gateway/channel-codex-auth.js";
+import { engineLabel, modelBelongsToEngine } from "../../engines/registry.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
@@ -190,39 +189,6 @@ export function createChannelsRouter({
       const meta = await getChannelMeta(entry.slug);
       const record = { ...entry, ...meta, isDM: Boolean(entry.isDM || meta?.isDM || entry.type === "im" || meta?.type === "im") };
       res.json(await composioInventory({ kind: "channel", id: req.params.channelId, record }));
-    } catch (error) { next(error); }
-  });
-
-  router.get("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      if (!(await registeredChannel(req, res))) return;
-      res.json(await channelCodexLoginStatus(req.params.channelId));
-    } catch (error) { next(error); }
-  });
-  router.post("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      const entry = await registeredChannel(req, res);
-      if (!entry) return;
-      assertChannelEngineApproved(await getChannelMeta(entry.slug), "codex-channel");
-      const method = req.body?.method;
-      const status = await startChannelCodexLogin(req.params.channelId, method, {
-        key: req.body?.key,
-        onAuthenticated: async () => {
-          const before = await getChannelMeta(entry.slug);
-          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex-channel", model: modelBelongsToEngine(current.model, "codex-channel") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex-channel") ? current.effort : "" }));
-          await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
-        },
-      });
-      res.status(202).json(status);
-    } catch (error) {
-      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
-      next(error);
-    }
-  });
-  router.delete("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      if (!(await registeredChannel(req, res))) return;
-      res.json({ cancelled: cancelChannelCodexLogin(req.params.channelId) });
     } catch (error) { next(error); }
   });
 
@@ -374,7 +340,9 @@ export function createChannelsRouter({
       if (Object.hasOwn(body, "licensePool")) next_.licensePool = normalizeLicensePool(body.licensePool, next_.engine);
       else if ((next_.engine || "") !== (current.engine || "")) next_.licensePool = "";
       reconcileModelWithEngine(next_, current, body);
-      if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
+      // The legacy channel Codex account is retired: a channel's own account is an engine license
+      // limited to the channel (Settings → Licenses). A save may only leave it, never enter it.
+      if (body.codexAuthSource === "gateway") next_.codexAuthSource = "gateway";
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       // A license NAMED for this conversation is checked by name: the projection below drops one
@@ -590,7 +558,7 @@ export function createChannelsRouter({
             skillRuntimeSwap: typeof body.skillRuntimeSwap === "boolean" ? body.skillRuntimeSwap : Boolean(current.skillRuntimeSwap),
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
-            codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",
+            codexAuthSource: body.codexAuthSource === "gateway" ? "gateway" : current.codexAuthSource || "gateway",
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
             workDir: workDirPatch !== undefined ? workDirPatch : current.workDir,
             extraFolders: extraFoldersPatch !== undefined ? extraFoldersPatch : normalizeExtraFolders(current.extraFolders),

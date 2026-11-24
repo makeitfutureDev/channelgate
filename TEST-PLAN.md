@@ -1,5 +1,62 @@
 # ChannelGate — Test Plan
 
+## A channel's own account is a license limited to it (2026-11-24)
+
+Automated:
+
+```sh
+node --test test/channel-codex-migration.test.js test/channel-licenses-ui.test.js \
+  test/channel-codex-login.test.js test/channel-codex-login-web.test.js \
+  test/codex-channel-history.test.js test/engine-licenses-channel-limit.test.js
+```
+
+- [x] `test/channel-codex-migration.test.js` "channel Codex accounts become channel-limited
+      licenses, keeping their sign-in and every pin": a ChatGPT sign-in → `codex-login` license
+      (type from the plan), its directory renamed (refresh token intact, the license reports
+      signed in); an API key → `codex-api` license holding the key, no key file left behind; no
+      sign-in → no license; default, approved list, thread pin, thread pool and session stamp name
+      the new id; `codexAuthSource` is `gateway`; nothing secret is logged; a second run is a no-op.
+- [x] "a thread resumed on the migrated license carries its rollout from the legacy directories"
+      (`~/.codex-channel`, then `~/.codex` for the oldest threads; only for the channel's own
+      migrated license).
+- [x] `test/channel-licenses-ui.test.js`: the legacy channel and gateway Codex blocks are gone; the
+      runtime pane mounts the one licenses manager scoped to the channel (harness choice, limit
+      locked); the gateway Codex sign-in sits on its license row.
+- [x] `test/channel-codex-login-web.test.js`: the retired channel sign-in route answers 404 for
+      GET/POST/DELETE; a save asking for `codexAuthSource: "channel"` stores `gateway`.
+- [x] Page test (needs `CG_BROWSER_MODULE`) `test/channel-licenses-browser.test.js`: the add form
+      opened from the channel offers both harnesses and their kinds, locks "Available in" to the
+      channel, and the saved Claude sign-in license appears in the channel's list.
+- [ ] Live `LICENSE-48` migration of an existing channel Codex account (Codex; the Claude harness
+      had no channel account, so Claude is covered by `LICENSE-49`). Fixture: a QA instance on the
+      previous beta build with `cg-testing-codex-auto` connected to its own ChatGPT account
+      (channel settings → Runtime → "Add this channel's own account" → Sign in with ChatGPT), its
+      default set to *Codex (channel account)*, and one thread `T` that already answered
+      `Reply with the word alpha.` on it. Action: update to this build and restart. Pass: the boot
+      log says "its own Codex account is now the license codex-lic-…"; Settings → Engine licenses
+      lists "Codex · cg-testing-codex-auto" as *Only in #cg-testing-codex-auto*, status Ready
+      without signing in again; the channel's Runtime tab lists it under "Licenses for this
+      channel" and the harness picker shows it selected; in `T` send
+      `What word did you reply with before?` — pass: `alpha` (the session resumed), the footer
+      names the new license. Repeat with an API-key channel account on a second channel — pass:
+      an *API key or custom server* license limited to that channel answers `beta` to
+      `Reply with the word beta.`.
+- [ ] Live `LICENSE-49` add a channel license from the channel's settings (run once per harness).
+      Fixture: an Enterprise deployment, `cg-testing-claude-auto` and `cg-testing-codex-auto`.
+      **Codex:** in the codex channel's Runtime tab → Add a license for this channel → Harness
+      Codex, kind *ChatGPT sign-in*, name `QA channel seat`, Add → Sign in → complete the device
+      code. **Claude:** in the claude channel → Harness Claude Code, kind *Claude sign-in*, name
+      `QA channel Claude`, Add → Sign in → run the shown command on the host. Then, per harness,
+      pick the license in the channel's harness picker, Save, and send
+      `Reply with the word gamma.` — pass: `gamma`, the footer names the channel license; the
+      license is listed under the channel and as *Only in #<channel>* in Settings → Engine
+      licenses; the other channel's `/model` does not offer it. Remove it from the channel's list
+      — pass: it disappears in both places and the channel follows the gateway default.
+- [ ] Live `LICENSE-50` the gateway's own Codex sign-in from its license row (Codex). Fixture: a QA
+      instance. Action: Settings → Engine licenses → Codex → Default sign-in → Sign in → choose
+      "Sign in with ChatGPT" — pass: a device code appears; Cancel sign-in clears it; choosing
+      "Use an OpenAI API key" shows the key box. Engine-independent for Claude (no such control).
+
 ## ROI of automations, API runs and skills (2026-11-24)
 
 Regression: `test/automation-roi.test.js` (the arithmetic and which runs count; input validation;

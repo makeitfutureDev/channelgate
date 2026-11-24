@@ -804,7 +804,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Engine &amp; runtime</h4>
-                  <p class="desc">Which sign-ins, API keys and servers the two harnesses may run on is managed under <a href="#set-engine-licenses" class="lic-jump">Engine licenses</a>. Below is which one a conversation uses when it does not choose its own.</p>
+                  <p class="desc">Which sign-ins, API keys and servers the two harnesses may run on — including the gateway's own Codex sign-in (Codex → Default sign-in → Sign in) — is managed under <a href="#set-engine-licenses" class="lic-jump">Engine licenses</a>. Below is which one a conversation uses when it does not choose its own.</p>
                   <label class="field">
                     <span>Harness (which CLI drives the bot)</span>
                     <select id="set-engine">
@@ -830,18 +830,6 @@
                     <select id="set-default-codex-effort"></select>
                     <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                   </label>
-                  <div class="ch-codex-login" id="gateway-codex-login">
-                    <strong>Default gateway Codex login</strong>
-                    <p class="desc">Shared by channels that use the gateway login.</p>
-                    <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
-                    <div class="ch-codex-login-status state">Checking sign-in…</div>
-                    <div class="ch-codex-device-section" hidden>
-                      <div class="ch-codex-device-code" hidden><a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a><span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span></div>
-                      <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
-                    </div>
-                    <div class="row-actions ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Gateway OpenAI API key"><button type="button" class="btn ch-codex-key-save">Save API key</button></div>
-                    <em class="state ch-codex-api-note" hidden>OpenAI bills API key use separately from a ChatGPT subscription.</em>
-                  </div>
                   <div class="dz-row">
                     <span class="t">Reset all channels to these gateway defaults<small>Clears every channel's engine, model and effort overrides, and optionally the per-thread <code>/model</code> pins that would otherwise survive it. Access, tools, tokens and DM templates stay unchanged. Existing threads keep their current engine session; new threads inherit these defaults. Can't be undone.</small></span>
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
@@ -1626,35 +1614,11 @@
 
         <!-- ── RUNTIME ────────────────────────────────────────────────────── -->
         <div class="subpane" data-pane="runtime">
-          <div class="ch-auth-chooser">
-            <label class="field">
-              <span>Connect a Codex account for this channel · Enterprise</span>
-              <select class="ch-codex-auth-source">
-                <option value="gateway">Use the gateway's licenses</option>
-                <option value="channel">Add this channel's own account</option>
-              </select>
-            </label>
-          </div>
-          <div class="ch-auth-channel-panel" hidden>
-            <h4>This channel's Codex setup</h4>
-            <p class="hint">This account appears as the license Codex (channel account) under the Codex harness. Switch between it and the gateway's licenses in this channel or a thread.</p>
-            <div class="field ch-codex-login">
-              <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
-              <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="ch-codex-device-section" hidden>
-                <div class="ch-codex-device-code" hidden>
-                  <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                  <span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span>
-                </div>
-                <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
-              </div>
-              <div class="row-actions ch-codex-api-section" hidden>
-                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Channel OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Save API key</button>
-              </div>
-              <em class="state ch-codex-api-note" hidden>The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
-            </div>
-            <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
+          <div class="setcard ch-licenses-card">
+            <h4>Licenses for this channel · Enterprise</h4>
+            <p class="desc">Accounts only this channel runs on: a Claude or Codex engine license limited to this channel (a ChatGPT or Claude sign-in, an API key, or a provider such as Bedrock, Vertex AI or Azure). It is offered in this channel's harness picker and nowhere else. All licenses are managed under <a href="#set-engine-licenses" class="ch-licenses-all">Settings → Engine licenses</a>.</p>
+            <p class="hint ch-licenses-enterprise" hidden>Adding a license limited to one channel needs an active Enterprise license. Existing ones stay listed and can be removed.</p>
+            <div class="ch-licenses"></div>
           </div>
           <fieldset class="ch-harness-policy" disabled>
             <legend>Approved harnesses · Enterprise</legend>

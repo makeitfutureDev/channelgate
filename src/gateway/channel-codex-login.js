@@ -141,11 +141,6 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
   return loginStatus(jobKey, home);
 }
 
-export function startChannelCodexLogin(channelId, method, options) {
-  requireEnterpriseFeature("channelCodexLogin");
-  if (!channelId) throw Object.assign(new Error("unknown channel"), { statusCode: 404 });
-  return startLogin(`channel:${channelId}`, channelCodexHome(channelId), method, options);
-}
 export const startGatewayCodexLogin = (method, options) => startLogin("gateway", gatewayCodexHome(), method, options);
 
 function cancelLogin(jobKey) {
@@ -158,7 +153,6 @@ function cancelLogin(jobKey) {
   return true;
 }
 
-export const cancelChannelCodexLogin = (channelId) => cancelLogin(`channel:${channelId}`);
 export const cancelGatewayCodexLogin = () => cancelLogin("gateway");
 
 // A Codex LICENSE's own ChatGPT sign-in (src/engines/license-state.js): the same device-code flow,

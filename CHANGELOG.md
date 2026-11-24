@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Licenses: a channel's own account is now an engine license limited to that channel. Channel
+  settings → Runtime shows **Licenses for this channel** (Claude or Codex; any sign-in, API key or
+  provider) with an **Add a license for this channel** button that opens the Settings → Engine
+  licenses form locked to the channel. The old "Connect a Codex account for this channel" block is
+  gone. Existing channel Codex accounts are converted once on upgrade, keeping their sign-in (no
+  re-login) and the threads, pins and schedules that used them. The gateway's own Codex sign-in
+  moved to Settings → Engine licenses → Codex → Default sign-in → **Sign in**.
 - ROI: every automation, API source and skill can now carry how many minutes one successful run
   (or use) saves and an hourly rate. The Automations page shows the time saved, its value, the AI
   cost, net value and ROI for the selected window, per automation and in total. A new **ROI** page

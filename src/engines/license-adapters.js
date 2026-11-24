@@ -23,6 +23,7 @@ import { runClaude } from "./claude.js";
 import { isIsolatedTarget, runtimeTargetOr } from "./runtime-target.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { dedicatedCodexCredentialState } from "./codex-eu.js";
+import { preserveMigratedChannelCodexHistory } from "./codex-channel-history.js";
 import { extraClaudeCredentialState, resolveExtraClaudeProvider, resolveExtraClaudeToken } from "./bedrock.js";
 import { codexAuthProcessEnv, codexHarnessFor } from "../gateway/channel-codex-paths.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
@@ -115,6 +116,8 @@ function codexLoginLicense(codex, record) {
         ...(target?.container ? { container: { ...target.container, codexHome: licenseContainerDir(id, target.container.home) } } : {}),
       };
       try {
+        // A channel's own Codex account that became this license: a resumed thread's rollout.
+        if (own.container) await preserveMigratedChannelCodexHistory({ ...ctx, target: own }, { licenseId: id, destinationRoot: own.container.codexHome });
         return await codex.run.call(this, { ...ctx, target: own, runtime: { ...ctx.runtime, allowedMcps: [], codexStateDir: isIsolatedTarget(target) ? "" : licenseLoginHome(id) } });
       } catch (error) {
         if (error?.details) error.details = { ...error.details, engine: id };
@@ -623,6 +626,8 @@ function codexProviderLicense(codex, record) {
       }
       const redacted = redactedRuntime(ctx.runtime, credential.secrets);
       try {
+        // A channel's own Codex API-key account that became this license: a resumed thread's rollout.
+        if (isolated) await preserveMigratedChannelCodexHistory({ ...ctx, target }, { licenseId: id, destinationRoot: home });
         const result = await codex.run.call(this, {
           ...ctx, target,
           runtime: {

@@ -112,6 +112,8 @@ The built-in Codex licenses have separate selections and sessions:
 - `codex-channel`: **Codex (channel account)**, the dedicated login connected to the target
   conversation. Requires Enterprise and that conversation's connected Codex login; a missing
   connection is refused before a new job starts and never falls back to the gateway login.
+  Legacy: such accounts are migrated at boot to a license limited to the conversation; request
+  that license's id instead.
 - `codex-eu`: the separate Codex EU login, when configured and enabled.
 
 Other registered license IDs are accepted too, including the ones an administrator added

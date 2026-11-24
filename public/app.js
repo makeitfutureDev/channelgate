@@ -78,7 +78,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card, .lic-form, .lic-panel";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card, .lic-form, .lic-panel, .ch-licenses-card";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -2371,11 +2371,11 @@ function renderChannelDetail(ch) {
   } else {
     approvedBox.textContent = "";
   }
-  const authSource = card.querySelector(".ch-codex-auth-source");
-  authSource.value = meta.codexAuthSource || "gateway";
+  // The legacy channel Codex account is retired (a channel's own account is a license limited to
+  // it, below); a channel the boot migration could not move still reads its stored switch.
+  const legacyAuthSource = meta.codexAuthSource === "channel" ? "channel" : "gateway";
   const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
   spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
-  const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
   const effortLabel = card.querySelector(".ch-effort-label");
@@ -2396,7 +2396,7 @@ function renderChannelDetail(ch) {
   // stand on the card, saved or not. `engineSelect.value` is the engine id, "" = the gateway default.
   const engineSelect = mountLicensePicker({
     harnessSelect: card.querySelector(".ch-engine"),
-    env: () => licenseEnv({ codexAuthSource: authSource.value, policy: approvedHarnesses(), channelIds: [ch.channelId, meta.codeChannel?.originChannelId] }),
+    env: () => licenseEnv({ codexAuthSource: legacyAuthSource, policy: approvedHarnesses(), channelIds: [ch.channelId, meta.codeChannel?.originChannelId] }),
     engine: meta.engine || "",
     pool: meta.licensePool || "",
     includeDefault: true,
@@ -2409,7 +2409,7 @@ function renderChannelDetail(ch) {
     shownEngine = engineSelect.value;
     syncModelOptions({ engineSelect, modelSelect, blankLabel: "gateway default (Settings)" });
     syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, legacyAuthSource === "channel" ? ch.channelId : "");
   };
   const paintHarnessPolicy = () => {
     harnessOptions.hidden = !harnessRestrict.checked;
@@ -2430,10 +2430,10 @@ function renderChannelDetail(ch) {
         else control.readOnly = !entitled && !control.value;
       }
     }
-    const dedicatedOption = card.querySelector('.ch-codex-auth-source option[value="channel"]');
-    if (dedicatedOption) dedicatedOption.disabled = license.features?.channelCodexLogin !== true;
+    const addChannelLicense = card.querySelector(".ch-licenses .lic-add");
     if (license.features?.channelCodexLogin !== true) {
-      card.querySelectorAll(".ch-auth-channel-panel input, .ch-auth-channel-panel select, .ch-auth-channel-panel button:not(.ch-codex-device-cancel)").forEach((control) => { control.disabled = true; });
+      card.querySelector(".ch-licenses-enterprise").hidden = false;
+      if (addChannelLicense) addChannelLicense.disabled = true;
     }
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
@@ -2442,29 +2442,33 @@ function renderChannelDetail(ch) {
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
 
-  const paintAuthScope = () => {
-    const dedicated = authSource.value === "channel";
-    channelPanel.hidden = !dedicated;
-    // The channel's own Codex license exists only while the channel signs in for itself: leaving
-    // that returns the channel to the gateway default rather than to another license silently.
-    if (!dedicated && ENGINE_MANIFESTS.find((m) => m.id === engineSelect.value)?.channelScoped) engineSelect.set("", "");
-    else engineSelect.repaint();
-    syncChannelRuntime();
-  };
-  authSource.addEventListener("change", paintAuthScope);
-  mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
-    onComplete: () => {
-      authSource.value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex-channel", licensePool: "" };
-      meta.codexAuthSource = "channel";
-      engineSelect.set("codex-channel", "");
-      delete AVAILABLE_MCPS[`codex-channel:${ch.channelId}`];
-      paintAuthScope();
+  // "Licenses for this channel": the Settings → Licenses manager, drawn for this conversation only.
+  // Its add/edit form is the same one, locked to this channel; a change reloads the engine
+  // manifest so the harness picker above offers the new license at once.
+  const channelLicenses = mountLicensesManager({
+    root: card.querySelector(".ch-licenses"),
+    api,
+    confirm: confirmDialog,
+    copyText: copyTerminalCommand,
+    mountCodexLogin: mountCodexLoginBox,
+    state: () => ({ manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED }),
+    reload: async () => {
+      if (!settingsDirty) await loadSettings();
+      await channelLicenses.load();
+      if (card.isConnected) { engineSelect.repaint(); syncChannelRuntime(); }
     },
+    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    scope: { channelId: ch.channelId, label: conversationChannelName(ch) || ch.name || ch.slug || ch.channelId },
+  });
+  void channelLicenses.load();
+  card.querySelector(".ch-licenses-all")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    setView("settings");
+    selectSettingsSection("engine-licenses");
   });
   syncModelOptions({ engineSelect, modelSelect, value: meta.model || "", blankLabel: "gateway default (Settings)" });
   syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: meta.effort || "" });
-  paintAuthScope();
+  syncChannelRuntime();
   modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
@@ -2559,7 +2563,7 @@ function renderChannelDetail(ch) {
     try {
       const approvals = approvedHarnesses();
       if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness or license.");
-      if (approvals !== null && !approvalAdmits(authSource.value === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
+      if (approvals !== null && !approvalAdmits(legacyAuthSource === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
         throw new Error("Choose a channel default from its approved harnesses and licenses.");
       }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
@@ -2593,7 +2597,6 @@ function renderChannelDetail(ch) {
           engine: engineSelect.value,
           // Beside the license it belongs to; "" when the choice is a single license or inherited.
           licensePool: engineSelect.pool ?? "",
-          codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
           ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
             ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
@@ -3978,6 +3981,15 @@ function paintEngineLicenses() {
     versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
     // What a license can be limited to: every channel and DM this gateway knows, by name.
     conversations: licenseConversations,
+    // The gateway's own Codex sign-in ("Default sign-in" of Codex): ChatGPT or an API key.
+    gatewayCodexLogin: {
+      url: "/api/gateway/codex-login",
+      onComplete: () => {
+        delete AVAILABLE_MCPS.codex;
+        const box = document.querySelector("#channel-detail .ch-mcps");
+        if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
+      },
+    },
   });
   licensesManager.paint();
 }
@@ -5400,13 +5412,6 @@ async function init() {
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
-  mountCodexLoginBox(document.getElementById("gateway-codex-login"), "/api/gateway/codex-login", {
-    onComplete: () => {
-      delete AVAILABLE_MCPS.codex;
-      const box = document.querySelector("#channel-detail .ch-mcps");
-      if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
-    },
-  });
   const { skills, personalSkills = [] } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];

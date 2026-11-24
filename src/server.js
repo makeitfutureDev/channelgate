@@ -284,6 +284,14 @@ async function main() {
   } catch (e) {
     console.warn(`[gateway] could not update the stored container process limit: ${e?.message || e}`);
   }
+  // Once per install: a channel's own Codex account (the legacy channel sign-in) becomes an engine
+  // license limited to that channel, keeping its login. Never fatal; see the module.
+  try {
+    const { migrateChannelCodexAccounts } = await import("./gateway/channel-codex-migration.js");
+    await migrateChannelCodexAccounts();
+  } catch (e) {
+    console.warn(`[gateway] channel Codex accounts were not moved to licenses (they keep working as before): ${e?.message || e}`);
+  }
   console.log(`[gateway] runtime root: ${root}`);
   console.log(`[gateway] singleton lock: ${lock.file}`);
 
