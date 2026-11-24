@@ -93,7 +93,14 @@ function providerSentence(body, depth = 0) {
 export function plainFailureText(value, maxChars = 400) {
   const limit = Number.isFinite(Number(maxChars)) ? Math.max(1, Number(maxChars)) : 400;
   const raw = String(value ?? "").trim();
-  const body = embeddedJsonObject(raw);
+  // A CLI may already have clipped its response. Recognize the start of the outer document,
+  // including a provider's metadata before its nested error. Keep ordinary braces in prose.
+  const document = /(?:^|:\s*)(\{\s*"[^"\r\n]+"\s*:|\[\s*(?=[\[{]))/.exec(raw);
+  const body = document?.[1].startsWith("[") ? null : embeddedJsonObject(raw);
+  if (!body && document) {
+    const heading = raw.slice(0, document.index).trim();
+    return (heading || "the provider rejected the request").slice(0, limit);
+  }
   const sentence = body ? providerSentence(body) : "";
   // Keep the prose the CLI wrapped around the body ("Codex provider error: {…}") and replace only
   // the document itself, so a message that was already a sentence is returned untouched.

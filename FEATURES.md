@@ -9037,7 +9037,9 @@ are retired, bullet by bullet; everything else stands.
   Unexpected Claude SIGKILL/137 never triggers blind automatic continuation; the error event keeps
   engine, runtime, exit code, signal and process/provider/Stop flags without raw process streams.
   Explicit Stop and AbortError also defeat legacy text-based continuation. Automatic-recovery and
-  both-engine failure notices unwrap provider JSON into readable sentences.
+  both-engine failure notices unwrap provider JSON into readable sentences. Slack saves and displays
+  the first 300 characters of the extracted fallback diagnostic when both harnesses fail. If the CLI
+  already clipped the JSON, the card keeps the provider’s leading explanation.
 - **Responsive Stop controls:** “stop the loop” and “Stop the check loop now” cancel through the
   early control path. Loop rows disappear synchronously before Slack calls; status clearing and
   unrelated acknowledgements cannot block another stopped thread’s notice. Stream cleanup gets a

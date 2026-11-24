@@ -12,7 +12,7 @@ delete process.env.CG_TRANSIENT_RETRY_ATTEMPTS;
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 ensureTestEnv();
 const { useFakeRuntime } = await import("./runtime-fake.js");
-await useFakeRuntime();
+const runtime = await useFakeRuntime();
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 process.env.PROGRESS_VIEW = "shimmer";
@@ -204,4 +204,48 @@ test("both-engine failure card unwraps provider JSON into a sentence", () => {
     fallbackError: 'API rejected: {"error":{"message":"Please try again later","code":"overloaded"}}' });
   assert.match(text, /Please try again later/);
   assert.doesNotMatch(text, /\{|"error"|overloaded/);
+});
+
+test("both-engine failure card extracts a long provider error before limiting its length", async (t) => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", engineFallback: true, engineFallbackMode: "auto", engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  const canary = "fixture-fallback-canary";
+  const previous = process.env.CODEX_API_KEY;
+  process.env.CODEX_API_KEY = canary;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = previous;
+  });
+  const reason = `The provider is unavailable. ${canary}. ` + "Please try again later. ".repeat(14);
+  const body = JSON.stringify({ error: { message: reason, code: "fixture_overloaded" } }).replace(canary, "\\u0066ixture-fallback-canary");
+  const eventLine = JSON.stringify({ type: "assistant", error: "overloaded_error", message: { role: "assistant", content: [{ type: "text", text: body }] } });
+  const spawn = runtime.spawn.bind(runtime);
+  t.mock.method(runtime, "spawn", (target, spec) => {
+    if (path.basename(spec.cmd) !== "claude") return spawn(target, spec);
+    return spawn(target, { ...spec, cmd: process.execPath, args: ["-e", "console.log(process.argv[1]); process.exitCode = 1", eventLine] });
+  });
+
+  const warnings = [];
+  t.mock.method(console, "warn", (...lines) => warnings.push(lines.join(" ")));
+  const client = fakeSlack();
+  await processMessageEvent(event("4000.700", "4000.700"), client, { botUserId: "U_BOT", teamId: "T_SWITCH" });
+  const card = cardOf(client);
+  assert.ok(card);
+  assert.match(card.text, /Claude could not answer either.*The provider is unavailable/);
+  assert.doesNotMatch(card.text, /[{}]|"message"|fixture_overloaded/);
+  assert.match(card.text, /\[REDACTED\]/);
+  assert.ok(!card.text.includes(canary));
+  const diagnostics = [...warnings, ...readEvents({ limit: 30 }).filter(row => row.threadKey === "4000.700").map(row => row.error || "")].join("\n");
+  assert.match(diagnostics, /\[REDACTED\]/);
+  assert.doesNotMatch(diagnostics, /fixture-fallback-canary|ixture-fallback-canary|"error":/);
+  assert.equal(card.blocks[0].text.text, card.text);
+  const action = buttonOf(card, ENGINE_RETRY_ACTION);
+  const record = engineSwitchChoices.take(action.value, USER, CHANNEL);
+  try {
+    assert.equal(record.ok, true);
+    assert.ok(record.record.ask.fallbackError.length <= 300);
+    assert.doesNotMatch(record.record.ask.fallbackError, /[{}]/);
+  } finally {
+    engineSwitchChoices.discard(action.value);
+  }
 });
