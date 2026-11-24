@@ -665,7 +665,7 @@ export function createActivityRouter({
     try {
       const { session, client } = await context(req);
       const access = await accessContext(client, session.ownerId);
-      const board = await automationBoard(access, session.ownerId, { days: Number(req.query.days) || 7, botName: await agentName(client).catch(() => "") });
+      const board = await automationBoard(access, session.ownerId, { days: Number(req.query.days) || 7, botName: await agentName(client).catch(() => ""), teamId: session.teamId });
       await context(req);
       return res.json(board);
     } catch (error) { return unavailable(res, error.status || 503); }

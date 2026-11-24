@@ -147,6 +147,15 @@ test("fixed delivery threads keep independent fresh engine sessions across fires
   assert.equal(posts.length, 0);
 });
 
+test("a run records the thread it works in, so a failed run can still be opened from the board", async () => {
+  const sched = fixture({ delivery: "thread", deliveryThread: "1791000010.123456", failureNotify: false });
+  await scheduler.runSchedule(sched, { runner: async () => { throw new Error("engine exploded"); }, deliver: async () => assert.fail("nothing to deliver") });
+  const [run] = history(sched.id);
+  assert.equal(run.status, "failed");
+  assert.equal(run.deliveryThread || "", "");
+  assert.equal(run.thread, "1791000010.123456");
+});
+
 test("failure notification preference suppresses failed and interrupted notices without erasing status", async () => {
   const sched = fixture({ failureNotify: false });
   await scheduler.runSchedule(sched, { runner: async () => { throw new Error("model unavailable"); } });

@@ -8,6 +8,11 @@
   membership approval card. An admin in an Admin-mode channel can also use any user's connections
   in the organization project. A channel no longer needs a `COMPOSIO_API_KEY_SDK`-style variable
   for this.
+- Automations: each automation on the Automations page now shows its AI cost for the selected
+  window next to its success rate, and an **Open last run** link that opens the last run's thread
+  directly in the Slack app (Ctrl/⌘-click opens it in the browser). A run that failed before
+  posting its answer still opens the thread it started in. The admin console now offers the
+  Slack links too.
 - Automations: the top of the Automations page (admin console and Activity dashboard) now shows
   the total number of runs and the total AI cost of the last 30 days, with the average cost per
   run. They stay on 30 days whichever window (24h / 7d / 30d) is selected for the rest of the board.

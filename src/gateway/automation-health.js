@@ -104,6 +104,12 @@ export function failureStreak(runs) {
   return n;
 }
 
+// The message a run lives under in its conversation: where its answer went, else the thread it
+// announced itself in (a run that failed before delivering still has one), else nothing.
+export function runThread(run) {
+  return String(run?.deliveryThread || run?.thread || "");
+}
+
 export function windowStats(runs) {
   const finished = runs.filter((r) => !LIVE.has(r.status) && r.status !== "skipped");
   // "completed" finished without anyone asking for a task report: it counts as a run, never as
@@ -170,7 +176,8 @@ export function automationHealth(schedule, runs, windowRuns = runs) {
     problem: key ? { key, label: PROBLEMS[key].label, outcome, since, message: problemMessage(key, latest, schedule, streak), code: latest?.errorKind || "" } : null,
     streak,
     running,
-    lastRun: latest ? { id: latest.id, status: latest.status, deliveryStatus: latest.deliveryStatus || "", startedAt: latest.startedAt || null, error: latest.error || "", summary: latest.summary || "", engine: latest.engine || "", model: latest.model || "" } : null,
+    lastRun: latest ? { id: latest.id, status: latest.status, deliveryStatus: latest.deliveryStatus || "", startedAt: latest.startedAt || null, error: latest.error || "", summary: latest.summary || "", engine: latest.engine || "", model: latest.model || "",
+      thread: runThread(latest), costUsd: typeof latest.costUsd === "number" ? latest.costUsd : null } : null,
     strip: runs.slice(0, 30).map(stripCell).reverse(),
     stats,
     // Recent runs whose error nobody acknowledged yet, and the last acknowledgement shown when

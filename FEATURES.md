@@ -143,7 +143,16 @@ included".
   most urgent problem. Views: Needs attention (default), Not delivered, Failing, Created by me,
   Paused, Everything. Facets with counts: Conversation, Problem, Type, Created by; search over
   name, instructions, error and run id; window 24h / 7d / 30d; sort by urgency, next run, lowest
-  success, cost or name. Cards are grouped Not delivered → Failing → Healthy → Paused.
+  success, cost or name. Cards are grouped Not delivered → Failing → Healthy → Paused. Each card
+  shows its **AI cost for the selected window** beside its success % (the tooltip adds runs, the
+  average per run, its last-30-days cost and the last run's cost) and an **Open last run** link
+  that opens the last run's thread in the Slack **app** (`slack://channel?team=…&id=…&message=…&
+  thread_ts=…`; Ctrl/⌘-click opens the web client). A run records the thread it works in
+  (`thread`: the announcement or loop thread at start, the posted message for a reminder) besides
+  `deliveryThread`, so a run that failed before delivering still opens; a run with no thread
+  (channel post, headless API run) opens its conversation. The ⋯ menu has "Open last run in
+  Slack" and "Open conversation in Slack", in the admin console too (the board payload carries the
+  Slack `teamId`); each run in the Runs tab has "Open this run in Slack". Slack conversations only.
 - **Detail** (`#automation=<channel>/<id>`, Back returns to the board): status, switch, Run now,
   Edit, stats (last runs, success, next run, not delivered, spend), and tabs Overview (open issue
   with How to fix, key facts), Runs (each run's status, delivery, cost, trigger, error, tokens,
