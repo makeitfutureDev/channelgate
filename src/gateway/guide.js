@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile, readdir, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { containerAccessNote } from "./runtime-access.js";
-import { getEmailAccountsEnabled } from "../config/settings.js";
+import { getComposioMode, getEmailAccountsEnabled } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 import { DEFAULT_PLATFORM, platformOr, isPlatformId } from "../platforms/registry.js";
@@ -141,19 +141,39 @@ export async function resolvedGuideFiles(platform = DEFAULT_PLATFORM) {
 
 // Placeholders every guide source may use, so a shared file can name the surface it is running on
 // without being forked per platform.
-// A guide line ending in `<!--if:email-->` describes the email accounts feature: it is kept (minus
-// the marker) only while the admin switch is on, so agents never learn of a feature that is off.
+// Feature conditions a guide source can carry, so agents are told only about what this gateway
+// has switched on. Two forms, both removed from the materialized file:
+//   • a line ending in ` <!--if:NAME-->` is kept (minus the marker) only while NAME holds;
+//   • a line that is exactly `<!--if:NAME-->` opens a block kept only while NAME holds, closed by a
+//     line that is exactly `<!--endif-->` (blocks do not nest).
+// An unknown NAME never holds, so a typo hides text instead of leaking it everywhere.
 const EMAIL_GUIDE_FILE = "references/email.md";
-function featureLines(content) {
-  const on = getEmailAccountsEnabled();
-  return String(content).split("\n").flatMap((line) => {
-    if (!line.endsWith(" <!--if:email-->")) return [line];
-    return on ? [line.slice(0, -" <!--if:email-->".length)] : [];
-  }).join("\n");
+const GUIDE_CONDITIONS = {
+  email: () => getEmailAccountsEnabled(),
+  "composio-sdk": () => getComposioMode() === "sdk",
+  "composio-personal": () => getComposioMode() !== "sdk",
+};
+function guideCondition(name) {
+  const check = Object.hasOwn(GUIDE_CONDITIONS, name) ? GUIDE_CONDITIONS[name] : null;
+  return Boolean(check && check());
+}
+export function applyGuideConditions(content) {
+  const out = [];
+  let block = null; // null outside a block, else whether the block is kept
+  for (const line of String(content).split("\n")) {
+    const open = /^<!--if:([a-z0-9-]+)-->$/.exec(line.trim());
+    if (open && block === null) { block = guideCondition(open[1]); continue; }
+    if (line.trim() === "<!--endif-->" && block !== null) { block = null; continue; }
+    if (block === false) continue;
+    const inline = / <!--if:([a-z0-9-]+)-->$/.exec(line);
+    if (inline) { if (guideCondition(inline[1])) out.push(line.slice(0, inline.index)); continue; }
+    out.push(line);
+  }
+  return out.join("\n");
 }
 
 function substitutePlatform(content, adapter, target) {
-  return featureLines(content)
+  return applyGuideConditions(content)
     .replaceAll("{{PLATFORM}}", adapter.label)
     .replaceAll("{{PLATFORM_ID}}", adapter.id)
     .replaceAll("{{CONTAINER_ACCESS}}", containerAccessNote(target));

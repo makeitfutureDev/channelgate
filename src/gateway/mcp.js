@@ -93,23 +93,29 @@ export function composioIdentitiesForRun({ clean = false, principalTrusted = tru
 // shared instruction file without two concurrent authors racing each other's sentence. The prompt
 // is built per run, per author, so there is no shared file to race. Deliberately engine-neutral and
 // content-free: server names and roles only, never a token, an address or an account label.
-export function composioIdentityPreamble({ user = false, agent = false } = {}) {
+export function composioIdentityPreamble({ user = false, agent = false, mode = "personal", sdkUserIds = {} } = {}) {
   const ownership = " These logical identities do not establish the connected service owner; discover account metadata through the selected identity before claiming ownership. The agent identity is not necessarily shared across channels. Matching service owners never authorize substituting identities.";
   // QA-0925 (FSHARE-02): the routing lived only in the gateway-usage guide, and a Codex turn that
   // skipped that page pushed a PDF through the workbench as base64 instead. Every run that has a
   // Composio identity needs the one handoff rule, whichever engine and whichever pages it reads.
   const files = " To hand a file from this folder to a Composio tool that takes a file object (Drive upload, email attachment, …), call `gateway` → `stage_file_for_composio` with `identity: \"user\"` for tools run through `composio-user`, or `identity: \"agent\"` for `composio-agent`; these are the only accepted identity values. Pass its result on unchanged; a tool that only ingests by URL takes a `create_public_file_link` upload link instead. Never push a file's bytes as base64 or chunks through the workbench or another Composio tool to get around staging, including when staging fails or the file is too large.";
+  // Which Composio mode backs the identities, and in SDK mode the user ids they act as — the facts a
+  // run needs to write code against the same connections (gateway-usage composio-scripts.md).
+  const ids = [user && sdkUserIds.user ? `\`composio-user\` = \`${sdkUserIds.user}\`` : "", agent && sdkUserIds.agent ? `\`composio-agent\` = \`${sdkUserIds.agent}\`` : ""].filter(Boolean);
+  const backing = mode === "sdk"
+    ? " Composio mode: SDK — both identities are user ids in the organization's Composio project" + (ids.length ? ` (${ids.join(", ")})` : "") + "; a container script reaches those connections only with an API key for that same project (gateway-usage references/composio-scripts.md)."
+    : " Composio mode: Personal — each identity is its owner's own Composio account behind a consumer key the gateway keeps; code runs in the Workbench, or locally only with a project API key from that same account (gateway-usage references/composio-scripts.md).";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
-      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + files + "]\n\n";
+      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + backing + files + "]\n\n";
   }
   if (user) {
     return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +
-      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + files + "]\n\n";
+      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + backing + files + "]\n\n";
   }
   if (agent) {
     return "[Composio identities in THIS run: `composio-agent` only (the shared agent's connections). " +
-      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + files + "]\n\n";
+      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + backing + files + "]\n\n";
   }
   return "";
 }

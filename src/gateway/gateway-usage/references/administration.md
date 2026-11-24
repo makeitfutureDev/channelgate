@@ -10,7 +10,8 @@ Two Composio accounts can be injected: `composio-agent` (YOUR own account) and `
 (the requester's). How each is backed is admin configuration and does not change the identity
 routing rules. Routine replies need no credential details; when asked about isolation, explain
 the supported scopes without assuming the current source or connected service owner. The admin
-chooses one global Composio mode in Settings:
+chooses one global Composio mode in Settings. **This gateway currently runs SDK mode.** <!--if:composio-sdk-->
+chooses one global Composio mode in Settings. **This gateway currently runs Personal mode.** <!--if:composio-personal-->
 
 - **Personal:** a saved user token backs `composio-user`; the channel's own token backs
   `composio-agent`. There is no organization-wide Composio token: a channel without its own token

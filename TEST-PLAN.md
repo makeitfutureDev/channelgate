@@ -460,6 +460,19 @@ node --test test/nested-claude-login.test.js test/ssh-session.test.js test/vscod
       output. Any answer (`alpha`, `beta`, `gamma`) produced while the list excludes Claude is a
       FAIL of the whole case.
 
+## Operating guide follows the Composio mode (2026-11-24)
+
+- Automated: `test/composio-mode-guide.test.js` (condition markers; materialized guide per mode
+  has no markers and only that mode's section; identity line names the mode and SDK user ids;
+  `sdkUserIdsFor` never guesses) and `test/composio-guide.test.js`.
+- Live, Claude and Codex, in a Slack test channel with a Composio identity: in Personal mode ask
+  "how can I write a script against my Composio connections?" — the answer describes the Workbench
+  and a project key from the same Composio account, never an organization project or user id.
+  Switch Settings → Composio to SDK, start a new thread, ask the same — the answer names the
+  requester's `slack:<team>:user:<id>` and the same-project key requirement, and shows the
+  `connectedAccounts.list` / `tools.execute` pattern. Pass: each mode's answer matches that mode
+  only, on both engines; no credential or session URL is printed.
+
 ## Google Chat Composio SDK identities (2026-11-22)
 
 Automated:

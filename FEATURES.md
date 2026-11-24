@@ -9246,6 +9246,25 @@ local fixtures are not claims of a production call.
   writes cannot restore them. Old organization settings are ignored and removed from settings.json
   at boot or the next save. Existing environment overrides no longer select a Toolbox endpoint.
 
+## Operating guide follows the Composio mode (2026-11-24)
+
+- The `gateway-usage` guide is materialized per run with **feature conditions**
+  (`src/gateway/guide.js` `applyGuideConditions`): a line ending in ` <!--if:NAME-->`, or a block
+  between a line `<!--if:NAME-->` and `<!--endif-->`, is kept only while NAME holds — `email`
+  (the email accounts switch), `composio-sdk`, `composio-personal`. Unknown names never hold. Admin
+  overrides keep the markers in the stored source and are filtered the same way.
+- `references/composio-scripts.md`, `references/administration.md` and SKILL.md's identity
+  section describe only the active Composio mode. **SDK mode:** each identity is a user id in the
+  organization's Composio project (`slack:<team>:user:<id>` / `…:channel:<id>`, Teams and Google
+  Chat equivalents); Workbench and meta tools act as it; a container script needs an API key for
+  the same project, proven by listing that user id's connected accounts, with a
+  `connectedAccounts.list` + `tools.execute` example. **Personal mode:** each identity is its
+  owner's own Composio account behind a consumer key the gateway keeps; Workbench is the normal
+  code path, and a local script needs a project API key from that same account, matched against
+  the identity's discovered aliases.
+- The per-run Composio identity line states the mode, and in SDK mode the exact user ids of the
+  identities this run received (`sdkUserIdsFor` in `run-integrations.js`; non-secret).
+
 ## Operating guide: Composio code paths and forms (2026-11-20)
 
 - `gateway-usage` → `references/composio-scripts.md` explains the two ways to run code with
