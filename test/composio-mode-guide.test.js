@@ -33,7 +33,9 @@ async function materialized(mode) {
 test("the materialized guide describes only the active Composio mode", async () => {
   const sdk = await materialized("sdk");
   assert.match(sdk, /runs Composio in SDK mode/);
-  assert.match(sdk, /connectedAccounts\.list\(\{ userIds: \[userId\]/);
+  assert.match(sdk, /Composio script relay \(no key\)/);
+  assert.match(sdk, /connectComposio\(\{ grant:/);
+  assert.match(sdk, /Admin-mode channel/);
   assert.match(sdk, /currently runs SDK mode/);
   assert.doesNotMatch(sdk, /runs Composio in Personal mode|<!--if:|<!--endif-->/);
   const personal = await materialized("personal");

@@ -127,15 +127,15 @@ test("guide separates Workbench code from container SDK scripts and keeps projec
   const scripts = await read("references/composio-scripts.md");
   assert.match(scripts, /## Code with connections: Workbench or this container/);
   // One block per Composio mode; the materialized guide keeps only the active one.
-  assert.match(scripts, /<!--if:composio-sdk-->[\s\S]*API key \*\*for the same Composio project\*\*[\s\S]*<!--endif-->/);
+  assert.match(scripts, /<!--if:composio-sdk-->[\s\S]*the Composio script relay \(no key\)[\s\S]*<!--endif-->/);
   assert.match(scripts, /<!--if:composio-personal-->[\s\S]*\*\*project API key from that account\*\*[\s\S]*<!--endif-->/);
-  assert.match(scripts, /Without such a key this path does not exist/);
+  assert.match(scripts, /Without\s+such a key the Workbench is the only code path/);
   assert.match(scripts, /deliberately gateway-side/);
   assert.match(scripts, /can act as ANY user id/);
   assert.match(scripts, /Do not recommend\s+sharing a project key with other channels or with organization scope/);
   assert.match(scripts, /Composio sees each request and\s+response either way/);
   const skill = await read("SKILL.md");
-  assert.match(skill, /container SDK script only with a matching project API key in the inventory/);
+  assert.match(skill, /in SDK mode through the gateway's Composio script relay \(no key/);
 });
 
 test("a requested form is a real ask_questions card, not Block Kit JSON or a Slack List", async () => {

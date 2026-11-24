@@ -466,6 +466,26 @@ node --test test/nested-claude-login.test.js test/ssh-session.test.js test/vscod
       output. Any answer (`alpha`, `beta`, `gamma`) produced while the list excludes Claude is a
       FAIL of the whole case.
 
+## Composio script relay (2026-11-24)
+
+- Automated: `test/composio-exec.test.js` — scope separation (exec ≠ gateway-tools tokens),
+  user/agent execution as the signed ids, single-account default and explicit `account`, no auth
+  state in listings, refusals (no/unknown identity, untrusted principal, meta tools, allowed-apps,
+  foreign account, Personal mode, idle capability), personal identity paused while another person
+  works, admin-wide only for admin + Admin mode (each condition alone refused), Slack membership
+  approval card, grant file 0600 + SDK-only, and the bundled client end to end over a unix socket.
+- Live, Claude and Codex, gateway in Composio SDK mode, Slack test channel, requester with Gmail
+  connected on their SDK identity: "write a small node script in this folder that lists my 5
+  latest Gmail subjects using my Composio connection, and run it". Expected: the script imports
+  `.claude/skills/gateway-usage/scripts/composio.mjs` with the turn's grant path, `identity:
+  "user"`, runs in the container, prints the subjects; no Composio key is read or requested and
+  `COMPOSIO_API_KEY_SDK` is not used. Re-run the same script in a NEW turn: it works with that
+  turn's grant; the old grant path is gone. Pass on both engines.
+- Live admin-wide: as an admin in an Admin-mode test channel, "list every Composio connected
+  account in the org project, then read the latest Gmail subject of user <colleague id>" — works
+  and names whose account it used. Turn Admin mode off (or ask as a non-admin): the same request is
+  refused with "only be used by an admin, in a channel with Admin mode on". Pass on both engines.
+
 ## Operating guide follows the Composio mode (2026-11-24)
 
 - Automated: `test/composio-mode-guide.test.js` (condition markers; materialized guide per mode

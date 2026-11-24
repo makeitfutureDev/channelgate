@@ -72,28 +72,42 @@ connected accounts. The MCP tools run in a tool-router session scoped to this th
   Workbench, `run_composio_tool(tool_slug, arguments, account=…)` calls the same connections.
   Nothing to install and no key in this container. The organization's allowed-apps and
   multi-account policy applies to the session.
-- **Local SDK script in this container:** needs an API key **for the same Composio project** as
-  the gateway's SDK key in this run's credential inventory (for example a hidden
-  `COMPOSIO_API_KEY_SDK` approved for `backend.composio.dev`). Before relying on it, prove it is
-  the same project: list the connected accounts of the identity's user id and check they match what
-  `COMPOSIO_SEARCH_TOOLS` reported. An empty list for an identity that has connections means a
-  different project; stop and say so. Then execute with that user id and the selected account:
+- **Script in this container — the Composio script relay (no key):** every turn with an SDK
+  identity gets a **grant file**; the prompt line "Composio script relay for THIS turn" names it.
+  The gateway daemon runs each call with the organization key, as exactly this run's identity, so
+  scripts, saved automations and their data stay in the work folder and no key ever enters the
+  container. Use the bundled dependency-free client
+  `.claude/skills/gateway-usage/scripts/composio.mjs` (same path under `.agents/skills/` for Codex):
 
   ```js
-  // npm install @composio/core   (in the work folder; not shipped in the image)
-  import { Composio } from "@composio/core";
-  const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY_SDK });
-  const userId = "slack:T…:user:U…"; // exact id from this run's identity line, for the selected identity
-  const { items } = await composio.connectedAccounts.list({ userIds: [userId], toolkitSlugs: ["gmail"] });
-  const result = await composio.tools.execute("GMAIL_FETCH_EMAILS", {
-    userId, connectedAccountId: items[0].id, arguments: { max_results: 10 },
-    version: "<toolkit version>", // or dangerouslySkipVersionCheck: true for a one-off
-  });
+  import { connectComposio } from "/abs/path/.claude/skills/gateway-usage/scripts/composio.mjs";
+  const composio = await connectComposio({ grant: "<grant file from this turn's prompt>" });
+  const { accounts } = await composio.accounts({ identity: "user", toolkit: "gmail" });
+  const r = await composio.execute({ identity: "user", tool: "GMAIL_FETCH_EMAILS",
+    arguments: { max_results: 10 }, account: accounts[0].id });   // account: needed when several
+  console.log(r.successful, r.data);
+  composio.close();
   ```
 
-  The Python SDK (`pip install composio`) has the same calls (`connected_accounts.list`,
-  `tools.execute`). Without such a key this path does not exist; the organization SDK key is
-  deliberately daemon-side, never ask for it.
+  or from the shell: `node <client> --grant <file> execute GMAIL_FETCH_EMAILS --identity user
+  --args '{"max_results":10}'` (`whoami`, `accounts`, `schema <TOOL>` too). `identity` is `"user"`
+  (the requester — `composio-user`) or `"agent"` (this conversation — `composio-agent`); pick it
+  with the same rules as the MCP tools. Discover the slug and its schema first
+  (`COMPOSIO_SEARCH_TOOLS` / `schema`); the relay runs app tools only, not `COMPOSIO_*` meta tools.
+  It enforces the organization's allowed apps, checks the account belongs to the identity, and
+  posts the same one-use approval card for a Slack join/invite/create. A personal identity pauses
+  while another person is working in this conversation. The grant stops working when the turn
+  ends: a saved script is re-run from a later turn with that turn's grant (pass the path in, never
+  hard-code it; never copy the grant anywhere else).
+- **Admin, in an Admin-mode channel:** the requester, when they are an organization admin and this
+  channel has Admin mode on, may also act as ANY user id in the organization project — pass
+  `userId` instead of `identity` (`whoami` reports `adminWide: true`; `users` lists the project's
+  connected accounts). Both conditions are re-checked by the daemon on every call. Use another
+  person's connections only when the admin explicitly asked for that person's account, say whose
+  account a result came from, and never make that the default.
+- **Your own Composio project key (not needed):** a project API key in the run's credential
+  inventory can also drive `@composio/core` directly, but it can act as ANY user in its project
+  for anyone who can talk in that channel. Prefer the relay; do not recommend adding such a key.
 <!--endif-->
 <!--if:composio-personal-->
 **This gateway runs Composio in Personal mode.** Each identity is its owner's **own Composio

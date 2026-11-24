@@ -42,7 +42,14 @@ function validRemoteMcps(claims) {
     claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
 }
 
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, admissionThreadKey, settingsThreadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+// `scope` names the ONE socket service family a token opens. "gateway-tools" (the default) is the
+// run's control-plane grant; "composio-exec" is the narrow grant a container SCRIPT holds for the
+// Composio script relay (src/mcp/composio-exec.js) — it opens nothing else, and a gateway-tools
+// token does not open the relay. Verification requires the exact scope the caller asks for.
+export const CAPABILITY_SCOPES = Object.freeze(["gateway-tools", "composio-exec"]);
+
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, admissionThreadKey, settingsThreadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, scope = "gateway-tools", now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+  if (!CAPABILITY_SCOPES.includes(scope)) throw new Error("Invalid gateway capability scope");
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -68,7 +75,7 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     progressReport: progressReport === true,
     composioSessions,
     ...(remoteMcps !== undefined ? { remoteMcps } : {}),
-    scope: "gateway-tools",
+    scope,
     iat: now,
     exp: now + ttl,
     jti: jti || randomUUID(),
@@ -87,6 +94,8 @@ function validComposioGrants(claims) {
   return Array.isArray(claims.composioSessions) && claims.composioSessions.length <= 2 &&
     claims.composioSessions.every((grant) => grant && typeof grant.url === "string" &&
       grant.url.length <= 2048 && ["user", "channel"].includes(grant.kind) &&
+      // The Composio user id the session acts as (optional; read by the script relay).
+      (grant.id === undefined || (typeof grant.id === "string" && grant.id.length > 0 && grant.id.length <= 400)) &&
       (grant.kind !== "user" || claims.principalTrusted === true));
 }
 
@@ -98,7 +107,7 @@ function validQuestionRouting(claims) {
     (claims.sudoSchedule === undefined || typeof claims.sudoSchedule === "boolean");
 }
 
-export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}) {
+export function verifyGatewayCapability(token, { secret, now = Date.now(), scope = "gateway-tools" } = {}) {
   if (!token || !secret) return { ok: false, reason: "missing capability or signing secret" };
   const [payload, signature, extra] = String(token).split(".");
   if (!payload || !signature || extra !== undefined) return { ok: false, reason: "malformed capability" };
@@ -113,7 +122,7 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   } catch {
     return { ok: false, reason: "invalid capability payload" };
   }
-  if (claims?.v !== VERSION || claims.aud !== "channelgate-mcp" || claims.scope !== "gateway-tools") {
+  if (claims?.v !== VERSION || claims.aud !== "channelgate-mcp" || claims.scope !== scope) {
     return { ok: false, reason: "unsupported capability" };
   }
   if (!claims.channelId || !claims.slug || !claims.authorId || !claims.threadKey || !ORIGINS.has(claims.origin) || typeof claims.principalTrusted !== "boolean") {

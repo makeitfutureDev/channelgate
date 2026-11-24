@@ -182,8 +182,8 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
   });
   const composioUserToken = composio.user.token;
   const composioToken = composio.shared.token;
-  const composioUserEndpoint = composio.user.endpoint;
-  const composioEndpoint = composio.shared.endpoint;
+  let composioUserEndpoint = composio.user.endpoint;
+  let composioEndpoint = composio.shared.endpoint;
   // The per-run half of the identity rule (CO-04: "check the calendar" with both identities present
   // read the SHARED one and posted a colleague's week into the channel, where the other harness
   // asked first). The managed instructions block carries the rule; this one line carries the fact
@@ -198,6 +198,11 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     composioEndpoint,
     composioToken,
   });
+  // SDK mode: each session endpoint carries the Composio user id it acts as, so the capability can
+  // sign it for the script relay (src/mcp/composio-exec.js) and the identity line can name it.
+  const sdkUserIds = sdkUserIdsFor({ composio, identities, workspaceId: effectiveWorkspaceId, userSubjectId, channelId });
+  if (sdkUserIds.user) composioUserEndpoint = { ...composioUserEndpoint, identityId: sdkUserIds.user };
+  if (sdkUserIds.agent) composioEndpoint = { ...composioEndpoint, identityId: sdkUserIds.agent };
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
     makeToolboxKey: meta.makeToolboxKey,
@@ -219,6 +224,6 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     userIdentity, composio, identities,
     composioUserToken, composioToken, composioUserEndpoint, composioEndpoint,
     makeToolboxUrl, makeToolboxKey, customMcps, emailSecrets,
-    composioIdentityPrefix: composioIdentityPreamble({ ...identities, mode: composio.mode, sdkUserIds: sdkUserIdsFor({ composio, identities, workspaceId: effectiveWorkspaceId, userSubjectId, channelId }) }),
+    composioIdentityPrefix: composioIdentityPreamble({ ...identities, mode: composio.mode, sdkUserIds }),
   };
 }
