@@ -5,9 +5,15 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 
-import { footerButtons, referencedWorkspaceFiles, reviewFileButtons } from "../src/slack/footer.js";
-import { FILES_ACTION_PATTERN } from "../src/slack/file-explorer.js";
-import { SECRETS_ACTION_ID } from "../src/slack/secret-explorer.js";
+import { ensureTestEnv } from "./helpers.js";
+
+// The footer reads thread state (the sudo posture) from the database, so the scratch runtime has
+// to be pinned before anything that can open it is imported.
+ensureTestEnv();
+
+const { footerButtons, referencedWorkspaceFiles, reviewFileButtons } = await import("../src/slack/footer.js");
+const { FILES_ACTION_PATTERN } = await import("../src/slack/file-explorer.js");
+const { SECRETS_ACTION_ID } = await import("../src/slack/secret-explorer.js");
 
 // The 📄 buttons only exist for inline-code paths that resolve to a real file inside the run cwd.
 // An agent in a gated channel folder writes folder-relative paths (and pasting the host's home
