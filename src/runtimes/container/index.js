@@ -21,6 +21,7 @@ import { egressPlanFor } from "./egress-hook.js";
 import { adapterFor } from "../../engines/registry.js";
 import { channelHistoryRoot } from "./history.js";
 import { CONTAINER_DEFAULT_PIDS_LIMIT } from "./pids-pressure.js";
+import { createServiceUnitInspector } from "./service-unit.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
 export { containerFingerprint } from "./lifecycle.js";
@@ -33,6 +34,19 @@ const log = (message) => logFn(message);
 
 let context = null;
 let bootSettings = null;
+// Whether a stop of the daemon's own systemd unit takes the containers with it (service-unit.js).
+let serviceUnit = createServiceUnitInspector();
+async function serviceUnitFacts(caps, containers = []) {
+  try {
+    const facts = await serviceUnit.inspect({
+      cgroupManager: caps?.cgroupManager || "",
+      containerPids: containers.filter((entry) => entry.status === "running").map((entry) => entry.pid),
+    });
+    return { unit: facts.unit, scope: facts.scope, killMode: facts.killMode, killsContainers: facts.killsContainers, advice: facts.advice };
+  } catch {
+    return { unit: "", scope: "", killMode: "", killsContainers: false, advice: "" };
+  }
+}
 
 function buildContext({ exec = undefined, now = undefined, pollMs = undefined, sweepMs = undefined } = {}) {
   const holder = {};
@@ -61,6 +75,7 @@ function runtime() {
 // the daemon.
 export function __setContainerRuntime(options = {}) {
   if (options.log) logFn = options.log;
+  if (options.serviceUnit) serviceUnit = options.serviceUnit;
   context = buildContext(options);
   return context;
 }
@@ -71,6 +86,7 @@ export function __resetContainerRuntime() {
   context = null;
   bootSettings = null;
   logFn = (message) => console.log(message);
+  serviceUnit = createServiceUnitInspector();
 }
 
 export const containerBackend = Object.freeze({
@@ -319,7 +335,7 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
   if (logger) logFn = logger;
   bootSettings = settings || null;
   const r = runtime();
-  const status = { cli: null, image: null, reconciled: null };
+  const status = { cli: null, image: null, reconciled: null, service: null };
   try {
     status.cli = await r.cli.probe(settings || {}, { image: settings?.image, force: true });
   } catch (error) {
@@ -349,6 +365,10 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
     log(`[container] boot reconcile failed: ${error?.message || error}`);
     status.reconciled = { ok: false, reason: String(error?.message || error) };
   }
+  // Said once per boot, where an operator reads why containers keep being recreated: the daemon
+  // cannot change its own unit, so it names the host command that does.
+  status.service = await serviceUnitFacts(status.cli, (status.reconciled?.containers || []).filter((entry) => !status.reconciled?.dead?.includes(entry.name)));
+  if (status.service.advice) log(`[container] WARNING: ${status.service.advice}`);
   r.reaper.startTimer();
   return status;
 }
@@ -447,6 +467,7 @@ export async function containerRuntimeStatus(settings = bootSettings) {
     }));
     out.running = out.containers.filter((entry) => entry.state === "running").length;
     out.awaitingImage = out.containers.filter((entry) => entry.awaitingImage).length;
+    out.service = await serviceUnitFacts(caps, listed);
   } catch (error) {
     out.cli.reason = out.cli.reason || String(error?.message || error);
   }

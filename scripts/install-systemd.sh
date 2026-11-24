@@ -185,9 +185,12 @@ EnvironmentFile=-$ENV_FILE
 ExecStart=$NODE_BIN $APP_DIR/src/start.js
 Restart=on-failure
 RestartSec=5
-# SIGTERM only the daemon: it drains, marks the shutdown and sweeps its own engine children
-# (host process groups, container run groups). Unknown interrupted executions are not replayed.
-KillMode=mixed
+# Signal ONLY the daemon, like every container manager's unit (docker, containerd): it drains,
+# marks the shutdown and sweeps its own engine children (host process groups, container run
+# groups). With cgroupfs the channel containers live in this unit's control group, so
+# control-group and mixed would SIGKILL them — conmon included — on every stop and restart while
+# Podman still lists them as running. Existing installs: scripts/repair-service-unit.sh.
+KillMode=process
 UMask=0077
 # Podman's newuidmap/newgidmap helpers need their setuid transition. Each channel container
 # still independently applies no-new-privileges to all engine processes.
@@ -210,5 +213,6 @@ systemctl daemon-reload
 systemctl enable "$UNIT_NAME"
 if [ "$START_SERVICE" -eq 1 ]; then systemctl start "$UNIT_NAME"; fi
 echo "Existing deployments: configuration changes do not recreate old containers or reset a stale pause namespace."
+echo "Channel containers keep running across a stop or restart of $UNIT_NAME; scripts/uninstall-systemd.sh stops them."
 echo "See docs/OPERATIONS.md (Rootless Podman system-service upgrades) for the idle maintenance procedure."
 echo "✅ Installed $UNIT_NAME as $SERVICE_USER (runtime $SERVICE_HOME)"

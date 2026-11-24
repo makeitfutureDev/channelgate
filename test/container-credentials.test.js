@@ -388,7 +388,8 @@ test("boot and health: an unusable CLI is legible, a usable one lists our contai
     const logs = [];
     const status = await bootContainerRuntime({ settings: BASE, log: (m) => logs.push(m) });
     assert.equal(status.cli.ok, false);
-    assert.deepEqual(Object.keys(status), ["cli", "image", "reconciled"], "boot status is the CLI, the image and the reconcile — there is no on/off switch");
+    assert.deepEqual(Object.keys(status), ["cli", "image", "reconciled", "service"], "boot status is the CLI, the image, the reconcile and the service-unit facts — there is no on/off switch");
+    assert.equal(status.service, null, "without a usable CLI there are no containers for a unit stop to end");
     assert.ok(logs.some((m) => /no usable container CLI/.test(m)));
     const health = await containerRuntimeStatus(BASE);
     assert.equal(health.cli.ok, false);

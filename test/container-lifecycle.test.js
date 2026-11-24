@@ -675,6 +675,44 @@ test("boot reconcile: running containers of THIS install are swept for run/warm 
   assert.equal(reaper.snapshot().find((e) => e.name === "cg-a").running, true);
 });
 
+test("boot reconcile: a container listed as running or stopping whose process is gone is removed, not registered idle", async () => {
+  // What a control-group kill of the daemon's unit leaves behind: Podman's record still says
+  // running (conmon died with it, so no exit was written) while the init pid no longer exists.
+  // Registering that corpse idle only had the reaper `stop` it into a permanent "stopping".
+  const ids = ["aaa", "bbb", "ccc", "ddd"];
+  const byId = {
+    aaa: inspectLine({ name: "cg-live", status: "running", install: currentInstallId(), channel: "a", pid: 4001 }),
+    bbb: inspectLine({ name: "cg-dead", status: "running", install: currentInstallId(), channel: "b", pid: 4002 }),
+    ccc: inspectLine({ name: "cg-dead-stopping", status: "stopping", install: currentInstallId(), channel: "c", pid: 4003 }),
+    // No pid reported (an older CLI, a fixture): never judged dead.
+    ddd: inspectLine({ name: "cg-unknown", status: "running", install: currentInstallId(), channel: "d" }),
+  };
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "ps", result: { code: 0, stdout: `${ids.join("\n")}\n` } },
+      { match: (a) => a[1] === "inspect" && a.length > 5, result: (a) => ({ code: 0, stdout: a.slice(5).map((id) => byId[id]).filter(Boolean).join("\n") }) },
+      { match: (a) => a[1] === "exec" && a.includes("cg-sweep"), result: { code: 0, stdout: "" } },
+    ],
+  });
+  const logs = [];
+  const cli = createContainerCli({ exec: fake.exec });
+  const reaper = createContainerReaper({ log: (m) => logs.push(m) });
+  const lifecycle = createContainerLifecycle({
+    cli, image: createContainerImage({ cli }), reaper, log: (m) => logs.push(m),
+    pidAlive: (pid) => pid === 4001,
+  });
+  const result = await lifecycle.bootReconcile(SETTINGS);
+  assert.deepEqual(result.dead, ["cg-dead", "cg-dead-stopping"]);
+  assert.deepEqual(result.running, ["cg-live", "cg-unknown"]);
+  const removed = fake.find("rm").map((argv) => argv[argv.length - 1]);
+  assert.deepEqual(removed, ["cg-dead", "cg-dead-stopping"], "only the dead ones are removed");
+  assert.ok(fake.find("rm").every((argv) => !argv.includes("-v") && !argv.includes("--volumes")), "the HOME volume outlives the container");
+  assert.deepEqual(fake.find("exec").filter((argv) => argv.includes("cg-sweep")).map((argv) => argv[2]), ["cg-live", "cg-unknown"], "a dead container is never exec'd into");
+  assert.deepEqual(reaper.snapshot().map((entry) => entry.name).sort(), ["cg-live", "cg-unknown"]);
+  assert.ok(logs.some((m) => /2 container\(s\) were listed as running with their processes gone \(cg-dead, cg-dead-stopping\)/.test(m)));
+});
+
 test("parsers: podman and docker inspect shapes, and the gone-error matcher", () => {
   assert.equal(parseStartedAt("2026-09-02 01:51:32.1391321 +0300 EEST").slice(0, 4), "2026");
   assert.equal(parseStartedAt("2026-09-02T01:51:32.139Z"), "2026-09-02T01:51:32.139Z");

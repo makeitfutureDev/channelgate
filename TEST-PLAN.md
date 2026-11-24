@@ -2077,6 +2077,47 @@ can still name it, resolves to the normal default instead of ending a turn or re
   "is not running" error, the journal logs "listed as running but its process … is gone —
   removing and recreating it", and no manual `podman rm` was needed.
 
+## Containers survive a system-service restart (2026-11-24)
+
+- Automated: `test/container-service-unit.test.js` — cgroup path and unit parsing; a system unit
+  whose containers share its cgroup under `mixed`/`control-group` yields the advice with the
+  repair command, `process`/`none` and containers in their own scopes yield none; a running
+  container's real cgroup outranks the probe's cgroup manager; every unknown (no systemd, no
+  unit, silent `systemctl`) is no advice; the KillMode read is cached for a minute; boot logs the
+  advice once and `containerRuntimeStatus` carries it; `scripts/repair-service-unit.sh` run
+  against a scratch unit directory with a stub `systemctl` (rewrite in place, one
+  `daemon-reload`, no restart, idempotent, adds a missing line, repairs the pre-rename unit,
+  fails on no unit / no `[Service]` / an overriding drop-in). `test/container-lifecycle.test.js`
+  — "boot reconcile: a container listed as running or stopping whose process is gone is removed,
+  not registered idle". `test/operations-readiness.test.js` — the installer writes
+  `KillMode=process`; the uninstaller stops labelled containers before removing a system unit.
+- Live (engine-independent — systemd and the container lifecycle act before any engine), on a
+  system-unit install with rootless Podman and `cgroupfs`:
+  1. *Unrepaired unit:* with `KillMode=mixed` in the unit, restart the service. Pass: the boot
+     journal has `[container] WARNING: Every stop or restart of channelgate.service also ends
+     this gateway's channel containers …`, `curl -s localhost:<port>/api/health` shows
+     `containerRuntime.service.killsContainers: true`, and Settings → Container runtime prints
+     the same sentence.
+  2. *Repair:* `sudo bash scripts/repair-service-unit.sh`. Pass: it reports `KillMode=process
+     written`, `systemctl show channelgate -p KillMode` reads `process`, the service's `MainPID`
+     and `ActiveEnterTimestamp` are unchanged, and within a minute the health field reads
+     `killsContainers: false` with an empty `advice`.
+  3. *Restart keeps containers:* send a DM message so its container is up and note
+     `podman inspect --format '{{.State.Pid}}' <name>` (as the service account). `systemctl
+     restart channelgate`. Pass: the same pid is still alive, the journal has no `Killing process
+     … (conmon)` line for the stop, boot logs `boot reconcile: N running container(s) swept and
+     registered idle`, and the next DM message is answered from the same container (same pid) with
+     no "is not running" / "is stopping" error.
+  4. *Uninstall stops them:* on a disposable install, `sudo bash scripts/uninstall-systemd.sh
+     --system` with a container up. Pass: it prints `Stopped 1 channel container(s)`, `podman ps`
+     is empty, and `podman volume ls` still lists the channel's HOME volume.
+- Live evidence, 2026-11-24, on a customer system-service install (Podman 4.9.3, cgroupfs): unit
+  repaired by hand to `KillMode=process` with `daemon-reload` and no restart; the next update's
+  restart left both running containers on their original init pids, the journal showed
+  `Found left-over process … (conmon) in control group while starting unit. Ignoring.` instead
+  of `Killing process`, boot logged `2 running container(s) swept and registered idle`, and a
+  turn ran in one of them two seconds later.
+
 ## Container process limit (2026-11-19)
 
 - [x] `test/container-process-limit.test.js` (always runs): the host-side reader returns the

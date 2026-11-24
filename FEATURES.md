@@ -1534,6 +1534,26 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
   ran `podman rm` by hand. `ensureUp` now checks the container's host init pid: a container
   listed "running" or "stopping" whose process is gone is removed and created again (HOME volume
   kept); one genuinely mid-stop (process alive) is still refused.
+- **A gateway restart no longer ends the channel containers on a system-service install.** The
+  cause of the above was the unit itself: with Podman's `cgroupfs` manager the containers live in
+  the unit's own control group, and the installer's `KillMode=mixed` had systemd SIGKILL all of
+  them — and the `conmon` that records an exit — on every stop, restart and update. The installer
+  now writes `KillMode=process` (systemd signals only the daemon, which sweeps its own engine
+  children), so containers and the work inside them survive a restart and boot adopts them.
+  - *Existing installs:* `sudo bash scripts/repair-service-unit.sh` (`npm run service:repair`)
+    rewrites only that line of the installed system unit, reloads systemd and restarts nothing;
+    it is idempotent and fails when a drop-in still overrides the value. An update cannot do it —
+    the updater is the service account.
+  - *Until then the daemon says so* (`src/runtimes/container/service-unit.js`): from its own
+    cgroup, the running containers' cgroups (or the probe's cgroup manager when none runs) and
+    `systemctl show`, it reports `containerRuntime.service` = `{ unit, scope, killMode,
+    killsContainers, advice }` on `/api/health`, logs the advice once at boot and prints it in
+    the Settings → Container runtime status line. Anything unknown is no advice.
+  - *Boot cleans up after an unsafe stop:* a container listed running or stopping whose init
+    process is gone is removed during boot reconcile instead of being registered idle (which had
+    the idle reaper `stop` the corpse into a permanent "stopping").
+  - *Stopping the service leaves containers up*; `scripts/uninstall-systemd.sh` stops them (by
+    the `cg.install` label, as the unit's account) before removing a system unit.
 - **A background job recovered after a daemon restart is leased again.** "Is anyone else inside?"
   is asked of leases, and the recovered job's lease died with the old daemon; without one, a
   rebuild or a reclaim would have seen an empty container and ended the job.

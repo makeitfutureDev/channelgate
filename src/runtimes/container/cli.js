@@ -164,7 +164,7 @@ export function createContainerCli({ exec = defaultExec, now = () => Date.now(),
   function unavailable(reason) {
     return Object.freeze({
       bin: "", kind: "", rootless: false, uidStrategy: "user", supportsInit: false,
-      supportsEnvFile: false, cgroupLimits: false, volumeRoot: "", version: "", ok: false, reason,
+      supportsEnvFile: false, cgroupLimits: false, cgroupManager: "", volumeRoot: "", version: "", ok: false, reason,
     });
   }
 
@@ -204,6 +204,10 @@ export function createContainerCli({ exec = defaultExec, now = () => Date.now(),
         supportsInit: /(^|\s)--init(\s|$|\[)/m.test(runHelp),
         supportsEnvFile: /--env-file/m.test(execHelp),
         cgroupLimits: false,
+        // Where a container's processes land: "cgroupfs" keeps them in the CALLER's cgroup (the
+        // daemon's own unit under a system service — service-unit.js), "systemd" gives each its scope.
+        // Podman only: a docker daemon's containers never live under the caller, whatever its driver.
+        cgroupManager: kind === "podman" ? String(parsed?.host?.cgroupManager || "").toLowerCase() : "",
         volumeRoot: detectVolumeRoot(kind, parsed),
         version,
         ok: true,

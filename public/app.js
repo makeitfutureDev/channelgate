@@ -4941,6 +4941,7 @@ function paintContainerRuntimeHealth(state) {
     if (state.awaitingImage) bits.push(`${state.awaitingImage} container(s) awaiting the built image; adopted on the next idle start.`);
   }
   if (state.socket && state.socket.listening === false) bits.push("The gateway control socket is not listening — container runs would have no gateway tools.");
+  if (state.service?.advice) bits.push(state.service.advice);
   el.textContent = bits.join(" ");
 }
 
