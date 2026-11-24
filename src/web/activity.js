@@ -33,7 +33,7 @@ import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from
 import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
-import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation, automationBoard, updateAutomation, runAutomationNow } from "../gateway/automations-view.js";
+import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation, automationBoard, updateAutomation, runAutomationNow, acknowledgeAutomation } from "../gateway/automations-view.js";
 import { PERSONAL_SKILLS_ID, channelSkillsView, personalSkillsView, saveSkillSelection, skillChannels } from "../gateway/skills-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { apiTokenChannels, apiTokenChannelView, createDashboardApiToken, revokeDashboardApiToken } from "../gateway/api-tokens-view.js";
@@ -644,6 +644,7 @@ export function createActivityRouter({
   for (const [action, handler] of [
     ["update", (access, ownerId, entry, id, req) => updateAutomation(access, ownerId, entry, id, req.body || {}).then((schedule) => ({ ok: true, enabled: schedule.enabled !== false }))],
     ["run", (access, ownerId, entry, id) => runAutomationNow(access, ownerId, entry, id)],
+    ["acknowledge", (access, ownerId, entry, id, req) => acknowledgeAutomation(access, ownerId, entry, id, req.body || {})],
   ]) {
     router.post(`/:id/api/automations/:channelId/:scheduleId/${action}`, async (req, res) => {
       try {

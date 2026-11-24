@@ -42,6 +42,23 @@ Claude and Codex (each engine as the channel's harness):
    returns to Healthy.
 9. Thread loop (`/loop` in a thread): its card has no Run now (thread loops pace themselves).
 
+Acknowledge errors (engine-independent: the acknowledgement never starts a turn; regression
+"an acknowledged error stops counting…" and "acknowledging: one run, all errors, undo…"):
+10. With A failing twice (step 8, prompt left broken), open A's Runs tab and click Acknowledge on
+    the OLDER failed run. Pass: that row shows "Acknowledged · Undo", its strip square is dimmed,
+    A stays Failing (the newest failure is still open). Click Acknowledge on the newest. Pass: A is
+    Healthy, Overview shows "Error acknowledged — … by <you> …" with Undo; 7-day success still
+    counts both failures. Undo → A is Failing again.
+11. Overview → "Already handled?" → Acknowledge all 2 errors. Pass: Healthy; the board's Needs
+    attention no longer lists A. Then Run now with the still-broken prompt. Pass: A is Failing
+    again (a new failure re-opens).
+12. Make A and C fail, then on the board click "Acknowledge all (2)" and confirm. Pass: both go
+    Healthy; "Nothing needs you right now".
+13. As a non-admin on B (created by someone else). Pass: no Acknowledge button on its card,
+    Overview or Runs; `POST …/acknowledge` answers 403. In the admin console the same action works
+    on B, and B's undeliverable verdict (step 1) acknowledged there stays acknowledged until the
+    scheduler records a new status.
+
 ## Unattended work: visible, hidden, or only on failure (2026-11-24)
 
 Automated: `node --test test/run-visibility.test.js test/api-run-outcomes.test.js test/automation-health.test.js`

@@ -133,6 +133,75 @@ test("only the creator, an admin or the DM owner may edit or run; members never 
   await assert.rejects(view.updateAutomation(access, "U_ANA", entry, "api:org-key", {}), { status: 400 });
 });
 
+test("an acknowledged error stops counting: the automation goes back to healthy, the history stays", () => {
+  const failed = run({ status: "failed", error: "boom" });
+  const older = run({ status: "failed", error: "boom" });
+  const broken = health.automationHealth({ enabled: true }, [failed, older, run({})]);
+  assert.equal(broken.health, "broken"); assert.equal(broken.openErrors, 2);
+
+  const acked = { ...failed, acknowledgedAt: new Date().toISOString(), acknowledgedByName: "Ana Pop" };
+  const one = health.automationHealth({ enabled: true }, [acked, older, run({})]);
+  assert.equal(one.health, "healthy"); assert.equal(one.problem, null); assert.equal(one.openErrors, 1);
+  assert.deepEqual([one.acknowledgement.byName, one.acknowledgement.label, one.acknowledgement.runId], ["Ana Pop", "Run failed", failed.id]);
+  assert.equal(one.stats.failed, 2); // the honest window stats keep the failures
+  assert.equal(one.strip.at(-1).ack, true); assert.equal(one.strip.at(0).ack, false); // oldest → newest
+  assert.equal(health.runProblem(acked), "failed"); assert.equal(health.openProblem(acked), null);
+
+  // A new failure after the acknowledgement opens a fresh problem.
+  assert.equal(health.automationHealth({ enabled: true }, [run({ status: "failed" }), acked]).health, "degraded");
+
+  // Acknowledged failures no longer make an automation flaky.
+  const ack = (r) => ({ ...r, acknowledgedAt: new Date().toISOString() });
+  const mixed = [run({}), ack(run({ status: "failed" })), run({}), ack(run({ status: "failed" })), run({})];
+  assert.equal(health.automationHealth({ enabled: true }, mixed).health, "healthy");
+
+  // Schedule-level verdicts stay acknowledged until the scheduler writes a different status.
+  const gone = { enabled: true, executionState: "undeliverable", lastStatus: "undeliverable: not_in_channel", acknowledgedStatus: "undeliverable: not_in_channel" };
+  assert.equal(health.automationHealth(gone, [run({})]).health, "healthy");
+  assert.equal(health.automationHealth({ ...gone, lastStatus: "undeliverable: channel_not_found" }, [run({})]).problem.key, "undeliverable");
+  const interrupted = { enabled: false, executionState: "interrupted", lastStatus: "interrupted: x", acknowledgedStatus: "interrupted: x" };
+  assert.equal(health.automationHealth(interrupted, [ack(run({ status: "interrupted" }))]).health, "paused");
+});
+
+test("acknowledging: one run, all errors, undo; only the creator, an admin or the DM owner", async () => {
+  const { mine, theirs } = await fixtureConversations();
+  const access = { user: { isAdmin: false }, allows: async () => true };
+  const entry = await view.checkedChannel(access, "U_ANA", "CBOARD1");
+  const board = async () => (await view.automationBoard(access, "U_ANA", {})).automations;
+  const item = async (id) => (await board()).find((a) => a.id === id);
+  assert.equal((await item(mine.id)).canAcknowledge, true);
+  assert.equal((await item(theirs.id)).canAcknowledge, false);
+  await assert.rejects(view.acknowledgeAutomation(access, "U_ANA", entry, theirs.id, {}), { status: 403, userFacing: true });
+
+  const [newest, older] = runs.listScheduleRuns({ scheduleId: mine.id });
+  await assert.rejects(view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, { runId: "nope" }), { status: 404 });
+  await assert.rejects(view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, { undo: true }), { status: 400 });
+  const one = await view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, { runId: newest.id });
+  assert.equal(one.acknowledged, 1);
+  let digest = await item(mine.id);
+  assert.equal(digest.health, "healthy"); assert.equal(digest.openErrors, 1); assert.equal(digest.acknowledgement.byName, "Ana Pop");
+  const listed = view.automationRuns(access, entry, mine.id, "U_ANA");
+  assert.equal(listed[0].acknowledgedByName, "Ana Pop"); assert.equal(listed[0].problem, "credential"); assert.equal(listed[1].acknowledgedAt, null);
+  assert.equal(runs.getScheduleRun(newest.id).status, "failed"); // the outcome is never rewritten
+
+  await view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, { runId: newest.id, undo: true });
+  assert.equal((await item(mine.id)).health, "broken");
+
+  const all = await view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, {});
+  assert.equal(all.acknowledged, 2);
+  digest = await item(mine.id);
+  assert.equal(digest.health, "healthy"); assert.equal(digest.openErrors, 0);
+  assert.ok(runs.getScheduleRun(older.id).acknowledgedAt);
+  await assert.rejects(view.acknowledgeAutomation(access, "U_ANA", entry, mine.id, { runId: (await runs.createScheduleRun(mine)).id }), { status: 400 }); // nothing to acknowledge on a live run
+
+  // An admin acknowledges the schedule-level "undeliverable" verdict; a new status re-opens it.
+  const admin = { user: { isAdmin: true }, allows: async () => true };
+  await view.acknowledgeAutomation(admin, "U_TIB", entry, theirs.id, {});
+  assert.equal((await item(theirs.id)).health, "healthy");
+  schedules.updateSchedule(theirs.id, { lastStatus: "undeliverable: channel_not_found" });
+  assert.equal((await item(theirs.id)).problem.key, "undeliverable");
+});
+
 let posts, timer;
 beforeEach(() => {
   scheduler.resetSchedulerState();
@@ -182,6 +251,13 @@ test("admin console routes: board, edit, validation errors, unknown automation",
     assert.equal(bad.status, 400); assert.match((await bad.json()).error, /invalid delivery/);
     assert.equal((await fetch(`${base}/automation-board/${target.channelId}/nope/runs`)).status, 200); // unknown id: empty history, not an error
     assert.equal((await fetch(`${base}/automation-board/CNOPE/x/run`, { method: "POST" })).status, 404);
+    const digest = board.automations.find((a) => a.title === "Weekly Make error digest");
+    const ack = await fetch(`${base}/automation-board/${digest.channelId}/${digest.id}/acknowledge`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(ack.status, 200); assert.equal((await ack.json()).acknowledged, 2);
+    const after = await (await fetch(`${base}/automation-board/board?days=30`)).json();
+    assert.equal(after.automations.find((a) => a.id === digest.id).health, "healthy");
+    const badRun = await fetch(`${base}/automation-board/${digest.channelId}/${digest.id}/acknowledge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ runId: 7 }) });
+    assert.equal(badRun.status, 400);
   } finally { server.close(); }
 });
 

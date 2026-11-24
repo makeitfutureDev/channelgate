@@ -46,9 +46,25 @@ included".
   (400), while the automation is running or still delivering (409), at the fan-out ceiling (429) and
   with no connected chat platform (503). The confirmation says it costs a run and can repeat
   external actions.
-- Routes: Activity `GET /:id/api/automations/board`, `POST …/:channelId/:scheduleId/update|run`
+- **Acknowledge errors** (`acknowledgeAutomation`, `src/gateway/automations-view.js`): after fixing
+  the cause or turning an automation back on, a person marks its errors as handled and it shows
+  Healthy again. Three levels: one run (Runs tab → Acknowledge, with Undo), every open error of
+  one automation (Overview → "Already handled?" → Acknowledge error / Acknowledge all N errors, the
+  card's Acknowledge button, the ⋯ menu), and every automation in the current list (toolbar
+  "Acknowledge all (N)", confirmed). The run's outcome is never rewritten: the run keeps its
+  status, the window's success % and failure counts stay honest, the strip shows the acknowledged
+  square dimmed, and the run records `acknowledgedAt` / `acknowledgedBy` / `acknowledgedByName`.
+  The verdict ignores acknowledged runs (no open problem, no streak, not counted as "fails now and
+  then"); a NEW failing run opens a fresh problem. Schedule-level verdicts (undeliverable,
+  interrupted) are acknowledged by storing the current `lastStatus` as `acknowledgedStatus` on the
+  schedule, so they re-open as soon as the scheduler writes a different status. The Overview then
+  says who acknowledged which error and when, with Undo. Same rights as editing (creator, admin, DM
+  owner); API runs cannot be acknowledged. Audit events `schedule_errors_acknowledged` /
+  `schedule_error_unacknowledged`.
+- Routes: Activity `GET /:id/api/automations/board`, `POST …/:channelId/:scheduleId/update|run|acknowledge`
   (CSRF-checked, re-authorized per request, validation errors shown, access errors not); console
-  `GET /api/automation-board/board`, `GET …/:channelId/:scheduleId/runs`, `POST …/update|run|delete`.
+  `GET /api/automation-board/board`, `GET …/:channelId/:scheduleId/runs`, `POST …/update|run|acknowledge|delete`.
+  `acknowledge` takes `{}` (all open errors), `{ runId }` (one run) or `{ runId, undo: true }`.
 
 Not possible yet: "Retry delivery" of a saved answer after a PERMANENT delivery failure — the
 gateway discards it when the conversation can never accept it, so the fix is re-invite, then Run now.

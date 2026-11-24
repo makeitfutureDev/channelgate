@@ -4,8 +4,9 @@
 // on every request; a schedule row is always looked up INSIDE the checked channel.
 import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../config/store.js";
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
-import { listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince } from "./schedule-runs.js";
-import { automationHealth, fixSteps } from "./automation-health.js";
+import { listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged } from "./schedule-runs.js";
+import { automationHealth, fixSteps, openProblem, runProblem } from "./automation-health.js";
+import { logEvent } from "../util/logger.js";
 import { buildSchedulePatch } from "../config/schedule-patch.js";
 import { costHistoryStart } from "../ee/cost-history.js";
 import { scheduleNextRun } from "../mcp/tools/schedules.js";
@@ -110,7 +111,11 @@ export const FAILED_RUN_STATUSES = new Set(["failed", "blocked", "interrupted"])
 // Enabled automations whose LAST run failed (a paused one is not asking for attention).
 function failingCount(schedules, channelId) {
   const historyStart = costHistoryStart();
-  return schedules.filter((s) => s.enabled !== false && FAILED_RUN_STATUSES.has(scheduleRunSummary(s.id, channelId, historyStart).lastStatus)).length;
+  return schedules.filter((s) => {
+    if (s.enabled === false) return false;
+    const summary = scheduleRunSummary(s.id, channelId, historyStart);
+    return FAILED_RUN_STATUSES.has(summary.lastStatus) && !summary.lastAcknowledged;
+  }).length;
 }
 
 const visible = (s, access) => !s.sudo || access.user?.isAdmin === true;
@@ -161,13 +166,14 @@ function postingWords(s) {
 }
 
 const RUN_FIELDS = ["id", "status", "startedAt", "completedAt", "durationMs", "summary", "error", "engine", "model", "costUsd", "deliveryStatus", "taskStatus",
-  "errorKind", "deliveryAttempts", "tokensIn", "tokensOut", "toolUseCount", "trigger", "scheduledAt", "engineStatus", "outcomeSource", "connections", "events", "eventsDropped"];
+  "errorKind", "deliveryAttempts", "tokensIn", "tokensOut", "toolUseCount", "trigger", "scheduledAt", "engineStatus", "outcomeSource", "connections", "events", "eventsDropped",
+  "acknowledgedAt", "acknowledgedByName"];
 export function automationRuns(access, entry, scheduleId, userId = "") {
   if (scheduleId.startsWith(API_SOURCE_PREFIX)) return apiSourceRuns(entry.channelId, scheduleId, { isAdmin: access.user?.isAdmin === true, userId });
   const s = listForChannel(entry.channelId).find((x) => x.id === scheduleId);
   if (s && !visible(s, access)) throw Object.assign(new Error("Automation denied"), { status: 403 });
   return listScheduleRuns({ scheduleId, channelId: entry.channelId, limit: 30 })
-    .map((r) => visibleScheduleRun(r)).map((r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] ?? null])));
+    .map((r) => visibleScheduleRun(r)).map((r) => ({ ...Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] ?? null])), problem: runProblem(r) }));
 }
 
 // The automation a viewer may CHANGE: visible to them, and theirs to change. An automation runs as
@@ -196,6 +202,40 @@ export async function updateAutomation(access, userId, entry, scheduleId, body, 
   const updated = updateSchedule(current.id, patch, current);
   if (!updated) throw Object.assign(new Error("The automation changed while it was being edited. Reload and try again."), { status: 409, userFacing: true });
   return updated;
+}
+
+// Acknowledge errors: a person looked at them and handled them (fixed the cause, turned the
+// automation back on), so the board shows it healthy again. `runId` acknowledges ONE run;
+// without it every open error of the automation is acknowledged, plus a schedule-level verdict
+// (undeliverable, interrupted). `undo` clears one run's acknowledgement. Same rule as editing:
+// hiding an error from the creator is a change to their automation.
+export async function acknowledgeAutomation(access, userId, entry, scheduleId, body = {}) {
+  const s = ownedSchedule(access, userId, entry, scheduleId);
+  const runId = body?.runId === undefined || body?.runId === null || body?.runId === "" ? "" : body.runId;
+  if (typeof runId !== "string" || runId.length > 64) throw Object.assign(new Error("Invalid run."), { status: 400, userFacing: true });
+  const undo = body?.undo === true;
+  if (undo && !runId) throw Object.assign(new Error("Choose the run to restore."), { status: 400, userFacing: true });
+  const users = await getUsers();
+  const by = { id: userId || "", name: users[userId]?.name || (access.user?.isAdmin === true ? "An admin" : "") };
+  const newest = listScheduleRuns({ scheduleId: s.id, channelId: entry.channelId, limit: 30 }).find((r) => !["queued", "running"].includes(r.status));
+  let ids;
+  if (runId) {
+    const run = getScheduleRun(runId, entry.channelId);
+    if (!run || run.scheduleId !== s.id) throw Object.assign(new Error("That run no longer exists."), { status: 404, userFacing: true });
+    if (!undo && !runProblem(run)) throw Object.assign(new Error("That run has no error to acknowledge."), { status: 400, userFacing: true });
+    ids = [run.id];
+  } else {
+    ids = scheduleRunsSince({ scheduleId: s.id, channelId: entry.channelId, sinceMs: 0, limit: 2000 }).filter((r) => openProblem(r)).map((r) => r.id);
+  }
+  const changed = setScheduleRunsAcknowledged({ scheduleId: s.id, channelId: entry.channelId, runIds: ids, by: undo ? null : by });
+  // The schedule-level verdict follows the newest run: acknowledged with "all", or with that run.
+  const touchesState = !runId || runId === newest?.id;
+  if (touchesState) {
+    const acknowledgedStatus = undo ? null : String(s.lastStatus || "") || null;
+    if ((s.acknowledgedStatus ?? null) !== acknowledgedStatus) updateSchedule(s.id, { acknowledgedStatus });
+  }
+  await logEvent(undo ? "schedule_error_unacknowledged" : "schedule_errors_acknowledged", { id: s.id, channel: entry.channelId, by: by.id.slice(0, 64), runs: changed, scope: runId ? "run" : "all" }).catch(() => {});
+  return { ok: true, acknowledged: undo ? 0 : changed, restored: undo ? changed : 0 };
 }
 
 export async function runAutomationNow(access, userId, entry, scheduleId) {
@@ -234,7 +274,7 @@ function scheduleItem(s, conv, ctx) {
     notify: s.notify || "channel", notifyUserId: s.notifyUserId || "", failureNotify: s.failureNotify !== false,
     hasMatchPrefix: Boolean(s.matchPrefix), deliveryThread: s.deliveryThread || "", sudo: s.sudo === true,
     createdBy: s.createdBy || "", createdByName: users[s.createdBy]?.name || "", mine: Boolean(userId) && s.createdBy === userId,
-    canEdit: may, canDelete: may, canRunNow: may && !s.loop,
+    canEdit: may, canDelete: may, canRunNow: may && !s.loop, canAcknowledge: may,
     engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
     ...health,
     fix: health.problem ? fixSteps(health.problem.key, { kind, once: isOneTime(s), botName }) : [],
@@ -254,7 +294,7 @@ function apiItem(src, conv, ctx) {
     timing: { cron: "", once: false, runAt: null, intervalDays: 0, loop: false }, nextRun: null, nextRunText: null,
     enabled: true, delivery: "", deliveryWords: "API caller", posting: "", resultPolicy: "always", executionVisibility: "visible",
     notify: "none", notifyUserId: "", failureNotify: false, hasMatchPrefix: false, deliveryThread: "", sudo: false,
-    createdBy: "", createdByName: "", mine: false, canEdit: false, canDelete: false, canRunNow: false,
+    createdBy: "", createdByName: "", mine: false, canEdit: false, canDelete: false, canRunNow: false, canAcknowledge: false,
     engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
     ...health,
     fix: health.problem ? fixSteps(health.problem.key, { kind: "API" }) : [],

@@ -39,6 +39,7 @@ export const PROBLEMS = Object.freeze({
 const HARD = new Set(["undeliverable", "delivery_failed", "transport", "interrupted", "login", "credential", "attempts", "license", "access", "engine_disabled"]);
 
 const text = (run) => `${run?.error || ""} ${run?.summary || ""}`;
+const acknowledged = (run) => Boolean(run?.acknowledgedAt);
 
 // The problem one finished run shows, or null for a clean run.
 export function runProblem(run) {
@@ -69,6 +70,11 @@ export function runProblem(run) {
   return null;
 }
 
+// The problem a run still asks someone to handle: none once a person acknowledged it.
+export function openProblem(run) {
+  return acknowledged(run) ? null : runProblem(run);
+}
+
 // One square of the two-row strip: top = run, bottom = delivery.
 export function stripCell(run) {
   const s = run.status;
@@ -76,7 +82,7 @@ export function stripCell(run) {
     : s === "blocked" || s === "unreported" ? "warn" : BAD_RUN.has(s) ? "fail" : "skip";
   const d = run.deliveryStatus;
   const deliveryTone = d === "delivered" ? "ok" : d === "failed" ? "fail" : d === "pending" ? (LIVE.has(s) ? "live" : "warn") : d === "suppressed" ? "quiet" : "none";
-  return { id: run.id, at: run.startedAt || null, run: runTone, delivery: deliveryTone, status: s || "", deliveryStatus: d || "" };
+  return { id: run.id, at: run.startedAt || null, run: runTone, delivery: deliveryTone, status: s || "", deliveryStatus: d || "", ack: acknowledged(run) && Boolean(runProblem(run)) };
 }
 
 // Consecutive bad runs from the newest finished one backwards.
@@ -85,7 +91,7 @@ export function failureStreak(runs) {
   for (const run of runs) {
     if (LIVE.has(run.status)) continue;
     if (run.status === "skipped" && run.errorKind !== "deferred") continue;
-    if (!runProblem(run)) break;
+    if (!openProblem(run)) break;
     n += 1;
   }
   return n;
@@ -117,12 +123,17 @@ export function automationHealth(schedule, runs, windowRuns = runs) {
   const state = String(schedule?.executionState || "");
   const lastStatus = String(schedule?.lastStatus || "");
   const enabled = schedule ? schedule.enabled !== false : true;
+  // A schedule-level verdict (undeliverable, interrupted) stays acknowledged until the scheduler
+  // writes a different status, which only a new run or a new archival does.
+  const stateAcknowledged = Boolean(schedule?.acknowledgedStatus) && schedule.acknowledgedStatus === lastStatus;
+  // Acknowledged failures no longer make the automation look flaky; the stats above stay honest.
+  const open = windowStats(windowRuns.filter((r) => !(acknowledged(r) && runProblem(r))));
   let key = null;
   let since = null;
-  if (schedule && (state === "undeliverable" || /^undeliverable:|^paused: channel archived/.test(lastStatus))) key = "undeliverable";
-  else if (schedule && !enabled && state === "interrupted") key = "interrupted";
-  else if (enabled) key = runProblem(latest);
-  if (!key && enabled && stats.finished >= 3 && stats.successRate !== null && stats.successRate < 0.8) key = "flaky";
+  if (schedule && !stateAcknowledged && (state === "undeliverable" || /^undeliverable:|^paused: channel archived/.test(lastStatus))) key = "undeliverable";
+  else if (schedule && !stateAcknowledged && !enabled && state === "interrupted") key = "interrupted";
+  else if (enabled) key = openProblem(latest);
+  if (!key && enabled && open.finished >= 3 && open.successRate !== null && open.successRate < 0.8) key = "flaky";
   if (key) {
     // When this problem started: the oldest run of the current streak, else the latest run.
     const first = runs.filter((r) => !LIVE.has(r.status)).slice(0, Math.max(1, streak)).at(-1);
@@ -141,6 +152,11 @@ export function automationHealth(schedule, runs, windowRuns = runs) {
     lastRun: latest ? { id: latest.id, status: latest.status, deliveryStatus: latest.deliveryStatus || "", startedAt: latest.startedAt || null, error: latest.error || "", summary: latest.summary || "", engine: latest.engine || "", model: latest.model || "" } : null,
     strip: runs.slice(0, 30).map(stripCell).reverse(),
     stats,
+    // Recent runs whose error nobody acknowledged yet, and the last acknowledgement shown when
+    // the automation went back to healthy because of it.
+    openErrors: runs.filter((r) => openProblem(r)).length,
+    acknowledgement: !key && latest && acknowledged(latest) && runProblem(latest)
+      ? { at: latest.acknowledgedAt, byName: latest.acknowledgedByName || "", label: PROBLEMS[runProblem(latest)].label, runId: latest.id } : null,
   };
 }
 

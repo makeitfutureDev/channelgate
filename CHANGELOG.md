@@ -6,7 +6,10 @@
   Activity dashboard: what didn't run or didn't arrive comes first, each automation shows its last
   30 runs as run + delivery, a plain-language problem and numbered fix steps, with views, filters,
   search and a 24h/7d/30d window. Creators (and admins) can pause, edit and **Run now** from the
-  page; everyone else who can see an automation gets a read-only view.
+  page; everyone else who can see an automation gets a read-only view. Errors can be
+  acknowledged once handled — one run, all of an automation's errors, or everything in the list —
+  so the automation goes back to Healthy while the run history keeps the failures; a new failure
+  re-opens it.
 - API runs can be `hidden` (nothing posted in chat) or `on-failure` (one alert only when a run
   fails or is blocked); scheduled tasks can send results only when they fail or are blocked.
 - Automations now include HTTP API runs: each channel API token (and, for admins, the
