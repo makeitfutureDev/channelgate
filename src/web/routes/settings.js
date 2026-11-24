@@ -716,7 +716,7 @@ export function createSettingsRouter({
         }
         patch.assumedModels = clean;
       }
-      // Org DM templates (User/Admin) — edited under Settings → Access Templates, folded into this save.
+      // Org DM templates (User/Admin) from Conversations → Templates.
       // Validate model/effort exactly like the per-channel/DM routes (bad values 400 before any save),
       // then shape-clean. Only a present side is replaced; a missing side keeps its stored value.
       if (body.dmTemplates && typeof body.dmTemplates === "object" && !Array.isArray(body.dmTemplates)) {

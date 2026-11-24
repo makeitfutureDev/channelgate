@@ -7,7 +7,7 @@ Model Context Protocol servers provide tools an engine can call. ChannelGate's g
 
 ## Where selections live
 
-Open **Conversations → [conversation] → Cloud MCP** in the admin interface, or the Slack conversation settings' Cloud MCP page. The picker shows the available inventory for the selected engine. Organization and individual grants are also available under **Settings → Access & security → Skills & connectors**.
+Open **Conversations → [conversation] → Cloud MCP** in the admin interface, or the Slack conversation settings' Cloud MCP page. The picker shows the available inventory for the selected engine. Organization and individual grants are also available under **Skills → Organization**.
 
 | Tool source | How it becomes available |
 | --- | --- |

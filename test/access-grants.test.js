@@ -307,8 +307,12 @@ test("conversation tool categories are first-class channel pages", () => {
   assert.match(client, /box\.dataset\.mcpLoading === engine/, "loading discovery must be explicit at the DOM boundary");
   assert.match(client, /accessGrantSkillOptions\(SKILLS,/, "all grant editors must preserve saved-only skills");
   assert.match(client, /buildAccessGrantsEditor\(u, \{ tier: "user", ownerId: id \}\)/, "the user editor knows whose personal skills it may offer");
-  assert.equal((client.match(/checkboxList\([a-zA-Z]+, skillOptions, accessGrantSkillSelection\(skillOptions,/g) || []).length, 3, "every skill grant editor leaves foreign personal grants unchecked");
-  assert.match(client, /accessGrants:\s*orgGrantsEditor\?\.getValues\(\)/);
+  for (const name of ["buildAccessGrantsEditor", "buildConfigEditor"]) {
+    const editor = client.split(`function ${name}(`)[1].split(/\n(?:async )?function /)[0];
+    assert.match(editor, /checkboxList\(skillsBox, skillOptions, accessGrantSkillSelection\(skillOptions,/, name + " leaves foreign personal grants unchecked");
+  }
+  const organization = readFileSync(new URL("../public/admin-organization-grants.js", import.meta.url), "utf8");
+  assert.match(organization, /accessGrants:\s*editor\.getValues\(\)/);
   assert.match(client, /accessGrants:\s*userGrantsEditor\.getValues\(\)/);
 });
 

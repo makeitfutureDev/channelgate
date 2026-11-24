@@ -22,10 +22,10 @@ admins also see and revoke every token on the Admin UI → API page. A channel t
 
 ### Deprecated: the organization-wide key
 
-The single run API key under Settings → HTTP run API still works for existing automations. It is
+The admin **API** page shows the organization-wide key only when one is configured. Existing automations can continue using it. It is
 deprecated: it acts as a fixed admin principal in *any* conversation with no person behind it,
-and every use logs a deprecation warning (one per hour). Replace it with channel tokens and clear
-it. An authenticated admin session also works from the browser.
+and every use logs a deprecation warning (one per hour). Replace it with channel tokens and revoke
+it on the API page. To remove an environment-managed key, unset `CG_API_KEY` and restart the daemon. An authenticated admin session also works from the browser.
 
 The Admin UI's HTTP run API page documents message/file inputs, harness and license overrides, polling,
 stopping and completion webhooks.

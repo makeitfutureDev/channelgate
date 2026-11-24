@@ -26,6 +26,7 @@
           <a class="nav-item" data-view="schedules" href="/automations"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M8 4.5V8l2.4 1.6"/></svg> Automations</a>
           <a class="nav-item" data-view="roi" href="/roi"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.5 2.5L14 4.5"/><path d="M10.5 4.5H14V8"/></svg> ROI</a>
           <a class="nav-item" data-view="audit" href="/activity"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13.5V9M6 13.5V5.5M10 13.5V2.5M14 13.5V7"/></svg> Activity</a>
+          <a class="nav-item" data-view="variables" href="/variables"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12M5 2v4m6 0v4m-5 0v4"/></svg> Variables</a>
           <a class="nav-item" data-view="skills" href="/skills"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 2 4.75v6.5L8 14.5l6-3.25v-6.5Z"/><path d="M2 4.75 8 8l6-3.25M8 8v6.5"/></svg> Skills</a>
           <a class="nav-item" data-view="api" href="/api-docs"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 2.5 7 13.5"/></svg> API</a>
           <a class="nav-item" data-view="settings" href="/settings"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg> Settings</a>
@@ -33,7 +34,6 @@
         </nav>
         <div class="sidebar-foot">
           <a id="my-activity" class="personal-activity" href="/activity/from-admin">My Activity ↗</a>
-          <div id="health" class="health"><div class="statuschip"><span class="dot off"></span>Loading…</div></div>
           <!-- Gateway version + one-click update (populated by loadUpdateStatus in app.js) -->
           <div id="update" class="health"></div>
           <button id="logout" class="ghost" style="display:none">Logout</button>
@@ -81,10 +81,11 @@
         <section id="view-channels" class="view master-detail">
           <div class="list-pane">
             <div class="list-search"><input id="channel-search" type="search" placeholder="Search conversations…" autocomplete="off" /></div>
-            <div class="seg" id="conv-seg" role="tablist">
+            <div class="seg" id="conv-seg" role="group" aria-label="Conversation filter">
               <button type="button" class="on" data-seg="all">All</button>
               <button type="button" data-seg="channels">Channels</button>
               <button type="button" data-seg="dms">DMs</button>
+              <button type="button" data-seg="templates">Templates</button>
             </div>
             <div class="conv-source-filter">
               <label for="conv-source">Source</label>
@@ -144,12 +145,22 @@
           </div>
         </section>
 
+        <section id="view-variables" class="view full">
+          <div class="view-head"><h2>Variables</h2></div>
+          <article id="org-secrets-card" class="setcard">
+            <h3>Organization variables <em class="state secret-state"></em></h3>
+            <p class="desc">Shared across conversations. Conversation variables take precedence. Enter a new value to replace a stored one.</p>
+            <div id="org-secrets-editor"></div>
+            <p id="org-secrets-status" class="state" role="status"></p>
+          </article>
+        </section>
+
         <!-- Skills: the gateway skill catalog, its sources, the review queue, templates and usage -->
         <section id="view-skills" class="view full">
           <div class="view-head dash-head">
             <div>
               <h2>Skills</h2>
-              <p class="hint">The gateway's own skill library. Conversations are granted skills from this catalog (per conversation under Conversations → Skills, or by applying a template); a GitHub source in <strong>review</strong> mode stages every change here for your approval; usage shows what actually fires.</p>
+              <p class="hint">Manage the skill catalog, organization grants and templates.</p>
             </div>
             <div class="dash-tools">
               <button id="skills-refresh" class="ghost" type="button">Refresh</button>
@@ -158,6 +169,7 @@
           <div id="skills-summary" class="skills-summary"></div>
           <div class="skills-tabs" role="tablist">
             <button type="button" class="skills-tab active" data-tab="usage" role="tab">Usage</button>
+            <button type="button" class="skills-tab" data-tab="organization" role="tab">Organization</button>
             <button type="button" class="skills-tab" data-tab="templates" role="tab">Templates</button>
             <button type="button" class="skills-tab" data-tab="catalog" role="tab">Catalog</button>
             <button type="button" class="skills-tab" data-tab="review" role="tab">Review <span class="badge" id="skills-review-badge" hidden></span></button>
@@ -166,6 +178,24 @@
             <button type="button" class="skills-tab" data-tab="mcp" role="tab">MCP</button>
           </div>
           <div id="skills-body">Loading…</div>
+          <article id="skills-organization" class="setcard" hidden>
+            <h3>Organization grants</h3>
+            <p class="desc">Selected skills and connectors apply to every conversation.</p>
+            <label class="field" style="max-width:420px">
+              <span>Grant tier</span>
+              <select id="org-grant-tier">
+                <option value="organization" selected>Organization — applies everywhere</option>
+                <option value="channel">Channel</option>
+                <option value="user">Individual user</option>
+              </select>
+            </label>
+            <div id="org-grants-editor"></div>
+            <div class="actions">
+              <button type="button" id="org-grants-save" class="primary" disabled>Save grants</button>
+              <button type="button" id="org-grants-discard" class="ghost" hidden>Discard changes</button>
+              <span id="org-grants-status" class="state" role="status"></span>
+            </div>
+          </article>
         </section>
 
         <!-- Automations: scheduled cron jobs, grouped by channel -->
@@ -216,25 +246,20 @@
           <div id="audit-events"></div>
         </section>
 
-        <!-- API: read-only reference for the HTTP run API (POST /api/runs). Content is static;
-             loadApiDocs() only fills the live base URL + token status. -->
+        <!-- HTTP run API reference and token management. -->
         <section id="view-api" class="view full">
           <div class="view-head">
             <h2>HTTP run API</h2>
-            <p class="hint">Trigger a headless run from outside Slack — Make.com, a cron job, a script — and get the answer back by polling or a webhook. Authenticated with a token you generate under <a href="#" id="apidoc-goto-settings">Settings → HTTP&nbsp;run&nbsp;API</a>.</p>
+            <p class="hint">Start a run from an automation and retrieve its result by polling or webhook.</p>
           </div>
 
           <div class="apidoc">
             <div class="setcard">
               <h4>Overview</h4>
-              <p class="desc">Each request starts a real gated run. With no <code>channel</code> it runs in a dedicated headless <code>api</code> folder and you read the result back; with a <code>channel</code> it posts as a normal thread in that Slack channel and stays resumable there.</p>
+              <p class="desc">A channel token starts runs in its own conversation, with the permissions of the person who created it.</p>
               <div class="apidoc-kv">
                 <div><span class="apidoc-k">Base URL</span><code class="apidoc-base">…</code></div>
                 <div><span class="apidoc-k">Auth header</span><code>X-API-Key: &lt;token&gt;</code> &nbsp;or&nbsp; <code>Authorization: Bearer &lt;token&gt;</code></div>
-                <div><span class="apidoc-k">Token</span><span id="apidoc-token-note" class="apidoc-note">Checking…</span></div>
-              </div>
-              <div class="card-foot">
-                <button type="button" class="ghost" id="apidoc-gen">Generate a token in Settings →</button>
               </div>
             </div>
 
@@ -253,13 +278,14 @@
 
             <div class="setcard">
               <h4>Authentication</h4>
-              <p class="desc"><strong>Channel tokens</strong> are the way to authenticate: anyone working in a conversation asks the agent there to <code>create_api_token</code> (or uses <code>list_api_tokens</code> / <code>revoke_api_token</code>). Such a token belongs to that one conversation and to the person who created it: runs it starts are posted there, act with that person's current role and authorization (an admin's token can do what an admin can; a member's token is a member), and stop working the moment the token is revoked or the person loses access. Send it as <code>X-API-Key</code> or <code>Authorization: Bearer</code>. It is scoped to <code>/api/runs</code> and to its conversation only; <code>channel</code> may be omitted or must name that conversation, and <code>author</code> is ignored.</p>
-              <p class="desc"><strong>Deprecated — organization-wide key.</strong> The single key under Settings → HTTP run API still works for existing automations, acts as a fixed admin principal in any conversation, and logs a deprecation warning when used. Replace it with channel tokens and clear it.</p>
+              <p class="desc">Ask the agent in a conversation to create an API token, or open <strong>Settings → API tokens</strong> on your Activity dashboard. Copy the token when you create it. Revoking it or losing access to the conversation stops future requests.</p>
               <table class="utable apidoc-table" id="apitok-table">
                 <thead><tr><th>Token</th><th>Conversation</th><th>Created by</th><th>Created</th><th>Last used</th><th></th></tr></thead>
                 <tbody id="apitok-rows"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
               </table>
             </div>
+
+            <section id="api-legacy-token" class="setcard" hidden></section>
 
             <div class="setcard">
               <h4><span class="apidoc-verb post">POST</span> <code>/api/runs</code> — start a run</h4>
@@ -268,7 +294,7 @@
                 <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
                 <tbody>
                   <tr><td><code>message</code></td><td>string</td><td>The prompt. Required unless a file is supplied.</td></tr>
-                  <tr><td><code>channel</code></td><td>string</td><td>Optional. Slack channel <em>id</em>, folder <em>slug</em>, or channel <em>name</em>. Omit → headless <code>api</code> folder.</td></tr>
+                  <tr><td><code>channel</code></td><td>string</td><td>Optional. Defaults to the token’s conversation. If supplied, the Slack channel ID, slug, or name must identify that conversation.</td></tr>
                   <tr><td><code>conversationKey</code></td><td>string</td><td>Optional external conversation identifier (1–200 chars, no control characters). Requires a registered Slack channel and connected bot. The same channel + key reuses a persistent thread; different events still start separate jobs.</td></tr>
                   <tr><td><code>author</code></td><td>string</td><td>Optional attribution label (≤64 chars). Defaults to <code>api</code>.</td></tr>
                   <tr><td><code>file</code></td><td>object/string</td><td>Inline attachment: <code>{ name, dataBase64 }</code> (or a raw base64 string). ≤25&nbsp;MB.</td></tr>
@@ -450,8 +476,7 @@
 
                 <div class="setbody" id="settings-body">
               <section class="setsec" id="set-connection" data-sec="connection" data-group="Workspace" aria-labelledby="set-connection-h">
-                <header class="setsec-head"><h3 id="set-connection-h">Chat connections</h3>
-                  <p class="setsec-desc">Connection status and one-time setup for each platform.</p></header>
+                <header class="setsec-head"><h3 id="set-connection-h">Chat connections</h3></header>
                 <details class="setcard" data-setkey="slack connection bot token app oauth xoxb xapp socket">
                   <summary><h4>Slack</h4><span class="setcard-hint">Socket Mode credentials</span><span class="setcard-state"></span></summary>
                   <div id="slack-status" class="status-banner">Checking…</div>
@@ -704,10 +729,10 @@
                     </label>
                   </div>
                   <label class="check"><input id="set-teams-all-message-events" type="checkbox" /> Observe edits and robot reactions on all messages (experimental)</label>
-                  <p class="desc">Off by default. Requires application RSC consent for <code>ChatMessage.Read.Chat</code> and <code>ChannelMessage.Read.Group</code> in the Teams app manifest, then app update/reinstallation in each intended conversation. Graph subscriptions start after an installed conversation sends an activity; this is not a tenant-wide message feed. Chat subscriptions use Microsoft Graph beta. Keep both <code>/api/teams/messages</code> and <code>/api/teams/notifications</code> reachable at the Public URL. Save, then reconnect Teams to apply. Normal messages still require a mention outside personal chats; only the robot reaction activates a message without one.</p>
+                  <p class="desc">Requires <code>ChatMessage.Read.Chat</code> and <code>ChannelMessage.Read.Group</code> consent in each conversation. Save, reinstall the app and reconnect Teams. Keep both message and notification endpoints reachable.</p>
                   <label class="check"><input id="set-teams-files-enabled" type="checkbox" /> Read group and channel files from allowed drives</label>
                   <label data-requires-setting="set-teams-files-enabled" hidden class="field"><span>Allowed Microsoft drive IDs (one per line, maximum 32)</span><textarea id="set-teams-file-drives" rows="3" placeholder="b!drive-id"></textarea></label>
-                  <p class="desc">Off by default. Requires separately configured selected-site application read access. Only files within these drives can download; no permissions are granted automatically. Use canonical SharePoint file links; sharing shortlinks are not supported. Personal-chat file uploads keep their existing download path. Save, then reconnect Teams to apply.</p>
+                  <p class="desc">Grant selected-site access and use canonical SharePoint file links. Save and reconnect Teams to apply.</p>
                   <p class="desc">Microsoft event endpoint: <code id="teams-endpoint">set a Public URL first</code></p>
                   <div class="tok-foot">
                     <button type="button" class="clear-tok" id="teams-connect">Connect</button>
@@ -717,57 +742,77 @@
               </section>
 
               <section class="setsec" id="set-messaging" data-sec="messaging" data-group="Workspace" aria-labelledby="set-messaging-h" hidden>
-                <header class="setsec-head"><h3 id="set-messaging-h">Messages &amp; calls</h3>
-                  <p class="setsec-desc">Choose how people activate agents, receive replies and make calls.</p></header>
-                <details class="setcard">
-                  <summary><h4>Slack replies</h4></summary>
-                  <p class="desc">Replies use Slack native streaming with native assistant status for thinking and tool progress.</p>
-                  <label class="toggle"><input type="checkbox" id="set-show-message-cost" /> Show provider-reported cost / estimated standard API-equivalent value in Slack message footers. The value is still recorded in Activity and Overview when hidden.</label>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Message activation reactions</h4></summary>
-                  <p class="desc">Choose which emoji reactions ask the bot to act on a message. Each platform has its own list; blank restores its default. Stop and acknowledgement reactions stay reserved.</p>
+                <header class="setsec-head"><h3 id="set-messaging-h">Messages</h3></header>
+                <article class="setcard reaction-settings">
+                  <h4>Message activation reactions</h4>
+                  <p class="desc">Separate trigger emoji with commas. Leave a list blank to use the platform default.</p>
                   <label class="field">
-                    <span>Slack activation emoji — comma-separated names</span>
+                    <span>Slack activation emoji</span>
                     <input id="set-mention-reactions" type="text" placeholder="robot_face" />
-                    <em class="state">Slack names, for example <code>robot_face</code> or <code>:rocket:</code>. Default: <code>robot_face</code>.</em>
+                    <em class="state">Use Slack emoji names, such as <code>robot_face</code>.</em>
                   </label>
                   <label class="field">
-                    <span>Microsoft Teams activation emoji — comma-separated names or emoji</span>
+                    <span>Microsoft Teams activation emoji</span>
                     <input id="set-teams-mention-reactions" type="text" placeholder="hearteyesrobot, alien, like, smilerobot" />
-                    <em class="state">Teams shortcuts or Unicode emoji, for example <code>alien</code> or 👽. For other named emoji, include their Unicode form too (for example <code>heart, ❤️</code>) so Graph can match them. Channel and group reactions require “Observe edits and robot reactions on all messages” and Teams event delivery.</em>
+                    <em class="state">Use Teams shortcuts or Unicode emoji. Group and channel triggers require Teams reaction events.</em>
                   </label>
                   <label class="field">
-                    <span>Google Chat activation emoji — comma-separated Unicode emoji</span>
+                    <span>Google Chat activation emoji</span>
                     <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
-                    <em class="state">Unicode emoji, for example 🤖 or 🚀. Acts once the Google Chat <em>Reaction events topic</em> is set (Workspace Events subscriptions deliver reactions). Mention the bot to start a request otherwise.</em>
+                    <em class="state">Requires a Google Chat reaction events topic.</em>
                   </label>
-                </details>
-                <details data-feature-toggle="set-whisper-enabled" class="setcard">
-                  <summary><h4>Voice notes</h4><span class="setcard-state"></span></summary>
-                  <label class="toggle"><input type="checkbox" id="set-whisper-enabled" /> Use <strong>local Whisper</strong> for voice notes when installed. Slack can fall back to a completed Slack transcript. Teams requires local Whisper for voice notes.</label>
-                </details>
-                <details data-feature-toggle="set-voice-calls-enabled" class="setcard" id="voice-calls-card">
-                  <summary><h4>Voice calls · Beta</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Let approved users talk to a channel's agent from a browser call page (the <strong>📞 Call</strong> reply button and the Activity page). The daemon holds a Google Gemini Live session; spoken requests run as ordinary turns in the bound Slack thread, authored by the caller, and the transcript is posted there when the call ends. Voice minutes are billed to your Gemini API key (about $0.02 per minute).</p>
-                  <label class="toggle"><input type="checkbox" id="set-voice-calls-enabled" /> Enable voice calls</label>
+                </article>
+                <article class="setcard">
+                  <h4>Slack replies</h4>
+                  <label class="toggle"><input type="checkbox" id="set-show-message-cost" /> Show cost or estimated API value in Slack reply footers</label>
+                </article>
+                <article data-feature-toggle="set-whisper-enabled" class="setcard">
+                  <header class="feature-head"><h4>Voice notes</h4><label class="feature-switch"><input type="checkbox" id="set-whisper-enabled" aria-label="Enable local Whisper for voice notes" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Transcribe voice messages locally with Whisper.</p>
+                </article>
+                <article class="setcard" data-setkey="approve permissions">
+                  <h4>Approval links</h4>
+                  <p class="desc">Send private confirmation links for approvals and busy threads. Requires a reachable Public URL.</p>
+                  <label class="field">
+                    <span>When to add approval links</span>
+                    <select id="set-approval-links">
+                      <option value="auto">auto — no native buttons, plus selected Slack testers with a public URL</option>
+                      <option value="always">always — eligible users (falls back to this machine's address)</option>
+                      <option value="off">off — native controls only</option>
+                    </select>
+                  </label>
+                </article>
+                <article class="setcard">
+                  <h4>Testing with AI</h4>
+                  <p class="desc">Selected Slack testers receive approval links alongside the usual buttons.</p>
+                  <div class="field">
+                    <span id="ai-testing-users-label">Slack testing users</span>
+                    <div id="set-ai-testing-users" class="user-picker" role="group" aria-labelledby="ai-testing-users-label"></div>
+                  </div>
+                </article>
+              </section>
+
+              <section class="setsec" id="set-calls" data-sec="calls" data-group="Workspace" aria-labelledby="set-calls-h" hidden>
+                <header class="setsec-head"><h3 id="set-calls-h">Calls</h3></header>
+                <article data-feature-toggle="set-voice-calls-enabled" class="setcard" id="voice-calls-card">
+                  <header class="feature-head"><h4>Voice calls <small>Beta</small></h4><label class="feature-switch"><input type="checkbox" id="set-voice-calls-enabled" aria-label="Enable Voice calls" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Call an agent from Activity or a chat thread. Gemini bills voice minutes to your API key.</p>
                   <div class="feature-fields" hidden>
                   <label class="field">
                     <span>Gemini API key <em class="state" id="gemini-api-key-state"></em></span>
                     <input id="set-gemini-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" maxlength="256" />
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-gemini-api-key">clear</button></div>
-                    <em class="state">Create a key in Google AI Studio. It stays in gateway settings and never reaches a browser or a channel container.</em>
+                    <em class="state">Create the key in Google AI Studio.</em>
                   </label>
                   <div class="setfield-grid">
                     <label class="field"><span>Voice model</span><select id="set-voice-call-model"></select></label>
                     <label class="field"><span>Voice</span><select id="set-voice-call-voice"></select></label>
                   </div>
                   </div>
-                </details>
-                <details data-feature-toggle="set-ios-calls-enabled" class="setcard" id="iphone-calls-card" data-setkey="ios push notifications voip apns">
-                  <summary><h4>Incoming iPhone calls · Beta</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Let an agent ask to call the requesting person in its current thread. Each invitation requires approval and expires after 45 seconds. Enable voice calls, then configure an Apple APNs key with VoIP permission for your app.</p>
-                  <label class="toggle"><input type="checkbox" id="set-ios-calls-enabled" /> Enable incoming iPhone calls</label>
+                </article>
+                <article data-feature-toggle="set-ios-calls-enabled" class="setcard" id="iphone-calls-card" data-setkey="ios push notifications voip apns">
+                  <header class="feature-head"><h4>Incoming iPhone calls <small>Beta</small></h4><label class="feature-switch"><input type="checkbox" id="set-ios-calls-enabled" aria-label="Enable Incoming iPhone calls" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Agents can request a call in the current thread. Requires voice calls, user approval and an Apple VoIP key.</p>
                   <div class="feature-fields" hidden>
                   <div class="setfield-grid">
                     <label class="field"><span>Apple team ID</span><input id="set-apns-team-id" maxlength="10" placeholder="3J929KZ29B" /></label>
@@ -779,35 +824,14 @@
                   </label>
                   <label class="toggle"><input type="checkbox" id="clear-apns-private-key" /> Remove the stored APNs key</label>
                   </div>
-                </details>
-                <details class="setcard" data-setkey="approve permissions">
-                  <summary><h4>Approval links</h4></summary>
-                  <p class="desc">Deliver approval and busy-thread cards as signed, single-use links in a private message to the person who raised them. On Slack, only users selected under Testing with AI receive these extra links alongside the buttons. Links are how Teams and Google Chat get approvals at all, and they make the flow answerable by automation. Each link opens a confirmation page and only acts when the page's Confirm button is pressed. Needs the gateway’s <strong>Public URL</strong> to be reachable from outside this machine.</p>
-                  <label class="field">
-                    <span>When to add approval links</span>
-                    <select id="set-approval-links">
-                      <option value="auto">auto — no native buttons, plus selected Slack testers with a public URL</option>
-                      <option value="always">always — eligible users (falls back to this machine's address)</option>
-                      <option value="off">off — native controls only</option>
-                    </select>
-                  </label>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Testing with AI</h4></summary>
-                  <p class="desc">Search and select the Slack users who need browser links for testing approval and busy-thread buttons. Everyone else sees the normal buttons. Enable approval links to use this setting.</p>
-                  <div class="field">
-                    <span id="ai-testing-users-label">Slack testing users</span>
-                    <div id="set-ai-testing-users" class="user-picker" role="group" aria-labelledby="ai-testing-users-label"></div>
-                  </div>
-                </details>
+                </article>
               </section>
 
               <section class="setsec" id="set-integrations" data-sec="integrations" data-group="Workspace" aria-labelledby="set-integrations-h" hidden>
-                <header class="setsec-head"><h3 id="set-integrations-h">Apps &amp; integrations</h3>
-                  <p class="setsec-desc">Connect external services and manage shared credentials.</p></header>
-                <details class="setcard">
-                  <summary><h4>Composio connection mode</h4></summary>
-                  <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal or channel tokens.</p>
+                <header class="setsec-head"><h3 id="set-integrations-h">Apps &amp; integrations</h3></header>
+                <article class="setcard">
+                  <h4>Composio connection mode</h4>
+                  <p class="desc">Switching modes never deletes saved personal or channel tokens.</p>
                   <label class="field">
                     <span>Mode</span>
                     <select id="set-composio-mode">
@@ -819,61 +843,53 @@
                   <label class="field" id="composio-sdk-key-field" data-mode-control="set-composio-mode">
                     <span>Composio SDK API key · Enterprise · Beta <em class="state" id="composio-sdk-key-state"></em></span>
                     <input id="set-composio-sdk-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <em class="state">Organization-level secret. It stays in gateway settings and is never passed to Claude, Codex, or a channel folder.</em>
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
                   </label>
                   <div id="composio-sdk-policy" data-mode-control="set-composio-mode" hidden>
                     <label class="toggle"><input class="csdk-multi" type="checkbox" checked /> Allow multiple accounts per app</label>
-                    <p class="desc">Each person can connect separate accounts, such as work and personal Gmail, with their own aliases. When several are connected, the agent must explicitly select which account to use.</p>
+                    <p class="desc">Use account aliases to select between multiple connections.</p>
                     <label class="field">
                       <span>Maximum accounts per app</span>
                       <input class="csdk-max" type="number" min="2" max="10" step="1" value="5" />
                     </label>
                     <label class="field">
                       <span>Available apps</span>
-                      <select class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
+                      <select id="set-composio-app-mode" class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
                     </label>
-                    <label class="field csdk-app-list" hidden>
+                    <label class="field csdk-app-list" data-mode-control="set-composio-app-mode" hidden>
                       <span>Allowed app slugs</span>
                       <textarea class="csdk-apps" rows="3" placeholder="gmail, slack, custom_aioutreach"></textarea>
-                      <em class="state">Separate Composio toolkit slugs with commas or spaces. An empty selected list blocks every app.</em>
+                      <em class="state">Separate toolkit slugs with commas or spaces. An empty selection blocks every app.</em>
                     </label>
-                    <p class="desc">Applies to personal and shared SDK sessions across the gateway. Existing sessions receive changes on their next run. Restricting apps does not delete saved connections. Save with the settings below.</p>
+                    <p class="desc">Changes apply to new SDK sessions. Existing connections are kept.</p>
                   </div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>MCP server URLs</h4></summary>
+                </article>
+                <article class="setcard">
+                  <h4>MCP server URLs</h4>
                   <label class="field">
                     <span>Personal-mode Composio MCP URL</span>
                     <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
                   </label>
-                </details>
-                <details class="setcard" id="org-secrets-card">
-                  <summary><h4>Organization variables · Enterprise <em class="state secret-state"></em></h4></summary>
-                  <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
-                  <div id="org-secrets-editor"></div>
-                </details>
-                <details data-feature-toggle="set-email-accounts-enabled" class="setcard">
-                  <summary><h4>Email accounts (IMAP/SMTP)</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Lets people connect a mailbox by its IMAP and SMTP settings — to a conversation or for themselves — and gives runs the email tools for those accounts. While off, the <strong>Email accounts</strong> sections are hidden on every surface, new accounts cannot be connected and runs get no email tools; accounts already stored are kept and return when it is switched back on.</p>
-                  <label class="toggle"><input type="checkbox" id="set-email-accounts-enabled" /> <strong>Enable email accounts</strong> — off hides them from everyone.</label>
-                </details>
-                <details data-feature-toggle="set-drivesync-enabled" class="setcard" data-setkey="gdrive rclone sync">
-                  <summary><h4>Google Drive sync · Enterprise</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and that channel's whole working folder — except agent instructions and skills (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/</code>, …), channel memory, secrets (<code>.env</code>, keys), <code>.git</code> and dependency trees, plus anything listed in the folder's <code>.driveignore</code>. Symlinks are never followed, and rclone runs in a throwaway container that sees only the channel folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
-                  <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
+                </article>
+                <article data-feature-toggle="set-email-accounts-enabled" class="setcard">
+                  <header class="feature-head"><h4>Email accounts (IMAP/SMTP)</h4><label class="feature-switch"><input type="checkbox" id="set-email-accounts-enabled" aria-label="Enable Email accounts (IMAP/SMTP)" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Connect personal or conversation mailboxes. Switching off email keeps saved accounts.</p>
+                </article>
+                <article data-feature-toggle="set-drivesync-enabled" class="setcard" data-setkey="gdrive rclone sync">
+                  <header class="feature-head"><h4>Google Drive sync <small>Enterprise</small></h4><label class="feature-switch"><input type="checkbox" id="set-drivesync-enabled" aria-label="Enable Google Drive sync" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Sync linked conversation folders with Google Drive using rclone.</p>
                   <div class="feature-fields" hidden>
                   <label class="field">
-                    <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — paste the downloaded key; it's stored write-only on this host and never shown again. Share your Drive folders with the service-account email shown here.</span>
+                    <span>Service-account key (JSON) <span id="drivesync-key-state" class="state"></span> — share each linked folder with this account.</span>
                     <textarea id="set-drivesync-keyjson" rows="4" placeholder='{ "type": "service_account", "project_id": "…", "private_key": "…", "client_email": "…@….iam.gserviceaccount.com" }'></textarea>
                   </label>
                   <label class="toggle"><input type="checkbox" id="clear-drivesync-keyjson" /> Remove the stored key</label>
                   <label class="field">
-                    <span>…or an absolute path to a key file already on this host (used only when no JSON is pasted above)</span>
-                    <input id="set-drivesync-keyfile" type="text" placeholder="/Users/me/.config/gateway/drive-sa.json" />
+                    <span>Or a host key-file path</span>
+                    <input id="set-drivesync-keyfile" type="text" placeholder="/etc/channelgate/drive-sa.json" />
                   </label>
                   <label class="field">
-                    <span>Impersonate subject (optional) — a Workspace user email for domain-wide delegation; blank = act as the service account itself (share each folder with the SA email instead)</span>
+                    <span>Impersonate subject (optional) — a Workspace user email for domain-wide delegation</span>
                     <input id="set-drivesync-subject" type="text" placeholder="drive-bot@yourdomain.com" />
                   </label>
                   <div class="setfield-grid">
@@ -901,11 +917,10 @@
                     <span id="drivesync-sync-all-result" class="hint"></span>
                   </div>
                   </div>
-                </details>
-                <details data-feature-toggle="set-perplexity-research-enabled" class="setcard" id="perplexity-research-card">
-                  <summary><h4>Perplexity research</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Let agents delegate research through your Perplexity subscription. This is a gateway-wide shared login for research only, using the unofficial Perplexity web bridge.</p>
-                  <label class="toggle"><input type="checkbox" id="set-perplexity-research-enabled" /> Enable Perplexity research subagents</label>
+                </article>
+                <article data-feature-toggle="set-perplexity-research-enabled" class="setcard" id="perplexity-research-card">
+                  <header class="feature-head"><h4>Perplexity research</h4><label class="feature-switch"><input type="checkbox" id="set-perplexity-research-enabled" aria-label="Enable Perplexity research" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Use a shared Perplexity subscription for research through the unofficial web bridge.</p>
                   <div class="feature-fields" hidden>
                   <label class="field">
                     <span>Subscription session token <em class="state" id="perplexity-session-state"></em></span>
@@ -914,20 +929,18 @@
                     <em class="state">Run <code>pwm login</code> on your computer and paste the token from <code>~/.config/perplexity-web-mcp/token</code>, or copy the value of the <code>__Secure-next-auth.session-token</code> cookie from your signed-in Perplexity browser. Paste only the value. The token is write-only; replace it here if the session expires.</em>
                   </label>
                   </div>
-                </details>
-                <details data-feature-toggle="set-public-file-links-enabled" class="setcard">
-                  <summary><h4>Public file links</h4><span class="setcard-state"></span></summary>
-                  <p class="desc">Lets a conversation mint a <strong>temporary public download URL</strong> for one file in its own working folder — anyone holding the link can fetch it with no login. Two uses: handing a file to an API that ingests by URL (a few minutes, capped fetches), and sending a person a link (duration chosen per link, <strong>48 hours maximum</strong>). Links are re-checked on every fetch against this switch, their expiry, their fetch count and the file's continued presence inside the channel folder; turning this off kills every outstanding link immediately. Requires the gateway’s <strong>Public URL</strong> to be set. Destinations reachable through Composio do not need this — those files are staged directly into Composio storage and never published.</p>
-                  <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>
-                </details>
+                </article>
+                <article data-feature-toggle="set-public-file-links-enabled" class="setcard">
+                  <header class="feature-head"><h4>Public file links</h4><label class="feature-switch"><input type="checkbox" id="set-public-file-links-enabled" aria-label="Enable Public file links" /><span class="setcard-state"></span></label></header>
+                  <p class="desc">Anyone with a link can download its file for up to 48 hours. Switching this off invalidates outstanding links. Requires a Public URL.</p>
+                </article>
               </section>
 
               <section class="setsec" id="set-appearance" data-sec="appearance" data-group="Workspace" aria-labelledby="set-appearance-h" hidden>
-                <header class="setsec-head"><h3 id="set-appearance-h">Appearance</h3>
-                  <p class="setsec-desc">Customize the gateway icon across the dashboard and installed apps.</p></header>
-                <details open class="setcard" data-setkey="logo color icon dock chrome app branding">
-                  <summary><h4>ChannelGate logo color</h4></summary>
-                  <p class="desc">Shared by everyone on this gateway. Updates the Activity logo, browser icon and installed app icons. Each gateway keeps its own color.</p>
+                <header class="setsec-head"><h3 id="set-appearance-h">Appearance</h3></header>
+                <article class="setcard" data-setkey="logo color icon dock chrome app branding">
+                  <h4>ChannelGate logo color</h4>
+                  <p class="desc">Used in Activity, the browser tab and installed apps.</p>
                   <div class="logo-color-editor">
                     <svg id="set-logo-preview" viewBox="0 0 48 48" width="64" height="64" role="img" aria-label="ChannelGate app icon preview"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>
                     <label class="field">Logo color<input id="set-logo-color" type="color" value="#ff642f" /></label>
@@ -935,17 +948,16 @@
                     <button id="reset-logo-color" type="button" class="btn">Reset to orange</button>
                   </div>
                   <p class="hint">Save, then reopen Activity. Chrome controls when an installed app updates its Dock icon; you may need to reinstall the app to refresh it.</p>
-                </details>
+                </article>
               </section>
 
               <section class="setsec" id="set-agent" data-sec="agent" data-group="Agents" aria-labelledby="set-agent-h" hidden>
-                <header class="setsec-head"><h3 id="set-agent-h">Agent defaults</h3>
-                  <p class="setsec-desc">Set the default harness, models, instructions and run limits.</p></header>
-                <details open class="setcard">
-                  <summary><h4>Engine &amp; runtime</h4><span class="setcard-hint">Default harness, models and effort</span></summary>
+                <header class="setsec-head"><h3 id="set-agent-h">Agent defaults</h3></header>
+                <article class="setcard">
+                  <h4>Engine &amp; runtime</h4>
                   <p class="desc">Conversations inherit these defaults. Manage sign-ins and API providers under <a href="#set-engine-licenses" class="lic-jump">Engine licenses</a>.</p>
                   <label class="field">
-                    <span>Harness (which CLI drives the bot)</span>
+                    <span>Default harness</span>
                     <select id="set-engine">
                       <option value="claude">Claude Code</option>
                       <option value="codex">Codex</option>
@@ -959,7 +971,6 @@
                     <label class="field">
                       <span>Default Claude effort</span>
                       <select id="set-default-claude-effort"></select>
-                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                     </label>
                     <label class="field">
                       <span>Default Codex model</span>
@@ -968,20 +979,19 @@
                     <label class="field">
                       <span>Default Codex effort</span>
                       <select id="set-default-codex-effort"></select>
-                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                     </label>
                   </div>
-                </details>
-                <details class="setcard" data-setkey="session keepalive fallback context window">
-                  <summary><h4>Failover &amp; sessions</h4></summary>
-                  <label class="toggle"><input type="checkbox" id="set-engine-fallback" /> <strong>Automatic failover between harnesses</strong> — when the engine driving a turn hits its usage/session limit, can't authenticate, or its provider stays unavailable through the in-place retries, <em>before doing any work</em>, answer with the other enabled harness (either direction) and keep using it for that channel until the failed one recovers. Requires both CLIs set up.</label>
+                </article>
+                <article class="setcard" data-setkey="session keepalive fallback context window">
+                  <h4>Failover &amp; sessions</h4>
+                  <label class="toggle"><input type="checkbox" id="set-engine-fallback" /> Switch to the other harness if the first is unavailable before work starts</label>
                   <label data-requires-setting="set-engine-fallback" hidden class="field">
                     <span>How a failover happens</span>
                     <select id="set-engine-fallback-mode">
                       <option value="auto">Switch automatically and answer</option>
                       <option value="ask">Ask in the thread first (buttons: switch / try again)</option>
                     </select>
-                    <em class="state">"Ask" posts a message with buttons in the Slack thread and runs nothing until someone clicks; the click re-runs the same message on the chosen harness. Scheduled runs, background agents and API runs cannot be asked and always switch automatically.</em>
+                    <em class="state">Background, scheduled and API runs always switch automatically.</em>
                   </label>
                   <div class="setfield-grid">
                     <label class="field">
@@ -993,10 +1003,10 @@
                       <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
                     </label>
                   </div>
-                </details>
-                <details class="setcard" data-setkey="concurrency queue slots">
-                  <summary><h4>Parallel agent runs</h4><span class="setcard-hint">Concurrency and reserved slots</span></summary>
-                  <p class="desc">Gateway-wide limit across conversations and harnesses. Extra requests wait in a queue. Changes apply when saved; active runs finish normally if you lower the limit. This is separate from the running-container limit under Gateway &amp; runtime.</p>
+                </article>
+                <article class="setcard" data-setkey="concurrency queue slots">
+                  <h4>Parallel agent runs</h4>
+                  <p class="desc">Extra requests wait for a free slot. Lowering the limit lets active runs finish.</p>
                   <div class="setfield-grid">
                     <label class="field">
                       <span>Maximum parallel agent runs</span>
@@ -1005,41 +1015,40 @@
                     <label class="field">
                       <span>Slots reserved for interactive requests</span>
                       <input id="set-reserved-interactive-runs" type="number" min="0" max="499" step="1" required />
-                      <em class="state">Interactive requests are live Slack, Teams and Google Chat messages, plus foreground API requests. Scheduled and background agents share the remaining slots. These slots are included in the total; reserve fewer than the total so background work can run. For example, 32 total with 2 reserved allows up to 30 background runs. Interactive requests can use any free slot.</em>
+                      <em class="state">Reserved slots count toward the total. Reserve fewer than the maximum to leave room for background runs.</em>
                     </label>
                   </div>
-                </details>
-                <details class="setcard" data-setkey="system prompt memory CLAUDE.md AGENTS.md">
-                  <summary><h4>Agent instructions</h4><span class="setcard-hint">Organization instructions and memory</span></summary>
-                  <label class="toggle"><input type="checkbox" id="set-agentsfile" /> Write <code>CLAUDE.md</code> + an <code>AGENTS.md</code> symlink in each channel folder (read by both Claude and Codex — edit <code>CLAUDE.md</code> directly)</label>
+                </article>
+                <article class="setcard" data-setkey="system prompt memory CLAUDE.md AGENTS.md">
+                  <h4>Agent instructions</h4>
+                  <label class="toggle"><input type="checkbox" id="set-agentsfile" /> Write shared Claude and Codex instructions in each channel folder</label>
                   <label class="field">
                     <span>Organization instructions · Enterprise (applied to all channels)</span>
                     <textarea id="set-agents-instructions" readonly rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
                     <small id="organization-instructions-entitlement"></small>
                     <button type="button" id="clear-organization-instructions" class="ghost">Clear organization instructions</button>
                   </label>
-                  <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets uncapped Markdown memory, searched on demand through a derived local FTS index. Fresh sessions receive only a compact catalog; the memory body stays in the channel folder. Per-channel override available.</label>
+                  <label class="toggle"><input type="checkbox" id="set-agentmemory" /> Enable folder-scoped conversation memory</label>
                   <label class="field">
-                    <span>Background memory review — every N turns per channel (0 = off). A turn that looks like a correction or decision is reviewed regardless; the reviewer reads the thread after the reply is delivered and saves what the model itself did not.</span>
+                    <span>Turns between memory reviews (0 = off)</span>
                     <input id="set-memory-review-every" type="number" min="0" step="1" placeholder="5" />
                   </label>
                   <label class="field">
-                    <span>Memory review model — a Claude alias or model id (cheap is fine: it only extracts facts)</span>
+                    <span>Memory review model (Claude)</span>
                     <input id="set-memory-review-model" type="text" placeholder="haiku" />
                   </label>
-                  <label class="toggle"><input type="checkbox" id="set-memory-review-notify" /> Post <code>🧠 Memory updated</code> in the thread when a review saved something (so a wrong save is visible and correctable)</label>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Model shortcuts</h4><span class="setcard-hint">Model picker aliases</span></summary>
-                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply. New installations include Astra, Sol, Terra, Fable, Opus and <code>:sonet</code> for Sonnet. Until this list is customized, targets follow the newest stable version in each family from the supported model catalog. Saving an edited list keeps those exact choices. Add an effort after the name (<code>:opus :high</code>), or use <code>:low</code>, <code>:mid</code>, <code>:medium</code> or <code>:high</code> alone to change only the effort; these four names are reserved. The selectors may follow the mention anywhere in the message.</p>
+                  <label class="toggle"><input type="checkbox" id="set-memory-review-notify" /> Post a message when a review saves new memories</label>
+                </article>
+                <article class="setcard">
+                  <h4>Model shortcuts</h4>
+                  <p class="desc">Use <code>@agent :astra</code> to pin a model to a thread. Add an effort such as <code>:high</code> to override its default.</p>
                   <div id="model-shortcuts-editor"></div>
                   <button type="button" class="clear-tok" id="add-model-shortcut" disabled>Add shortcut</button>
-                </details>
+                </article>
               </section>
 
               <section class="setsec" id="set-engine-licenses" data-sec="engine-licenses" data-group="Agents" aria-labelledby="set-engine-licenses-h" hidden>
-                <header class="setsec-head"><h3 id="set-engine-licenses-h">Engine licenses</h3>
-                  <p class="setsec-desc">Manage sign-ins, API providers and the licenses agents can use.</p></header>
+                <header class="setsec-head"><h3 id="set-engine-licenses-h">Engine licenses</h3></header>
                 <details open class="setcard">
                   <summary><h4>Licenses the gateway may use</h4><span class="setcard-hint">Enabled licenses and sign-ins</span></summary>
                   <p class="desc">There are two harnesses, Claude Code and Codex. A license is one way a harness reaches a model: a sign-in (a subscription, business or enterprise plan), an API key, a custom server, or a cloud account on Amazon Bedrock, Google Vertex AI or Microsoft Azure. Add as many as you need with <strong>Add license</strong>; each one then shows a <strong>Sign in</strong> button or command, or is checked against its server with <strong>Verify</strong>.</p>
@@ -1081,7 +1090,6 @@
                     <label class="field">
                       <span>Default effort</span>
                       <select data-role="default-effort"></select>
-                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                     </label>
                   </details>
                 </template>
@@ -1099,13 +1107,12 @@
               </section>
 
               <section class="setsec" id="set-automation" data-sec="automation" data-group="Agents" aria-labelledby="set-automation-h" hidden>
-                <header class="setsec-head"><h3 id="set-automation-h">Schedules &amp; reminders</h3>
-                  <p class="setsec-desc">Set scheduling limits and quiet-thread reminder defaults.</p></header>
-                <details open class="setcard">
-                  <summary><h4>Schedules &amp; nudges</h4></summary>
+                <header class="setsec-head"><h3 id="set-automation-h">Schedules &amp; reminders</h3></header>
+                <article class="setcard">
+                  <h4>Schedules &amp; nudges</h4>
                   <div class="setfield-grid">
                     <label class="field">
-                      <span>Minimum schedule interval (minutes) — recurring crons firing more often are rejected</span>
+                      <span>Minimum schedule interval (minutes)</span>
                       <input id="set-sched-min" type="number" min="1" step="1" placeholder="60" />
                     </label>
                     <label class="field">
@@ -1113,25 +1120,24 @@
                       <input id="set-sched-max" type="number" min="1" step="1" placeholder="20" />
                     </label>
                     <label class="field">
-                      <span>No-response reminder (hours) — an opted-in user gets one personal nudge after this long</span>
+                      <span>No-response reminder (hours)</span>
                       <input id="set-nudge-hours" type="number" min="1" step="1" placeholder="24" />
                     </label>
                   </div>
-                  <label class="toggle"><input type="checkbox" id="set-default-nudges" /> <strong>New users start with quiet-thread reminders ON</strong> — ticked: a new user gets one personal mention when a thread goes quiet after the hours set above. Unticked: new users start with reminders off. Each user can change this in Slack App Home. Changing the default only affects users first seen afterward; use the button below to apply it to existing users.</label>
+                  <label class="toggle"><input type="checkbox" id="set-default-nudges" /> Enable quiet-thread reminders for new users</label>
                   <div class="dz-row">
                     <span class="t">Apply the default to all existing users<small>Overwrites every user's quiet-thread reminder preference with the default above. Personal choices are lost. Can't be undone.</small></span>
                     <button type="button" id="reset-nudges" class="dz-btn">Apply to all…</button>
                     <span class="saved" id="reset-nudges-saved"></span>
                   </div>
-                </details>
+                </article>
               </section>
 
               <section class="setsec" id="set-access" data-sec="access" data-group="Administration" aria-labelledby="set-access-h" hidden>
-                <header class="setsec-head"><h3 id="set-access-h">Access &amp; security</h3>
-                  <p class="setsec-desc">Manage permissions, grants and trusted apps.</p></header>
-                <details class="setcard">
-                  <summary><h4>Default channel access</h4><span class="setcard-hint">Who can use a new channel</span></summary>
-                  <p class="desc">Applied to each channel when the bot joins it. Changing this only affects channels joined afterward.</p>
+                <header class="setsec-head"><h3 id="set-access-h">Access &amp; security</h3></header>
+                <article class="setcard">
+                  <h4>Default channel access</h4>
+                  <p class="desc">Applies when the bot joins a new channel.</p>
                   <label class="field">
                     <span>Who can use the bot in a new channel</span>
                     <select id="set-channel-access">
@@ -1139,67 +1145,26 @@
                       <option value="admins">Admins only</option>
                       <option value="none">No one — dormant until you add users manually</option>
                     </select>
-                    <em class="state"><strong>“Approved members already in the channel”</strong> = the channel's existing members who are also on the org's approved-users list — <strong>not</strong> the whole org (someone has to be in the channel to use the bot there). Admins always have access, and approved people who join the channel later are added automatically. Captured per-channel when the bot joins, so changing this only affects channels it joins afterward. <code>No one</code> blocks everyone (admins included) until you add them to that channel's Allowed users.</em>
+                    <em class="state">Approved members must belong to the channel. “No one” blocks admins too until allowed users are added.</em>
                   </label>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Skills &amp; connectors</h4><span class="setcard-hint">Organization-wide grants</span></summary>
-                  <p class="desc">Grants are a live union of organization + channel + active user. Organization selections apply immediately to every existing and future conversation; they are not copied into channels.</p>
-                  <label class="field" style="max-width:420px">
-                    <span>Grant tier</span>
-                    <select id="org-grant-tier">
-                      <option value="organization" selected>Organization — applies everywhere</option>
-                      <option value="channel">Channel</option>
-                      <option value="user">Individual user</option>
-                    </select>
-                  </label>
-                  <div id="org-grants-editor"></div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Trusted bot apps</h4></summary>
-                  <p class="desc">Slack app/bot IDs allowed to trigger runs despite being bots — for integrations (e.g. Make.com) that post on a user's behalf. The message must still <code>@mention</code> the bot and come from an approved user. Find the ID in the app's URL or via <code>auth.test</code>.</p>
+                </article>
+                <article class="setcard">
+                  <h4>Trusted bot apps</h4>
+                  <p class="desc">Allow listed Slack apps to trigger runs on behalf of approved users. Messages still require a bot mention.</p>
                   <div class="chips" data-chip-for="set-trusted-apps"><input class="chip-input" type="text" placeholder="add app ID…" aria-label="Add trusted bot app ID" /></div>
                   <input id="set-trusted-apps" type="hidden" />
-                </details>
-              </section>
-
-              <section class="setsec" id="set-templates" data-sec="templates" data-group="Administration" aria-labelledby="set-templates-h" hidden>
-                <header class="setsec-head"><h3 id="set-templates-h">Access templates</h3>
-                  <p class="setsec-desc">Set initial permissions and tools for channels, members and admins.</p></header>
-                <details class="setcard" id="skill-templates-card">
-                  <summary><h4>Skill templates · Enterprise <em class="state">· Development, Sales, Marketing, Management, …</em></h4></summary>
-                  <p class="desc">A named, explicit set of skills from the catalog. Assign one to a conversation under Conversations → Tools or with <code>set_channel_skill_template</code>; edits reach every conversation that follows it, and channel-specific skills come on top.</p>
-                  <div id="skill-templates-editor">Loading…</div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>New channel template <em class="state">· copied when the bot first joins</em></h4></summary>
-                  <p class="desc">Applied once when a channel is first registered. Later edits affect only channels the gateway bot joins afterward; existing channel settings stay unchanged.</p>
-                  <div id="tpl-channel-editor"></div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>User template <em class="state">· default for new DMs</em></h4></summary>
-                  <p class="desc">Applies to every DM set to this template — the baseline capabilities a person gets when they message the bot directly. A DM can still be switched to Admin or Custom from its own row under Conversations.</p>
-                  <div id="tpl-user-editor"></div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Admin template <em class="state">· admin DM default</em></h4></summary>
-                  <p class="desc">Applies to DMs set to this template — the default for an admin's own DM.</p>
-                  <div id="tpl-admin-editor"></div>
-                </details>
+                </article>
               </section>
 
               <section class="setsec" id="set-admin-access" data-sec="admin-access" data-group="Administration" aria-labelledby="set-admin-access-h" hidden>
-                <header class="setsec-head"><h3 id="set-admin-access-h">Admin access</h3>
-                  <p class="setsec-desc">Manage your dashboard identity and sign-in methods.</p></header>
+                <header class="setsec-head"><h3 id="set-admin-access-h">Admin access</h3></header>
                 <div class="setcard admin-access-card" id="admin-access"></div>
               </section>
 
               <section class="setsec" id="set-license" data-sec="license" data-group="Administration" aria-labelledby="set-license-h" hidden>
-                <header class="setsec-head"><h3 id="set-license-h">License &amp; usage</h3>
-                  <p class="setsec-desc">Manage the gateway license, monthly usage and model rates.</p></header>
-                <details class="setcard">
-                  <summary><h4>License <em class="state" id="license-state-chip"></em></h4></summary>
-                  <p class="desc">Without a key this deployment serves <strong>one active channel</strong> per UTC month. A Registered (free) key supports 100 active conversation threads <strong>per channel</strong> per UTC month, up to 10 channels and 10 users, and 30 days of cost history; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
+                <header class="setsec-head"><h3 id="set-license-h">License &amp; usage</h3></header>
+                <article class="setcard">
+                  <h4>License <em class="state" id="license-state-chip"></em></h4>
                   <div id="license-banner" class="license-banner" hidden></div>
                   <dl class="license-facts" id="license-facts"></dl>
                   <label class="field">
@@ -1217,12 +1182,12 @@
                     <button type="button" id="license-verify" class="ghost">Verify now</button>
                     <em class="state" id="license-verify-msg"></em>
                   </div>
-                </details>
-                <details class="setcard">
-                  <summary><h4>Usage this month <em class="state" id="license-usage-month"></em></h4></summary>
-                  <p class="desc">AI messages started per conversation in the current UTC month — every origin except the deployment's own memory-review runs. Conversation ids are shown locally; only <strong>hashes and counts</strong> are ever reported to the platform.</p>
+                </article>
+                <article class="setcard">
+                  <h4>Usage this month <em class="state" id="license-usage-month"></em></h4>
+                  <p class="desc">Messages per conversation in the current UTC month, excluding memory reviews.</p>
                   <div id="license-usage"></div>
-                </details>
+                </article>
                 <details class="setcard" data-setkey="cost pricing token rates billing">
                   <summary><h4>Model rates &amp; usage estimates</h4></summary>
                   <div class="field full">
@@ -1251,11 +1216,10 @@
               </section>
 
               <section class="setsec" id="set-system" data-sec="system" data-group="Administration" aria-labelledby="set-system-h" hidden>
-                <header class="setsec-head"><h3 id="set-system-h">Gateway &amp; runtime</h3>
-                  <p class="setsec-desc">Manage network settings, containers, API access and daemon operations.</p></header>
-                <details class="setcard">
-                  <summary><h4>Public URL</h4></summary>
-                  <p class="desc">The daemon's externally-reachable base URL (e.g. <code>https://gateway.makeitfuture.com</code>) — used where the gateway needs to build absolute links back to itself.</p>
+                <header class="setsec-head"><h3 id="set-system-h">Gateway &amp; runtime</h3></header>
+                <article class="setcard">
+                  <h4>Public URL</h4>
+                  <p class="desc">Used for public callbacks and approval links.</p>
                   <label class="field">
                     <span>Public URL (the daemon's externally-reachable base URL)</span>
                     <input id="set-public-url" type="text" placeholder="https://gateway.makeitfuture.com" />
@@ -1272,11 +1236,11 @@
                       <option value="xff">nginx / caddy / other (last X-Forwarded-For hop)</option>
                     </select>
                   </label>
-                  <p class="desc">Without this, every remote login shares one backoff bucket behind the proxy; with it, each real client gets its own. Only declare a proxy you control: it must set the header on every request.</p>
-                </details>
+                  <p class="desc">Trust only a proxy you control that sets this header on every request.</p>
+                </article>
                 <details class="setcard">
                   <summary><h4>Container runtime</h4></summary>
-                  <p class="desc">Every channel's engine processes run inside <strong>its own long-lived Linux container</strong> — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable beyond the channel's own folders. This is the only runtime: the daemon needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels run in their container too; the permission bypass applies inside it, never on the host.</p>
+                  <p class="desc">Channel containers require Podman or Docker and the gateway runtime image. Admin-mode channels run in their container too.</p>
                   <div class="setfield-grid">
                     <label class="field">
                       <span>Container CLI</span>
@@ -1332,20 +1296,6 @@
                     <em class="state">How to get it: run <code>claude setup-token</code> on the gateway host and paste the token here. A container has no host <code>~/.claude</code> to borrow, so without this a container run fails closed instead of sharing the operator's own login.</em>
                   </label>
                   <em class="state" id="container-runtime-health">Checking…</em>
-                </details>
-                <details class="setcard">
-                  <summary><h4>HTTP run API — deprecated organization-wide key</h4></summary>
-                  <p class="desc"><strong>Deprecated:</strong> prefer channel tokens (ask the agent in a conversation for <code>create_api_token</code>; listed on the API page). This single key acts as a fixed admin in every conversation. A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
-                  <label class="field">
-                    <span>API token <em class="state" id="apikey-state"></em></span>
-                    <input id="set-apikey" type="password" placeholder="leave blank to keep current" autocomplete="off" />
-                    <div class="tok-foot">
-                      <button type="button" class="clear-tok" id="gen-apikey">generate</button>
-                      <button type="button" class="clear-tok" id="copy-apikey">copy</button>
-                      <button type="button" class="clear-tok" id="clear-apikey">clear</button>
-                    </div>
-                  </label>
-                  <span class="saved" id="apikey-msg"></span>
                 </details>
                 <details class="setcard danger" data-setkey="restart reset daemon">
                   <summary><h4>Danger zone</h4><span class="setcard-hint">Reset channel access or restart the daemon</span></summary>
@@ -1603,6 +1553,7 @@
               <em class="state ch-skill-template-state"></em>
             </label>
             <div class="ch-skills"></div>
+            <a class="ch-org-grants" href="/skills#organization">Organization grants</a>
           </div>
         </div>
 

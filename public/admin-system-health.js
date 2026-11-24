@@ -169,6 +169,15 @@ function hardwareMarkup(data) {
     ${data.changes?.length ? `<details class="sh-changes"><summary>Recent hardware changes (${data.changes.length})</summary><ul>${data.changes.map((change) => `<li>${esc(time(change.timestamp))} · ${esc(change.fields?.join(", "))}</li>`).join("")}</ul></details>` : '<p class="sh-muted">No hardware changes recorded.</p>'}`;
 }
 
+export function slackHealthMarkup(health, error) {
+  const slack = health?.slack;
+  let status = "Checking…";
+  if (error || (health && !slack)) status = "Status unavailable";
+  else if (slack?.connected) status = slack.user ? `Connected as @${slack.user}` : "Connected";
+  else if (slack) status = slack.status || "Disconnected";
+  return `<p class="statuschip"><span class="dot ${slack?.connected && !error ? "ok" : "off"}" aria-hidden="true"></span>Slack · ${esc(status)}</p>`;
+}
+
 export function harnessHealthMarkup(health, engineLabel, error) {
   if (error) return '<p class="sh-muted">Harness status unavailable.</p>';
   if (!health) return '<p class="sh-muted">Checking harnesses…</p>';
@@ -192,7 +201,7 @@ export function setSystemHealthActive(active, engineLabel) {
 function mountSystemHealth(root, engineLabel) {
   root.innerHTML = `<div class="view-head sh-head"><div><p class="sh-eyebrow">Infrastructure</p><h2>System health</h2><p class="hint">Live host resources, 30-day performance history, and six months of storage trends.</p></div><div class="sh-actions"><span id="sh-status" class="sh-status" role="status">Connecting…</span><button type="button" class="ghost" id="sh-pause">Pause</button><button type="button" class="ghost" id="sh-refresh">Refresh</button></div></div>
     <div id="sh-error" class="sh-notice" role="status" hidden></div><div id="sh-metrics" class="sh-metrics"></div><div id="sh-storage-alert" class="sh-notice" role="status" hidden></div>
-    <article class="sh-panel sh-harnesses"><h3>Engine harnesses</h3><div id="sh-harness-status"></div></article>
+    <article class="sh-panel sh-harnesses"><h3>Gateway status</h3><div id="sh-slack-status"></div><h4>Engine harnesses</h4><div id="sh-harness-status"></div></article>
     <div class="sh-toolbar"><div class="sh-ranges" role="group" aria-label="Resource history period">${RANGES.map((range) => `<button type="button" data-range="${range}" aria-pressed="${range === "live"}">${range === "live" ? "Live" : range}</button>`).join("")}</div><span id="sh-updated" class="sh-muted">Waiting for the first sample…</span></div>
     <div class="sh-charts"><article class="sh-panel sh-resource-panel"><div class="sh-card-head"><div><h3>Resource usage</h3><p id="sh-period" class="sh-muted"></p></div><div class="sh-legend"><span class="sh-cpu">CPU</span><span class="sh-memory">RAM</span></div></div><div id="sh-resource-chart" class="sh-chart"></div></article><article class="sh-panel"><div class="sh-card-head"><div><h3>Storage trend</h3><p class="sh-muted">Last six months · recorded observations</p></div><span class="sh-legend sh-disk">Used</span></div><div id="sh-storage-chart" class="sh-chart sh-chart-small"></div></article><article class="sh-panel sh-forecast"><span class="sh-kicker">Capacity forecast</span><h3 id="sh-forecast-title"></h3><p id="sh-forecast-detail" class="sh-muted"></p></article></div>
     <div class="sh-detail-grid"><article class="sh-panel"><h3>Selected-period peaks</h3><div id="sh-peaks"></div></article><article class="sh-panel"><h3>Collection</h3><div id="sh-collection"></div></article></div>
@@ -235,6 +244,7 @@ function mountSystemHealth(root, engineLabel) {
     const peaks = state.range === "live" ? Object.fromEntries(["cpuPercent", "memoryPercent", "load1", "storagePercent"].map((field) => { const values = points.map((p) => p[field]).filter(finite); return [field, values.length ? Math.max(...values) : null]; })) : state.history?.peaks;
     $("#sh-peaks").innerHTML = pairs([["CPU", percent(peaks?.cpuPercent)], ["RAM", percent(peaks?.memoryPercent)], ["System load (1 min)", number(peaks?.load1, 2)], ["Storage", percent(peaks?.storagePercent)]]);
     $("#sh-collection").innerHTML = pairs([["Live sampling", collection ? `${number(collection.sampleIntervalMs / 1000, 0)} seconds` : "—"], ["Persisted aggregates", collection ? `${number(collection.aggregateIntervalMs / 1000, 0)} seconds` : "—"], ["Resource retention", collection ? `${collection.resourceRetentionDays} days` : "—"], ["Storage retention", collection ? `${collection.storageRetentionDays} days` : "—"], ["Last persisted", time(collection?.lastPersistedAt)], ["Swap in use", `${healthBytes(sample?.swapUsedBytes)} / ${healthBytes(sample?.swapTotalBytes)}`]]);
+    $("#sh-slack-status").innerHTML = slackHealthMarkup(state.harnesses, state.errors.harnesses);
     $("#sh-harness-status").innerHTML = harnessHealthMarkup(state.harnesses, engineLabel, state.errors.harnesses);
     $("#sh-hardware-body").innerHTML = hardwareMarkup(state.hardware);
   }

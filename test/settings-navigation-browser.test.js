@@ -74,8 +74,11 @@ test("settings categories, targeted search and drafts work at desktop and mobile
   // A disabled feature exposes its switch. Search does not silently enable it.
   await search.fill("Gemini API key");
   await results.filter({ hasText: /Gemini API key/i }).first().click();
+  if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, "settings-calls-desktop.png") });
   const voice = page.locator("#set-voice-calls-enabled");
   const geminiKey = page.locator("#set-gemini-api-key");
+  assert.equal(await visibleSections.getAttribute("data-sec"), "calls");
+  assert.equal(await page.locator("#set-ios-calls-enabled").isVisible(), true);
   assert.equal(await voice.isChecked(), false);
   assert.equal(await voice.evaluate((el) => el === el.ownerDocument.activeElement), true);
   assert.equal(await geminiKey.isVisible(), false);
@@ -83,6 +86,13 @@ test("settings categories, targeted search and drafts work at desktop and mobile
   assert.equal(await geminiKey.isVisible(), true);
   await voice.uncheck();
   assert.equal(await geminiKey.isVisible(), false);
+
+  await search.fill("Allowed app slugs");
+  await results.first().click();
+  assert.equal(await page.locator("#set-composio-mode").evaluate((el) => el === el.ownerDocument.activeElement), true);
+  assert.equal(await page.locator("#set-composio-mode").inputValue(), "personal");
+  await search.fill("deprecated legacy key");
+  await page.locator("#settings-no-results").waitFor();
 
   // A provider editor can put a saved credential suffix in a placeholder.
   // Search metadata must exclude it even when the settings index is freshly rebuilt.
@@ -101,8 +111,18 @@ test("settings categories, targeted search and drafts work at desktop and mobile
   await search.fill("public URL");
   await results.filter({ hasText: /externally-reachable/i }).first().click();
   await page.locator("#set-public-url").fill(publicUrl);
+  await search.fill("global variables");
+  await results.filter({ hasText: "Organization variables" }).click();
+  await page.locator("#view-variables.active").waitFor();
+  assert.equal(new URL(page.url()).pathname, "/variables");
+  await page.goBack();
+  await page.locator("#set-public-url").waitFor();
+  assert.equal(await page.locator("#set-public-url").inputValue(), publicUrl);
   await navItem("messaging").click();
-  await visibleSections.locator("summary").filter({ hasText: "Message activation reactions" }).click();
+  assert.equal(await page.locator("#set-mention-reactions").isVisible(), true);
+  assert.equal(await page.locator("#set-whisper-enabled").isVisible(), true);
+  if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, "settings-messages-desktop.png") });
+  assert.equal(await voice.isVisible(), false);
   await page.locator("#set-mention-reactions").fill("rocket");
   await navItem("appearance").click();
   await search.fill("unmatched-fixture-9875");

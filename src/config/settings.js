@@ -1470,6 +1470,7 @@ export function settingsForApi() {
     dmTemplates: getDmTemplates(),
     hasAdminPassword: Boolean(getAdminPassword()),
     hasApiKey: Boolean(getApiKey()),
+    hasStoredApiKey: Boolean(s.apiKey),
     apiKeyLast4: last4(getApiKey()),
     // License: the KEY itself never rides this response (src/web/secrets.js reveals it one at a
     // time, behind a fresh password). The card's live status comes from GET /api/license.

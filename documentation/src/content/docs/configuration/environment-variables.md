@@ -10,7 +10,7 @@ Use environment variables for project API tokens and CLI credentials. Store them
 | Scope | Where to configure | Precedence for the same name |
 | --- | --- | --- |
 | Conversation | **Conversations → Environment** or Slack **Secrets** | Overrides personal and organization values here |
-| Organization | **Settings → Integrations → Environment variables** | Base value across conversations unless overridden |
+| Organization | **Variables → Organization variables** | Base value across conversations unless overridden |
 | Personal | The person's secret controls | Overrides organization values on this person's runs |
 
 The effective order is **conversation → personal → organization**. A personal token of the same name overrides the organization value on its owner's runs, but does not replace an existing conversation token. Variables are supplied when a run starts; they are not a project configuration file.

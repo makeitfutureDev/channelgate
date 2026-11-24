@@ -7,6 +7,7 @@ export const ADMIN_VIEWS = Object.freeze({
   schedules: Object.freeze({ path: "/automations", title: "Automations" }),
   roi: Object.freeze({ path: "/roi", title: "ROI" }),
   audit: Object.freeze({ path: "/activity", title: "Activity" }),
+  variables: Object.freeze({ path: "/variables", title: "Variables" }),
   skills: Object.freeze({ path: "/skills", title: "Skills" }),
   api: Object.freeze({ path: "/api-docs", title: "HTTP run API" }),
   settings: Object.freeze({ path: "/settings", title: "Settings" }),
@@ -15,7 +16,7 @@ export const ADMIN_VIEWS = Object.freeze({
 });
 
 export const ADMIN_VIEW_PATHS = Object.freeze(Object.values(ADMIN_VIEWS).map(({ path }) => path));
-export const ADMIN_CONVERSATION_PATH_RE = /^\/conversations\/(channel|dm|group)\/([A-Za-z0-9._-]+)\/?$/;
+export const ADMIN_CONVERSATION_PATH_RE = /^\/conversations\/(?:(channel|dm|group)\/([A-Za-z0-9._-]+)|template\/(channel|user|admin))\/?$/;
 
 const VIEW_BY_PATH = new Map(Object.entries(ADMIN_VIEWS).map(([view, { path }]) => [path, view]));
 
@@ -42,6 +43,7 @@ export function titleForView(view) {
 export function pathForConversation(kind, channelId) {
   const type = String(kind || "").toLowerCase();
   const id = String(channelId || "");
+  if (type === "template" && ["channel", "user", "admin"].includes(id)) return `/conversations/template/${id}`;
   if (!["channel", "dm", "group"].includes(type) || !/^[A-Za-z0-9._-]+$/.test(id)) return ADMIN_VIEWS.channels.path;
   return `${ADMIN_VIEWS.channels.path}/${type}/${id}`;
 }
@@ -56,7 +58,8 @@ export function conversationKindForChannel(channel) {
 export function conversationRouteForPath(pathname) {
   const match = ADMIN_CONVERSATION_PATH_RE.exec(normalizePath(pathname));
   if (!match) return null;
-  const [, kind, channelId] = match;
+  const [, kind, channelId, template] = match;
+  if (template) return { kind: "template", template, key: `tpl:${template}` };
   return {
     kind,
     channelId,

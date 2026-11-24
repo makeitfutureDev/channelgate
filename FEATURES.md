@@ -8028,15 +8028,21 @@ are retired, bullet by bullet; everything else stands.
   admin UI (lazy-loaded on first open, saved with its own button via `GET`/`PUT
   /api/channels/:id/memory`). Warns when folder memory is toggled off for the channel. → TEST-PLAN: Admin UI.
 - Admin Settings groups categories under **Workspace**, **Agents** and **Administration**. Each
-  category has its own link, with expandable subcategories and a compact selector on phones.
+  category has its own link and a compact selector on phones. Everyday controls open directly.
+  **Messages** covers replies, reactions, voice notes and approvals. **Calls** covers browser
+  voice calls and incoming iPhone calls.
   Slack, Google Chat and Teams show connection status with setup collapsed. Optional features show
   their state and expose dependent fields when enabled. Desktop forms and search results use the
   available width. One global Save preserves pending edits across categories.
 - Settings search (`/` or Ctrl/⌘-K) finds fields, options, setup steps and actions across
   categories. Each result shows its location and opens the matching control or its prerequisite.
   Typing a search or opening a result leaves the form clean. Credential values stay out of search.
-  **System health → Engine harnesses** lists enabled licenses, CLI availability, sign-in status
-  and the warm-session count.
+  Results also link to the new homes for conversation templates, shared variables and skill grants.
+  **System health** shows the Slack connection, enabled harnesses, CLI versions, sign-in status
+  and warm-session count. **API** shows the deprecated organization-wide token only when one exists.
+- **Conversations → Templates** edits new-channel, user DM and admin DM defaults with a separate
+  Save for each. **Skills → Organization** manages shared skills and connectors, **Skills →
+  Templates** manages skill templates, and **Variables** manages deployment-wide variables.
 - A reusable **new-channel template** is copied into a channel's metadata only when the bot first
   registers it. It defaults to Autonomous mode with approved-domain network egress; edits affect
   future joins without silently changing existing channels.

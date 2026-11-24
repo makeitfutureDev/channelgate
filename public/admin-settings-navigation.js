@@ -53,7 +53,25 @@ function searchIndex(sections) {
   return entries;
 }
 
-export function createSettingsNavigation() {
+// Keep former Settings entries discoverable after their editors move to another page.
+const destinations = [
+  { title: "Organization variables", path: "Variables", keywords: "global environment secrets credentials", oldIds: ["org-secrets-card", "org-secrets-editor"], href: "/variables" },
+  { title: "Organization skills and connectors", path: "Skills / Organization", keywords: "global grants mcp servers", oldIds: ["org-grants-editor", "org-grant-tier"], href: "/skills#organization" },
+  { title: "Skill templates", path: "Skills / Templates", keywords: "skill sets assignments", oldIds: ["skill-templates-card", "skill-templates-editor"], href: "/skills#templates" },
+  { title: "New channel template", path: "Conversations / Templates", keywords: "channel defaults access templates", oldIds: ["set-templates", "tpl-channel-editor"], href: "/conversations/template/channel" },
+  { title: "User DM template", path: "Conversations / Templates", keywords: "user direct message defaults access templates", oldIds: ["tpl-user-editor"], href: "/conversations/template/user" },
+  { title: "Admin DM template", path: "Conversations / Templates", keywords: "admin direct message defaults access templates", oldIds: ["tpl-admin-editor"], href: "/conversations/template/admin" },
+  { title: "Slack connection status", path: "System health", keywords: "slack connected health", href: "/system-health#sh-slack-status" },
+  { title: "Engine harness status", path: "System health", keywords: "cli versions warm sessions engine health", href: "/system-health#sh-harness-status" },
+  { title: "Organization-wide run API token", path: "API", keywords: "http deprecated legacy key", conditional: true, oldIds: ["set-apikey"], href: "/api-docs#api-legacy-token" },
+];
+
+export function movedSettingsPath(location) {
+  if (location.pathname !== "/settings") return null;
+  return destinations.find((item) => item.oldIds?.includes(location.hash.slice(1)))?.href;
+}
+
+export function createSettingsNavigation(openDestination) {
   const byId = (id) => document.getElementById(id);
   const view = byId("view-settings");
   const body = byId("settings-body");
@@ -65,6 +83,7 @@ export function createSettingsNavigation() {
   const results = byId("settings-results");
   const empty = byId("settings-no-results");
   let current = sections[0];
+  let hasLegacyKey = false;
   let indexed = null;
   let activeQuery = "";
   let activeTarget = null;
@@ -115,8 +134,11 @@ export function createSettingsNavigation() {
       window.history.replaceState(window.history.state, "", "/settings#" + encodeURIComponent(targetId));
     }
     if (target.closest("[hidden]") || (focus && !focus.getClientRects().length)) {
-      const hidden = target.closest("[hidden]");
-      const prerequisite = hidden?.dataset.requiresSetting || hidden?.dataset.modeControl || card?.dataset.featureToggle;
+      // Resolve nested settings from the outside in so the suggested control is visible.
+      let prerequisite = card?.dataset.featureToggle;
+      for (let el = target; el && el !== card; el = el.parentElement) {
+        if (el.hidden) prerequisite = el.dataset.requiresSetting || el.dataset.modeControl || prerequisite;
+      }
       focus = byId(prerequisite) || card?.querySelector("summary");
       if (focus && title && prerequisite) {
         prerequisiteHint.textContent = focus.type === "checkbox"
@@ -143,7 +165,7 @@ export function createSettingsNavigation() {
     empty.hidden = true;
     results.replaceChildren();
     if (!searching) return;
-    indexed ||= searchIndex(sections);
+    indexed ||= [...searchIndex(sections), ...destinations.filter((item) => !item.conditional || hasLegacyKey)];
     const hits = rankSettings(indexed, activeQuery);
     byId("settings-result-count").textContent = hits.length + (hits.length === 1 ? " matching setting" : " matching settings");
     empty.hidden = hits.length > 0;
@@ -156,7 +178,7 @@ export function createSettingsNavigation() {
       const name = document.createElement("strong");
       name.textContent = hit.title;
       button.append(path, name);
-      button.addEventListener("click", () => reveal(hit.target, hit.title));
+      button.addEventListener("click", () => hit.href ? openDestination(hit.href) : reveal(hit.target, hit.title));
       results.append(button);
     }
     if (hits.length > limit) {
@@ -228,6 +250,11 @@ export function createSettingsNavigation() {
   choose(current.dataset.sec, { hash: false, scroll: false });
   return {
     choose, reveal,
+    setLegacyKeyAvailable(present) {
+      hasLegacyKey = !!present;
+      indexed = null;
+      if (activeQuery) renderSearch();
+    },
     enter(hash) {
       const linked = hash && byId(hash.slice(1));
       if (linked && body.contains(linked) && !linked.matches(".setsec")) return reveal(linked);

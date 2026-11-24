@@ -39,7 +39,7 @@ export const cleanAccessGrants = (value) => ({
 
 // Shape-clean one DM template (User/Admin) before persisting. Its model/effort are validated by the
 // caller via invalidModelOrEffort; here we only coerce types and drop unknown engines/MCP matches.
-// Used by the settings PUT — the templates live under Settings → Access Templates.
+// Shared by new channel and DM templates under Conversations → Templates.
 export const cleanConversationTemplate = (t) => ({
   skills: Array.isArray(t?.skills) ? t.skills : [],
   skillTemplate: typeof t?.skillTemplate === "string" ? t.skillTemplate.trim() : "",

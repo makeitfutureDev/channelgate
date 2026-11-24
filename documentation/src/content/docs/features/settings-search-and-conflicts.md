@@ -3,7 +3,7 @@ title: Settings search and conflicts
 description: Find settings quickly and handle concurrent edits without overwriting unrelated changes.
 ---
 
-The **Settings** page has a search box and section navigation for Connection, Agent defaults, Access Templates, Integrations, License, Access & security, and System. Search filters the rendered settings; clear it to restore the full form.
+**Settings** groups controls by workspace, agent and administration tasks. Search by field name, platform, option or action. Results show a location and open the control, its enable switch or the page where it is managed.
 
 ## Find a control
 

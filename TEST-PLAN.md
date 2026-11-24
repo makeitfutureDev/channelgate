@@ -13784,6 +13784,11 @@ none` for its cases and live gates. Kept as history.
       Edit settings in two categories, clear a no-match search, save once and reload. Both edits
       must persist. Open System health and verify harness status and warm sessions against the
       fixture's health response. The sidebar should carry no per-license rows.
+- [ ] UI-SETTINGS-DESTINATIONS-01. Edit reactions directly in Messages and inspect both switches
+      under Calls. Confirm off features hide setup fields. Search for a moved editor and follow the
+      result. Save a conversation template or organization grant with a gateway Settings draft
+      pending, then verify the draft can still be saved independently. Check Variables, Skills →
+      Templates, Slack under System health, and the API page with and without a stored legacy token.
 - [ ] Settings chip editors (trusted bot apps, network egress domains): Enter/comma adds a chip,
       × removes, Backspace on empty removes last; saving persists the same comma-separated values
       as before the redesign.

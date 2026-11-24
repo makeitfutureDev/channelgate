@@ -122,7 +122,7 @@ test("Voice calls section offers the closed choices and saves the person's own p
   await flush();
   assert.equal(nav.all().find((c) => c.attrs["aria-current"] === "page").textContent, "Voice calls");
   assert.ok(find(panel, "h2", "How the agent talks to you on a call"));
-  assert.ok(find(panel, "p", "Voice calls are not enabled on this gateway yet; an administrator turns them on under gateway Settings → Voice calls. Your preferences are kept for when they are."), "the settings view is rendered without the gateway flag here");
+  assert.ok(find(panel, "p", "Voice calls are not enabled on this gateway yet; an administrator turns them on under Settings → Calls. Your preferences are kept for when they are."), "the settings view is rendered without the gateway flag here");
   const language = panel.querySelectorAll("input").find((c) => c.attrs.name === "language" || c.name === "language");
   assert.equal(language.value, "Romanian");
   const selects = panel.querySelectorAll("select");

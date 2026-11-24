@@ -63,6 +63,7 @@ function setMessage(msg, isError = false) {
 async function withStatus(fn, okMessage = "") {
   try {
     const out = await fn();
+    if (out?.settingsVersion?.from) settingsVersionMoved?.(out.settingsVersion.from, out.settingsVersion.to);
     setMessage(okMessage);
     return out;
   } catch (err) {
@@ -92,6 +93,7 @@ async function refreshAll() {
     api("/api/skills/profiles"),
   ]);
   state.overview = overview;
+  document.dispatchEvent(new CustomEvent("skill-templates-loaded", { detail: overview.templates || [] }));
   state.catalog = {
     ...catalog,
     skills: filterSkillCatalog(catalog.skills, {
@@ -120,8 +122,25 @@ async function loadDetail(slug) {
   state.fileView = null;
 }
 
-export async function loadSkills() {
+export function updateOrganizationSkills(skills) {
+  if (!state.overview) return;
+  state.overview.orgSkills = skills;
+  renderSummary();
+}
+
+let organizationLoader;
+let settingsVersionMoved;
+export async function loadSkills({ loadOrganization, versionMoved } = {}) {
+  if (loadOrganization) organizationLoader = loadOrganization;
+  if (versionMoved) settingsVersionMoved = versionMoved;
   wire();
+  if (window.location.pathname === "/skills") {
+    const section = window.location.hash.slice(1);
+    const tabs = document.querySelectorAll(".skills-tab");
+    state.tab = [...tabs].some((tab) => tab.dataset.tab === section) ? section : "usage";
+  }
+  showSkillsTab();
+  if (state.tab === "organization") void organizationLoader?.();
   try {
     await refreshAll();
   } catch (err) {
@@ -198,13 +217,25 @@ function restoreFocus(snapshot) {
   el.setSelectionRange(Math.min(snapshot.start, limit), Math.min(snapshot.end ?? snapshot.start, limit));
 }
 
+function showSkillsTab() {
+  const panel = document.getElementById("skills-organization");
+  if (panel) panel.hidden = state.tab !== "organization";
+  body().hidden = state.tab === "organization";
+  for (const tab of document.querySelectorAll(".skills-tab")) {
+    const active = tab.dataset.tab === state.tab;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  }
+}
+
 function render() {
+  showSkillsTab();
   renderSummary();
   const badge = document.getElementById("skills-review-badge");
   const pending = (state.overview?.staged?.length || 0) + (state.overview?.proposals?.length || 0);
   badge.hidden = pending === 0;
   badge.textContent = String(pending);
-  for (const b of document.querySelectorAll(".skills-tab")) b.classList.toggle("active", b.dataset.tab === state.tab);
+  if (state.tab === "organization") return;
   const status = state.error ? `<p class="skills-error">${esc(state.error)}</p>` : state.message ? `<p class="skills-ok">${esc(state.message)}</p>` : "";
   const panel = { catalog: renderCatalog, review: renderReview, sources: renderSources, sync: renderSyncSettings, mcp: renderMcp, templates: renderTemplates, usage: renderUsage }[state.tab] || renderCatalog;
   const focused = captureFocus();
@@ -801,13 +832,12 @@ async function act(action, el) {
       break;
     }
     case "org-grant":
-      await withStatus(() => api("/api/skills/org/grant", { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }), `${state.selected} is granted organization-wide.`);
+    case "org-revoke": {
+      const grant = action === "org-grant";
+      await withStatus(() => api(`/api/skills/org/${grant ? "grant" : "revoke"}`, { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }), `${state.selected} ${grant ? "is granted" : "is no longer granted"} organization-wide.`);
       await refreshAll();
       break;
-    case "org-revoke":
-      await withStatus(() => api("/api/skills/org/revoke", { method: "POST", body: JSON.stringify({ slugs: [state.selected] }) }), `${state.selected} is no longer granted organization-wide.`);
-      await refreshAll();
-      break;
+    }
     case "publish-now": {
       const r = await withStatus(() => api(`/api/skills/catalog/${encodeURIComponent(state.selected)}/publish`, { method: "POST", body: "{}" }));
       if (r) setMessage(r.result.published ? `Published to ${r.result.repo}@${r.result.branch} (${r.result.files.length} file(s))${r.result.adopted ? "; now owned by that source" : ""}.` : `Not published: ${r.result.reason}`, !r.result.published);
@@ -875,7 +905,11 @@ function wire() {
   document.getElementById("skills-refresh").addEventListener("click", () => loadSkills());
   for (const b of document.querySelectorAll(".skills-tab")) {
     b.addEventListener("click", () => {
+      const previous = state.tab;
       state.tab = b.dataset.tab;
+      if (window.location.pathname === "/skills") window.history.replaceState(window.history.state, "", state.tab === "usage" ? "/skills" : "/skills#" + state.tab);
+      if (state.tab === "organization") void organizationLoader?.();
+      if (previous === "organization" && state.tab !== previous) void loadSkills();
       state.fileView = null;
       setMessage("");
       render();

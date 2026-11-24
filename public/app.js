@@ -16,13 +16,15 @@ import {
   loadChannelGuestOptions,
   reconcileChannelMeta,
 } from "./admin-state.js";
-import { createSettingsNavigation } from "./admin-settings-navigation.js";
+import { conversationTemplates, saveConversationTemplate, templateConfig } from "./admin-conversation-templates.js";
+import { createSettingsNavigation, movedSettingsPath } from "./admin-settings-navigation.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
 import { setSubscriptionsActive } from "./admin-subscriptions.js";
-import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, revealSecret, tokenValue } from "./admin-view.js";
 import { freshAdminAuth, mountAdminAccess, mountUserDashboardAccess } from "./admin-access.js";
-import { loadSkills } from "./admin-skills.js";
+import { mountOrganizationGrants } from "./admin-organization-grants.js";
+import { loadSkills, updateOrganizationSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
 import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
@@ -56,7 +58,7 @@ let ENGINE_MANIFESTS = [];
 // global, per channel, or per DM — so every engine picker is built from this filter.
 let ENGINE_ENABLED = {};
 let GLOBAL_COMPOSIO_MODE = "personal";
-let orgGrantsEditor = null;
+let orgGrantsPanel;
 // The Settings page's Save sends a DIFF, so it has to remember what it was painted from:
 // SETTINGS_BASELINE is the form read back immediately after that paint (form shape, compared
 // against the form at save time) and SETTINGS_SNAPSHOT is the server representation itself (API
@@ -65,13 +67,16 @@ let orgGrantsEditor = null;
 let SETTINGS_BASELINE = null;
 let SETTINGS_SNAPSHOT = null;
 let SETTINGS_VERSION = "";
+function advanceSettingsVersion(from, to) {
+  if (from && to && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to);
+}
 // Live parts of the settings payload: they move on their own and are nobody's edit.
 const SETTINGS_NON_VALUE_KEYS = ["ok", "stale", "code", "error", "slack", "platforms", "engines", "settingsVersion"];
 // Unified Conversations selection key: "ch:<channelId>" (channel) or "dm:<channelId>" (DM). One
-// key drives both list highlight + detail. (The User/Admin DM templates live under Settings now.)
+// key drives both list highlight and detail. Conversation templates use "tpl:<id>".
 let selectedConv = null;
 let convSource = "all";
-let convFilter = "all"; // segmented control: all | channels | dms
+let convFilter = "all"; // segmented control: all | channels | dms | templates
 let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; null until first (soft) fetch
 let convCostsFetched = false;
 let detailDirty = false; // whether the open conversation detail has unsaved edits (drives the savebar)
@@ -376,7 +381,11 @@ function capLabelOf(m = {}) {
 
 // ── View switching + URL history ────────────────────────────────────────────────
 function loadView(name, { refreshIdentity = true } = {}) {
-  if (name === "system-health") setSystemHealthActive(true, engineLabel);
+  if (name === "system-health") {
+    setSystemHealthActive(true, engineLabel);
+    const id = window.location.hash.slice(1);
+    if (["sh-slack-status", "sh-harness-status"].includes(id)) document.getElementById(id)?.scrollIntoView();
+  }
   if (name === "subscriptions") setSubscriptionsActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
@@ -386,8 +395,9 @@ function loadView(name, { refreshIdentity = true } = {}) {
     // role changes. Refresh it independently so existing unsaved Settings edits stay intact.
     else if (refreshIdentity) mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog }).catch(() => {});
   }
-  if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
-  if (name === "skills") loadSkills().catch(() => {}); // always refresh
+  if (name === "api") loadApiDocs().catch(() => {});
+  if (name === "skills") loadSkills({ loadOrganization: loadOrganizationGrants, versionMoved: advanceSettingsVersion }).catch(() => {});
+  if (name === "variables") loadOrgSecrets();
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
   if (name === "roi") loadRoi().catch(() => {});
   if (name === "audit") loadAudit().catch(() => {}); // always refresh
@@ -409,6 +419,10 @@ function setView(name, { history = "push", load = true } = {}) {
   const path = pathForView(view);
   if (history === "replace") window.history.replaceState({ view }, "", path);
   else if (history === "push" && window.location.pathname !== path) window.history.pushState({ view }, "", path);
+  if (view !== "api") {
+    apiDocsVisit++;
+    paintLegacyToken(null);
+  }
   if (view !== "system-health") setSystemHealthActive(false);
   if (view !== "subscriptions") setSubscriptionsActive(false);
   if (load) loadView(view);
@@ -416,34 +430,70 @@ function setView(name, { history = "push", load = true } = {}) {
 }
 
 // ── API docs (static reference for the HTTP run API) ────────────────────────────
-// The page content is static in index.html; this only fills the live base URL (from the public
-// URL setting, else the current origin) and whether a token has been generated. Degrades quietly
-// if /api/settings isn't reachable (e.g. session expired) — the reference still reads fine.
-function gotoApiTokenSettings() {
-  setView("settings");
-  if (!viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
-  settingsNavigation.reveal(document.getElementById("set-apikey"));
+let apiDocsVisit = 0;
+function paintLegacyToken(settings) {
+  const card = document.getElementById("api-legacy-token");
+  card.replaceChildren();
+  card.hidden = !settings?.hasApiKey;
+  if (settings) settingsNavigation.setLegacyKeyAvailable(settings.hasApiKey);
+  if (card.hidden) return;
+  card.innerHTML = `<h4>Organization-wide token · deprecated</h4>
+    <p class="desc">This token can start runs as an admin in every conversation. Migrate existing automations to channel tokens.</p>`;
+  if (!settings.hasStoredApiKey) {
+    const status = document.createElement("p");
+    status.className = "desc";
+    status.textContent = `••••${settings.apiKeyLast4 || ""} · To revoke this token, remove CG_API_KEY from the daemon environment and restart it.`;
+    card.append(status);
+    return;
+  }
+  card.insertAdjacentHTML("beforeend", `<label class="field"><span>API token</span><input type="password" readonly autocomplete="off"></label>
+    <div class="card-foot"><button type="button" class="ghost" data-copy>Copy token</button>
+    <button type="button" class="ghost" data-revoke>Revoke token</button></div><span class="saved" role="status"></span>`);
+  const message = card.querySelector('[role="status"]');
+  const reveal = revealSecret("settings", "apiKey");
+  const input = card.querySelector("input");
+  const control = attachReveal(input, { has: true, last4: settings.apiKeyLast4, fetch: reveal });
+  control.btn.tabIndex = 0;
+  card.querySelector("[data-copy]").onclick = async () => {
+    try {
+      const value = await reveal();
+      if (value && input.isConnected) {
+        await navigator.clipboard.writeText(value);
+        message.textContent = "Token copied.";
+      }
+    } catch (e) { message.textContent = e.message; }
+  };
+  const revoke = card.querySelector("[data-revoke]");
+  revoke.onclick = async () => {
+    if (!await confirmDialog({ title: "Revoke the organization-wide token?", body: "Automations using this stored token will lose access.", confirmLabel: "Revoke", danger: true })) return;
+    revoke.disabled = true;
+    try {
+      const result = await api("/api/settings", { method: "PUT", body: JSON.stringify({
+        clearApiKey: true, settingsVersion: settings.settingsVersion, connectSlack: false,
+      }) });
+      if (SETTINGS_VERSION === settings.settingsVersion) SETTINGS_VERSION = result.settingsVersion;
+      if (input.isConnected) paintLegacyToken(result);
+    } catch (e) {
+      if (e.status === 409 && input.isConnected) {
+        paintLegacyToken(e.body);
+        await infoDialog({ title: "Settings changed", body: "The token was not revoked. Review the current token before trying again." });
+      } else {
+        message.textContent = e.message;
+        revoke.disabled = false;
+      }
+    }
+  };
 }
 
 async function loadApiDocs() {
-  let base = window.location.origin;
-  let hasKey = null;
-  try {
-    const s = await api("/api/settings");
-    if (s.publicUrl) base = String(s.publicUrl).replace(/\/+$/, "");
-    hasKey = Boolean(s.hasApiKey);
-  } catch {
-    /* not logged in / offline — the reference is static, so just keep the origin fallback */
-  }
+  const visit = ++apiDocsVisit;
+  paintLegacyToken(null);
+  const settings = await api("/api/settings").catch(() => null);
+  if (visit !== apiDocsVisit) return;
+  const base = settings?.publicUrl ? String(settings.publicUrl).replace(/\/+$/, "") : window.location.origin;
   for (const el of document.querySelectorAll("#view-api .apidoc-base")) el.textContent = base;
-  const note = document.getElementById("apidoc-token-note");
-  if (note) {
-    note.textContent =
-      hasKey === true
-        ? "Channel tokens: ask the agent in a conversation for create_api_token. A deprecated organization-wide key is also set under Settings → HTTP run API."
-        : "Channel tokens: ask the agent in a conversation for create_api_token (listed below). No organization-wide key is set — good.";
-    note.classList.toggle("apidoc-note-warn", hasKey === true);
-  }
+  paintLegacyToken(settings);
+  if (settings?.hasApiKey && location.hash === "#api-legacy-token") document.getElementById("api-legacy-token").scrollIntoView();
   await paintApiTokens();
 }
 
@@ -1507,6 +1557,7 @@ function costFor(channelId, slug) {
 const hashName = (n) => (String(n || "").startsWith("#") ? String(n) : "#" + n);
 
 function conversationPathForKey(key) {
+  if (key?.startsWith("tpl:")) return pathForConversation("template", key.slice(4));
   if (key?.startsWith("dm:")) return pathForConversation("dm", key.slice(3));
   if (key?.startsWith("ch:")) {
     const channelId = key.slice(3);
@@ -1517,6 +1568,7 @@ function conversationPathForKey(key) {
 }
 
 function conversationExists(key) {
+  if (key?.startsWith("tpl:")) return conversationTemplates.some((template) => template.id === key.slice(4));
   if (key?.startsWith("dm:")) return DMS.some((d) => d.channelId === key.slice(3));
   if (key?.startsWith("ch:")) return CHANNELS.some((c) => c.channelId === key.slice(3));
   return false;
@@ -1561,8 +1613,19 @@ function renderConvList() {
   const showDms = convFilter === "all" || convFilter === "dms";
   list.innerHTML = "";
 
-  // The User/Admin DM templates live under Settings → Access Templates (not this list). DM rows below
-  // still borrow their template's capdot via DM_TEMPLATES.
+  const templates = convFilter === "templates";
+  document.querySelector(".conv-source-filter").hidden = templates;
+  document.getElementById("channel-search").closest(".list-search").hidden = templates;
+  for (const button of document.querySelectorAll("#conv-seg button")) {
+    button.classList.toggle("on", button.dataset.seg === convFilter);
+    button.setAttribute("aria-pressed", String(button.dataset.seg === convFilter));
+  }
+  if (templates) {
+    for (const { id, title } of conversationTemplates) {
+      list.appendChild(convRow("tpl:" + id, "var(--accent)", title, "", null));
+    }
+    return;
+  }
 
   // Channels — sorted by name; capdot + profile label (+ network) sub-line; 30-day cost if known.
   if (showChannels) {
@@ -1626,13 +1689,17 @@ async function selectConv(key, { history = "push", canonicalize = false } = {}) 
       return false;
     }
   }
-  selectedConv = key;
-  detailDirty = false;
-  renderConvList();
-  if (key) openDetail(key);
-  else {
-    document.getElementById("channel-detail").innerHTML =
-      `<p class="empty-detail">Select a conversation on the left to edit its settings.<br /><span class="hint">New channels appear once the bot has seen a message in them, and start <strong>fail-closed</strong>. DMs appear after the person messages the bot.</span></p>`;
+  if (key?.startsWith("tpl:")) convFilter = "templates";
+  else if (convFilter === "templates") convFilter = "all";
+  if (selectedConv !== key || !detailDirty) {
+    selectedConv = key;
+    detailDirty = false;
+    renderConvList();
+    if (key) openDetail(key);
+    else {
+      document.getElementById("channel-detail").innerHTML =
+        `<p class="empty-detail">Select a conversation on the left to edit its settings.<br /><span class="hint">New channels appear once the bot has seen a message in them, and start <strong>fail-closed</strong>. DMs appear after the person messages the bot.</span></p>`;
+    }
   }
 
   const path = conversationPathForKey(key);
@@ -1644,6 +1711,7 @@ async function selectConv(key, { history = "push", canonicalize = false } = {}) 
 
 function openDetail(key) {
   if (!key) return;
+  if (key.startsWith("tpl:")) return renderConversationTemplate(key.slice(4));
   if (key.startsWith("ch:")) {
     const ch = CHANNELS.find((c) => c.channelId === key.slice(3));
     if (ch) renderChannelDetail(ch);
@@ -1807,6 +1875,29 @@ function selectedMcpEntries(box, engine) {
   }).filter(Boolean);
 }
 
+function openOrganizationGrants() {
+  window.history.pushState({ view: "skills" }, "", "/skills#organization");
+  setView("skills", { history: "none" });
+}
+
+function loadOrganizationGrants() {
+  if (!orgGrantsPanel) {
+    wireGrantTierNavigation(document.getElementById("org-grant-tier"), "organization");
+    orgGrantsPanel = mountOrganizationGrants({
+      api,
+      buildEditor: (grants) => buildAccessGrantsEditor(grants, { tier: "organization" }),
+      loadSkillOptions: async () => {
+        const catalog = await api("/api/skills");
+        SKILLS = catalog.skills;
+        PERSONAL_SKILLS = catalog.personalSkills || [];
+      },
+      versionMoved: advanceSettingsVersion,
+      onSaved: updateOrganizationSkills,
+    });
+  }
+  return orgGrantsPanel.load();
+}
+
 function wireGrantTierNavigation(select, currentTier) {
   if (!select) return;
   select.value = currentTier;
@@ -1815,8 +1906,7 @@ function wireGrantTierNavigation(select, currentTier) {
     event.stopPropagation();
     const next = select.value;
     if (next === "organization") {
-      setView("settings");
-      settingsNavigation.reveal(document.getElementById("org-grant-tier"));
+      openOrganizationGrants();
     } else if (next === "channel") {
       setView("channels");
     } else if (next === "user") {
@@ -2155,13 +2245,6 @@ function renderChannelDetail(ch) {
     if (!skillsBox.isConnected) return;
     SKILL_TEMPLATES = overview.templates || [];
     fillSkillTemplateSelect(templateSelect, meta.skillTemplate || "", card.querySelector(".ch-skill-template-state"));
-    if (meta.skillTemplate && !SKILL_TEMPLATES.some((t) => t.slug === meta.skillTemplate)) {
-      const missing = document.createElement("option");
-      missing.textContent = `${meta.skillTemplate} (unavailable)`;
-      missing.value = meta.skillTemplate;
-      templateSelect.add(missing);
-      templateSelect.value = meta.skillTemplate;
-    }
     const inherited = () => {
       const template = SKILL_TEMPLATES.find((t) => t.slug === templateSelect.value);
       const section = catalog.skills.filter((s) => s.channelScope === (meta.workspaceLink?.channelId || ch.channelId) && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
@@ -2457,10 +2540,15 @@ function renderChannelDetail(ch) {
       await channelLicenses.load();
       if (card.isConnected) { engineSelect.repaint(); syncChannelRuntime(); }
     },
-    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    versionMoved: ({ from, to } = {}) => advanceSettingsVersion(from, to),
     scope: { channelId: ch.channelId, label: conversationChannelName(ch) || ch.name || ch.slug || ch.channelId },
   });
   void channelLicenses.load();
+  card.querySelector(".ch-org-grants").addEventListener("click", (event) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openOrganizationGrants();
+  });
   card.querySelector(".ch-licenses-all")?.addEventListener("click", (e) => {
     e.preventDefault();
     setView("settings");
@@ -2781,14 +2869,8 @@ function renderChannelDetail(ch) {
   const refreshVpn = mountChannelVpnControls(card, ch.channelId);
 }
 
-// ── Reusable config editor (Access Templates / custom DM) ────────────────────────
-// Uses the SAME capability picker as a channel's Access tab: profile cards (Read-only / Worker /
-// Autonomous / Full access / Lean / Custom) drive the hidden flag checkboxes, "Custom" reveals them,
-// a network switch, then the Tools (MCP/Skills) and Runtime (engine/model/effort) blocks — so a
-// template is configured with the exact same elements as a channel. getValues() returns the flat
-// flag shape the template/DM save expects (no `profile` field — it's re-derived from the flags).
-// `storesPool` is false where only `engine` is stored (the settings templates): the license step
-// then offers single licenses, with no "Any license" and no "also use".
+// Conversation templates and custom DMs share mode, tools and runtime controls.
+// A custom DM can also store a license pool.
 function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "cfg-editor";
@@ -2797,20 +2879,19 @@ function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}
     <div><p class="fldlab">Mode</p><div class="cap-cards cfg-capcards">
       <button type="button" class="cap-card" data-cap="read"><h5>Read-only</h5><p>Reads files. Changes need approval.</p></button>
       <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in this channel’s folder only.</p></button>
-      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Full tools for admins. Host-home access can be enabled in Settings.</p></button>
+      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Admins can use all tools. Other members use Worker.</p></button>
     </div></div>
     <div class="mode-options"><p class="fldlab">Special modes</p>
-      <label class="togglerow"><input type="checkbox" class="cfg-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Automatically approve tool requests for all members. Enables Worker when Read-only is selected.</small></span></label>
+      <label class="togglerow"><input type="checkbox" class="cfg-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Approve tool requests automatically. Enables Worker in Read-only mode.</small></span></label>
       <label class="togglerow"><input type="checkbox" class="cfg-clean" /><span class="switch"></span><span class="t"><b>Lean</b><small>Bare model without skills or connectors. In Admin mode, applies to non-admins.</small></span></label>
     </div>
   </div>
   <select class="cfg-profile" hidden aria-hidden="true"><option value="read">Read-only</option><option value="worker">Worker</option><option value="admin">Admin</option></select>
-  <em class="state cfg-profile-help" style="display:block;margin:0 0 16px"></em>
   <input type="checkbox" class="cfg-admin" hidden /><input type="checkbox" class="cfg-bash" hidden />
     <label class="togglerow cfg-network-wrap">
       <input type="checkbox" class="cfg-network" />
       <span class="switch"></span>
-      <span class="t"><b>Network egress</b><small><code>git push</code> / <code>gh</code> to the allowed domains — needs Bash, admin-only</small></span>
+      <span class="t"><b>Network egress</b><small>Allow outbound network requests.</small></span>
     </label>
 
     <p class="fldlab" style="margin-top:20px">Tools</p>
@@ -2821,7 +2902,7 @@ function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}
         <div class="cfg-mcps checks"></div>
       </div>
       <div class="col tools-col">
-        <label class="field"><span>Skill template <em class="state">· followed live; skills checked below are added on top</em></span>
+        <label class="field"><span>Skill template <em class="state">· follows updates from Skills</em></span>
           <select class="cfg-skill-template"><option value="">none</option></select>
           <em class="state cfg-skill-template-state"></em></label>
         <div class="checks-head"><h4>Additional skills</h4><span class="checks-count cfg-skills-count"></span></div>
@@ -2832,7 +2913,7 @@ function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}
 
     <p class="fldlab" style="margin-top:20px">Runtime</p>
     <div class="grid grid-2">
-      <label class="field"><span>Harness (which CLI drives this)</span>
+      <label class="field"><span>Harness</span>
         <select class="cfg-engine"><option value="">Default (global setting)</option></select></label>
       <label class="field"><span>Model</span>
         <select class="cfg-model"></select></label>
@@ -2890,11 +2971,9 @@ function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}
   const networkBox = el.querySelector(".cfg-network");
   networkBox.checked = !!cfg.allowNetwork;
   const profSel = el.querySelector(".cfg-profile");
-  const profHelp = el.querySelector(".cfg-profile-help");
   const capCards = [...el.querySelectorAll(".cap-card")];
   const applyProfileUI = (p) => {
     profSel.value = p;
-    profHelp.textContent = PROFILE_HELP[p] || "";
     for (const c of capCards) c.classList.toggle("sel", c.dataset.cap === p);
     for (const c of capCards) {
       const mark = c.querySelector(".box-mark");
@@ -2961,7 +3040,9 @@ function buildSavebar() {
 // Dirty-track a detail card + wire its savebar. save() does the PUT; discard() re-renders.
 function wireSavebar(card, bar, save, discard) {
   const msg = bar.querySelector(".msg");
+  let revision = 0;
   const mark = () => {
+    revision++;
     if (detailDirty) return;
     detailDirty = true;
     bar.hidden = false;
@@ -2971,9 +3052,14 @@ function wireSavebar(card, bar, save, discard) {
   const onEdit = (e) => { if (!e.target.closest(`.detail-savebar, .checks-filter, ${SELF_SAVING_CONTROLS}`)) mark(); };
   card.addEventListener("input", onEdit);
   card.addEventListener("change", onEdit);
-  bar.querySelector(".save-changes").addEventListener("click", async () => {
+  const saveButton = bar.querySelector(".save-changes");
+  const discardButton = bar.querySelector(".discard");
+  saveButton.addEventListener("click", async () => {
+    const submitted = revision;
+    saveButton.disabled = discardButton.disabled = true;
     try {
       await save();
+      if (!card.isConnected || submitted !== revision) return;
       detailDirty = false;
       msg.textContent = "Saved";
       msg.classList.add("clean");
@@ -2981,32 +3067,51 @@ function wireSavebar(card, bar, save, discard) {
     } catch (e) {
       msg.textContent = "Couldn't save: " + e.message;
       msg.classList.remove("clean");
+    } finally {
+      saveButton.disabled = discardButton.disabled = false;
     }
   });
-  bar.querySelector(".discard").addEventListener("click", discard);
+  discardButton.addEventListener("click", discard);
   return mark;
 }
 
-// ── Org DM templates (User / Admin) — live under Settings → Access Templates ───────────
-// Two buildConfigEditor instances mounted into the settings section; their values fold into the
-// page's one global Save (see the save-settings handler). getValues() is read from these refs.
-const dmTplEditors = { user: null, admin: null };
-let channelTplEditor = null;
-function renderChannelTemplateSettings(template) {
-  const mount = document.getElementById("tpl-channel-editor");
-  if (!mount) return;
-  mount.innerHTML = "";
-  channelTplEditor = buildConfigEditor(template || {});
-  mount.appendChild(channelTplEditor.el);
-}
-function renderDmTemplateSettings(templates) {
-  for (const name of ["user", "admin"]) {
-    const mount = document.getElementById(`tpl-${name}-editor`);
-    if (!mount) continue;
-    mount.innerHTML = "";
-    const ed = buildConfigEditor(templates[name] || {});
-    mount.appendChild(ed.el);
-    dmTplEditors[name] = ed;
+// One independent editor per template. Loading or saving a template never repaints Settings.
+async function renderConversationTemplate(id) {
+  const { title, description } = conversationTemplates.find((item) => item.id === id);
+  const card = document.createElement("div");
+  card.className = "card detail-card conversation-template";
+  card.innerHTML = `<header class="dhead"><h2>${title}</h2></header><p class="hint">${description}</p><p class="template-loading" role="status">Loading…</p>`;
+  document.getElementById("channel-detail").replaceChildren(card);
+  detailDirty = false;
+  const status = card.querySelector(".template-loading");
+  try {
+    const [settings, catalog] = await Promise.all([api("/api/settings"), api("/api/skills/templates")]);
+    if (!card.isConnected) return;
+    SKILL_TEMPLATES = catalog.templates || [];
+    let version = settings.settingsVersion;
+    let stored = templateConfig(settings, id);
+    const editor = buildConfigEditor(stored);
+    let baseline = editor.getValues();
+    const bar = buildSavebar();
+    status.replaceWith(editor.el, bar);
+    wireSavebar(card, bar, async () => {
+      const values = editor.getValues();
+      const result = await saveConversationTemplate({ api, id, stored, version, baseline, values });
+      advanceSettingsVersion(result.previousVersion, result.settings.settingsVersion);
+      version = result.settings.settingsVersion;
+      stored = templateConfig(result.settings, id);
+      baseline = values;
+      DM_TEMPLATES = result.settings.dmTemplates || DM_TEMPLATES;
+      renderConvList();
+    }, () => renderConversationTemplate(id));
+  } catch (error) {
+    status.textContent = `Couldn’t load this template. ${error.message}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "ghost";
+    retry.textContent = "Retry";
+    retry.onclick = () => renderConversationTemplate(id);
+    card.append(retry);
   }
 }
 
@@ -3029,11 +3134,19 @@ function renderDmDetail(id) {
 
   const tplField = document.createElement("label");
   tplField.className = "field";
-  tplField.innerHTML = `<span>Template — a preset config, or Custom to hand-configure this DM</span>
+  tplField.innerHTML = `<span>DM template</span>
     <select class="dm-template"><option value="user">User template</option><option value="admin">Admin template</option><option value="custom">Custom</option></select>`;
   card.appendChild(tplField);
   const tplSel = tplField.querySelector(".dm-template");
   tplSel.value = dm.meta?.workspaceLink ? "custom" : dm.template;
+  const editTemplate = document.createElement("a");
+  editTemplate.className = "hint";
+  editTemplate.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    selectConv("tpl:" + tplSel.value);
+  });
+  card.appendChild(editTemplate);
   if (dm.meta?.workspaceLink) {
     tplSel.disabled = true;
     const linked = document.createElement("p");
@@ -3053,6 +3166,9 @@ function renderDmDetail(id) {
   card.appendChild(customBox);
   let ed = null;
   const renderCustom = () => {
+    editTemplate.hidden = tplSel.value === "custom";
+    editTemplate.textContent = tplSel.value === "admin" ? "Edit admin DM template" : "Edit user DM template";
+    editTemplate.href = pathForConversation("template", tplSel.value);
     customBox.innerHTML = "";
     ed = null;
     if (tplSel.value === "custom") {
@@ -3579,7 +3695,10 @@ function toggleClearTok(btn) {
   markSettingsDirty();
 }
 
-const settingsNavigation = createSettingsNavigation();
+const settingsNavigation = createSettingsNavigation((href) => {
+  window.history.pushState({}, "", href);
+  applyLocation();
+});
 
 function refreshFeatureCards() {
   for (const card of document.querySelectorAll("[data-feature-toggle]")) {
@@ -3843,7 +3962,7 @@ function paintEngineLicenses() {
     blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
     reload: loadSettings,
     // Only the step this page can account for: its own version → the one the check produced.
-    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    versionMoved: ({ from, to } = {}) => advanceSettingsVersion(from, to),
     // What a license can be limited to: every channel and DM this gateway knows, by name.
     conversations: licenseConversations,
     // The gateway's own Codex sign-in ("Default sign-in" of Codex): ChatGPT or an API key.
@@ -3909,7 +4028,6 @@ function readSettingsForm() {
     composioSdkPolicy: readComposioPolicy(document.getElementById("composio-sdk-policy")),
     ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
     ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
-    accessGrants: orgGrantsEditor?.getValues() || {},
     composioMcpUrl: document.getElementById("set-composio").value,
     publicUrl: document.getElementById("set-public-url").value,
     appleAppIds: document.getElementById("set-apple-app-ids").value,
@@ -4005,16 +4123,8 @@ function readSettingsForm() {
       claude: document.getElementById("set-assumed-claude").value.trim(),
       codex: document.getElementById("set-assumed-codex").value.trim(),
     },
-    ...(channelTplEditor ? { channelTemplate: channelTplEditor.getValues() } : {}),
-    // DM templates fold into the one global Save. Only include an editor that's mounted (the
-    // section may not have been visited yet — mounting happens in loadSettings, so it always is).
-    ...(dmTplEditors.user && dmTplEditors.admin
-      ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
-      : {}),
     // HTTP run API token (write-only): send the new value only if edited/generated; the clear
     // toggle removes it. Leaving the field untouched keeps the stored token.
-    ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
-    ...(document.getElementById("clear-apikey").classList.contains("armed") ? { clearApiKey: true } : {}),
   };
 }
 
@@ -4046,10 +4156,6 @@ function paintSettings(s) {
   for (const p of s.qwenProviders || []) SETTINGS_HAVE_PROVIDER_KEY[p.id] = p.hasApiKey === true;
   paintTerminalHarnesses(s.terminalHarnesses, s);
   paintEngineLicenses();
-  const orgGrantsHost = document.getElementById("org-grants-editor");
-  orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });
-  orgGrantsHost.replaceChildren(orgGrantsEditor.el);
-  wireGrantTierNavigation(document.getElementById("org-grant-tier"), "organization");
   document.getElementById("state-bot").textContent = tokenState(s.tokens.hasBotToken, s.tokens.botTokenLast4);
   document.getElementById("state-app").textContent = tokenState(s.tokens.hasAppToken, s.tokens.appTokenLast4);
   document.getElementById("state-sign").textContent = s.tokens.hasSigningSecret ? "set" : "not set";
@@ -4146,8 +4252,6 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
   // HTTP run API key: a revealable field seeded with the stored token (so it can be copied into an
   // automation) plus a set/not-set state. Generated client-side, persisted on Save (write-only).
-  attachReveal(document.getElementById("set-apikey"), { has: s.hasApiKey, last4: s.apiKeyLast4, fetch: revealSecret("settings", "apiKey") });
-  document.getElementById("apikey-state").textContent = s.hasApiKey ? "· set" : "· not set (run API needs an admin login)";
   // License key: has*/last4 only in this payload, like every other secret. The value is fetched
   // one at a time from /api/secrets/reveal behind the eye toggle.
   attachReveal(document.getElementById("set-license-key"), { has: s.hasLicenseKey, last4: s.licenseKeyLast4, fetch: revealSecret("settings", "licenseKey") });
@@ -4206,12 +4310,7 @@ function paintSettings(s) {
   document.getElementById("set-assumed-claude").value = assumed.claude ?? "";
   document.getElementById("set-assumed-codex").value = assumed.codex ?? "";
   renderSlackStatus(s.slack);
-  renderSkillTemplatesSettings().catch(() => {});
-  renderChannelTemplateSettings(s.channelTemplate || {});
-  // DM templates: (re)build the two editors from the stored config, and keep DM_TEMPLATES in sync so
-  // the Conversations list shows each DM row's template-derived capdot after an edit + save.
   DM_TEMPLATES = s.dmTemplates || DM_TEMPLATES;
-  renderDmTemplateSettings(DM_TEMPLATES);
   if (viewLoaded.channels) renderConvList();
   // Re-render the chip editors from the (just-set) hidden inputs, and treat this repaint as clean.
   for (const c of document.querySelectorAll("#view-settings .chips[data-chip-for]")) renderChipsFromInput(c);
@@ -4224,6 +4323,7 @@ function paintSettings(s) {
   document.getElementById("set-gchat-key").value = "";
   // Remember what this paint put on the page: Save sends the difference against it, so a field
   // nobody touched here is never re-asserted over another writer's newer value.
+  settingsNavigation.setLegacyKeyAvailable(s.hasApiKey);
   SETTINGS_SNAPSHOT = s;
   SETTINGS_VERSION = s?.settingsVersion ? String(s.settingsVersion) : "";
   refreshFeatureCards();
@@ -4237,13 +4337,13 @@ async function loadSettings() {
   ]);
   USERS = directory.users || {};
   paintSettings(settings);
-  await Promise.all([loadLicense(), loadOrgSecrets(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
+  await Promise.all([loadLicense(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
   // The admin-added engine licenses: their type, sign-in state and verification (the manifest
   // painted above already lists them by name).
   await licensesManager?.load();
 }
 
-// ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
+// ── Variables: organization-wide environment secrets (config/scoped-env.js) ────────
 // Its own endpoint, not part of /api/settings: that payload is a fixed set of named fields with
 // hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
 // that erodes the "resolve a NAMED field" property web/secrets.js depends on.
@@ -4252,13 +4352,17 @@ let orgSecretEntitled = null;
 async function loadOrgSecrets() {
   const host = document.getElementById("org-secrets-editor");
   if (!host) return;
-  let vars = [];
-  const license = await api("/api/license").catch(() => ({ features: {} }));
-  const entitled = license.features?.organizationVariables === true;
+  const status = document.getElementById("org-secrets-status");
+  let entitled;
+  let vars;
   try {
-    vars = (await api("/api/org-secrets")).vars || [];
-  } catch {
-    /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
+    const [license, list] = await Promise.all([api("/api/license"), api("/api/org-secrets")]);
+    entitled = license.features?.organizationVariables === true;
+    vars = list.vars || [];
+    status.textContent = entitled ? "" : "Enterprise is required to add or replace organization variables.";
+  } catch (error) {
+    status.textContent = "Could not load organization variables. " + error.message;
+    return;
   }
   if (orgSecretEditor && orgSecretEntitled === entitled) {
     orgSecretEditor.setVars(vars);
@@ -4266,7 +4370,9 @@ async function loadOrgSecrets() {
   }
   host.textContent = "";
   orgSecretEntitled = entitled;
-  host.appendChild(secretEditorMarkup());
+  const markup = secretEditorMarkup();
+  markup.querySelector(".secret-add").hidden = !entitled;
+  host.appendChild(markup);
   const card = document.getElementById("org-secrets-card");
   orgSecretEditor = mountSecretEditor({
     root: card,
@@ -4276,7 +4382,7 @@ async function loadOrgSecrets() {
     userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
     namePlaceholder: "GH_TOKEN",
-    emptyText: "No organization variables — each conversation relies on its own secrets, or on whatever login the gateway host has.",
+    emptyText: "No organization variables set.",
     removeBody: "EVERY conversation stops receiving it on its next run. The value can't be recovered — you would have to issue a new one.",
     savedText: (name) => `Saved ${name}. Every conversation's next run receives it.`,
   });
@@ -4487,32 +4593,6 @@ function bindSettings() {
     }
   });
 
-  // HTTP run API token: generate (client-side random), copy, and clear-on-save. The generated
-  // value is marked dirty + revealed so Save picks it up (tokenValue) and the operator can copy it.
-  const apikeyMsg = document.getElementById("apikey-msg");
-  document.getElementById("clear-apikey").addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(document.getElementById("clear-apikey")); });
-  document.getElementById("gen-apikey").addEventListener("click", (e) => {
-    e.preventDefault();
-    const bytes = crypto.getRandomValues(new Uint8Array(24));
-    const tok = "cg_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    const input = document.getElementById("set-apikey");
-    input.value = tok;
-    input._reveal.dirty = true;
-    input.dataset.dirty = "1";
-    input._reveal.revealed = true;
-    paintReveal(input);
-    disarmClearTok(document.getElementById("clear-apikey")); // generating a new key contradicts clearing
-    apikeyMsg.textContent = "Generated — click Save to apply, then Copy for your automation.";
-  });
-  document.getElementById("copy-apikey").addEventListener("click", async (e) => {
-    e.preventDefault();
-    const input = document.getElementById("set-apikey");
-    // The freshly typed/generated value if edited, otherwise the stored one behind the reveal.
-    const val = input._reveal?.dirty ? input.value.trim() : String(input._reveal?.full || "");
-    if (!val) { apikeyMsg.textContent = "No token yet — Generate one first."; return; }
-    try { await navigator.clipboard.writeText(val); apikeyMsg.textContent = "Copied ✓"; }
-    catch { apikeyMsg.textContent = "Copy failed — reveal it with the eye and copy manually."; }
-  });
   document.getElementById("reset-access").addEventListener("click", async () => {
     const saved = document.getElementById("reset-access-saved");
     const ok = await confirmDialog({
@@ -4592,7 +4672,6 @@ function bindSettings() {
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
       loadLicense().catch(() => { /* the save itself succeeded — the card refreshes on reload */ });
-      disarmClearTok(document.getElementById("clear-apikey"));
       saved.textContent = slackTokenChanged ? (r.slack?.connected ? "✓ saved & reconnected" : "✓ saved") : "✓ saved";
       // Paint directly from the representation returned by the write that committed. A second GET
       // is unnecessary and can repaint stale client/cache state over the just-saved boolean.
@@ -4745,23 +4824,15 @@ function closeFolderPicker() {
 
 // ── Health ──────────────────────────────────────────────────────────────────────
 async function loadHealth() {
-  const el = document.getElementById("health");
   try {
     const h = await api("/api/health");
-    const slackOk = !!h.slack?.connected;
-    const slackLabel = slackOk ? `Slack · @${h.slack.user}` : `Slack · ${h.slack?.status || "off"}`;
     const engines = h.engines && typeof h.engines === "object" ? h.engines : { claude: h.claude || {} };
     const firstHealth = !HEALTH_ENGINES;
     HEALTH_ENGINES = engines;
     if (firstHealth) licensesManager?.paint();
-    // Gateway root goes in a tooltip rather than wrapping raw text in the rail.
-    el.title = h.gatewayRoot || "";
-    el.innerHTML = `<div class="statuschip"><span class="dot ${slackOk ? "ok" : "off"}"></span>${escapeHtml(slackLabel)}</div>`;
     document.getElementById("logout").style.display = h.authEnabled ? "" : "none";
     paintContainerRuntimeHealth(h.containerRuntime);
-  } catch (e) {
-    el.removeAttribute("title");
-    el.innerHTML = `<div class="statuschip"><span class="dot off"></span>API error</div>`;
+  } catch {
     paintContainerRuntimeHealth(null);
   }
 }
@@ -4961,6 +5032,11 @@ async function runGatewayUpdate() {
 
 // Resolve the initial path before async boot work so a refresh paints the requested page without
 // flashing Overview. `/` remains a backwards-compatible entry point and is canonicalized.
+function redirectMovedSetting() {
+  const href = movedSettingsPath(window.location);
+  if (href) window.history.replaceState({}, "", href);
+}
+redirectMovedSetting();
 const initialConversationRoute = conversationRouteForPath(window.location.pathname);
 const initialView = viewForPath(window.location.pathname) || "dashboard";
 setView(initialView, {
@@ -4968,12 +5044,14 @@ setView(initialView, {
   load: false,
 });
 
-window.addEventListener("popstate", async () => {
+async function applyLocation() {
+  redirectMovedSetting();
   const conversation = conversationRouteForPath(window.location.pathname);
   const view = viewForPath(window.location.pathname) || "dashboard";
   setView(view, { history: "none" });
   if (view === "channels") await selectConv(conversation?.key || null, { history: "none", canonicalize: true });
-});
+}
+window.addEventListener("popstate", applyLocation);
 
 // ── Static event wiring (elements always present in the DOM) ─────────────────────
 document.getElementById("schedule-history-all").addEventListener("click", () => openScheduleHistory());
@@ -5022,24 +5100,25 @@ for (const b of document.querySelectorAll(".nav-item")) {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     if (b.dataset.view === "channels") {
-      if (!(await selectConv(null))) return;
+      const resumeTemplate = selectedConv?.startsWith("tpl:") && detailDirty && !document.getElementById("view-channels").classList.contains("active");
+      if (!(await selectConv(resumeTemplate ? selectedConv : null))) return;
       setView("channels", { history: "none" });
     } else setView(b.dataset.view);
   });
 }
 // API docs → jump to the token field in Settings.
-document.getElementById("apidoc-gen").addEventListener("click", gotoApiTokenSettings);
-document.getElementById("apidoc-goto-settings").addEventListener("click", (e) => { e.preventDefault(); gotoApiTokenSettings(); });
 document.getElementById("channel-search").addEventListener("input", () => renderConvList());
 document.getElementById("conv-source").addEventListener("change", (event) => {
   convSource = event.target.value;
   renderConvList();
 });
-// Segmented filter (All / Channels / DMs) — narrows the one conversation list.
-for (const b of document.querySelectorAll("#conv-seg button")) {
-  b.addEventListener("click", () => {
-    convFilter = b.dataset.seg;
-    for (const x of document.querySelectorAll("#conv-seg button")) x.classList.toggle("on", x === b);
+for (const button of document.querySelectorAll("#conv-seg button")) {
+  button.addEventListener("click", async () => {
+    const filter = button.dataset.seg;
+    if (filter === convFilter) return;
+    if (filter === "templates") return selectConv("tpl:channel");
+    if (convFilter === "templates" && !await selectConv(null)) return;
+    convFilter = filter;
     renderConvList();
   });
 }
@@ -5059,7 +5138,7 @@ document.getElementById("settings-body").addEventListener("change", (event) => {
 });
 
 // Settings dirty tracking — any input/change in the panes flips the savebar to "Unsaved changes"
-// (the savebar's own controls + the Access Templates tool filter boxes are exempt — filtering a
+// (the savebar and tool filter boxes are exempt — filtering a
 // checklist is a view action, not a config change). A successful save re-loads settings, clearing it.
 {
   const view = document.getElementById("view-settings");
@@ -5268,99 +5347,31 @@ init().catch(showFatalError);
 
 // ── Skill templates ──────────────────────────────────────────────────────────────
 // A conversation follows one template (live) and adds its own skills on top; the templates are
-// edited under Settings → Access Templates. `SKILL_TEMPLATES` is loaded with the skill catalog.
+// edited under Skills → Templates. `SKILL_TEMPLATES` is loaded with the skill catalog.
 function fillSkillTemplateSelect(select, value, stateEl) {
   if (!select) return;
   select.innerHTML = `<option value="">none</option>${SKILL_TEMPLATES.map((t) => `<option value="${escapeHtml(t.slug)}">${escapeHtml(t.name)} (${(t.resolved || []).length})</option>`).join("")}`;
-  select.value = SKILL_TEMPLATES.some((t) => t.slug === value) ? value : "";
+  if (value && !SKILL_TEMPLATES.some((t) => t.slug === value)) {
+    const missing = document.createElement("option");
+    missing.value = value;
+    missing.textContent = `${value} (unavailable)`;
+    select.add(missing);
+  }
+  select.value = value;
   const paint = () => {
     const t = SKILL_TEMPLATES.find((x) => x.slug === select.value);
-    if (stateEl) stateEl.textContent = t ? `${(t.resolved || []).length} skill(s) from the template: ${(t.resolved || []).slice(0, 12).join(", ")}${(t.resolved || []).length > 12 ? "…" : ""}` : "no template — only the skills checked below (plus organization and personal grants)";
+    if (stateEl) stateEl.textContent = t ? `${(t.resolved || []).length} skills included` : "";
   };
   paint();
-  select.addEventListener("change", paint);
+  select.onchange = paint;
 }
 
-let skillTplEditing = null; // slug being edited, "" for a new one, null for the list
 
-async function renderSkillTemplatesSettings() {
-  const mount = document.getElementById("skill-templates-editor");
-  if (!mount) return;
-  try {
-    SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
-  } catch (err) {
-    mount.innerHTML = `<p class="skills-error">Could not load templates: ${escapeHtml(err.message)}</p>`;
-    return;
+// Skills owns template editing. A refreshed catalog updates any mounted template picker without
+// firing change events or disturbing a draft in another view.
+document.addEventListener("skill-templates-loaded", ({ detail }) => {
+  SKILL_TEMPLATES = detail;
+  for (const select of document.querySelectorAll(".cfg-skill-template, .ch-skill-template:not(:disabled)")) {
+    fillSkillTemplateSelect(select, select.value, select.closest(".field")?.querySelector(".cfg-skill-template-state, .ch-skill-template-state"));
   }
-  if (skillTplEditing !== null) return renderSkillTemplateEditor(mount, skillTplEditing);
-  const rows = SKILL_TEMPLATES.map((t) => `
-    <tr>
-      <td><strong>${escapeHtml(t.name)}</strong> <span class="skills-muted">${escapeHtml(t.slug)}</span>${t.builtin ? ' <span class="pill">built-in</span>' : ""}<br/><span class="skills-muted">${escapeHtml(t.description || "")}</span></td>
-      <td>${(t.resolved || []).length} skill(s)<br/><span class="skills-muted">${(t.missing || []).length ? `<span class="skills-error">missing: ${escapeHtml(t.missing.join(", "))}</span>` : ""}</span></td>
-      <td>${(t.channels || []).length ? t.channels.map((c) => escapeHtml(c.name)).join(", ") : '<span class="skills-muted">no conversation yet</span>'}</td>
-      <td><button type="button" class="ghost" data-tpl-edit="${escapeHtml(t.slug)}">Edit</button></td>
-    </tr>`).join("");
-  mount.innerHTML = `
-    <table class="skills-table"><thead><tr><th>Template</th><th>Skills</th><th>Used by</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="skills-muted">No templates yet.</td></tr>'}</tbody></table>
-    <div class="skills-actions"><button type="button" class="ghost" data-tpl-new="1">+ New template</button></div>`;
-  mount.querySelectorAll("[data-tpl-edit]").forEach((b) => b.addEventListener("click", () => { skillTplEditing = b.dataset.tplEdit; renderSkillTemplatesSettings(); }));
-  mount.querySelector("[data-tpl-new]")?.addEventListener("click", () => { skillTplEditing = ""; renderSkillTemplatesSettings(); });
-}
-
-function renderSkillTemplateEditor(mount, slug) {
-  const t = SKILL_TEMPLATES.find((x) => x.slug === slug) || { slug: "", name: "", description: "", skills: [], categories: [], builtin: false, channels: [] };
-  const isNew = !slug;
-  mount.innerHTML = `
-    <div class="skills-form">
-      <label class="field"><span>Name</span><input class="tpl-name" value="${escapeHtml(t.name)}" placeholder="Support" /></label>
-      <label class="field"><span>Slug</span><input class="tpl-slug" value="${escapeHtml(t.slug)}" placeholder="support"${isNew ? "" : " readonly"} /></label>
-      <label class="field wide"><span>Description</span><input class="tpl-desc" value="${escapeHtml(t.description || "")}" /></label>
-    </div>
-    <div class="col tools-col">
-      <div class="checks-head"><h4>Explicit skills</h4><span class="checks-count tpl-skills-count"></span></div>
-      <input type="search" class="checks-filter tpl-skills-filter" placeholder="Filter skills…" autocomplete="off" />
-      <div class="tpl-skills checks"></div>
-    </div>
-    <p class="skills-note tpl-resolved">${(t.resolved || []).length ? `Currently resolves to ${(t.resolved || []).length} skill(s): ${escapeHtml((t.resolved || []).join(", "))}` : ""}</p>
-    <div class="skills-actions">
-      <button type="button" class="tpl-save">${isNew ? "Create template" : "Save template"}</button>
-      ${!isNew && !t.builtin ? '<button type="button" class="ghost danger-btn tpl-delete">Delete</button>' : ""}
-      <button type="button" class="ghost tpl-cancel">Back to the list</button>
-      <span class="skills-muted tpl-status"></span>
-    </div>`;
-  const box = mount.querySelector(".tpl-skills");
-  box.dataset.kind = "s";
-  const skillOptions = accessGrantSkillOptions(SKILLS, t.skills || [], { personal: PERSONAL_SKILLS });
-  checkboxList(box, skillOptions, accessGrantSkillSelection(skillOptions, t.skills || []));
-  wireChecksTools(box, mount.querySelector(".tpl-skills-filter"), mount.querySelector(".tpl-skills-count"));
-  const status = mount.querySelector(".tpl-status");
-  mount.querySelector(".tpl-cancel").addEventListener("click", () => { skillTplEditing = null; renderSkillTemplatesSettings(); });
-  mount.querySelector(".tpl-save").addEventListener("click", async () => {
-    status.textContent = "saving…";
-    try {
-      const body = {
-        slug: mount.querySelector(".tpl-slug").value.trim(),
-        name: mount.querySelector(".tpl-name").value.trim(),
-        description: mount.querySelector(".tpl-desc").value.trim(),
-        categories: [],
-        skills: checkedValues(box),
-      };
-      const r = await api("/api/skills/templates", { method: "POST", body: JSON.stringify(body) });
-      status.textContent = `saved — ${(r.template.resolved || []).length} skill(s)`;
-      skillTplEditing = null;
-      await renderSkillTemplatesSettings();
-    } catch (err) {
-      status.textContent = err.message;
-    }
-  });
-  mount.querySelector(".tpl-delete")?.addEventListener("click", async () => {
-    if (!(await confirmDialog({ title: `Delete the ${t.name} template?`, body: "Conversations that follow it keep only their own added skills afterwards.", confirmLabel: "Delete", danger: true }))) return;
-    try {
-      await api(`/api/skills/templates/${encodeURIComponent(t.slug)}`, { method: "DELETE" });
-      skillTplEditing = null;
-      await renderSkillTemplatesSettings();
-    } catch (err) {
-      status.textContent = err.message;
-    }
-  });
-}
+});

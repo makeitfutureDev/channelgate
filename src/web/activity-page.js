@@ -1419,7 +1419,7 @@ function settingsBrowser(config, browser, theme, connections) {
     voice() {
       const v = data.voice || { language: "", style: "brief", patience: "normal", instructions: "", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } };
       const prefs = card("How the agent talks to you on a call", "Your voice calls only. Saved to your account; your next call uses it. The voice always knows who you are, which conversations you have open and what you did on recent calls.");
-      if (!voiceCalls) prefs.append(node("p", "settings-copy", "Voice calls are not enabled on this gateway yet; an administrator turns them on under gateway Settings → Voice calls. Your preferences are kept for when they are."));
+      if (!voiceCalls) prefs.append(node("p", "settings-copy", "Voice calls are not enabled on this gateway yet; an administrator turns them on under Settings → Calls. Your preferences are kept for when they are."));
       const styleLabels = { brief: "Brief — short answers, gets on with it", conversational: "Conversational — a little more, elaborates when asked", "thinking-partner": "Thinking partner — listens while you think aloud, asks one question at a time" };
       const patienceLabels = { quick: "Quick — answers as soon as you stop", normal: "Normal", patient: "Patient — waits through your pauses" };
       const select = (name, options, current, labels) => {
