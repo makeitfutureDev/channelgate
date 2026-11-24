@@ -5275,7 +5275,8 @@ Engine-independent: none of this is reachable from an engine turn.
 ## Email accounts admin switch (2026-11-24)
 
 - Automated: `test/email-accounts-switch.test.js` — off by default: no email tools registered,
-  channel and personal saves refused, no Email accounts link in Settings; on: tools and link return.
+  channel and personal saves refused, no Email accounts link in Settings, the materialized
+  `gateway-usage` skill has no `references/email.md` and no email lines; on: all of it returns.
 - Live (engine-independent UI, then Claude and Codex): with the switch off, open Slack ⚙️ Settings
   → MCP and → You and the Activity Settings page as a member — no Email accounts section; ask
   "list my email accounts" in a test channel on Claude and on Codex — the run has no email tool.

@@ -1,3 +1,4 @@
+import { getEmailAccountsEnabled } from '../../config/settings.js';
 // Compact native Cards v2 help and its complete text fallback share the same content.
 // Sections expand in the Chat client and do not submit an action or start an engine.
 const TITLE = 'How to use me';
@@ -14,7 +15,7 @@ const SHORTCUTS = [
   '`/stop` — Stop this session’s active and queued work.',
 ];
 const COMMAND_HINT = 'In spaces and groups, mention me before a typed command: `@agent /help`. Registered slash commands selected from the Chat menu address me directly.';
-const TOPICS = [
+const ALL_TOPICS = [
   { title: 'All commands', rows: [
     '`/help` — Show this guide.',
     '`/settings` — Open Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics and You.',
@@ -79,14 +80,26 @@ const TOPICS = [
   ] },
 ];
 
+export function googleChatHelpText() { return [
+  `**${TITLE}**`, INTRO, '**Get started**', ...QUICK_START,
+  '**Useful commands**', ...SHORTCUTS, COMMAND_HINT,
+  ...topics().flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
+].join('\n\n'); }
+// The full text with every optional row, for tests and docs; runtime replies call googleChatHelpText().
 export const GOOGLE_CHAT_HELP_TEXT = [
   `**${TITLE}**`, INTRO, '**Get started**', ...QUICK_START,
   '**Useful commands**', ...SHORTCUTS, COMMAND_HINT,
-  ...TOPICS.flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
+  ...ALL_TOPICS.flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
 ].join('\n\n');
 
 // Card rendering. Each row keeps the exact fallback wording; the card adds Material icons,
 // emoji section headers and a command/description split so the guide scans like a menu.
+// The email accounts row is shown only while the admin switch is on (Settings → Email accounts).
+function topics() {
+  if (getEmailAccountsEnabled()) return ALL_TOPICS;
+  return ALL_TOPICS.map(topic => ({ ...topic, rows: topic.rows.filter(text => !text.startsWith('Connect a mailbox')) }));
+}
+
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
   '/status': 'monitoring', '/jobs': 'pending_actions', '/fork': 'call_split', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
@@ -125,6 +138,6 @@ export function createGoogleChatHelpCard() {
     section('Get started', QUICK_START.map((text, index) => row(text, QUICK_ICONS[index]))),
     section('Useful commands', [...SHORTCUTS.map(text => row(text)),
       decorated(inline(COMMAND_HINT), 'info')]),
-    ...TOPICS.map(topic => section(topic.title, topic.rows.map(text => row(text)), true)),
+    ...topics().map(topic => section(topic.title, topic.rows.map(text => row(text)), true)),
   ] };
 }
