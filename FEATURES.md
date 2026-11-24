@@ -4144,6 +4144,14 @@ effort while preserving the source thread's choices. Runtime retries strip both 
 the task and retain their established runtime-choice behavior. Queued shortcut tasks retain their
 accepted model/effort independently of later selections, including across restart recovery.
 
+Effort-only selectors `:low`, `:mid` (= medium), `:medium` and `:high` keep the thread's engine and
+model and pin only the reasoning effort: `@agent :high task` runs at high effort, `@agent :mid`
+pins it without starting a turn. These four names are reserved and cannot be model shortcuts. An
+effort the thread's model does not offer is refused before any pin changes; two efforts in a row
+are refused. Selectors count wherever the bot mention sits in the message, as long as they follow
+it directly (`fix the build @agent :opus :medium`, `ok @agent :mid go on`); `@agent: please` and
+colons elsewhere in the text stay ordinary text. `/fork` still takes a model shortcut first.
+
 ## Public documentation website
 
 - `documentation/` builds a static Astro/Starlight documentation section for

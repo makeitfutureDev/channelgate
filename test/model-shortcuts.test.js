@@ -4,7 +4,7 @@ import express from "express";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { parseModelShortcut, defaultModelShortcuts, modelShortcutsFromSettings } = await import("../src/config/model-shortcuts.js");
+const { parseModelShortcut, defaultModelShortcuts, modelShortcutsFromSettings, liftMentionSelector, effortShortcut } = await import("../src/config/model-shortcuts.js");
 const { getModelShortcuts, settingsForApi, saveSettings, getSettings } = await import("../src/config/settings.js");
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 
@@ -80,6 +80,26 @@ test("shortcut effort accepts spaced or adjacent colons and preserves task text"
   assert.deepEqual(parseModelShortcut(":sol :"), { name: "sol", effort: "", task: "" });
   assert.deepEqual(parseModelShortcut(":sol :unknown task"), { name: "sol", effort: "unknown", task: "task" });
   assert.deepEqual(parseModelShortcut(":sol explain :high"), { name: "sol", task: "explain :high" });
+});
+
+test("selectors after the bot mention count anywhere in the message", () => {
+  const B = "BX";
+  assert.equal(liftMentionSelector(`ok improve the skill creator <@${B}> :opus :medium`, B), ":opus :medium ok improve the skill creator");
+  assert.equal(liftMentionSelector(`please <@${B}> :mid fix the build`, B), ":mid please fix the build");
+  assert.equal(liftMentionSelector(`<@${B}> :sol:high task`, B), ":sol:high task");
+  assert.equal(liftMentionSelector(`do X <@${B}> :high.`, B), ":high do X .");
+  assert.deepEqual(parseModelShortcut(liftMentionSelector(`fix it <@${B}> :opus :mid`, B)), { name: "opus", effort: "medium", task: "fix it" });
+  // Not selectors: a colon after a space-less mention followed by prose, another user's mention, emoji-ish text.
+  assert.equal(liftMentionSelector(`hey <@${B}>: please check`, B), null);
+  assert.equal(liftMentionSelector(`ask <@UOTHER> :high now <@${B}>`, B), null);
+  assert.equal(liftMentionSelector(`<@${B}> :) thanks`, B), null);
+  assert.equal(liftMentionSelector(`no mention :high`, B), null);
+});
+
+test("effort-only names map mid to medium and are reserved", () => {
+  assert.deepEqual(["low", "mid", "MEDIUM", "high", "xhigh", "opus"].map(effortShortcut), ["low", "medium", "medium", "high", "", ""]);
+  assert.deepEqual(modelShortcutsFromSettings({ modelShortcuts: { high: { engine: "claude", model: "claude-opus-5-5" }, opus: { engine: "claude", model: "claude-opus-5-5" } } }),
+    { opus: { engine: "claude", model: "claude-opus-5-5" } });
 });
 
 test("settings save and expose valid engine/model mappings", async () => {

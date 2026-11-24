@@ -206,3 +206,38 @@ test("a member's shortcut needs no admin; a disabled engine refuses it before ch
   assert.equal(await getThreadEngine(entry.slug, "125.003"), "claude");
   assert.equal(await getThreadModel(entry.slug, "125.003"), "claude-opus-5-5");
 });
+
+test("effort-only selectors anywhere after the mention keep the model and pin effort on both engines", async () => {
+  const entry = await upsertChannelEntry(CHANNEL, { name: "shortcut-dm", type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude" });
+  saveSettings({ modelShortcuts: { sol: { engine: "codex", model: "gpt-6.1-sol" }, opus: { engine: "claude", model: "claude-opus-5-5" } } });
+  for (const [index, name] of ["sol", "opus"].entries()) {
+    const engine = name === "sol" ? "codex" : "claude";
+    const root = `129.00${index}`;
+    const send = (text, ts) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text, ts, thread_ts: root }, client, { botUserId: BOT });
+    // Model + effort at the END of the sentence.
+    await send(`switch this thread please <@${BOT}> :${name} :low`, root);
+    assert.equal(await getThreadEngine(entry.slug, root), engine);
+    assert.equal(await getThreadEffort(entry.slug, root), "low");
+    // Effort alone, mid-sentence: model stays, effort changes, the selector never reaches the prompt.
+    await send(`now <@${BOT}> :mid summarize effort-only task`, `${root}1`);
+    const spawn = runtime.calls.spawn.at(-1);
+    if (engine === "codex") assert.ok(spawn.args.includes('model_reasoning_effort="medium"'));
+    else assert.equal(spawn.args[spawn.args.indexOf("--effort") + 1], "medium");
+    const prompt = spawn.args.find(arg => arg.includes("effort-only task"));
+    assert.ok(prompt);
+    assert.doesNotMatch(prompt, /:mid/);
+    assert.equal(await getThreadModel(entry.slug, root), name === "sol" ? "gpt-6.1-sol" : "claude-opus-5-5");
+    assert.equal(await getThreadEffort(entry.slug, root), "medium");
+    // Effort alone, no task: pins without starting a turn.
+    const before = runtime.calls.spawn.length;
+    await send(`<@${BOT}> :high`, `${root}2`);
+    assert.equal(runtime.calls.spawn.length, before);
+    assert.equal(await getThreadEffort(entry.slug, root), "high");
+    assert.match(messages.at(-1).text, /effort `high`/);
+    // Two efforts are refused and change nothing.
+    await send(`<@${BOT}> :high :low task`, `${root}3`);
+    assert.match(messages.at(-1).text, /is an effort/);
+    assert.equal(await getThreadEffort(entry.slug, root), "high");
+  }
+});

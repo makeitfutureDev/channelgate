@@ -7095,6 +7095,24 @@ Record blocked fixtures and unexecuted gates explicitly for both engines.
 
 ## Model shortcuts acceptance (2026-10-06)
 
+### Effort-only selectors and selectors anywhere after the mention (2026-11-24)
+
+- [x] Automated: `test/model-shortcuts.test.js` and `test/model-shortcut-pipeline.test.js` cover
+      lifting `:shortcut [:effort]` that directly follows the bot mention at any position, ignoring
+      `@agent: prose`, other users' mentions and `:)`; `:mid` → `medium`; reserved effort names
+      refused as model shortcuts in Settings and dropped from stored maps; effort-only selection
+      keeping the thread's engine/model with the actual Claude `--effort` / Codex
+      `model_reasoning_effort` flag; selector-only acknowledgement without a spawn; the selector
+      excluded from the task; two efforts in a row refused with pins unchanged. Fixtures only.
+- [ ] Live Claude and Codex separately, owned private Slack fixture, authorized member: pin the
+      thread with `@agent :opus` (Claude) or `@agent :sol` (Codex). Send
+      `Reply exactly EFFORT_ONLY_OK @agent :mid`. Pass: exact reply on the same model, runtime
+      evidence shows medium effort, selector absent from the task. Send `@agent :high` alone:
+      acknowledgement naming effort `high`, no engine turn. Send
+      `Reply exactly TRAILING_OK @agent :sonet :low` (Codex fixture: `:sol :low`): the thread
+      switches/stays on the mapped model at low effort and replies exactly. Send
+      `@agent: Reply exactly PROSE_OK`: runs as ordinary text, no "Unknown model shortcut".
+
 ### Optional effort suffix (2026-11-10)
 
 - [x] Automated: `test/model-shortcuts.test.js`, `test/model-shortcut-pipeline.test.js` and

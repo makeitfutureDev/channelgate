@@ -53,8 +53,8 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
-import { parseModelShortcut } from "../config/model-shortcuts.js";
+import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled, getDefaultModel } from "../config/settings.js";
+import { parseModelShortcut, liftMentionSelector, effortShortcut, EFFORT_SHORTCUT_NAMES } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
@@ -783,7 +783,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       },
     });
 
-    let prompt = stripMentions(event.text, botUserId);
+    // A `:shortcut [:effort]` right after the bot mention counts wherever the mention sits in the
+    // message; it is moved to the front, where the shortcut and effort selectors below read it.
+    let prompt = liftMentionSelector(event.text, botUserId) ?? stripMentions(event.text, botUserId);
     const files = Array.isArray(event.files) ? event.files : [];
     const slackTables = extractSlackTables(event);
     if (!prompt && files.length === 0 && slackTables.length === 0) {
@@ -1242,7 +1244,30 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A retry/switch card already selected the runtime. Keep its choice, but remove the
     // original shortcut prefix before replaying the task to the engine.
     if (shortcut && engineChoice) prompt = shortcut.task;
-    if (shortcut && !engineChoice) {
+    const effortOnly = shortcut && !engineChoice ? effortShortcut(shortcut.name) : "";
+    if (effortOnly) {
+      // `:low` / `:mid` / `:medium` / `:high` alone: keep the thread's engine and model, pin effort.
+      if (shortcut.effort !== undefined) {
+        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `\`:${shortcut.name}\` is an effort. Put a model shortcut first (\`:opus :high\`) or use one effort alone.` });
+        return;
+      }
+      const engine = await resolveThreadEngine(entry.slug, threadKey, meta);
+      const model = [await getThreadModel(entry.slug, threadKey), effectiveMeta(meta).model, getDefaultModel(engine)]
+        .find((m) => m && modelBelongsToEngine(m, engine)) || "";
+      if (!effortBelongsToModel(effortOnly, engine, model)) {
+        const offered = effortsForModel(engine, model).filter((value) => EFFORT_SHORTCUT_NAMES.includes(value));
+        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `Effort \`${effortOnly}\` is not offered by ${model ? `\`${model}\`` : engineLabel(engine)}.${offered.length ? ` Choose ${offered.map((value) => `\`:${value}\``).join(", ")}.` : ""}` });
+        return;
+      }
+      await setThreadEffort(entry.slug, threadKey, effortOnly);
+      // A queued task keeps the effort it was accepted with, like a model shortcut.
+      shortcutRuntimeOverrides = { effort: effortOnly };
+      prompt = shortcut.task;
+      if (!prompt && files.length === 0) {
+        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `✅ This thread now uses effort \`${effortOnly}\`${model ? ` with \`${model}\`` : ""}.` });
+        return;
+      }
+    } else if (shortcut && !engineChoice) {
       const shortcuts = getModelShortcuts();
       const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
       if (!target) {
