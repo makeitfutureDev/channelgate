@@ -133,6 +133,12 @@ Engine-independent (board, verdicts, filters, permissions — no engine turn):
    show the counts the cards confirm; ticking a conversation and a problem narrows the list and
    shows removable chips; Clear all restores; search by a run id from the Runs tab finds its card;
    24h/7d/30d changes the KPI line. Pass: no card outside the filters, no count mismatch.
+2a. 30-day totals: with automations that have runs in the last 30 days, open Automations in the
+   admin console and in Activity → Automations. Pass: the hero shows **Total runs · last 30 days**
+   and **Total AI cost · last 30 days** with "avg $… / run"; switching 24h/7d/30d changes only the
+   KPI line below, never the two tiles; on the 30d window the tiles equal that line's runs and
+   spend; a member's tiles count only the conversations their board shows. Regression: "the
+   board's 30-day totals count every run and its AI cost, whatever window is selected".
 3. Pause A with its switch. Pass: it moves to Paused, `list_schedules` shows it disabled; turn it
    back on from the Paused card.
 4. Edit A in Settings (rename, change time to weekdays 09:15, delivery "Post in the channel").

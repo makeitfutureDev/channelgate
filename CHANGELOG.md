@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Automations: the top of the Automations page (admin console and Activity dashboard) now shows
+  the total number of runs and the total AI cost of the last 30 days, with the average cost per
+  run. They stay on 30 days whichever window (24h / 7d / 30d) is selected for the rest of the board.
 - Agent guide: the built-in `gateway-usage` guide now describes only the Composio mode the gateway
   runs. In SDK mode agents are told each identity's Composio user id and how a local
   `@composio/core` script reaches the same connections (with an API key for the same project); in

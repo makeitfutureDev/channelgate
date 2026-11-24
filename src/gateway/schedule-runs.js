@@ -157,6 +157,18 @@ export function roiRunTotals({ scheduleId, channelId, sinceMs }) {
   return { runs: Number(row?.runs) || 0, counted: Number(row?.counted) || 0, costUsd: Number(row?.cost) || 0 };
 }
 
+// Every run of one automation started at or after `sinceMs` and their AI cost, aggregated in SQL
+// so a high-frequency automation is counted in full. Cost the plan's history does not show
+// (before `historyStart`) is left out, exactly as visibleScheduleRun hides it per run.
+export function runTotalsSince({ scheduleId, channelId, sinceMs, historyStart = costHistoryStart() }) {
+  const start = historyStart ? historyStart.toISOString() : null;
+  const row = getDb().prepare(`SELECT count(*) AS runs,
+      sum(CASE WHEN ? IS NULL OR julianday(COALESCE(json_extract(data, '$.completedAt'), json_extract(data, '$.startedAt'))) >= julianday(?)
+        THEN COALESCE(json_extract(data, '$.costUsd'), 0) ELSE 0 END) AS cost
+    FROM schedule_runs WHERE schedule_id = ? AND channel_id = ? AND started_ms >= ?`).get(start, start, scheduleId, channelId, Math.floor(Number(sinceMs) || 0));
+  return { runs: Number(row?.runs) || 0, costUsd: Number(row?.cost) || 0 };
+}
+
 // Output-only view: internal readers and update paths always retain original accounting.
 export function visibleScheduleRun(run, historyStart = costHistoryStart()) {
   if (!run || costVisibleAt(run.completedAt ?? run.startedAt, new Date(), historyStart)) return run;

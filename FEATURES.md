@@ -133,7 +133,12 @@ included".
   off, Silent too long, Container resources exhausted, Out of attempts, Deferred, Agent reported
   failure, Run failed, Outcome not reported, Fails now and then — the failing streak, since when,
   and numbered **How to fix** steps (a copyable `/invite @bot` when the bot's name is known).
-- **Board.** Hero: "N automations need you · M not delivered", the window's runs, success %, not
+- **Board.** Hero: "N automations need you · M not delivered", two fixed tiles — **Total runs ·
+  last 30 days** and **Total AI cost · last 30 days** (with the average per run) over every
+  automation in the viewer's scope, whatever window is selected, counted in SQL so a
+  high-frequency automation is counted in full; where the plan's cost history starts inside the
+  30 days the cost tile says "from <date>" and leaves earlier cost out
+  (`runTotalsSince`, board field `totals`) — then the selected window's runs, success %, not
   delivered, failed and spend, a Broken/Degraded/Healthy/Paused bar and a "Start here" card for the
   most urgent problem. Views: Needs attention (default), Not delivered, Failing, Created by me,
   Paused, Everything. Facets with counts: Conversation, Problem, Type, Created by; search over

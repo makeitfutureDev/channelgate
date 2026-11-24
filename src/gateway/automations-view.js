@@ -4,7 +4,7 @@
 // on every request; a schedule row is always looked up INSIDE the checked channel.
 import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../config/store.js";
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
-import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount, roiRunTotals } from "./schedule-runs.js";
+import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged, liveApiRunCount, roiRunTotals, runTotalsSince } from "./schedule-runs.js";
 import { roiOf, roiTotals, roiAssignments, getDefaultRoiRate, setRoiAssignment, roiMinutes, roiRate } from "./roi.js";
 import { automationHealth, currentProblem, fixSteps, openProblem, runProblem } from "./automation-health.js";
 import { logEvent } from "../util/logger.js";
@@ -270,6 +270,8 @@ export async function runAutomationNow(access, userId, entry, scheduleId) {
 const isOneTime = (s) => Boolean(s.once || (s.runAt && !s.intervalDays && !s.cron));
 const DELIVERY_WORDS = { standard: "New thread", "daily-thread": "Daily thread", channel: "Channel post", "dm-on-match": "DM on match", thread: "Existing thread" };
 export const BOARD_WINDOWS = [1, 7, 30];
+// The board's fixed headline totals ("last 30 days"), whatever window is selected.
+export const BOARD_TOTAL_DAYS = 30;
 
 function kindOf(s) { return s.loop ? "Thread loop" : s.kind === "reminder" ? "Reminder" : "Task"; }
 
@@ -321,11 +323,13 @@ function boardItem(facts, conv, ctx) {
   const engineRun = runs.find((r) => r.engine || r.model);
   const sum = (key) => windowRuns.reduce((n, r) => n + (Number(r[key]) || 0), 0);
   const worth = roiRunTotals({ scheduleId: facts.id, channelId: conv.channelId, sinceMs: ctx.roiSinceMs });
+  const month = runTotalsSince({ scheduleId: facts.id, channelId: conv.channelId, sinceMs: ctx.monthSinceMs, historyStart: ctx.historyStart });
   return {
     ...shown, channelId: conv.channelId, conversation: conv.name, personal: conv.personal,
     engine: engineRun ? { engine: engineRun.engine || "", model: engineRun.model || "" } : null,
     ...health,
     roi: roiOf({ minutes: roiInput.minutes, rate: roiInput.rate, defaultRate: ctx.defaultRate, counted: worth.counted, costUsd: worth.costUsd }),
+    month,
     fix: health.problem ? fixSteps(health.problem.key, { kind: facts.kind, once, botName: ctx.botName }) : [],
     // The run API's limits as this source met them inside the window. The cap is gateway-wide.
     ...(facts.trigger === "api" ? { limits: { cap: API_MAX_INFLIGHT, inFlight: runs.filter((r) => ["queued", "running"].includes(r.status)).length,
@@ -344,6 +348,7 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
   // ROI never sets value against spend it may not show: where the plan's cost history starts
   // inside the window, ROI counts from there (and says so) instead of from the window's start.
   const roiSinceMs = historyStart ? Math.max(sinceMs, historyStart.getTime()) : sinceMs;
+  const monthSinceMs = now.getTime() - BOARD_TOTAL_DAYS * 86400_000;
   const defaultRate = getDefaultRoiRate();
   const apiRoi = roiAssignments("api");
   const automations = [];
@@ -368,7 +373,7 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
       name = adminConsole ? (users[owner]?.name ? `DM · ${users[owner].name}` : "Direct message") : "Your direct messages";
     } else name = `#${String(await activityChannelName(entry)).replace(/^#+/, "")}`;
     const conv = { channelId: entry.channelId, name, personal: dm };
-    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName, liveApiRuns, roiSinceMs, defaultRate, apiRoi };
+    const ctx = { access, userId, users, now, sinceMs, historyStart, entry: isApi ? { ...entry, channelId: API_CHANNEL_ID } : entry, botName, liveApiRuns, roiSinceMs, monthSinceMs, defaultRate, apiRoi };
     const items = [...sources.map((src) => boardItem(apiFacts(src, ctx), conv, ctx)), ...shown.map((s) => boardItem(scheduleFacts(s, ctx), conv, ctx))];
     automations.push(...items);
     conversations.push({ ...conv, count: items.length, attention: items.filter((a) => a.attention).length });
@@ -377,12 +382,17 @@ export async function automationBoard(access, userId, { days = 7, now = new Date
     t.runs += a.stats.runs; t.finished += a.stats.finished; t.judged += a.stats.judged; t.succeeded += a.stats.succeeded; t.failed += a.stats.failed;
     t.notDelivered += a.stats.notDelivered; t.costUsd += a.stats.costUsd; return t;
   }, { runs: 0, finished: 0, judged: 0, succeeded: 0, failed: 0, notDelivered: 0, costUsd: 0 });
+  // Last 30 days across every automation in scope; cost counts only where the plan's cost history shows it.
+  const month = automations.reduce((t, a) => { t.runs += a.month.runs; t.costUsd += a.month.costUsd; return t; }, { runs: 0, costUsd: 0 });
+  const costSinceMs = historyStart ? Math.max(monthSinceMs, historyStart.getTime()) : monthSinceMs;
   const counts = { broken: 0, degraded: 0, healthy: 0, paused: 0 };
   for (const a of automations) counts[a.health] += 1;
   return {
     viewer: { isAdmin: access.user?.isAdmin === true, adminConsole, userId: userId || "" },
     windowDays, generatedAt: now.toISOString(), botName,
     kpis: { ...totals, costUsd: Math.round(totals.costUsd * 100) / 100, successRate: totals.judged ? totals.succeeded / totals.judged : null },
+    totals: { days: BOARD_TOTAL_DAYS, runs: month.runs, costUsd: Math.round(month.costUsd * 100) / 100,
+      costSince: new Date(costSinceMs).toISOString(), costLimited: costSinceMs > monthSinceMs },
     roi: { ...roiTotals(automations.map((a) => a.roi)), defaultRate, since: new Date(roiSinceMs).toISOString(), limited: roiSinceMs > sinceMs },
     counts, attention: automations.filter((a) => a.attention).length,
     conversations: conversations.sort((a, b) => b.attention - a.attention || a.name.localeCompare(b.name)),

@@ -404,6 +404,16 @@ export function automationBoardBrowser(config, browser) {
     { id: "healthy", title: "Healthy", icon: "check", tone: "ok", copy: "Running as expected" },
     { id: "paused", title: "Paused", icon: "pause", tone: "idle", copy: "Turned off. Nothing runs until someone turns it back on" },
   ];
+  // The fixed headline totals: every run and its AI cost over the last 30 days, whatever window
+  // the toolbar selects (the KPI line below follows that window).
+  function totalsRow(t) {
+    if (!t) return null;
+    const tile = (label, value, note) => h("div", { class: "ab-total" }, h("p", { class: "ab-side-label", text: label }), h("strong", { text: value }), note ? h("small", { text: note }) : null);
+    return h("div", { class: "ab-totals", role: "group", "aria-label": "Last " + t.days + " days" },
+      tile("Total runs · last " + t.days + " days", t.runs.toLocaleString(), ""),
+      tile("Total AI cost · last " + t.days + " days", money(t.costUsd, 2),
+        t.costLimited ? "from " + shortDate(t.costSince) + ", where cost history starts" : t.runs ? "avg " + money(t.costUsd / t.runs) + " / run" : ""));
+  }
   function hero(board) {
     const n = board.attention;
     const nd = board.automations.filter((a) => a.group === "not-delivered").length;
@@ -425,7 +435,7 @@ export function automationBoardBrowser(config, browser) {
       h("b", { text: String(k.notDelivered) }), " not delivered · ", h("b", { text: String(k.failed) }), " failed · ", h("b", { text: money(k.costUsd, 2) }), " spent");
     const main = h("div", { class: "ab-hero-main" },
       h("p", { class: "ab-eyebrow" }, h("i", { class: "ab-live" }), "Automation health · " + (board.viewer.adminConsole ? "all conversations" : "conversations you can access") + " · updated " + new Date(board.generatedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })),
-      headline, kpis, bar, legend);
+      headline, totalsRow(board.totals), kpis, bar, legend);
     const out = h("section", { class: "ab-hero" }, main);
     out.append(roiBand(board));
     const first = board.automations.filter((a) => a.attention).sort(SORTS.urgent)[0];
@@ -1007,6 +1017,7 @@ export const AUTOMATION_BOARD_CSS = `
 /* hero */
 .ab-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,330px);gap:22px;padding:22px 24px;border:1px solid var(--ab-line);border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--ab-panel) 92%,var(--ab-fail)),var(--ab-panel));margin-bottom:18px}
 .ab-headline{margin:0 0 8px;font-size:clamp(20px,2.4vw,28px);letter-spacing:-.02em;line-height:1.15;font-weight:700}.ab-headline .ab-dot{color:var(--ab-faint)}
+.ab-totals{display:grid;grid-template-columns:repeat(2,minmax(0,220px));gap:10px;margin:0 0 12px}.ab-total{padding:10px 12px;border:1px solid var(--ab-line);border-radius:10px;background:var(--ab-panel-2);min-width:0}.ab-total .ab-side-label{margin:0 0 4px}.ab-total strong{display:block;font-size:22px;letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ab-total small{display:block;color:var(--ab-faint);font-size:11.5px}
 .ab-kpis{margin:0 0 16px;color:var(--ab-muted)}.ab-kpis b{color:var(--ab-ink);font-weight:600}
 .ab-bar{display:flex;gap:3px;height:8px;border-radius:6px;overflow:hidden;margin-bottom:12px;background:var(--ab-line)}.ab-bar i{display:block;min-width:6px}
 .ab-legend{display:flex;flex-wrap:wrap;gap:6px 18px}
