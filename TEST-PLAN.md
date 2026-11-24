@@ -1980,6 +1980,16 @@ that channel's threads and automations are gone (the leave event clears the cach
 from the dashboard's thread and require its row to change to working and then done on refresh with
 no extra delay.
 
+## Paged Activity feed (2026-11-24)
+
+Regression: `test/activity.test.js` ("Activity feed window…", "Load more widens only this
+session's window…", the large-snapshot SSE test). Live (engine-independent: the window does not
+depend on the engine): with a viewer holding more than 100 idle threads and more than 100 completed
+ones, open Activity and require 100 ordinary rows plus every working/waiting/pinned row, tab counts
+equal to the true totals, and **Load more** on Active and Completed each adding 100 older rows.
+Start a turn in an old thread outside the window and require it to appear at the top as working
+within about a second, for Claude and for Codex.
+
 ## Live Activity feed without Slack waits (2026-11-24)
 
 Regression: `test/home-threads.test.js` ("live Activity snapshots never wait on Slack root reads"),

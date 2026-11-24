@@ -168,6 +168,42 @@ function timed(res, name, started, rows) {
   if (ms >= SLOW_DASHBOARD_MS) console.warn(`[activity] slow ${name} load: ${ms} ms, ${rows ?? 0} rows`);
 }
 
+// The feed sends a window, not every thread a person ever had. Working/waiting threads,
+// pinned threads and threads of pinned channels always come; the rest is grouped (open,
+// completed, hidden), newest activity first, ACTIVITY_PAGE_SIZE per page. "Load more" raises a
+// group's limit for this session; live pushes keep the same window. Counts cover everything.
+export const ACTIVITY_PAGE_SIZE = 100;
+const FEED_GROUPS = ["open", "done", "hidden"];
+export const feedGroup = (row) => row.hidden ? "hidden" : row.status === "done" ? "done" : "open";
+export function activityFeedWindow(all, limits = {}) {
+  const lim = Object.fromEntries(FEED_GROUPS.map((g) => [g, Number.isSafeInteger(limits?.[g]) && limits[g] > 0 ? limits[g] : ACTIVITY_PAGE_SIZE]));
+  const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0, hidden: 0 };
+  const groups = { open: [], done: [], hidden: [] };
+  for (const row of all) {
+    if (row.hidden) counts.hidden++;
+    else {
+      if (Object.hasOwn(counts, row.status)) counts[row.status]++;
+      if (row.status !== "done") counts.open++;
+      if (row.status !== "later" && !(row.status === "done" && row.dismissed)) counts.active++;
+    }
+    groups[feedGroup(row)].push(row);
+  }
+  const always = (row) => !row.hidden && (row.status === "working" || row.status === "waiting" || row.pinned || row.channelPinned);
+  const recent = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
+  const completed = (a, b) => (Number(b.completedMs) || 0) - (Number(a.completedMs) || 0) || recent(a, b);
+  const rows = [], more = {};
+  for (const g of FEED_GROUPS) {
+    const sorted = groups[g].sort(g === "done" ? completed : recent);
+    let taken = 0;
+    for (const row of sorted) {
+      if (always(row)) rows.push(row);
+      else if (taken < lim[g]) { rows.push(row); taken++; }
+    }
+    more[g] = sorted.filter((row) => !always(row)).length > lim[g];
+  }
+  return { rows, counts, more, limits: lim };
+}
+
 export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
@@ -304,15 +340,17 @@ export function createActivityRouter({
     linkedIds.set(session.ownerId, await activityIdentityIds(session.ownerId));
     const external = await platformActivitySnapshot(session.ownerId);
     data.rows.push(...external.rows);
-    return {
-      rows: data.rows.map((row) => ({ platform: row.platform || 'slack', channelId: row.channel_id, threadTs: row.thread_ts,
+    const all = data.rows.map((row) => ({ platform: row.platform || 'slack', channelId: row.channel_id, threadTs: row.thread_ts,
         hidden: row.hidden_ms > 0, dismissed: row.dismissed_ms > 0, canComplete: row.canComplete ?? row.starter_id === session.ownerId,
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         comment: Object.hasOwn(comments, JSON.stringify([row.channel_id, row.thread_ts])) ? comments[JSON.stringify([row.channel_id, row.thread_ts])] : "",
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         completedMs: row.status === "done" ? Math.max(0, row.done_ms || 0, row.root_done ? row.root_reaction_ms || 0 : 0) : 0,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
-        url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
+        url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` }));
+    const page = activityFeedWindow(all, session.feedLimits);
+    return {
+      rows: page.rows, counts: page.counts, more: page.more, limits: page.limits,
       pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable || external.unavailable), truncated: Boolean(data.truncated || external.truncated), total: data.total + external.rows.length, updatedAt: now(),
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
@@ -826,6 +864,22 @@ export function createActivityRouter({
       await context(req); // A disable/expiry while the snapshot awaited membership cannot publish it.
       if (version !== configVersion) return unavailable(res, 503);
       timed(res, "threads", started, data.rows?.length);
+      return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/threads/more", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const group = req.body?.group;
+      if (!FEED_GROUPS.includes(group)) return res.status(400).json({ error: "Unknown group" });
+      const current = session.feedLimits?.[group] || ACTIVITY_PAGE_SIZE;
+      session.feedLimits = { ...session.feedLimits, [group]: Math.min(current + ACTIVITY_PAGE_SIZE, 5000) };
+      const version = configVersion;
+      const data = await browserSnapshot(client, session, req.params.id);
+      await context(req);
+      if (version !== configVersion) return unavailable(res, 503);
+      for (const stream of streams) if (stream.id === req.params.id) stream.changed(); // keep live pushes on the new window
       return res.json(data);
     } catch (error) { return unavailable(res, error.status || 503); }
   });

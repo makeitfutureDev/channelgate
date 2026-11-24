@@ -807,7 +807,7 @@ test("SSE keeps a healthy connection open while a large snapshot drains instead 
   // A snapshot above the socket's high-water mark makes res.write() return false even when the
   // browser is reading fine; closing there made the page cycle Reconnecting/Live every 2 s.
   const rows = Array.from({ length: 400 }, (_, i) => ({ channel_id: "C_WORK", thread_ts: `100.${String(i).padStart(6, "0")}`,
-    title: "T".repeat(500), channelName: "#C_WORK", status: "idle", last_message_ms: 1 }));
+    title: "T".repeat(500), channelName: "#C_WORK", status: "working", last_message_ms: 1 })); // working rows are never windowed
   let snapshots = 0;
   const f = await fixture(t, { pollMs: 20, accessRefreshMs: 40, snapshot: async () => { snapshots++; return { rows, total: rows.length }; } });
   const user = await f.login();
@@ -1803,3 +1803,38 @@ for (const operation of ['hide', 'completion']) {
     });
   }
 }
+
+test("Activity feed window: newest 100 per group, live and pinned rows always, true counts", async () => {
+  const { activityFeedWindow } = await import("../src/web/activity.js");
+  const row = (i, extra = {}) => ({ channelId: "C_WORK", threadTs: `1.${i}`, status: "idle", lastMessageMs: i, completedMs: 0, ...extra });
+  const all = [
+    ...Array.from({ length: 250 }, (_, i) => row(i)),
+    ...Array.from({ length: 150 }, (_, i) => row(1000 + i, { status: "done", completedMs: 1000 + i })),
+    ...Array.from({ length: 5 }, (_, i) => row(2000 + i, { hidden: true })),
+    row(-1, { status: "working" }), row(-2, { status: "waiting" }), row(-3, { pinned: true }), row(-4, { channelPinned: true }),
+  ];
+  const page = activityFeedWindow(all);
+  const keys = new Set(page.rows.map((r) => r.threadTs));
+  for (const ts of ["1.-1", "1.-2", "1.-3", "1.-4"]) assert.ok(keys.has(ts), ts);
+  assert.ok(keys.has("1.249") && !keys.has("1.149"), "newest 100 open rows");
+  assert.ok(keys.has("1.1149") && !keys.has("1.1049"), "newest 100 completed rows");
+  assert.equal(page.rows.filter((r) => r.hidden).length, 5);
+  assert.deepEqual(page.more, { open: true, done: true, hidden: false });
+  assert.equal(page.counts.idle, 252); assert.equal(page.counts.done, 150); assert.equal(page.counts.working, 1); assert.equal(page.counts.hidden, 5);
+  const wider = activityFeedWindow(all, { open: 200, done: 200 });
+  assert.equal(wider.rows.filter((r) => r.status === "done").length, 150);
+  assert.ok(wider.rows.some((r) => r.threadTs === "1.50") && wider.more.open === true && wider.more.done === false);
+});
+
+test("Load more widens only this session's window and needs the CSRF header", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login();
+  const first = await (await f.request(user.url + "/api/threads", { headers: user.headers })).json();
+  assert.deepEqual(first.limits, { open: 100, done: 100, hidden: 100 });
+  assert.equal(first.counts.idle, 1); assert.equal(first.more.open, false);
+  const more = await f.request(user.url + "/api/threads/more", { method: "POST", headers: user.post, body: JSON.stringify({ group: "done" }) });
+  assert.equal(more.status, 200); assert.equal((await more.json()).limits.done, 200);
+  assert.equal((await (await f.request(user.url + "/api/threads", { headers: user.headers })).json()).limits.done, 200);
+  assert.equal((await f.request(user.url + "/api/threads/more", { method: "POST", headers: user.post, body: JSON.stringify({ group: "nope" }) })).status, 400);
+  assert.equal((await f.request(user.url + "/api/threads/more", { method: "POST", headers: { ...user.post, "x-cg-csrf": "wrong" }, body: JSON.stringify({ group: "open" }) })).status, 403);
+});
