@@ -76,8 +76,10 @@ Where it is stored: a schedule keeps `roiMinutes` / `roiHourlyRate` on its own r
 
 Who may set it: a schedule — its creator, an organization admin, or the owner of the DM it lives
 in (the same rule as editing it); an API source — whoever may see it (the token's creator, or an
-admin; the organization key's runs are admin-only); a skill and the default rate — organization
-admins only, because they apply to everyone.
+admin; the organization key's runs are admin-only); the default rate — organization admins only;
+a skill — an organization admin on the ROI page, or, in chat, whoever may edit that skill (its
+author for a personal skill, that channel's members for a channel skill, an admin for an
+organization skill — including a synced one nobody edits in place).
 
 Where it shows (the one shared component, `src/web/automation-board.js`, in the admin console and
 in every member's Activity dashboard):
@@ -93,6 +95,13 @@ in every member's Activity dashboard):
   tokens' runs, and skill uses in those conversations (never another person's DM).
 - Chat: `create_schedule` / `update_schedule` accept `roi_minutes_saved` and `roi_hourly_rate`;
   `list_schedules` shows them. The agent is told to use the person's numbers, never to invent them.
+- Chat, skills: `create_skill` / `update_skill` accept the same `roi_minutes_saved` and
+  `roi_hourly_rate` and write the skill's `roi_assignments` row (ROI-only updates write no new
+  revision; omitted keeps a value, 0 clears it; a refused or invalid value writes nothing);
+  `get_skill_info` shows them. `create_skill` without them answers "ROI: not set" with the
+  follow-up to ask. The bundled `skill-authoring` skill tells the agent to ask "how many minutes
+  does one use save, and at what hourly rate?" while creating a skill and to create it anyway
+  when the user does not know. Audit `skill_roi_set` with `via: "mcp"`.
 
 API: `GET …/roi?days=7|30|90`, `POST …/:channelId/:scheduleId/roi` `{ minutesSaved, hourlyRate }`,
 `POST …/roi/skill` `{ slug, minutesSaved, hourlyRate }`, `POST …/roi/default` `{ hourlyRate }` —
