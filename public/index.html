@@ -1015,7 +1015,7 @@
                 </article>
                 <article class="setcard" data-setkey="concurrency queue slots">
                   <h4>Parallel agent runs</h4>
-                  <p class="desc">Extra requests wait for a free slot. Lowering the limit lets active runs finish.</p>
+                  <p class="desc">This limit is separate from the running-container limit. Changes apply when saved. Extra requests wait for a free slot, and active runs finish when you lower the limit.</p>
                   <div class="setfield-grid">
                     <label class="field">
                       <span>Maximum parallel agent runs</span>
@@ -1024,7 +1024,7 @@
                     <label class="field">
                       <span>Slots reserved for interactive requests</span>
                       <input id="set-reserved-interactive-runs" type="number" min="0" max="499" step="1" required />
-                      <em class="state">Reserved slots count toward the total. Reserve fewer than the maximum to leave room for background runs.</em>
+                      <em class="state">Live chat messages and foreground API requests can use any free slot. Reserved slots count toward the total. Schedules and background agents share the remaining slots.</em>
                     </label>
                   </div>
                 </article>

@@ -3074,8 +3074,9 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   protection, FIFO/cancellation, live increases and decreases, and real desktop/mobile controls.
 - UI fixture (engine-independent): isolated authenticated-admin Express router and Chromium;
   open Settings → Agent defaults. Set total 32/reserve 0, save/reload, verify both values and
-  container limit unchanged. Confirm explanation distinguishes containers and interactive turns,
-  desktop/mobile layout fits, and invalid integer/reserve inputs receive errors without writes.
+  container limit unchanged. Read the card and confirm it distinguishes the container limit,
+  live chat messages and foreground API requests from scheduled and background work. Check that
+  desktop/mobile layout fits and invalid integer/reserve inputs receive errors without writes.
   This disposable fixture is separate from deployed admin authentication acceptance.
 - Live dual-engine fixture: reserve an isolated QA gateway and admin operator (Contact), with
   Apps as approved non-admin in cg-qa-auto C0BTFTRU33Q (Claude) and cg-qa-private-auto
