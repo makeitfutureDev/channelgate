@@ -2921,7 +2921,7 @@ function noteClient(calls) {
       calls.push(["chatStream", { id }]);
       return {
         ts: id,
-        append: async (payload) => { calls.push(["append", payload]); return { ok: true }; },
+        append: async (payload) => { calls.push(["append", payload, id]); return { ok: true }; },
         stop: async (payload) => { calls.push(["stopStream", payload || {}]); return { ok: true }; },
       };
     },
@@ -2946,7 +2946,25 @@ test("a gateway answer note is streamed at the head of the answer and never deli
   const text = streamedMarkdown(calls);
   assert.equal(text.match(/was rejected before the turn started/g).length, 1, `delivered once: ${JSON.stringify(text)}`);
   assert.ok(text.startsWith(NOTE), "the note leads the answer");
+  assert.equal(calls.filter(([method]) => method === "chatStream").length, 1, "a text-only reply with a preface stays one message");
   assert.equal(text.match(/The answer itself\./g).length, 1, "and the answer is delivered once");
+});
+
+test("a gateway preface followed by tool work keeps the progress card above the answer", async () => {
+  const calls = [];
+  const progress = startProgress("stream", noteClient(calls), cardChannel(), "1730000001.100000", { authorId: "U_NOTE" });
+  progress.onEvent({ kind: "answer_note", scope: "gateway", text: NOTE });
+  await cardReady();
+  progress.onEvent({ kind: "tool_use", name: "Read", target: "package.json", id: "read-package" });
+  await cardReady();
+  const writes = calls.filter(([method]) => method === "append");
+  assert.ok(writes[0][1].chunks?.some((chunk) => chunk.type === "task_update"), "the first visible stream is the real tool card");
+  const noteWrite = writes.find(([, payload]) => payload.markdown_text === NOTE);
+  assert.ok(noteWrite, "the warning is live as soon as the tool card opens");
+  assert.notEqual(noteWrite[2], writes[0][2], "answer and progress are separate native messages");
+  progress.onDelta("The test command is npm test.");
+  await progress.finalize({ content: NOTE + "The test command is npm test." });
+  assert.equal(streamedMarkdown(calls), NOTE + "The test command is npm test.");
 });
 
 test("a tool-only turn still delivers its whole answer under the note", async () => {

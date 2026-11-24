@@ -734,6 +734,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // orchestrator assembles `content` in its own order (the license warning, then the failover note,
   // for instance), and a note announced by one engine attempt may not be in another's content.
   const prefaceParts = [];
+  let pendingPreface = "";
   let truncated = false; // the live stream hit the length cap — the rest arrives as follow-up messages
   let replyBlocks = []; // Block Kit the agent composed for the final answer (slack_compose_reply)
   let failed = false;
@@ -834,6 +835,14 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       failed = true;
     });
     return chain;
+  };
+  // A gateway warning can precede both the model's first word and its first tool call.
+  // Let that first event establish message order before writing the warning into the answer.
+  const flushPreface = () => {
+    if (!pendingPreface) return;
+    const text = pendingPreface;
+    pendingPreface = "";
+    enqueue(() => appendCurrent({ markdown_text: text }));
   };
   // Push the helper's buffered tail to Slack without adding text. `chunks: []` is the SDK's
   // documented way to force a flush (any `chunks` value flushes; an empty one adds nothing), and it
@@ -982,6 +991,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       if (isDeadStreamError(error)) await reseedTimeline();
       else timelineOff = true;
     });
+    flushPreface();
   };
   const stopTimeline = async (site = "task-card stop") => {
     if (!timelineStreamer) return;
@@ -1156,6 +1166,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       // underneath it, so a text-only turn stays text-only — pushTimeline() drops liveness pulses
       // from here on, while a tool, subagent, notice or progress-report row still opens the card.
       answerStarted = true;
+      flushPreface();
       // The model is writing the answer now → the last tool row is done.
       if (t.trim()) timeline.flushActive();
       if (rawLen + t.length > MAX_SLACK_CHARS) {
@@ -1214,7 +1225,8 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           return;
         }
         prefaceParts.push(e.text);
-        enqueue(() => appendCurrent({ markdown_text: e.text }));
+        pendingPreface += e.text;
+        if (timelineRequested) flushPreface();
       } else if (e.kind === "notice") {
         // Durable row, not just a status blip: the stop-hook safety valve says work is being
         // abandoned, and that has to still be readable once the turn has finished.
@@ -1263,6 +1275,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopped = true;
       disarmIdleFlush(); // stop() below flushes the helper's buffer itself
       stopHeartbeat();
+      flushPreface();
       await clearShimmer();
       try {
         const fullRaw = result?.content || "";
