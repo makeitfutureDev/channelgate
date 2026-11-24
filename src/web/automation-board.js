@@ -3,11 +3,13 @@
 // Admins and members get the same page, filters and actions; only the server-side scope differs.
 // Everything the server sends is rendered as text — never as markup.
 
-// `config`: { boardApi, boardHeaders, adminConsole, teamId, base, csrf }. Mounts into #ab-root.
+// `config`: { boardApi, boardHeaders, adminConsole, teamId, base, csrf, rootId, page, roiHref,
+// boardHref }. Mounts into #ab-root (or `rootId`); `page: "roi"` renders the ROI page instead of
+// the board — the same component, so both surfaces get the same numbers and the same edit forms.
 export function automationBoardBrowser(config, browser) {
   "use strict";
   const { document } = browser;
-  const root = document.getElementById("ab-root");
+  const root = document.getElementById(config.rootId || "ab-root");
   if (!root) return;
   const api = config.boardApi || (config.base + "/api/automations");
   const headers = config.boardHeaders || (config.csrf ? { "X-CG-CSRF": config.csrf } : {});
@@ -17,7 +19,9 @@ export function automationBoardBrowser(config, browser) {
     board: null, error: "", loading: true, days: [1, 7, 30].includes(remembered) ? remembered : 7,
     view: "attention", q: "", sort: "urgent", conv: new Set(), trigger: new Set(), kind: new Set(), problem: new Set(), owner: new Set(),
     detail: null, tab: "overview", runs: new Map(), openRun: "", busy: new Set(),
+    roi: null, roiDays: [7, 30, 90].includes(Number(store?.getItem("cg-roi-days"))) ? Number(store.getItem("cg-roi-days")) : 30, roiEdit: "", dirty: false,
   };
+  const roiPage = config.page === "roi";
 
   // ── tiny DOM helpers ──────────────────────────────────────────────────────────────────────
   function h(tag, attrs, ...kids) {
@@ -56,6 +60,7 @@ export function automationBoardBrowser(config, browser) {
     loop: "<path d='M3 8a5 5 0 0 1 8.6-3.5L13 6M13 8a5 5 0 0 1-8.6 3.5L3 10'/><path d='M13 2.5V6H9.5M3 13.5V10h3.5'/>",
     api: "<path d='M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5'/>",
     refresh: "<path d='M13 8a5 5 0 1 1-1.5-3.6L13 6'/><path d='M13 2.5V6H9.5'/>",
+    trend: "<path d='M2 12.5 6 8l2.5 2.5L14 4.5'/><path d='M10.5 4.5H14V8'/>",
     trash: "<path d='M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9'/>",
   };
   function icon(name, cls) {
@@ -80,6 +85,11 @@ export function automationBoardBrowser(config, browser) {
   const stamp = (iso) => iso ? new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
   const shortDate = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
   const money = (n, digits) => typeof n === "number" ? "$" + n.toFixed(digits ?? (n >= 10 ? 2 : n >= 1 ? 2 : 4)) : "—";
+  // ROI figures: whole dollars from 1,000 up, hours as minutes below one hour, ROI as a multiple.
+  const usd = (n) => typeof n !== "number" ? "—" : (n < 0 ? "−" : "") + "$" + Math.abs(n).toLocaleString("en-US", Math.abs(n) >= 1000 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const hrs = (n) => typeof n !== "number" ? "—" : n > 0 && n < 1 ? Math.round(n * 60) + " min" : (n >= 100 ? Math.round(n).toLocaleString("en-US") : String(Math.round(n * 10) / 10)) + " h";
+  const mult = (n) => typeof n !== "number" ? "—" : (n < 0 ? "−" : "") + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 1 }) + "×";
+  const netTone = (n) => typeof n !== "number" ? "idle" : n > 0 ? "ok" : n < 0 ? "fail" : "idle";
   const pct = (r) => r === null || r === undefined ? "—" : Math.round(r * 100) + "%";
   const dur = (ms) => { const s = Math.round((ms || 0) / 1000); return s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s"; };
   const initials = (name) => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
@@ -124,7 +134,8 @@ export function automationBoardBrowser(config, browser) {
   async function load(quiet) {
     if (!quiet) { state.loading = true; paint(); }
     try {
-      state.board = await request("/board?days=" + state.days);
+      if (roiPage) state.roi = await request("/roi?days=" + state.roiDays);
+      else state.board = await request("/board?days=" + state.days);
       state.error = "";
     } catch (error) { state.error = error.message; }
     state.loading = false;
@@ -253,6 +264,7 @@ export function automationBoardBrowser(config, browser) {
     paint();
   }
   function fromHash() {
+    if (roiPage) return;
     const m = /^#automation=(.+)$/.exec(browser.location.hash || "");
     let key = null;
     if (m) { try { key = decodeURIComponent(m[1]); } catch { key = null; } }
@@ -294,6 +306,7 @@ export function automationBoardBrowser(config, browser) {
     next: (x, y) => String(x.nextRun || "9").localeCompare(String(y.nextRun || "9")),
     success: (x, y) => (x.stats.successRate ?? 2) - (y.stats.successRate ?? 2),
     cost: (x, y) => y.stats.costUsd - x.stats.costUsd,
+    roi: (x, y) => Number(y.roi.configured) - Number(x.roi.configured) || y.roi.valueUsd - x.roi.valueUsd || x.title.localeCompare(y.title),
   };
   function visibleItems() {
     const view = VIEWS.find((v) => v.id === state.view) || VIEWS[0];
@@ -351,6 +364,8 @@ export function automationBoardBrowser(config, browser) {
     if (a.nextRun) parts.push(h("span", { class: "ab-next" }, "Next ", h("b", { text: stamp(a.nextRun) }), " · " + rel(a.nextRun)));
     parts.push(h("span", {}, icon("send"), a.deliveryWords + (a.posting ? " · " + a.posting : "")));
     if (a.engine?.model || a.engine?.engine) parts.push(h("span", {}, icon("spark"), a.engine.model || a.engine.engine));
+    if (a.roi?.configured) parts.push(h("span", { class: "ab-roi-chip", title: "ROI in this window: " + plural(a.roi.counted, "run") + " × " + a.roi.minutes + " min at " + usd(a.roi.effectiveRate) + "/h, against " + usd(a.roi.costUsd) + " AI cost" },
+      icon("trend"), "Saved " + hrs(a.roi.hoursSaved) + " · " + usd(a.roi.valueUsd) + (a.roi.multiple !== null ? " · " + mult(a.roi.multiple) + " ROI" : "")));
     if (a.createdByName) parts.push(h("span", { class: "ab-owner" }, h("i", { class: "ab-avatar", text: initials(a.createdByName) }), a.createdByName + (a.mine ? " (you)" : "")));
     if (full && a.sudo) parts.push(h("span", { class: "ab-sudo" }, "Host access"));
     return h("div", { class: "ab-meta" }, parts);
@@ -412,6 +427,7 @@ export function automationBoardBrowser(config, browser) {
       h("p", { class: "ab-eyebrow" }, h("i", { class: "ab-live" }), "Automation health · " + (board.viewer.adminConsole ? "all conversations" : "conversations you can access") + " · updated " + new Date(board.generatedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })),
       headline, kpis, bar, legend);
     const out = h("section", { class: "ab-hero" }, main);
+    out.append(roiBand(board));
     const first = board.automations.filter((a) => a.attention).sort(SORTS.urgent)[0];
     if (first) {
       const primary = primaryAction(first);
@@ -423,6 +439,155 @@ export function automationBoardBrowser(config, browser) {
     }
     return out;
   }
+  // ── ROI ───────────────────────────────────────────────────────────────────────────────────
+  const windowWords = (days) => days === 1 ? "last 24 hours" : "last " + days + " days";
+  function roiTiles(t, opts) {
+    const o = opts || {};
+    const tile = (label, value, note, tone) => h("div", { class: "ab-roi-tile" }, h("p", { class: "ab-side-label", text: label }), h("strong", { class: tone ? "ab-t-" + tone : "", text: value }), note ? h("small", { text: note }) : null);
+    return h("div", { class: "ab-roi-tiles" },
+      tile("Time saved", hrs(t.hoursSaved), o.runsNote || ""),
+      tile("Value of that time", usd(t.valueUsd), o.valueNote || ""),
+      tile("AI cost", usd(t.costUsd), o.costNote || ""),
+      tile("Net value", usd(t.netUsd), "value − AI cost", netTone(t.netUsd)),
+      tile("ROI", mult(t.multiple), t.multiple === null ? (t.costUsd ? "" : "no AI cost recorded") : "net value ÷ AI cost", netTone(t.multiple)));
+  }
+  // The Automations page's own ROI dashboard: what the automations in scope returned in the
+  // window, and how many of them have the two inputs it needs.
+  function roiBand(board) {
+    const r = board.roi;
+    const head = h("div", { class: "ab-row ab-between" },
+      h("p", { class: "ab-eyebrow" }, icon("trend"), "Return on investment · " + windowWords(board.windowDays) + (r.limited ? " (from " + shortDate(r.since) + ", where cost history starts)" : "")),
+      config.roiHref ? h("a", { class: "ab-link", href: config.roiHref }, "Open the ROI page", icon("ext")) : null);
+    const band = h("section", { class: "ab-roi-band", "aria-label": "Return on investment" }, head);
+    if (!r.configured) {
+      band.append(h("p", { class: "ab-muted", text: board.automations.length
+        ? "No automation has ROI values yet. Open an automation and say how many minutes one successful run saves and what an hour of that work costs — the time saved, its value and the ROI appear here."
+        : "ROI appears here once an automation has run and has ROI values." }));
+      return band;
+    }
+    band.append(roiTiles(r, { runsNote: plural(r.counted, "successful run"), costNote: "of those automations" }),
+      h("p", { class: "ab-muted ab-roi-note", text: r.configured + " of " + r.items + " automations have ROI values" + (r.unconfiguredCostUsd ? "; the others cost " + usd(r.unconfiguredCostUsd) + " in this window and are not counted." : ".") }));
+    return band;
+  }
+  // Minutes + hourly rate for one item. `save(body)` posts them; the server re-checks who may.
+  function roiForm(input, save, opts) {
+    const o = opts || {};
+    const minutes = h("input", { type: "number", min: "0", max: "100000", step: "any", inputmode: "decimal", value: input.minutes || "", placeholder: "0", "aria-label": "Minutes saved per " + (o.unit || "successful run"), oninput: () => { state.dirty = true; } });
+    const rate = h("input", { type: "number", min: "0", max: "100000", step: "any", inputmode: "decimal", value: input.rate || "", placeholder: o.defaultRate ? String(o.defaultRate) + " (default)" : "0", "aria-label": "Hourly rate in US dollars", oninput: () => { state.dirty = true; } });
+    const err = h("p", { class: "ab-form-error", role: "alert", hidden: true });
+    const btn = h("button", { type: "submit", class: "ab-btn ab-primary ab-small" }, "Save");
+    const form = h("form", { class: "ab-roi-form", onsubmit: async (e) => {
+      e.preventDefault();
+      err.hidden = true; btn.disabled = true;
+      try {
+        await save({ minutesSaved: minutes.value === "" ? 0 : Number(minutes.value), hourlyRate: rate.value === "" ? 0 : Number(rate.value) });
+        state.dirty = false; state.roiEdit = "";
+        toast("ROI values saved.", "ok");
+        await load(true);
+      } catch (error) { err.textContent = error.message; err.hidden = false; btn.disabled = false; }
+    } },
+      h("label", { class: "ab-field" }, h("span", { text: "Minutes saved per " + (o.unit || "successful run") }), minutes),
+      h("label", { class: "ab-field" }, h("span", { text: "Hourly rate (USD)" }), rate),
+      h("div", { class: "ab-row" }, btn, o.cancel ? h("button", { type: "button", class: "ab-btn ab-small", onclick: () => { state.dirty = false; state.roiEdit = ""; paint(); } }, "Cancel") : null),
+      err);
+    return form;
+  }
+  function roiPanel(a) {
+    const r = a.roi;
+    const panel = h("aside", { class: "ab-panel ab-facts" }, h("h3", { text: "ROI" }));
+    if (r.configured) panel.append(h("dl", {},
+      fact("Each successful run saves", r.minutes + " min", h("small", { text: " at " + usd(r.effectiveRate) + "/h" + (r.usesDefaultRate ? " (default rate)" : "") })),
+      fact("Time saved", hrs(r.hoursSaved), h("small", { text: " · " + plural(r.counted, "successful run") + ", " + windowWords(state.days) })),
+      fact("Value", usd(r.valueUsd)),
+      fact("AI cost", usd(r.costUsd)),
+      fact("Net value", h("span", { class: "ab-t-" + netTone(r.netUsd), text: usd(r.netUsd) })),
+      fact("ROI", h("span", { class: "ab-t-" + netTone(r.multiple), text: mult(r.multiple) }), r.multiple === null ? h("small", { text: " no AI cost recorded" }) : null)));
+    else panel.append(h("p", { class: "ab-muted", text: r.minutes ? "Add an hourly rate (or ask an admin to set the default rate) to see what the saved time is worth."
+      : "Say how many minutes of work one successful run saves and what an hour of that work costs. The board then shows the time saved, its value and the ROI against the AI cost." }));
+    if (a.canEditRoi) panel.append(roiForm(r, (body) => request(itemPath(a, "roi"), { method: "POST", body: JSON.stringify(body) }), { defaultRate: state.board?.roi.defaultRate }));
+    else panel.append(h("p", { class: "ab-note", text: "Only " + (a.createdByName || "the person who created it") + " or an admin can change these values." }));
+    return panel;
+  }
+  // The ROI page: totals, where the value comes from, then every item with its inputs.
+  function roiTable(title, sec, kind, copy) {
+    const o = state.roi;
+    const skills = kind === "skill";
+    const head = h("tr", {}, ...[skills ? "Skill" : kind === "api" ? "API source" : "Automation", skills ? "Used by" : "Conversation", skills ? "Uses" : "Successful runs", "Saves", "Rate", "Time saved", "Value", "AI cost", "Net", "ROI", ""]
+      .map((label, i) => h("th", { scope: "col", class: i >= 2 && i <= 9 ? "ab-num" : "", text: label })));
+    const body = h("tbody");
+    for (const item of sec.items) {
+      const r = item.roi;
+      const key = kind + ":" + (item.channelId || "") + "/" + item.id;
+      const name = !skills && config.boardHref ? h("a", { class: "ab-roi-name", href: config.boardHref + "#automation=" + encodeURIComponent(item.channelId + "/" + item.id), text: item.title }) : h("span", { class: "ab-roi-name", text: item.title });
+      const where = skills ? (item.people || item.channels ? plural(item.people, "person").replace("persons", "people") + " · " + plural(item.channels, "conversation") : "—") : item.conversation;
+      body.append(h("tr", { class: r.configured ? "" : "is-unset" },
+        h("th", { scope: "row" }, name, !skills && item.kind !== "Task" && item.kind !== "API" ? h("small", { text: " " + item.kind }) : null, item.enabled === false ? h("small", { text: " paused" }) : null),
+        h("td", { text: where }),
+        h("td", { class: "ab-num", text: String(r.counted) }),
+        h("td", { class: "ab-num", text: r.minutes ? r.minutes + " min" : "—" }),
+        h("td", { class: "ab-num", text: r.effectiveRate ? usd(r.effectiveRate) + "/h" + (r.usesDefaultRate ? "*" : "") : "—", title: r.usesDefaultRate ? "The default hourly rate" : "" }),
+        h("td", { class: "ab-num", text: r.minutes ? hrs(r.hoursSaved) : "—" }),
+        h("td", { class: "ab-num", text: r.configured ? usd(r.valueUsd) : "—" }),
+        h("td", { class: "ab-num", text: r.costUsd === null ? "n/a" : usd(r.costUsd), title: r.costUsd === null ? "The AI cost of a skill use is part of its run and is not split out" : "" }),
+        h("td", { class: "ab-num ab-t-" + netTone(r.netUsd), text: usd(r.netUsd) }),
+        h("td", { class: "ab-num ab-t-" + netTone(r.multiple), text: mult(r.multiple) }),
+        h("td", { class: "ab-roi-act" }, item.canEditRoi ? h("button", { type: "button", class: "ab-btn ab-small" + (r.configured ? "" : " ab-primary"), "aria-expanded": String(state.roiEdit === key), "aria-label": (r.configured ? "Edit ROI values of " : "Set ROI values of ") + item.title,
+          onclick: () => { state.roiEdit = state.roiEdit === key ? "" : key; state.dirty = false; paint(); } }, r.configured ? "Edit" : "Set ROI") : null)));
+      if (state.roiEdit === key && item.canEditRoi) {
+        const save = (values) => skills ? request("/roi/skill", { method: "POST", body: JSON.stringify({ slug: item.id, ...values }) }) : request(itemPath(item, "roi"), { method: "POST", body: JSON.stringify(values) });
+        body.append(h("tr", { class: "ab-roi-edit" }, h("td", { colspan: "11" }, roiForm(r, save, { unit: skills ? "use" : "successful run", defaultRate: o.defaultRate, cancel: true }))));
+      }
+    }
+    const t = sec.totals;
+    return h("section", { class: "ab-panel ab-roi-section", "aria-label": title },
+      h("div", { class: "ab-row ab-between" }, h("div", {}, h("h3", { text: title }), h("p", { class: "ab-muted", text: copy })),
+        h("p", { class: "ab-roi-sum" }, h("b", { text: usd(t.valueUsd) }), " value · ", h("b", { text: hrs(t.hoursSaved) }), " saved" + (t.costKnown && t.configured ? " · " : ""), t.costKnown && t.configured ? h("b", { class: "ab-t-" + netTone(t.multiple), text: mult(t.multiple) }) : null, t.costKnown && t.configured ? " ROI" : "",
+          h("small", { text: "  " + t.configured + " of " + t.items + " set" }))),
+      sec.items.length ? h("div", { class: "ab-roi-scroll" }, h("table", { class: "ab-roi-table" }, h("thead", {}, head), body))
+        : h("p", { class: "ab-muted", text: skills ? "No skill was used in this window." : kind === "api" ? "No API source in the conversations you can see." : "No automations yet." }));
+  }
+  function paintRoi() {
+    if (state.loading && !state.roi) { root.replaceChildren(h("p", { class: "ab-muted ab-loading", text: "Loading ROI…" }), toastHost); return; }
+    const o = state.roi;
+    if (!o) { root.replaceChildren(h("div", { class: "ab-empty" }, h("h3", { text: "Couldn’t load ROI" }), h("p", { text: state.error }), h("button", { type: "button", class: "ab-btn", onclick: () => load() }, "Try again")), toastHost); return; }
+    const seg = h("div", { class: "ab-seg", role: "group", "aria-label": "Time window" });
+    for (const d of [7, 30, 90]) seg.append(h("button", { type: "button", class: state.roiDays === d ? "is-active" : "", "aria-pressed": String(state.roiDays === d),
+      onclick: () => { state.roiDays = d; try { store?.setItem("cg-roi-days", String(d)); } catch { /* ignore */ } void load(true); } }, d + "d"));
+    let rateBox;
+    if (o.viewer.isAdmin) {
+      const rate = h("input", { type: "number", min: "0", max: "100000", step: "any", inputmode: "decimal", value: o.defaultRate || "", placeholder: "0", "aria-label": "Default hourly rate in US dollars", oninput: () => { state.dirty = true; } });
+      rateBox = h("form", { class: "ab-roi-default", title: "Used for every item that has minutes saved but no hourly rate of its own", onsubmit: async (e) => {
+        e.preventDefault();
+        try { await request("/roi/default", { method: "POST", body: JSON.stringify({ hourlyRate: rate.value === "" ? 0 : Number(rate.value) }) }); state.dirty = false; toast("Default hourly rate saved.", "ok"); await load(true); }
+        catch (error) { toast(error.message, "fail"); }
+      } }, h("label", {}, h("span", { text: "Default rate" }), h("span", { class: "ab-roi-money" }, "$", rate, "/h")), h("button", { type: "submit", class: "ab-btn ab-small" }, "Save"));
+    } else rateBox = h("span", { class: "ab-muted", text: o.defaultRate ? "Default rate " + usd(o.defaultRate) + "/h" : "No default rate set" });
+    const t = o.totals;
+    const parts = [["Automations", o.automations.totals.valueUsd, "accent"], ["API runs", o.api.totals.valueUsd, "live"], ["Skills", o.skills.totals.valueUsd, "ok"]];
+    const split = h("div", { class: "ab-roi-split" });
+    if (t.valueUsd > 0) {
+      const bar = h("div", { class: "ab-bar", role: "img", "aria-label": parts.map(([label, v]) => label + " " + usd(v)).join(", ") });
+      for (const [, v, tone] of parts) if (v > 0) bar.append(h("i", { class: "ab-src-" + tone, style: "flex:" + v / t.valueUsd }));
+      const legend = h("div", { class: "ab-legend" });
+      for (const [label, v, tone] of parts) legend.append(h("span", { class: "ab-legend-item" }, h("i", { class: "ab-src-" + tone }), h("b", { text: usd(v) }), label + " · " + Math.round((v / t.valueUsd) * 100) + "%"));
+      split.append(h("p", { class: "ab-side-label", text: "Where the value comes from" }), bar, legend);
+    }
+    const hero = h("section", { class: "ab-hero ab-roi-hero" }, h("div", { class: "ab-hero-main" },
+      h("p", { class: "ab-eyebrow" }, icon("trend"), "Return on investment · " + (o.viewer.adminConsole ? "all conversations" : o.viewer.isAdmin ? "all conversations you can access, every skill use" : "conversations you can access") + " · " + windowWords(o.windowDays) + (o.limited ? " (from " + shortDate(o.since) + ", where cost history starts)" : "")),
+      h("h2", { class: "ab-headline" }, t.configured ? [h("span", { class: "ab-t-" + netTone(t.netUsd), text: usd(t.netUsd) }), " net value from ", h("span", { text: hrs(t.hoursSaved) }), " of saved work"] : "Set ROI values to see what your automations are worth"),
+      roiTiles(t, { runsNote: t.configured + " of " + t.items + " items have ROI values", valueNote: "automations, API runs and skills", costNote: "automations and API runs" }), split));
+    root.replaceChildren(
+      state.error ? h("p", { class: "ab-banner", text: state.error }) : "",
+      h("div", { class: "ab-toolbar ab-roi-toolbar" }, h("h2", { class: "ab-view-title" }, icon("trend"), "ROI"), rateBox, seg,
+        h("button", { type: "button", class: "ab-icon-btn", title: "Refresh", "aria-label": "Refresh", onclick: () => load(true) }, icon("refresh"))),
+      hero,
+      roiTable("Automations", o.automations, "automation", "Scheduled tasks, reminders and loops. A run counts when it succeeded and its answer arrived."),
+      roiTable("API runs", o.api, "api", "Runs started over the HTTP run API, by token" + (o.viewer.isAdmin ? "." : " — the ones your own tokens started.")),
+      roiTable("Skills", o.skills, "skill", "One use per run that loaded the skill. A skill’s AI cost is part of its run and is not split out, so skills show value without a cost." + (o.viewer.isAdmin ? "" : " Only an admin sets a skill’s values.")),
+      h("p", { class: "ab-muted ab-roi-note", text: "How it is calculated: time saved = successful runs × minutes saved per run; value = time saved × hourly rate (* = the default rate); net = value − AI cost; ROI = net ÷ AI cost. The minutes and rates are estimates people entered. Items without them are listed but not counted." }),
+      toastHost);
+  }
+
   function facet(title, key, values) {
     if (values.length < 2 && !state[key].size) return null;
     const box = h("details", { class: "ab-facet", open: true }, h("summary", { text: title }));
@@ -479,7 +644,7 @@ export function automationBoardBrowser(config, browser) {
     for (const [d, label] of [[1, "24h"], [7, "7d"], [30, "30d"]]) seg.append(h("button", { type: "button", class: state.days === d ? "is-active" : "", "aria-pressed": String(state.days === d),
       onclick: () => { state.days = d; try { store?.setItem("cg-ab-days", String(d)); } catch { /* ignore */ } void load(true); } }, label));
     const sort = h("select", { class: "ab-select", "aria-label": "Sort", onchange: (e) => { state.sort = e.target.value; paintList(); } });
-    for (const [v, label] of [["urgent", "Most urgent"], ["next", "Next run"], ["success", "Lowest success"], ["cost", "Most expensive"], ["name", "Name"]]) sort.append(h("option", { value: v, selected: state.sort === v }, label));
+    for (const [v, label] of [["urgent", "Most urgent"], ["next", "Next run"], ["success", "Lowest success"], ["cost", "Most expensive"], ["roi", "Highest value"], ["name", "Name"]]) sort.append(h("option", { value: v, selected: state.sort === v }, label));
     return h("div", { class: "ab-toolbar" }, h("h2", { class: "ab-view-title" }, icon(view.icon), view.label),
       h("span", { class: "ab-key", title: "Each square is one run: top row the run, bottom row its delivery" }, h("i", { class: "c-ok" }), h("i", { class: "c-ok" }), " run / delivery"),
       bulk.length ? h("button", { type: "button", class: "ab-btn ab-small", title: "Mark every open error in this list as handled", onclick: () => acknowledgeMany(bulk) }, icon("check"), "Acknowledge all (" + bulk.length + ")") : null,
@@ -771,7 +936,7 @@ export function automationBoardBrowser(config, browser) {
       a.canAcknowledge && a.openErrors ? h("button", { type: "button", class: "ab-btn ab-small", disabled: ackBusy(a), onclick: () => acknowledge(a) }, icon("check"), a.openErrors > 1 ? "Acknowledge all " + a.openErrors + " errors" : "Acknowledge error") : null,
       h("button", { type: "button", class: "ab-btn ab-small", onclick: () => loadRuns(a, true) }, icon("refresh"), "Refresh"))), runList(a))
       : state.tab === "settings" ? settingsForm(a)
-        : h("div", { class: "ab-overview" }, issueCard(a), h("div", { class: "ab-side-stack" }, keyFacts(a), limitsPanel(a)));
+        : h("div", { class: "ab-overview" }, issueCard(a), h("div", { class: "ab-side-stack" }, keyFacts(a), roiPanel(a), limitsPanel(a)));
     return h("div", { class: "ab-detail" },
       h("button", { type: "button", class: "ab-link ab-back", onclick: closeDetail }, icon("back"), "All automations"),
       h("section", { class: "ab-panel ab-detail-head ab-edge-" + tone },
@@ -783,6 +948,7 @@ export function automationBoardBrowser(config, browser) {
 
   // ── frame ─────────────────────────────────────────────────────────────────────────────────
   function paint() {
+    if (roiPage) return paintRoi();
     const keepFocus = document.activeElement?.classList?.contains("ab-search") ? document.activeElement.selectionStart : null;
     listHost = null;
     if (state.loading && !state.board) { root.replaceChildren(h("p", { class: "ab-muted ab-loading", text: "Loading automations…" }), toastHost); return; }
@@ -798,13 +964,15 @@ export function automationBoardBrowser(config, browser) {
     paintList();
     if (keepFocus !== null) { const s = root.querySelector(".ab-search"); s?.focus(); try { s?.setSelectionRange(keepFocus, keepFocus); } catch { /* ignore */ } }
   }
-  const hash = /^#automation=(.+)$/.exec(browser.location?.hash || "");
+  const hash = roiPage ? null : /^#automation=(.+)$/.exec(browser.location?.hash || "");
   if (hash) { try { state.detail = decodeURIComponent(hash[1]); } catch { state.detail = null; } }
   void load().then(() => { const a = state.detail && findItem(state.detail); if (a) void loadRuns(a); });
-  browser.setInterval(() => { if (document.visibilityState !== "hidden" && !root.querySelector(".ab-form :focus, .ab-modal")) void load(true); }, 60_000);
+  browser.setInterval(() => { if (document.visibilityState !== "hidden" && !state.dirty && !root.querySelector(".ab-form :focus, .ab-roi-form :focus, .ab-roi-default :focus, .ab-modal")) void load(true); }, 60_000);
 }
 
 export const AUTOMATION_BOARD_HTML = `<section class="ab-page" aria-label="Automations"><div class="ab-page-head"><h1>Automations</h1><p>Scheduled tasks, reminders, loops and API runs. What didn’t run or didn’t arrive comes first, with how to fix it.</p></div><div id="ab-root" class="ab"><p class="ab-muted">Loading automations…</p></div><noscript><p>Enable JavaScript to view automations.</p></noscript></section>`;
+
+export const AUTOMATION_ROI_HTML = `<section class="ab-page" aria-label="ROI"><div class="ab-page-head"><h1>ROI</h1><p>What automations, API runs and skills are worth: the time each successful run or use saves, at an hourly rate, against what the runs cost.</p></div><div id="ab-root" class="ab"><p class="ab-muted">Loading ROI…</p></div><noscript><p>Enable JavaScript to view ROI.</p></noscript></section>`;
 
 export const AUTOMATION_BOARD_CSS = `
 .ab-page{width:100%;min-width:0;max-width:1480px;margin:0 auto;padding:22px 24px 60px}
@@ -959,6 +1127,35 @@ export const AUTOMATION_BOARD_CSS = `
 .ab-field.ab-inline{flex-direction:row;align-items:center;gap:9px}.ab-field.ab-inline>span{font-weight:400}
 .ab-form-error{margin:0;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--ab-fail) 14%,transparent);color:var(--ab-fail)}
 .ab-form-actions{padding-top:6px;border-top:1px solid var(--ab-line)}
+/* roi */
+.ab-roi-band{grid-column:1/-1;padding-top:16px;border-top:1px solid var(--ab-line);display:flex;flex-direction:column;gap:10px;min-width:0}
+.ab-roi-band .ab-eyebrow,.ab-roi-band p{margin:0}.ab-roi-band .ab-link{text-decoration:none;font-size:12.5px}
+.ab-roi-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.ab-roi-tile{padding:10px 12px;border:1px solid var(--ab-line);border-radius:10px;background:var(--ab-panel-2);min-width:0}
+.ab-roi-tile .ab-side-label{margin:0 0 4px}.ab-roi-tile strong{display:block;font-size:19px;letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ab-roi-tile small{display:block;color:var(--ab-faint);font-size:11.5px}
+.ab-roi-note{margin:0;font-size:12px}
+.ab-roi-chip{color:var(--ab-ok)}
+.ab-roi-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;margin-top:12px;padding-top:12px;border-top:1px solid var(--ab-line)}
+.ab-roi-form .ab-form-error{grid-column:1/-1}.ab-roi-edit .ab-roi-form{margin:0;padding:4px 0;border:0;max-width:640px}
+.ab-roi-hero{grid-template-columns:minmax(0,1fr)}.ab-roi-hero .ab-hero-main{gap:14px;display:flex;flex-direction:column}.ab-roi-hero .ab-headline{margin:0}
+.ab-roi-split{display:flex;flex-direction:column;gap:8px}.ab-roi-split .ab-side-label{margin:0}.ab-roi-split .ab-legend-item{cursor:default}
+.ab-src-accent{background:var(--ab-accent)}.ab-src-live{background:var(--ab-live)}.ab-src-ok{background:var(--ab-ok)}
+.ab-roi-toolbar{margin-bottom:14px}.ab-roi-toolbar .ab-view-title{margin-right:auto}
+.ab-roi-default{display:flex;align-items:center;gap:8px}.ab-roi-default label{display:flex;align-items:center;gap:8px;color:var(--ab-muted)}
+.ab-roi-money{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--ab-line);border-radius:8px;background:var(--ab-panel-2);color:var(--ab-ink)}
+.ab-roi-money input{width:72px;border:0;background:transparent;outline:0;text-align:right;-moz-appearance:textfield}
+.ab-roi-section{margin-top:14px;display:flex;flex-direction:column;gap:12px}.ab-roi-section h3{margin:0}.ab-roi-section p{margin:2px 0 0}
+.ab-roi-sum{white-space:nowrap}.ab-roi-sum small{color:var(--ab-faint)}
+.ab-roi-scroll{overflow-x:auto;margin:0 -4px}
+.ab-roi-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;min-width:860px}
+.ab-roi-table th,.ab-roi-table td{padding:8px 10px;text-align:left;border-top:1px solid var(--ab-line);vertical-align:middle;white-space:nowrap}
+.ab-roi-table thead th{border-top:0;color:var(--ab-faint);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.ab-roi-table tbody th{font-weight:600;white-space:normal;min-width:180px}.ab-roi-table tbody th small{color:var(--ab-faint);font-weight:400}
+.ab-roi-table .ab-num{text-align:right}.ab-roi-table tr.is-unset td{color:var(--ab-faint)}
+.ab-roi-name{color:inherit;text-decoration:none}a.ab-roi-name:hover{text-decoration:underline}
+.ab-roi-act{text-align:right}.ab-roi-edit td{background:var(--ab-panel-2)}
+@media (max-width:1100px){.ab-roi-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:520px){.ab-roi-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.ab-roi-toolbar{flex-wrap:wrap}}
 /* modal, toast */
 .ab-modal{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.5)}
 .ab-modal-card{width:min(460px,100%);padding:20px;border-radius:14px;border:1px solid var(--ab-line);background:var(--ab-panel)}.ab-modal-card h3{margin:0 0 8px}.ab-modal-card p{margin:0 0 18px;color:var(--ab-muted)}
@@ -976,5 +1173,5 @@ export const AUTOMATION_BOARD_CSS = `
 
 // The admin console loads the same component as a module (src/web/app.js serves this text).
 export function automationBoardModuleSource() {
-  return `export const automationBoardBrowser = ${automationBoardBrowser.toString()};\nexport const AUTOMATION_BOARD_CSS = ${JSON.stringify(AUTOMATION_BOARD_CSS)};\nexport const AUTOMATION_BOARD_HTML = ${JSON.stringify(AUTOMATION_BOARD_HTML)};\n`;
+  return `export const automationBoardBrowser = ${automationBoardBrowser.toString()};\nexport const AUTOMATION_BOARD_CSS = ${JSON.stringify(AUTOMATION_BOARD_CSS)};\nexport const AUTOMATION_BOARD_HTML = ${JSON.stringify(AUTOMATION_BOARD_HTML)};\nexport const AUTOMATION_ROI_HTML = ${JSON.stringify(AUTOMATION_ROI_HTML)};\n`;
 }

@@ -24,6 +24,7 @@
           <a class="nav-item" data-view="channels" href="/conversations"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 1.5 4 14.5M12 1.5l-1.5 13M2 5.5h12.5M1.5 10.5H14"/></svg> Conversations</a>
           <a class="nav-item" data-view="users" href="/users"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.6"/><path d="M1.5 14c0-2.5 1.8-4 4-4s4 1.5 4 4M11 5.6a2.4 2.4 0 1 0 .1-4.7M11.5 9.9c1.9.3 3 1.8 3 4.1"/></svg> Users</a>
           <a class="nav-item" data-view="schedules" href="/automations"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M8 4.5V8l2.4 1.6"/></svg> Automations</a>
+          <a class="nav-item" data-view="roi" href="/roi"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.5 2.5L14 4.5"/><path d="M10.5 4.5H14V8"/></svg> ROI</a>
           <a class="nav-item" data-view="audit" href="/activity"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13.5V9M6 13.5V5.5M10 13.5V2.5M14 13.5V7"/></svg> Activity</a>
           <a class="nav-item" data-view="skills" href="/skills"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 2 4.75v6.5L8 14.5l6-3.25v-6.5Z"/><path d="M2 4.75 8 8l6-3.25M8 8v6.5"/></svg> Skills</a>
           <a class="nav-item" data-view="api" href="/api-docs"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 2.5 7 13.5"/></svg> API</a>
@@ -175,6 +176,15 @@
           </div>
           <div id="ab-root" class="ab">Loading…</div>
           <button id="schedule-history-all" class="ghost" type="button">Run history of every automation, deleted ones included</button>
+        </section>
+
+        <!-- ROI: time saved and value of automations, API runs and skills against their AI cost -->
+        <section id="view-roi" class="view full">
+          <div class="view-head">
+            <h2>ROI</h2>
+            <p class="hint">What automations, API runs and skills are worth: the time each successful run or use saves, at an hourly rate, against what the runs cost. The inputs are your own estimates; set them here or on each automation. Members see the same page in their Activity dashboard, limited to the conversations they can access.</p>
+          </div>
+          <div id="roi-root" class="ab">Loading…</div>
         </section>
 
         <!-- Activity: full width — filterable run history + a quiet all-time totals strip -->

@@ -1,5 +1,45 @@
 # ChannelGate — Test Plan
 
+## ROI of automations, API runs and skills (2026-11-24)
+
+Regression: `test/automation-roi.test.js` (the arithmetic and which runs count; input validation;
+the store; ROI on the board; who may set what; the ROI page's three sections and member scoping;
+console routes; the page in both surfaces), `test/admin-navigation.test.js`.
+
+Fixtures: a shared test channel with (A) a task created by the tester that has run successfully at
+least twice in the last 7 days and failed once, (B) a task created by another person, (C) an API
+token of the tester with at least two completed `POST /api/runs` calls, and a skill (S) used in
+that channel at least once in the last 30 days. No ROI values set anywhere.
+
+Engine-independent (inputs, arithmetic, pages, permissions — no engine turn):
+1. As the tester (approved, not admin) open Activity → Automations. Pass: the header's "Return on
+   investment" band says no automation has ROI values and links to the ROI page.
+2. Open A → Overview → ROI, enter 30 minutes and 60 USD, Save. Pass: the panel shows time saved =
+   successful delivered runs × 0.5 h, value = that × 60, the AI cost of ALL of A's runs in the
+   window, net and the multiple; the failed run is not counted; A's card shows "Saved … ROI"; the
+   header band now shows the same totals and "1 of N automations have ROI values".
+3. Open B → Overview. Pass: no fields, with the note naming who can change the values.
+4. Open the ROI page (nav → ROI). Pass: A under Automations with its values, B listed as not set
+   with a dash; C under API runs with **Set ROI**; S under Skills with no button; AI cost of S
+   reads "n/a". Set C to 10 minutes and no rate. Pass: C shows time saved but no value (no
+   default rate yet) and is not counted in the totals.
+5. As an organization admin open the admin console → ROI. Set the default rate to 50, Save. Pass:
+   C now has a value at "$50.00/h*" and counts; the hero's "Where the value comes from" bar shows
+   Automations and API runs. Set S to 5 minutes. Pass: S shows value = uses × 5 min × 50, AI cost
+   "n/a", no net; the totals' value grows by it and the AI cost does not change.
+6. Switch 7d / 30d / 90d. Pass: counts and totals follow the window; a figure never exceeds the
+   next larger window's.
+7. Clear A's two fields and Save. Pass: A returns to "not set" and leaves the totals.
+8. Back as the tester: `POST` a default rate or a skill's values from the dashboard page is not
+   offered, and the request itself answers 403.
+
+Claude and Codex (run each once; the tools are the same, the engine phrases the call):
+9. In the test channel: "Update the task A: each successful run saves me 20 minutes and my hourly
+   rate is 80 dollars." Pass: the reply confirms 20 min and 80 USD/h, `list_schedules` shows
+   `roiMinutes: 20`, `roiHourlyRate: 80`, and the board's ROI panel shows them.
+10. "Create a reminder for tomorrow 09:00 to send the report" (no numbers given). Pass: the
+    schedule is created WITHOUT ROI values — the agent did not invent any.
+
 ## Automations health board (2026-11-24)
 
 Regression: `test/automation-health-board.test.js` (classifier, verdicts and fix steps; member vs

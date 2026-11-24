@@ -21,6 +21,7 @@ const EXPECTED = {
   channels: "/conversations",
   users: "/users",
   schedules: "/automations",
+  roi: "/roi",
   audit: "/activity",
   skills: "/skills",
   api: "/api-docs",

@@ -56,6 +56,7 @@ converting or relabelling it.
 ## Quiet execution, outcome tracking and existing threads
 - `execution_visibility:"silent"` omits startup announcements. This is independent of destination and notification mentions. Runs still appear in Admin UI → Automations → Runs.
 - `result_policy:"on-result"` omits only an explicit healthy empty check (`no-op`). The scheduler appends outcome-report instructions automatically; do not require users to hand-write them. Failed, blocked and unreported work is never interpreted as an empty success.
+- ROI: when the person says what a run is worth ("each run saves me 20 minutes", "my rate is 80 USD an hour"), pass `roi_minutes_saved` and `roi_hourly_rate` to `create_schedule` / `update_schedule` (0 clears). Use only their numbers — never estimate or invent them. The Automations and ROI pages turn them into time saved, value and ROI against the run's AI cost; without an hourly rate the organization's default rate applies.
 - `failure_notify:false` also hides failure/unreported notices; durable run history still records the problem. Default true keeps actionable failures visible.
 - `delivery:"thread"` sends results into `delivery_thread`, defaulting to the current real thread. The destination stays in THIS conversation. Every fire starts a fresh agent session. Use daily-thread to group each day; with silent execution the first useful report creates the day’s anchor.
 - These controls apply to agent tasks, not reminder messages. Keep existing defaults unless the user asks for silence or another destination.

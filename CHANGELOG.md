@@ -2,6 +2,13 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- ROI: every automation, API source and skill can now carry how many minutes one successful run
+  (or use) saves and an hourly rate. The Automations page shows the time saved, its value, the AI
+  cost, net value and ROI for the selected window, per automation and in total. A new **ROI** page
+  (admin console and each member's Activity dashboard) puts automations, API runs and skills side
+  by side over 7, 30 or 90 days. Admins set a default hourly rate and the skills' values; creators
+  set their own automations' and API tokens' values, on the page or by asking in chat. Skills show
+  value only — their AI cost is part of the run that used them.
 - Automations: HTTP API runs and scheduled automations now share one run history. API runs get
   everything schedules had — 90 days of runs, the full list of problem types with fix steps,
   **Acknowledge**, and the event timeline. A new **Trigger** filter separates Scheduled from API.

@@ -1,5 +1,57 @@
 # ChannelGate — Features
 
+## ROI of automations, API runs and skills (2026-11-24)
+
+Every automation, every API source and every skill can carry two numbers a person enters: the
+**minutes of work one successful run (or one skill use) saves** and the **hourly rate (USD)** of
+that work. The gateway never measures time; these are the person's estimates, and it only does
+the arithmetic (`src/gateway/roi.js`):
+
+- time saved = counted runs × minutes ÷ 60; value = time saved × hourly rate; net = value − AI
+  cost; ROI = net ÷ AI cost, shown as a multiple ("19×"). No multiple when the cost is zero.
+- A run counts when it ended `succeeded`, `no-op` or `completed` AND its answer was not lost
+  (delivery not `failed`). Failed, blocked, interrupted and unreported runs save nothing but
+  their cost still counts against the automation.
+- An item with minutes but no rate uses the **default hourly rate** (organization-wide, set by an
+  admin on the ROI page; marked `*`). Without minutes, or without any rate, an item is "not set":
+  it is listed, never added to a total, and its cost is reported beside the total.
+- A skill counts one use per run that loaded it (`skill_usage`). A skill's AI cost is part of its
+  run's cost and is not split out, so skills show time and value only — no cost, net or multiple.
+- The window never reaches further back than the license's cost history, so value is never set
+  against spend the page may not show; the page says so when the window was shortened.
+
+Where it is stored: a schedule keeps `roiMinutes` / `roiHourlyRate` on its own record; API sources
+(per conversation + source), skills (per slug) and the default rate live in `roi_assignments`
+(migration 65). Both zero removes the entry.
+
+Who may set it: a schedule — its creator, an organization admin, or the owner of the DM it lives
+in (the same rule as editing it); an API source — whoever may see it (the token's creator, or an
+admin; the organization key's runs are admin-only); a skill and the default rate — organization
+admins only, because they apply to everyone.
+
+Where it shows (the one shared component, `src/web/automation-board.js`, in the admin console and
+in every member's Activity dashboard):
+
+- **Automations page**: a "Return on investment" band in the header for the selected window (time
+  saved, value, AI cost, net, ROI, how many automations have values), a "Saved … · $… · N× ROI"
+  line on each card, a **Highest value** sort, and an **ROI** panel on each automation's and API
+  source's Overview with the two fields.
+- **ROI page** (`/roi` in the console, `/activity/<session>/roi` in the dashboard; 7/30/90 days):
+  the combined totals, where the value comes from (automations / API runs / skills), and one table
+  each for automations, API sources and skills with inline **Set ROI** / **Edit**. An admin also
+  sets the default rate there. A member sees the conversations they can open, their own API
+  tokens' runs, and skill uses in those conversations (never another person's DM).
+- Chat: `create_schedule` / `update_schedule` accept `roi_minutes_saved` and `roi_hourly_rate`;
+  `list_schedules` shows them. The agent is told to use the person's numbers, never to invent them.
+
+API: `GET …/roi?days=7|30|90`, `POST …/:channelId/:scheduleId/roi` `{ minutesSaved, hourlyRate }`,
+`POST …/roi/skill` `{ slug, minutesSaved, hourlyRate }`, `POST …/roi/default` `{ hourlyRate }` —
+under `/api/automation-board` (console) and `/activity/<session>/api/automations` (dashboard). The
+board response carries `roi` per automation and for the whole board. Audit events:
+`automation_roi_set`, `skill_roi_set`, `roi_default_rate_set` (numbers and who, nothing else).
+
+→ TEST-PLAN: ROI of automations, API runs and skills (2026-11-24).
+
 ## Automations health board — one page for admins and members (2026-11-24)
 
 The Automations page of the admin console and of the Activity dashboard is now ONE component

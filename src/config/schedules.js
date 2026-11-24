@@ -6,7 +6,8 @@
 // Shape: { id, channelId, slug, cron, runAt, once, prompt, description, createdBy, kind, ack,
 //          ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, notify, notifyUserId,
 //          delivery, dailyThreadDate, dailyThreadTs, enabled, createdAt, lastRun, lastStatus,
-//          cronEligibleSince, lastCronFireMs, lastFireMinute, executionState, pendingDelivery, sudo }
+//          cronEligibleSince, lastCronFireMs, lastFireMinute, executionState, pendingDelivery, sudo,
+//          roiMinutes, roiHourlyRate }
 // Thread-loop rows (see ../gateway/loops.js) add: { loop, loopId, threadTs, resumeThread,
 //          ticksRemaining, loopReason, loopNoop }. They live in this same table on purpose — one
 //          tick loop, one concurrency cap, one per-channel ceiling — and are declared here so the
@@ -18,7 +19,7 @@ export function getSchedules() {
   return getDb().prepare("SELECT data FROM schedules ORDER BY rowid").all().map((r) => fromJson(r.data, {}));
 }
 
-export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop, sudo, successCriteria }) {
+export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop, sudo, successCriteria, roiMinutes, roiHourlyRate }) {
   const sched = {
     id: randomUUID().slice(0, 8),
     channelId,
@@ -32,6 +33,10 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     description: description || "",
     // Optional "goal": what must be true for a fire to count as succeeded (schedule-outcome.js).
     successCriteria: typeof successCriteria === "string" ? successCriteria.trim() : "",
+    // ROI inputs (gateway/roi.js): minutes one successful run saves, and the hourly rate of that
+    // work in USD. 0 = not set (the rate then falls back to the gateway default).
+    roiMinutes: Number(roiMinutes) > 0 ? Number(roiMinutes) : 0,
+    roiHourlyRate: Number(roiHourlyRate) > 0 ? Number(roiHourlyRate) : 0,
     createdBy: createdBy || "",
     // Explicit host execution, authorized by the creation/edit surface and rechecked at every
     // spawn. Never infer this from the launching thread's /sudo flag or channel admin mode.

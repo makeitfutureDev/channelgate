@@ -1554,4 +1554,24 @@ export const migrations = [
       `);
     },
   },
+  {
+    // ROI inputs that have no row of their own to live on (src/gateway/roi.js): an API source
+    // (kind 'api', its conversation + source id), a skill (kind 'skill', the slug) and the
+    // gateway's default hourly rate (kind 'default'). A schedule keeps its ROI on its own record.
+    version: 65,
+    up(db) {
+      db.exec(`
+        CREATE TABLE roi_assignments (
+          kind          TEXT NOT NULL,
+          channel_id    TEXT NOT NULL DEFAULT '',
+          ref           TEXT NOT NULL,
+          minutes_saved REAL NOT NULL DEFAULT 0,
+          hourly_rate   REAL NOT NULL DEFAULT 0,
+          updated_at    INTEGER NOT NULL,
+          updated_by    TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (kind, channel_id, ref)
+        );
+      `);
+    },
+  },
 ];

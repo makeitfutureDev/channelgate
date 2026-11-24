@@ -33,7 +33,8 @@ import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from
 import { registerActivityConnectionRoutes } from "./activity-connections.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
-import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation, automationBoard, updateAutomation, runAutomationNow, acknowledgeAutomation } from "../gateway/automations-view.js";
+import { automationChannels, checkedChannel, channelAutomations, automationRuns, deleteAutomation, automationBoard, updateAutomation, runAutomationNow, acknowledgeAutomation, setAutomationRoi } from "../gateway/automations-view.js";
+import { roiOverview, setSkillRoi, setDefaultRate } from "../gateway/roi-view.js";
 import { PERSONAL_SKILLS_ID, channelSkillsView, personalSkillsView, saveSkillSelection, skillChannels } from "../gateway/skills-view.js";
 import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { apiTokenChannels, apiTokenChannelView, createDashboardApiToken, revokeDashboardApiToken } from "../gateway/api-tokens-view.js";
@@ -407,7 +408,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/automations") ? "automations" : req.path.endsWith("/skills") ? "skills" : req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
+      const view = req.path.endsWith("/automations") ? "automations" : req.path.endsWith("/roi") ? "roi" : req.path.endsWith("/skills") ? "skills" : req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : /\/settings(?:\/(?:connections(?:\/new)?|email))?$/.test(req.path) ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
@@ -606,6 +607,7 @@ export function createActivityRouter({
   router.get("/:id/settings/connections/new", serveDashboard);
   router.get("/:id/calls", serveDashboard);
   router.get("/:id/automations", serveDashboard);
+  router.get("/:id/roi", serveDashboard);
   router.get("/:id/skills", serveDashboard);
   // Skills: the same access rule as Automations, re-derived from the session owner on every
   // request; a channel id from the browser only narrows what that access already allows.
@@ -668,6 +670,31 @@ export function createActivityRouter({
       return res.json(board);
     } catch (error) { return unavailable(res, error.status || 503); }
   });
+  // The ROI page: automations, API sources and skills in the same scope as the board.
+  router.get("/:id/api/automations/roi", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const access = await accessContext(client, session.ownerId);
+      const overview = await roiOverview(access, session.ownerId, { days: Number(req.query.days) || 30 });
+      await context(req);
+      return res.json(overview);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  // Organization-wide ROI inputs (a skill's, the default hourly rate): admins only.
+  for (const [name, handler] of [["skill", setSkillRoi], ["default", setDefaultRate]]) {
+    router.post(`/:id/api/automations/roi/${name}`, async (req, res) => {
+      try {
+        const { session, client } = await context(req);
+        if (!csrfOk(req, session)) return unavailable(res, 403);
+        const access = await accessContext(client, session.ownerId);
+        await context(req);
+        return res.json(await handler(access, session.ownerId, req.body || {}));
+      } catch (error) {
+        if (error.userFacing) return res.status(error.status || 400).json({ error: error.message });
+        return unavailable(res, error.status || 503);
+      }
+    });
+  }
   router.get("/:id/api/automations/:channelId", async (req, res) => {
     try {
       const { session, client } = await context(req);
@@ -694,6 +721,7 @@ export function createActivityRouter({
     ["update", (access, ownerId, entry, id, req) => updateAutomation(access, ownerId, entry, id, req.body || {}).then((schedule) => ({ ok: true, enabled: schedule.enabled !== false }))],
     ["run", (access, ownerId, entry, id) => runAutomationNow(access, ownerId, entry, id)],
     ["acknowledge", (access, ownerId, entry, id, req) => acknowledgeAutomation(access, ownerId, entry, id, req.body || {})],
+    ["roi", (access, ownerId, entry, id, req) => setAutomationRoi(access, ownerId, entry, id, req.body || {})],
   ]) {
     router.post(`/:id/api/automations/:channelId/:scheduleId/${action}`, async (req, res) => {
       try {
