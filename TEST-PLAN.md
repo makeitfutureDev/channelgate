@@ -5854,8 +5854,11 @@ inbox). Record the address and the servers; never the password.
 ### Live gates (engine-independent UI; a turn afterwards in Claude AND Codex) — UNEXECUTED
 Fixture: a disposable channel; one admin, one approved non-manager member, one unapproved member.
 - [ ] **Navigation:** open ⚙️ Settings from a reply in a thread. Pass: the first line is the
-  channel name with a page dropdown listing seven pages; Agent opens first, with *This thread*
-  above *Channel default*. Switching pages clears any open form.
+  channel name with a dropdown listing Agent, Access, MCP, Variables, Skills, Schedules, API
+  tokens, Diagnostics and You. A DM offers eight pages and omits Access. Agent opens first with
+  *This thread* above *Channel default*. Switching pages clears the open form and any pending
+  confirmation. Older links open their current page, including Resume → Diagnostics and
+  Tokens → API tokens.
 - [ ] **Agent:** pick a thread model, then the mode and the Auto-approve tick. Pass: each saves on
   pick ("✅ Saved."). The next Claude turn and the next Codex turn use them. A non-manager sees
   the mode as one read-only line.
