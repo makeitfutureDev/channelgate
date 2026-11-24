@@ -7,6 +7,7 @@ import { getComposioToken, getUser, isAdmin, isApproved } from "../config/store.
 import { getComposioMode } from "../config/settings.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
+import { composioIdentity } from "../ee/composio-sessions.js";
 import { canManage } from "./modes.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { resolveCustomMcpsForRun } from "./custom-mcps.js";
@@ -120,6 +121,20 @@ export async function resolveComposioRuntime({
   };
 }
 
+// The Composio user ids an SDK-mode run's identities act as, for a local SDK script that has to
+// name the same user (gateway-usage references/composio-scripts.md). Non-secret: a workspace id
+// plus a person's or conversation's platform id. Only for identities this run actually received;
+// an id that cannot be formed is left out rather than guessed.
+export function sdkUserIdsFor({ composio, identities, workspaceId = "", userSubjectId = "", channelId = "" } = {}) {
+  if (composio?.mode !== "sdk") return {};
+  const safe = (kind, id) => { try { return composioIdentity({ workspaceId, kind, id }); } catch { return ""; } };
+  const out = {};
+  if (identities?.user && composio.user?.source === "sdk-user") out.user = safe("user", userSubjectId);
+  if (identities?.agent && composio.shared?.source === "sdk-channel") out.agent = safe("channel", channelId);
+  for (const key of Object.keys(out)) if (!out[key]) delete out[key];
+  return out;
+}
+
 /**
  * Everything a run's MCP payload and prompt need to know about its integrations. `untrustedPrincipal`
  * withholds the PERSONAL identity (the HTTP run API authenticates its key, not the author it names);
@@ -204,6 +219,6 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     userIdentity, composio, identities,
     composioUserToken, composioToken, composioUserEndpoint, composioEndpoint,
     makeToolboxUrl, makeToolboxKey, customMcps, emailSecrets,
-    composioIdentityPrefix: composioIdentityPreamble(identities),
+    composioIdentityPrefix: composioIdentityPreamble({ ...identities, mode: composio.mode, sdkUserIds: sdkUserIdsFor({ composio, identities, workspaceId: effectiveWorkspaceId, userSubjectId, channelId }) }),
   };
 }

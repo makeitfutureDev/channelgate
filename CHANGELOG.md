@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Agent guide: the built-in `gateway-usage` guide now describes only the Composio mode the gateway
+  runs. In SDK mode agents are told each identity's Composio user id and how a local
+  `@composio/core` script reaches the same connections (with an API key for the same project); in
+  Personal mode they are told the identities are each owner's own Composio account and the
+  Workbench is the code path unless that account's own project key is provided.
 - Containers: on a system-service install (`scripts/install-systemd.sh`), restarting or updating
   the gateway no longer kills every channel container and whatever was running inside it. Before,
   each restart left containers that looked running but were dead, and messages failed with

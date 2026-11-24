@@ -191,7 +191,7 @@ invite the bot. See `references/messages.md`.
 | Make a tracker people edit over time           | `references/tables.md`            | `gateway` → `slack_list_create`, `…_add_item`, `…_update_item`, `…_items`, `…_info` |
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
-| Script bulk app calls, process large Composio results, or run code with connections (Workbench vs a container SDK script) | `references/composio-scripts.md` | chosen identity's `COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MULTI_EXECUTE_TOOL`, `COMPOSIO_REMOTE_WORKBENCH`; container SDK only with a project API key in the inventory |
+| Script bulk app calls, process large Composio results, or run code with connections (Workbench vs a container SDK script) | `references/composio-scripts.md` | chosen identity's `COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MULTI_EXECUTE_TOOL`, `COMPOSIO_REMOTE_WORKBENCH`; container SDK script only with a matching project API key in the inventory (what "matching" means depends on the Composio mode — see the reference) |
 | Send a file to Drive / an email attachment / any Composio destination | `references/sharing-files.md` | `gateway` → `stage_file_for_composio` (returns the `{name, mimetype, s3key}` those tools require) |
 | Give a file a temporary public URL (API that ingests by URL, or a person who wants a link) | `references/sharing-files.md` | `gateway` → `create_public_file_link` (ask the duration for a person; 48h max), `list_public_file_links`, `revoke_public_file_link` |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
@@ -234,9 +234,11 @@ Three identities can act, and every tool name says which one:
 Personal and agent connections may reach the same service owner or different owners. Discover
 account metadata through the selected identity before making ownership claims; do not read business
 data just to identify an account. Matching owners never authorize substituting identities. The agent
-identity is channel-specific — the channel's own token in Personal mode, or the channel's SDK
-identity — and is not shared across channels; a DM has none. Explain those possibilities when
-asked about isolation, without claiming which applies to this run unless verified.
+identity is channel-specific and is not shared across channels; a DM has none. On this gateway
+(Composio SDK mode) it is this channel's user id in the organization's Composio project. <!--if:composio-sdk-->
+(Composio Personal mode) it is this channel's own Composio account, behind its consumer key. <!--if:composio-personal-->
+Which service accounts are connected to it is still something to discover: never claim an owner
+unless verified.
 
 The hyphenated names are the logical MCP server identities. A harness/tool registry may normalize
 punctuation in callable names, so `composio-user` can appear as `composio_user` (and likewise for
