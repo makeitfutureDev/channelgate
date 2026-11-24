@@ -363,7 +363,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     const loopHandle = loopTick ? { aborted: false, controller: new AbortController(), authorId: sched.createdBy, loop: true } : null;
     if (loopTick) await runQueue.acquire(loopRunKey, loopHandle);
     let result;
-    let stoppedResult;
+    let stopDetails;
     try {
       // A `stop` in the thread while this tick waited its turn already deleted the loop row and
       // marked the handle aborted. Honor it rather than spending a turn nobody is waiting for.
@@ -397,7 +397,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       });
     } catch (err) {
       if (!loopHandle?.aborted) throw err;
-      stoppedResult = err.details?.result || err.details || {};
+      stopDetails = err.details;
     } finally {
       if (loopTick) runQueue.release(loopRunKey, loopHandle);
     }
@@ -405,19 +405,22 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     if (loopHandle?.aborted) {
       // A Stop can race either the engine error or its final result. Retain any usage already
       // incurred, but never deliver a stale answer, report a scheduled failure or re-arm the loop.
-      const partial = result || stoppedResult || {};
+      const partial = result || stopDetails?.result || stopDetails || {};
       const started = getScheduleRun(run.id);
-      recordTaskOutcome(run.id, {
-        ...partial,
-        engine: partial.engine || started.engine,
+      const stopped = { ...partial,
+        engine: partial.engine || stopDetails?.engine || started.engine,
         model: partial.runtimeModel || partial.model || started.model,
         durationMs: partial.durationMs ?? Date.now() - Date.parse(started.startedAt),
         interrupted: true,
         automationOutcome: { status: "skipped", source: "gateway", summary: "Loop stopped by request." },
-      });
+      };
+      recordTaskOutcome(run.id, stopped);
       updateScheduleRun(run.id, { deliveryStatus: "suppressed" });
-      // runMessage already accounts for a failed attempt. A resolved result is the scheduler's responsibility.
-      if (result) await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: result.engine, taskKind: "scheduled", result });
+      // runMessage marks failures it already banked. Other interrupted runners can return
+      // partial accounting data without having written a usage row themselves.
+      if (!stopDetails?.usageRecorded && (result || partial.usage || partial.usageAccounting || partial.costUSD != null)) {
+        await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: stopped.engine, taskKind: "scheduled", result: stopped });
+      }
       return;
     }
     result = classifyScheduleResult(result);

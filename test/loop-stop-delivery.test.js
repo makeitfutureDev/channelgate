@@ -4,6 +4,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { armLoop, threadLoops, stopThreadLoops } = await import("../src/gateway/loops.js");
+const { readUsage, recordUsage } = await import("../src/gateway/usage.js");
 const { getScheduleRun } = await import("../src/gateway/schedule-runs.js");
 const { runSchedule, startScheduler, resetSchedulerState } = await import("../src/gateway/scheduler.js");
 const { stopRunsInChannel } = await import("../src/slack/message-pipeline.js");
@@ -41,14 +42,19 @@ for (const { replacement, budget } of [{ replacement: false, budget: 3 }, { repl
   });
 }
 
-for (const throws of [false, true]) {
-  test(`stopping an active loop suppresses a late engine ${throws ? "error" : "result"}`, async () => {
+for (const outcome of ["success", "error", "already-banked error"]) {
+  test(`stopping an active loop accounts for a late engine ${outcome} once`, async () => {
+    const before = (await readUsage({ channelId: channel })).length;
     const schedule = arm(), entered = Promise.withResolvers(), release = Promise.withResolvers();
     let delivered = 0;
     const work = runSchedule(schedule, { runner: async ({ signal }) => {
       entered.resolve(signal);
       await release.promise;
-      if (throws) throw Object.assign(new Error("run stopped"), { details: { result: output, explicitStop: true } });
+      if (outcome !== "success") {
+        const usageRecorded = outcome === "already-banked error";
+        if (usageRecorded) await recordUsage({ channelId: channel, slug, engine: output.engine, taskKind: "scheduled", result: output });
+        throw Object.assign(new Error("run stopped"), { details: { result: output, explicitStop: true, usageRecorded } });
+      }
       return output;
     }, deliver: async () => { delivered++; } });
     try {
@@ -67,5 +73,8 @@ for (const throws of [false, true]) {
     assert.equal(recorded.engineStatus, "interrupted");
     assert.equal(recorded.deliveryStatus, "suppressed");
     assert.equal(recorded.tokensIn, 13);
+    const usage = await readUsage({ channelId: channel });
+    assert.equal(usage.length, before + 1);
+    assert.deepEqual([usage[0].taskKind, usage[0].tokensIn, usage[0].tokensOut], ["scheduled", 13, 4]);
   });
 }
