@@ -42,9 +42,19 @@ export function modelShortcutsFromSettings(settings, catalogs = {}) {
   const raw = settings?.modelShortcuts;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   return Object.fromEntries(Object.entries(raw).filter(([name, target]) =>
-    MODEL_SHORTCUT_NAME_RE.test(name) && target && typeof target === "object" &&
+    MODEL_SHORTCUT_NAME_RE.test(name) && !effortShortcut(name) && target && typeof target === "object" &&
     typeof target.engine === "string" && typeof target.model === "string"
   ));
+}
+
+// Effort-only selectors: `@agent :high task` keeps the thread's model and pins just the effort.
+// These names are reserved — a model shortcut can never be called `:low`, `:mid`, `:medium` or
+// `:high`. `mid` is shorthand for `medium`.
+const EFFORT_SHORTCUTS = Object.freeze({ low: "low", mid: "medium", medium: "medium", high: "high" });
+export const EFFORT_SHORTCUT_NAMES = Object.freeze(Object.keys(EFFORT_SHORTCUTS));
+export function effortShortcut(name) {
+  const key = String(name || "").toLowerCase();
+  return Object.hasOwn(EFFORT_SHORTCUTS, key) ? EFFORT_SHORTCUTS[key] : "";
 }
 
 // Slack gives the bot mention as <@ID>; stripMentions leaves the colon at the start.
@@ -56,5 +66,26 @@ export function parseModelShortcut(text) {
   const task = match[2].trim();
   if (!task.startsWith(":")) return { name, task };
   const effort = /^:\s*(\S*)(?:\s+([\s\S]*))?$/.exec(task);
-  return { name, effort: effort[1].toLowerCase(), task: (effort[2] || "").trim() };
+  const value = effort[1].toLowerCase();
+  return { name, effort: effortShortcut(value) || value, task: (effort[2] || "").trim() };
+}
+
+// The selectors may follow the bot mention ANYWHERE in the message ("fix the build @agent :opus
+// :high", "ok @agent :mid now do X"), not only at its start. The colon must touch the mention's
+// trailing space and the name ("@agent: please" is ordinary text). Returns the message without
+// the bot mention, with the selectors moved to the front where parseModelShortcut reads them —
+// or null when no bot mention carries a selector (the caller strips mentions as before).
+export function liftMentionSelector(text, botUserId) {
+  const raw = String(text ?? "");
+  if (!botUserId) return null;
+  const id = String(botUserId).replace(/[^A-Z0-9]/gi, "");
+  const name = "[a-z][a-z0-9_-]{0,23}";
+  const match = new RegExp(`<@${id}(?:\\|[^>]+)?>[ \\t]*(:${name}(?:[ \\t]*:${name})?)(?=[\\s.,;!?)]|$)`, "i").exec(raw);
+  if (!match) return null;
+  const before = raw.slice(0, match.index).replace(/[ \t]+$/, "");
+  const after = raw.slice(match.index + match[0].length).replace(/^[ \t]+/, "");
+  const rest = `${before}${before && after ? " " : ""}${after}`
+    .replace(new RegExp(`<@${id}(?:\\|[^>]+)?>`, "g"), "").trim();
+  const selector = match[1].replace(/[ \t]+/g, " ");
+  return `${selector}${rest ? ` ${rest}` : ""}`;
 }
