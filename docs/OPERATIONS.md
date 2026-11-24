@@ -116,7 +116,8 @@ as the service user, which fails on a root-owned checkout. A single-user box may
 user-scope unit (`~/.config/systemd/user/channelgate.service`, with `loginctl enable-linger` so it
 survives logout); the updater and the migration find both scopes. `sudo bash
 scripts/uninstall-systemd.sh` (`npm run service:uninstall`) removes either unit — current and
-pre-rename names — and leaves the service account and runtime root in place. The service must never
+pre-rename names — stops the system unit's channel containers, and leaves the service account, the
+containers' volumes and the runtime root in place. The service must never
 share credentials or a runtime root with interactive development. ChannelGate runs on Linux only;
 there is no other service packaging.
 
@@ -1002,12 +1003,30 @@ copied: Claude Code rotates refresh tokens,
 and a copy that refreshes logs the original out. A relayed access token cannot rotate anything. A
 `claude setup-token` value, when configured, is used instead and needs no refresh.
 
-**Service unit:** the installer sets `KillMode=mixed`. systemd then sends SIGTERM only to the
-daemon, which drains, marks the shutdown and sweeps its own engine children (the container run
-groups) so interrupted execution is recorded for reconciliation on the next boot. With the default
-`control-group` mode systemd signals the engine (or the `podman exec` client) directly and the
-turn may be recorded as a plain error before orderly state persistence. Existing installs: add
-`KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
+**Service unit:** the system-service installer sets `KillMode=process`, like the units of other
+container managers. systemd then signals only the daemon, which drains, marks the shutdown and
+sweeps its own engine children (the container run groups) so interrupted execution is recorded
+for reconciliation on the next boot. Nothing else in the unit's control group is touched — and on
+a system-service install that group holds the channel containers themselves (see *Rootless Podman
+system-service upgrades*). `control-group` (systemd's default) and `mixed` (what the installer
+wrote before 0.7.0) SIGKILL every container, and the `conmon` that would have recorded its exit,
+on each stop, restart and update: Podman keeps listing them as running, work inside them is lost,
+and they have to be recreated.
+
+- **Existing system-service installs:** run `sudo bash scripts/repair-service-unit.sh`
+  (`npm run service:repair` as root) on the gateway host once. It rewrites only the `KillMode`
+  line of the installed unit, reloads systemd and restarts nothing; the new value applies from the
+  next stop. Updates cannot do this themselves — the updater runs as the service account. Until it
+  is done the daemon says so at boot (`[container] WARNING: Every stop or restart of …`), in
+  `GET /api/health` (`containerRuntime.service`) and under Settings → Container runtime, and
+  recovers on its own: boot removes containers left listed as running with their processes gone,
+  and each is recreated (HOME volume kept) on its channel's next message.
+- **A stopped service leaves its containers up.** They are idle (no engine runs without the
+  daemon) and the next start adopts them. To stop them as well, as the service account:
+  `podman stop $(podman ps -q --filter label=cg.install)`. The uninstaller does this itself.
+- **User-scope units** are unaffected when Podman uses its systemd cgroup manager (the default
+  there): every container has a scope of its own outside the unit. If a user unit reports the
+  boot warning, set `KillMode=process` under `[Service]` and `systemctl --user daemon-reload`.
 
 ## System health
 

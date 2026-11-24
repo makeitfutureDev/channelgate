@@ -833,9 +833,27 @@ export function createContainerLifecycle({
   // foreground and warm groups only; a detached background job is meant to survive a restart.
   async function bootReconcile(settings, { sweepKinds = ["run", "warm"] } = {}) {
     const caps = await cli.probe(settings, { image: settings?.image });
-    if (!caps.ok) return { ok: false, reason: caps.reason, running: [], swept: [] };
+    if (!caps.ok) return { ok: false, reason: caps.reason, running: [], swept: [], dead: [] };
     const containers = await listOurContainers(caps);
-    const running = containers.filter((entry) => entry.status === "running");
+    // A container the previous daemon's stop took down with it (service-unit.js) is still listed
+    // as running, or as stopping when something tried to stop the corpse. Registering it idle
+    // would only have the reaper `stop` it into a permanent "stopping"; remove it now and let its
+    // channel's next message create a fresh one (the HOME and temp volumes are kept).
+    const dead = [];
+    for (const entry of containers) {
+      if (!["running", "stopping"].includes(entry.status) || !(entry.pid > 1) || pidAlive(entry.pid)) continue;
+      try {
+        await removeContainer(caps, entry.name);
+        dead.push(entry.name);
+      } catch (error) {
+        log(`[container] boot reconcile could not remove dead container ${entry.name}: ${error?.message || error}`);
+      }
+    }
+    if (dead.length) {
+      log(`[container] boot reconcile: ${dead.length} container(s) were listed as running with their processes gone `
+        + `(${dead.join(", ")}) — removed; each is recreated on its channel's next message`);
+    }
+    const running = containers.filter((entry) => entry.status === "running" && !dead.includes(entry.name) && (!(entry.pid > 1) || pidAlive(entry.pid)));
     const swept = [];
     for (const entry of running) {
       const result = await cli.runWith(caps, ["exec", entry.name, "cg-sweep", ...sweepKinds], { timeoutMs: 60_000 });
@@ -853,7 +871,7 @@ export function createContainerLifecycle({
       if (leaseTarget) sweepRunCredentials(leaseTarget);
     }
     if (running.length) log(`[container] boot reconcile: ${running.length} running container(s) swept and registered idle`);
-    return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, containers };
+    return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, dead, containers };
   }
 
   return {

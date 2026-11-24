@@ -29,6 +29,30 @@ done
 
 removed=0
 
+# The unit uses KillMode=process, so stopping it leaves the channel containers running (that is
+# what keeps them alive across a restart). Removing the service is the one moment they must go
+# too: stop every container carrying this gateway's ownership label, as the unit's own account.
+# Best effort — a missing runtime, account or session never blocks the removal. HOME volumes and
+# the containers themselves stay, like the runtime root.
+stop_unit_containers() {
+  local file="$1" account home uid ids
+  account="$(sed -n 's/^User=//p' "$file" | head -n 1)"
+  [ -n "$account" ] || return 0
+  command -v podman >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1 || return 0
+  home="$(getent passwd "$account" 2>/dev/null | cut -d: -f6)"
+  uid="$(id -u "$account" 2>/dev/null || true)"
+  [ -n "$home" ] && [ -n "$uid" ] || return 0
+  as_account() { (cd / && runuser -u "$account" -- env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" "$@"); }
+  ids="$(as_account podman ps -q --filter label=cg.install 2>/dev/null || true)"
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086
+  if as_account podman stop --time 10 $ids >/dev/null 2>&1; then
+    echo "✅ Stopped $(printf '%s\n' $ids | wc -l | tr -d ' ') channel container(s) of $account"
+  else
+    echo "⚠️  Could not stop every channel container of $account — list them with: sudo -u $account podman ps --filter label=cg.install"
+  fi
+}
+
 if [ "$WANT_SYSTEM" = "1" ]; then
   SYSTEM_DIR="${CG_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}"
   found_system=0
@@ -37,6 +61,7 @@ if [ "$WANT_SYSTEM" = "1" ]; then
     found_system=1
     [ "$(id -u)" -eq 0 ] || { echo "❌ Removing the system unit needs root: sudo bash scripts/uninstall-systemd.sh --system"; exit 1; }
     systemctl disable --now "$unit" 2>/dev/null || true
+    stop_unit_containers "$SYSTEM_DIR/$unit"
     rm -f "$SYSTEM_DIR/$unit"
     echo "✅ Removed system unit $unit"
     removed=1

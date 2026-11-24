@@ -2,6 +2,15 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Containers: on a system-service install (`scripts/install-systemd.sh`), restarting or updating
+  the gateway no longer kills every channel container and whatever was running inside it. Before,
+  each restart left containers that looked running but were dead, and messages failed with
+  "container is not running" or "is stopping — inspect it by hand" until someone removed them.
+  New installs are fixed. **Existing system-service installs must run
+  `sudo bash scripts/repair-service-unit.sh` once on the gateway host** (no restart needed); until
+  then the gateway warns at boot and under Settings → Container runtime, and cleans up dead
+  containers itself at startup. Stopping the service now leaves its containers running; the
+  uninstaller stops them.
 - Email accounts: new admin switch Settings → **Email accounts (IMAP/SMTP)**, off by default. While
   off, nobody sees the Email accounts sections, no mailbox can be connected and runs get no email
   tools or guide instructions about email; stored accounts are kept. **Upgrading installs that use email accounts must turn it on.**

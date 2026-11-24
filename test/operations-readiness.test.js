@@ -156,6 +156,10 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.ok(systemd.indexOf('scripts/service-path-preflight.mjs') < systemd.indexOf('useradd --system'));
   assert.match(systemd, /Relocate the checkout to \/opt\/channelgate/);
   assert.match(systemd, /ProtectSystem=strict/);
+  // With cgroupfs the channel containers live in the unit's own control group: any KillMode that
+  // reaches the group SIGKILLs them (and the conmon that records the exit) on every restart.
+  assert.match(systemd, /^KillMode=process$/m);
+  assert.doesNotMatch(systemd, /^KillMode=(mixed|control-group)$/m);
   // The engines spawn by bare name: the unit must carry an explicit PATH with the resolved CLI
   // dirs (systemd's default PATH won't have nvm/user-prefix installs) and the credential env
   // file for the login-less service account. HOME must exist for os.homedir()-derived state.
@@ -180,11 +184,19 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(uninstall, /systemctl --user "\$@"/);
   assert.match(uninstall, /needs root/);
   assert.doesNotMatch(uninstall, /userdel|rm -rf/);
+  // KillMode=process leaves the containers up when the unit stops, so removing it stops them —
+  // as the unit's own account, by the ownership label, and before the unit file is gone.
+  assert.match(uninstall, /podman ps -q --filter label=cg\.install/);
+  assert.match(uninstall, /runuser -u "\$account"/);
+  assert.ok(uninstall.indexOf('stop_unit_containers "$SYSTEM_DIR/$unit"') < uninstall.indexOf('rm -f "$SYSTEM_DIR/$unit"'));
+  assert.ok(uninstall.indexOf('systemctl disable --now "$unit"') < uninstall.indexOf('stop_unit_containers "$SYSTEM_DIR/$unit"'));
+  assert.doesNotMatch(uninstall, /podman (rm|volume)/);
   // The npm aliases point at the systemd scripts and nothing else; the launchd ones are gone.
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   assert.equal(pkg.scripts["service:install"], "bash scripts/install-systemd.sh");
   assert.equal(pkg.scripts["service:uninstall"], "bash scripts/uninstall-systemd.sh");
-  assert.deepEqual(Object.keys(pkg.scripts).filter((name) => name.startsWith("service:")).sort(), ["service:install", "service:uninstall"]);
+  assert.equal(pkg.scripts["service:repair"], "bash scripts/repair-service-unit.sh");
+  assert.deepEqual(Object.keys(pkg.scripts).filter((name) => name.startsWith("service:")).sort(), ["service:install", "service:repair", "service:uninstall"]);
   assert.doesNotMatch(JSON.stringify(pkg.scripts), /launchd/);
 });
 

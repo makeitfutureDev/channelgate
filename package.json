@@ -37,6 +37,7 @@
     "update": "bash scripts/update.sh",
     "service:install": "bash scripts/install-systemd.sh",
     "service:uninstall": "bash scripts/uninstall-systemd.sh",
+    "service:repair": "bash scripts/repair-service-unit.sh",
     "backup": "bash scripts/backup-config.sh",
     "restore": "bash scripts/restore-config.sh",
     "restore:drill": "bash scripts/restore-drill.sh",

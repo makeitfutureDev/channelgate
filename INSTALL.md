@@ -94,9 +94,12 @@ setup installs `rclone` into `~/.local/bin` instead. Downloads are checked again
 checksum; a failed optional install leaves Drive sync dormant and prints a manual remedy. It writes
 `/etc/systemd/system/channelgate.service`, with `ProtectSystem=strict`, `ProtectHome=read-only`
 and persistent private `/tmp`/`/var/tmp` backing under the service HOME. A managed Podman
-configuration keeps container cgroups inside the delegated system service. Existing installations
+configuration keeps container cgroups inside the delegated system service, and the unit's
+`KillMode=process` keeps those containers running across a gateway restart. Existing installations
 need the idle migration checks in `docs/OPERATIONS.md` (Rootless Podman system-service upgrades);
-installing the new unit alone does not repair old containers or a stale pause namespace.
+installing the new unit alone does not repair old containers or a stale pause namespace. A unit
+written by an older installer still ends every channel container on each restart: run
+`sudo bash scripts/repair-service-unit.sh` once (no restart needed).
 The daemon must permit Podman's setuid namespace helpers; every channel
 container still uses no-new-privileges and dropped capabilities. API credentials belong in the
 0600 `/var/lib/channelgate/service.env` before starting real turns. Manage it with `systemctl`:
