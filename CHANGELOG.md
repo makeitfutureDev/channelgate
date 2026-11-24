@@ -4,7 +4,7 @@
 
 - Email accounts: new admin switch Settings → **Email accounts (IMAP/SMTP)**, off by default. While
   off, nobody sees the Email accounts sections, no mailbox can be connected and runs get no email
-  tools; stored accounts are kept. **Upgrading installs that use email accounts must turn it on.**
+  tools or guide instructions about email; stored accounts are kept. **Upgrading installs that use email accounts must turn it on.**
 - Licenses: a channel's own account is now an engine license limited to that channel. Channel
   settings → Runtime shows **Licenses for this channel** (Claude or Codex; any sign-in, API key or
   provider) with an **Add a license for this channel** button that opens the Settings → Engine

@@ -15,7 +15,7 @@ import { rememberReplySession } from '../reply-sessions.js';
 import { googleChatWorkspaceContext } from './workspace-access.js';
 import { isSpaceName, isMessageName, isThreadName } from './api.js';
 import { chatText, chatButtons, chatAction, chatLink, chatCard, validateChatCard, controlError, GoogleChatControlError } from './cards.js';
-import { GOOGLE_CHAT_HELP_TEXT, createGoogleChatHelpCard } from './help.js';
+import { googleChatHelpText, createGoogleChatHelpCard } from './help.js';
 import { buildGoogleChatSettings, handleGoogleChatSettings, createGoogleChatSettingsContext } from './settings.js';
 import { parseSettingsCommand, GOOGLE_CHAT_SETTINGS_USAGE } from './settings-commands.js';
 import { handleGeneral } from '../msteams/settings-general.js';
@@ -164,7 +164,7 @@ export function createGoogleChatControls({ connector, conversation = createConve
     if (name === 'model' && command[2]?.trim()) return false;
     if (name === 'help') {
       try { if (!args.replyCard) throw new Error('Cards unavailable'); await args.replyCard({ card: createGoogleChatHelpCard() }); }
-      catch { await args.reply(GOOGLE_CHAT_HELP_TEXT); }
+      catch { await args.reply(googleChatHelpText()); }
       return true;
     }
     if (name === 'settings' && command[2]?.trim()) {
