@@ -11880,6 +11880,10 @@ structural invariants are automated; rendered navigation and feature claims also
       replaces the pending tick rather than stacking; the tick budget carries across re-arms and
       finally refuses with a stated reason; a stop reports how many ticks it dropped; loops are
       scoped per thread and never disturb a user's own schedules (`test/native-loop.test.js`).
+- [x] Scheduler regression (REL-RUNTIME-04). Stop a tick while its runner resolves or rejects and
+      verify its usage, interrupted status and suppressed delivery. Stop while Slack delivery is
+      held, with and without a replacement loop, including the old loop’s final budgeted tick.
+      Only the replacement may remain armed (`test/loop-stop-delivery.test.js`).
 - [ ] Manual: a loop tick queues behind a live message in the same thread (per-thread FIFO), and a
       `stop` while a tick is queued aborts it before it spends a turn.
 - [x] Unit: the injected guide routes looping work to the NATIVE tools and states the three things

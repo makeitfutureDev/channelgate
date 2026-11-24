@@ -6,6 +6,9 @@
   provider returns a long JSON error.
 - The Claude login watch remembers both daily warnings, so switching repeatedly between an
   expiring and a missing login no longer sends duplicate admin messages.
+- Stopping a thread loop while its answer is being delivered keeps future ticks cancelled. An
+  actively interrupted tick preserves its usage and no longer posts a scheduled-failure notice.
+
 - A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
   the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
   thread to its container.
