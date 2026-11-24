@@ -5,6 +5,7 @@ import { z } from "zod";
 import { addSchedule, listForChannel, updateSchedule, deleteSchedule, countEnabledForChannel } from "../../config/schedules.js";
 import { costHistoryStart } from "../../ee/cost-history.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
+import { apiSourceVisible, isApiSource } from "../../gateway/api-run-history.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
 import { isAdmin } from "../../config/store.js";
 import { cronValid, minIntervalMinutes, nextCronRun } from "../../util/cron.js";
@@ -203,8 +204,18 @@ export function register(server, ctx) {
   }, async ({ schedule_id, run_id, limit, before }) => {
     if (!channelId) return text("No channel context.");
     const historyStart = costHistoryStart();
-    if (run_id) return text(JSON.stringify(visibleScheduleRun(getScheduleRun(run_id, channelId), historyStart) || { error: "No run in this channel." }));
-    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId, historyStart), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before }).map((run) => visibleScheduleRun(run, historyStart)) }));
+    // HTTP API runs share this ledger but keep their own visibility rule: an organization
+    // admin, or the person who created the token behind the run. Nobody else reads them here,
+    // and a channel-wide listing never includes them.
+    const apiDenied = async (sourceId) => isApiSource(sourceId) && !apiSourceVisible(channelId, sourceId, { isAdmin: Boolean(await ctx.requireAdmin?.()), userId: createdBy });
+    if (run_id) {
+      const run = getScheduleRun(run_id, channelId);
+      if (run && await apiDenied(run.scheduleId)) return text(JSON.stringify({ error: "No run in this channel." }));
+      return text(JSON.stringify(visibleScheduleRun(run, historyStart) || { error: "No run in this channel." }));
+    }
+    if (schedule_id && await apiDenied(schedule_id)) return text(JSON.stringify({ summary: null, runs: [] }));
+    const scheduledOnly = !schedule_id;
+    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId, historyStart, { scheduledOnly }), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before, scheduledOnly }).map((run) => visibleScheduleRun(run, historyStart)) }));
   });
 
   server.registerTool("update_schedule", {

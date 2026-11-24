@@ -48,8 +48,30 @@ The agent reports on the work itself only when asked:
 `successCriteria` (≤ 2000 characters) implies `reportOutcome: true`; send `reportOutcome: true`
 alone to get a report without a goal. Without either, a clean run is `unreported`. With either,
 the answer's text is not streamed live in Slack (the final answer is posted whole). The report is
-the agent's own evidence, not independent verification. API runs appear on the Activity
-dashboard's Automations page, grouped by token.
+the agent's own evidence, not independent verification.
+
+## Automations page: name, history, limits and alerts
+
+API runs appear on the Automations page beside scheduled automations, in the same run history
+(kept 90 days; `GET /api/runs/:id` answers for 7 days).
+
+- **Grouping.** Runs group by token. Send `name` (a string, ≤ 80 characters) to give a flow its
+  own automation: `{ "message": "…", "name": "Nightly CRM sync" }`. `GET` returns `name`.
+- **Completed.** A run sent without `reportOutcome` or `successCriteria` shows as **Completed**
+  on the page: it finished and nobody judged it. It is not a problem and is not counted in the
+  success rate. The API still answers `taskStatus: "unreported"` with `outcome.source: "none"`.
+  A run that was asked for a report and gave none is **Unreported** and counts as a problem.
+- **Webhook delivery.** `webhookDelivery` on `GET` is `null` without a webhook, else `pending`,
+  `delivered` or `failed` (an attempt was refused; retries continue). A failed delivery shows on
+  the page as "Webhook not delivered" with the endpoint's error. The webhook URL is never stored
+  in the run history.
+- **Limits.** The gateway runs at most 25 API runs at once; a call beyond that gets HTTP 429.
+  Refused calls are counted on the page ("Rejected at the run limit"), as are repeated calls
+  answered by `idempotencyKey` without starting a run.
+- **Failure alerts.** When runs of one source fail three times in a row, the token's creator gets
+  one direct message. Nothing more is sent until a run succeeds. Organization-key runs alert
+  nobody.
+- **Who sees them.** An organization admin, or the person who created the token.
 
 ## Visibility in chat
 

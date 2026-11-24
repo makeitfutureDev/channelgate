@@ -43,7 +43,9 @@ export function createSchedulesRouter() {
       const channelId = req.query.channelId;
       const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
       const historyStart = costHistoryStart();
-      const runs = listScheduleRuns({ scheduleId, channelId, limit, before: req.query.before }).map((run) => ({
+      // This page is the schedules' own history: without a schedule id it lists scheduled runs
+      // only (HTTP API runs share the ledger and are read on the Automations page).
+      const runs = listScheduleRuns({ scheduleId, channelId, limit, before: req.query.before, scheduledOnly: !scheduleId }).map((run) => ({
         ...visibleScheduleRun(run, historyStart), channelName: scheduleConversationName(run, index[run.channelId], users),
       }));
       res.json({ runs, summary: scheduleId ? scheduleRunSummary(scheduleId, channelId, historyStart) : null, nextBefore: runs.length === limit ? runs.at(-1).id : null });

@@ -59,10 +59,14 @@ import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
 import { PROFILE_FLAGS, API_PRINCIPAL, isAuthorized } from "./modes.js";
 import { isAdmin, isApproved } from "../config/store.js";
-import { postNotice, asConnector } from "../platforms/notify.js";
+import { postNotice, postDirectMessage, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
-import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, needsAttention } from "./schedule-outcome.js";
+import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule } from "./schedule-outcome.js";
+import { API_MAX_INFLIGHT, apiSourceId, backfillApiRunLedger, normalizeApiRunName, noteApiDuplicate, noteApiRejection, openApiRun, syncApiRun } from "./api-run-history.js";
+import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
+import { appendScheduleRunEvent } from "./schedule-runs.js";
+import { plainFailureText } from "../util/process-outcome.js";
 import { resolveApiConversation, threadPermalink, validateConversationKey } from "./api-conversations.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
@@ -74,7 +78,7 @@ export const API_SLUG = "api";
 // Where a run shows in its channel: "visible" (kickoff thread + answer), "hidden" (nothing posted;
 // GET / webhook / Automations page only), "on-failure" (nothing unless it needs attention).
 export const API_VISIBILITIES = ["visible", "hidden", "on-failure"];
-const MAX_INFLIGHT = 25; // reject new starts past this many concurrently-running API jobs (429)
+const MAX_INFLIGHT = API_MAX_INFLIGHT; // reject new starts past this many concurrently-running API jobs (429)
 // Cap for an inline base64 payload or a downloaded webhook-supplied fileUrl — the same ceiling every
 // inbound attachment gets (util/bounded-bytes.js). A fileUrl body streams to disk under it; an
 // inline payload is in practice bounded far lower by the JSON body limit of the admin app.
@@ -110,6 +114,9 @@ function persist(job) {
     "INSERT INTO api_jobs(id, status, created_ms, data) VALUES(?, ?, ?, ?) " +
     "ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data"
   ).run(job.id, job.status, job.createdMs, toJson(job));
+  // The run ledger follows every checkpoint (telemetry: it never throws, and is a no-op for a
+  // job that has no ledger row).
+  syncApiRun(job);
 }
 
 // Trim the in-memory map and prune old persisted rows. Cheap; called once per start.
@@ -232,6 +239,7 @@ export function stopApiRun(id) {
 // Recover only DELIVERY of durable results. Unknown in-flight work is explicitly interrupted;
 // the caller must reconcile side effects before submitting another execution.
 export async function recoverApiRuns({ slack, deliver = deliverResult, webhook = fireWebhook } = {}) {
+  backfillApiRunLedger();
   const stale = getDb().prepare("SELECT data FROM api_jobs ORDER BY created_ms").all()
     .map((r) => fromJson(r.data, null)).filter((j) => j &&
       (["running", "queued"].includes(j.status) || j.deliveryPending || j.webhookPending || j.interruptionNoticePending));
@@ -503,12 +511,21 @@ async function fireWebhook(job) {
     });
     await logEvent("api_webhook", { id: job.id, status: job.status, code: res.status, ok: res.ok });
     await res.body?.cancel?.().catch(() => {});
+    // Delivered, or a refused delivery the Automations page shows as "Webhook not delivered"
+    // (retried once more after a gateway restart; the result stays readable by job id).
+    job.webhookAttempts = (job.webhookAttempts || 0) + 1;
     if (res.ok) {
       job.webhookPending = false;
-      persist(job);
+      job.webhookError = "";
+    } else {
+      job.webhookError = `The webhook answered HTTP ${res.status}.`;
     }
+    persist(job);
   } catch (e) {
     await logEvent("api_webhook_error", { id: job.id, error: e.message }).catch(() => {});
+    job.webhookAttempts = (job.webhookAttempts || 0) + 1;
+    job.webhookError = controller.signal.aborted ? `The webhook did not answer within ${WEBHOOK_TIMEOUT_MS / 1000} seconds.` : "The webhook could not be reached.";
+    try { persist(job); } catch { /* the job row is the caller's record; a ledger note must not throw here */ }
   } finally {
     clearTimeout(t);
   }
@@ -553,7 +570,7 @@ export async function startApiRun(input = {}) {
     if (!API_VISIBILITIES.includes(visibility)) return { ok: false, code: 400, error: `visibility must be one of: ${API_VISIBILITIES.join(", ")}.` };
     if (visibility !== "visible" && conversationKey) return { ok: false, code: 400, error: "conversationKey continues a visible Slack thread; it cannot be combined with visibility \"" + visibility + "\"." };
     // "on-failure" must know whether the WORK failed, so it always asks the agent for its report.
-    outcomeOptions = { successCriteria, visibility, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) || visibility === "on-failure" };
+    outcomeOptions = { successCriteria, visibility, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) || visibility === "on-failure", name: normalizeApiRunName(input.name) };
   } catch (error) {
     return { ok: false, code: 400, error: error.message };
   }
@@ -597,13 +614,26 @@ export async function startApiRun(input = {}) {
   const idemKey = idempotencyKey ? String(idempotencyKey).slice(0, 200) : "";
   if (idemKey) {
     const existing = findByIdempotencyKey(idemKey);
-    if (existing) return dedupedShape(startShape(existing, true));
+    if (existing) {
+      noteApiDuplicate(existing.id);
+      return dedupedShape(startShape(existing, true));
+    }
     // A same-key POST is mid-start: share its outcome instead of racing a duplicate run.
     const pending = pendingStarts.get(idemKey);
-    if (pending) return dedupedShape(await pending);
+    if (pending) {
+      const shared = await pending;
+      if (shared?.ok && shared.jobId) noteApiDuplicate(shared.jobId);
+      return dedupedShape(shared);
+    }
   }
   // Backpressure: bound concurrently-running API jobs (runMessage's own semaphore bounds spawns).
-  if (countInflight() >= MAX_INFLIGHT) return { ok: false, code: 429, error: `Too many API runs in flight (${MAX_INFLIGHT}). Retry shortly.` };
+  if (countInflight() >= MAX_INFLIGHT) {
+    // Nothing runs, but the refusal is recorded against its source (one aggregated ledger row).
+    const p = input.principal || null;
+    const target = p?.channelId || conversationEntry?.channelId || (input.channel ? (await resolveChannel(input.channel).catch(() => null))?.channelId : API_CHANNEL_ID);
+    if (target) noteApiRejection({ channelId: target, principalKind: p ? "user" : "api", apiTokenId: p?.tokenId || null, name: outcomeOptions.name });
+    return { ok: false, code: 429, error: `Too many API runs in flight (${MAX_INFLIGHT}). Retry shortly.` };
+  }
   reservedStarts += 1;
   let settle = () => {};
   if (idemKey) pendingStarts.set(idemKey, new Promise((resolve) => { settle = resolve; }));
@@ -784,6 +814,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     successCriteria: outcomeOptions.successCriteria,
     reportOutcome: outcomeOptions.reportOutcome,
     visibility: outcomeOptions.visibility,
+    name: outcomeOptions.name || "",
     taskStatus: null,
     outcome: null,
     model: null,
@@ -802,13 +833,15 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   const controller = new AbortController();
   controllers.set(jobId, controller);
   persist(job);
+  // The same ledger scheduled runs write: history, health and acknowledgement on the Automations page.
+  try { openApiRun(job); syncApiRun(job); } catch { /* telemetry only */ }
   houseKeep();
   await logEvent("api_run_start", { id: jobId, slug, channel: slackThread ? entry.channelId : "", author: authorId, hasFile: Boolean(attachmentPath) });
 
   // Drive the run in the background — the HTTP handler returns immediately. `driver` is injectable
   // for the same reason recoverApiRuns takes one: admission can then be tested without a subprocess.
   driver(job, { textForRun, attachmentPath, client: slackThread ? client : null,
-    alertClient: outcomeOptions.visibility === "on-failure" && registeredSlack ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
+    alertClient: outcomeOptions.visibility === "on-failure" && registeredSlack ? client : null, notifyClient: client, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
 
   return startShape(job);
 }
@@ -874,8 +907,16 @@ async function postFailureAlert(client, job) {
   }
 }
 
+// Three failures in a row from one source: one DM to the token's creator (the organization key
+// has no person behind it, so its sources alert nobody — admins read them on the board).
+async function alertApiFailureStreak(job, client) {
+  if (!client || job.principalKind !== "user" || !job.author) return;
+  await alertFailureStreak({ scheduleId: apiSourceId(job), channelId: job.channelId, title: job.name || `API runs in ${job.slug}`,
+    notify: (text) => postDirectMessage(client, { userId: job.author, text }) });
+}
+
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
-async function runInBackground(job, { textForRun, attachmentPath, client, alertClient = null, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
+async function runInBackground(job, { textForRun, attachmentPath, client, alertClient = null, notifyClient = null, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
   const runKey = threadRunKey(job);
@@ -916,8 +957,10 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
     }
     const onEvent = (ev) => {
       if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySaves += 1;
+      try { recordRunEvent(job.id, ev); } catch { /* telemetry only */ }
       status?.onEvent?.(ev);
     };
+    try { appendScheduleRunEvent(job.id, { kind: "agent_requested" }); } catch { /* telemetry only */ }
 
     const rawResult = await runMessage({
       channelId: job.channelId,
@@ -947,10 +990,8 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
       onEvent,
       onRuntimeResolved: (runtime) => {
         if (runtime?.model) job.model = runtime.model;
-        if (runtime?.engine && runtime.engine !== job.engine) {
-          job.engine = runtime.engine;
-          persist(job);
-        }
+        if (runtime?.engine && runtime.engine !== job.engine) job.engine = runtime.engine;
+        persist(job);
         status?.onRuntimeResolved?.(runtime);
       },
     });
@@ -963,6 +1004,8 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
     // Report the harness that actually answered, including a default's automatic failover.
     // This also applies when a stop arrives as that harness is finishing.
     job.engine = result.engine || job.engine;
+    // One recorder for both triggers: the ledger row gets the same outcome a scheduled run would.
+    try { recordTaskOutcome(job.id, result); } catch { /* telemetry only */ }
 
     // A stop that landed while the run was finishing: honor the intent — mark stopped, suppress the
     // answer (don't post/return it), but still bill what it cost.
@@ -1000,7 +1043,8 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
     persist(job);
 
     await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs, taskStatus: job.taskStatus });
-    if (alertClient && needsAttention(job.taskStatus)) await postFailureAlert(alertClient, job);
+    // One posting rule for both triggers (schedule-outcome.js): on-failure posts only what needs attention.
+    if (alertClient && resultPosts(apiPostingRule(job.visibility), job.taskStatus)) await postFailureAlert(alertClient, job);
 
     if (client) {
       try {
@@ -1048,6 +1092,9 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
       job.taskStatus = "failed";
       job.completedMs = Date.now();
       job.error = err.message;
+      // The category the Automations page files this under (login expired, usage limit, …).
+      job.errorKind = err.details?.providerKind || "execution";
+      job.ledgerError = plainFailureText(err.message) || "The run failed.";
       persist(job);
       await logEvent("api_run_error", { id: job.id, slug: job.slug, error: err.message }).catch(() => {});
       if (client) {
@@ -1060,5 +1107,6 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
     if (queued) runQueue.release(runKey, handle);
     controllers.delete(job.id);
     await fireWebhook(job);
+    await alertApiFailureStreak(job, notifyClient);
   }
 }

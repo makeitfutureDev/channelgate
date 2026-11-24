@@ -87,6 +87,67 @@ Live (both engines — `on-failure` depends on the agent's outcome report):
       fire posts nothing (run history `deliveryStatus: suppressed`); with Gmail disconnected a fire
       posts the blocked result. Automations card reads "Silent start, posts only failures".
 
+## One run ledger for schedules and API runs (2026-11-24)
+
+Automated:
+
+```sh
+node --test test/api-run-outcomes.test.js test/automation-health.test.js test/automation-health-board.test.js test/activity-automations.test.js test/api-runs-*.test.js test/cost-history-schedules.test.js
+```
+
+- [x] "API sources group by credential and follow the API-token visibility rule": stored jobs are
+      folded into `schedule_runs` once (second backfill → 0); rows carry `trigger: "api"`, model
+      and connections; a `scheduledOnly` conversation read returns none of them.
+- [x] "a started API run writes a ledger row, grouped by its optional name": a non-string `name`
+      → 400; `name` → source `api:org-key~nightly-crm-sync`; the row holds no webhook URL or
+      prompt; a repeated `idempotencyKey` is counted as `duplicates: 1`.
+- [x] "a run that was never asked to report is completed, not a problem…": `completed`, no
+      problem, healthy, success rate `null`; a requested-but-missing report → `unreported` problem.
+- [x] "webhook delivery maps onto the ledger's delivery states…": `pending` → `failed` with
+      `deliveryError` and problem `webhook_failed` while the run stays `succeeded` → `delivered`.
+- [x] "calls refused at the in-flight cap leave one aggregated trace per source": two refusals →
+      one `skipped` row, `rejectedCount: 2`, problem `rejected`.
+- [x] "one posting rule serves schedules and API visibility".
+- [x] "the board builds API sources like schedules…": `canAcknowledge: true`, `limits.cap: 25`,
+      the conversation list's failing count equals the board's problems, acknowledging clears it.
+- [x] "three failures in a row alert the owner once, for either trigger…": third failure alerts,
+      the fourth is silent, a success resets, `enabled: false` never alerts.
+- [x] "get_schedule_runs keeps API rows behind the token-creator rule": channel-wide reads list
+      scheduled runs only; another member gets nothing for an API source or run id; the creator
+      gets their token's runs but not the organization key's; an admin gets both.
+- [x] "a telemetry write failure before execution releases the schedule's in-flight guard"
+      (unchanged scheduler behavior over the shared insert).
+
+Live (both engines — the engine produces the outcome report and the events on each row, so Claude
+and Codex each run it). Fixture: `cg-testing-claude-auto` and `cg-testing-codex-auto`, one channel
+token in each created by the tester, a webhook receiver the tester controls.
+
+- [ ] UNEXECUTED 1. `POST /api/runs` `{"message":"Reply OK","name":"Ledger smoke"}`. Pass:
+      Automations shows an automation "Ledger smoke" with Trigger **API**; its run is
+      **Completed** (neutral square), the automation is Healthy, the success rate shows "—";
+      `GET /api/runs/:id` still has `taskStatus: "unreported"` and `name: "Ledger smoke"`.
+- [ ] UNEXECUTED 2. With Gmail disconnected, `POST /api/runs`
+      `{"message":"Draft a reply to my latest unread Gmail","reportOutcome":true,"name":"Ledger smoke"}`. Pass: the run is **Blocked** with the connection named, numbered fix
+      steps appear, **Acknowledge error** is offered to the token's creator and puts the automation
+      back to Healthy; the run row expands to the event timeline, engine · model and tokens.
+- [ ] UNEXECUTED 3. Send the step-2 call three times in a row. Pass: after the third the token's
+      creator receives one direct message "failed 3 runs in a row"; a fourth sends nothing.
+- [ ] UNEXECUTED 4. `POST /api/runs` with `"webhook"` pointing at a receiver that answers 500.
+      Pass: `webhookDelivery: "failed"`, the board shows "Webhook not delivered" with the
+      endpoint's error while the run's own outcome is unchanged; make the receiver answer 200 →
+      after the next retry `webhookDelivery: "delivered"` and the problem is gone.
+- [ ] UNEXECUTED 5. Send the same body twice with one `idempotencyKey`. Pass: the second answers
+      200 `reused: true`; the source's **API limits** panel shows Deduplicated 1.
+- [ ] UNEXECUTED 6. Trigger filter: tick **API**, then **Scheduled**. Pass: only API sources, then
+      only schedules, reminders and loops; counts match the list.
+- [ ] UNEXECUTED 7. As another member of the channel (not admin, not the token's creator) open
+      Automations and ask the agent "show the run history of this channel's automations". Pass:
+      no API source on the page and no API run in the `get_schedule_runs` answer.
+- [ ] UNEXECUTED 8 (engine-independent, scheduler only): a schedule whose runs fail three times in
+      a row DMs its creator once; with failure notices off it sends nothing.
+- [ ] UNEXECUTED 9 (engine-independent): restart the gateway on a host with API runs from the last
+      7 days. Pass: they are on the Automations page with their original status and cost.
+
 ## API runs as automations, and success criteria (2026-11-24)
 
 Automated:
@@ -107,8 +168,8 @@ node --test test/api-run-outcomes.test.js test/activity-automations.test.js test
       not wrapped.
 - [x] "API sources group by credential and follow the API-token visibility rule": admin sees the
       token and organization-key sources; the token's creator sees only theirs; another member
-      sees none; the latest finished run sets `lastStatus`; success rate over reported runs; run
-      rows carry model and unavailable connections.
+      sees none; the latest run sets the summary's `lastStatus`; success rate over judged
+      runs; run rows carry model and unavailable connections.
 - [x] "the Automations view lists API sources beside schedules, never deletable".
 
 Live (both engines — the agent writes the outcome report, so Claude and Codex each run it):
