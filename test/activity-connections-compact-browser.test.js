@@ -19,7 +19,7 @@ test("compact logo catalog paginates without accumulating cards and Email has it
     res.json({ apps, nextCursor: !req.query.query && !req.query.cursor ? "second" : null });
   });
   app.get(/^\/activity\/fixture\/settings\/(?:email|connections(?:\/new)?)$/, (req, res) => {
-    const page = activityPage({ sessionId: "fixture", csrf: "csrf", view: "settings", emailPage: req.path.endsWith("/email"), connectionsPage: req.path.includes("/connections"), connectionsNew: req.path.endsWith("/new") });
+    const page = activityPage({ sessionId: "fixture", csrf: "csrf", view: "settings", emailAccounts: true, emailPage: req.path.endsWith("/email"), connectionsPage: req.path.includes("/connections"), connectionsNew: req.path.endsWith("/new") });
     res.type("html").send(page.html);
   });
   const server = await new Promise(resolve => { const value = app.listen(0, "127.0.0.1", () => resolve(value)); });
