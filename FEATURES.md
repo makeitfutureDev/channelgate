@@ -5537,6 +5537,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   durable is the retired bot message deleted, keeping one authoritative reply visible whenever the
   answer fits Slack's single-message limit. A failed cleanup leaves both safe complete copies and
   retries at terminal state rather than risking answer loss.
+  The streamed and completed Claude answer preserves paragraph boundaries between tool narration
+  and the next assistant message.
   Independently, the native assistant-status shimmer is a temporary live activity surface: it
   carries **thinking summaries** (the latest line of the actual reasoning text, throttled and
   clipped to 80 chars; Codex reasoning summaries too; redacted thinking stays bare), tool labels,

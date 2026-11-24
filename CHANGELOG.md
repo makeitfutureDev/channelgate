@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Claude replies keep a paragraph break between tool narration and the next assistant message
+  when the provider supplies no spacing.
 - When both harnesses fail, Slack’s retry card shows a readable reason even when the second
   provider returns a long JSON error.
 - The Claude login watch remembers both daily warnings, so switching repeatedly between an
