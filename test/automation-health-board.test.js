@@ -108,6 +108,25 @@ test("a member's board: only conversations they can access, their own DM, no hos
   assert.equal(board.counts.broken, 2); assert.equal(board.counts.healthy, 1);
 });
 
+test("the board's 30-day totals count every run and its AI cost, whatever window is selected", async () => {
+  const { mine } = await fixtureConversations();
+  const access = { user: { isAdmin: false }, allows: async (e) => ["CBOARD1", "DBOARD1", "DBOARD2"].includes(e.channelId) };
+  const today = await view.automationBoard(access, "U_ANA", { days: 1 });
+  assert.deepEqual(today.totals, { days: 30, runs: 4, costUsd: 0.85, costSince: today.totals.costSince, costLimited: false });
+  // Ten days later the runs have left the 7-day window but are still in the 30-day totals.
+  const later = await view.automationBoard(access, "U_ANA", { days: 7, now: new Date(Date.now() + 10 * 86400_000) });
+  assert.equal(later.kpis.runs, 0);
+  assert.equal(later.totals.runs, 4); assert.equal(later.totals.costUsd, 0.85);
+  assert.equal(later.automations.find((a) => a.id === mine.id).month.runs, 2);
+  // Past 30 days they drop out.
+  const gone = await view.automationBoard(access, "U_ANA", { days: 30, now: new Date(Date.now() + 31 * 86400_000) });
+  assert.deepEqual({ runs: gone.totals.runs, costUsd: gone.totals.costUsd }, { runs: 0, costUsd: 0 });
+  // Cost the plan's history does not show is left out; the runs still count.
+  const hidden = runs.runTotalsSince({ scheduleId: mine.id, channelId: "CBOARD1", sinceMs: 0, historyStart: new Date(Date.now() + 60_000) });
+  assert.deepEqual(hidden, { runs: 2, costUsd: 0 });
+  assert.deepEqual(runs.runTotalsSince({ scheduleId: mine.id, channelId: "CBOARD1", sinceMs: 0, historyStart: null }), { runs: 2, costUsd: 0.75 });
+});
+
 test("the admin console sees every conversation, every DM by name and host-access rows", async () => {
   await fixtureConversations();
   const board = await view.automationBoard(view.ADMIN_CONSOLE_ACCESS, "", { adminConsole: true });
