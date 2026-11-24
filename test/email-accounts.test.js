@@ -120,6 +120,7 @@ const store = await import("../src/config/store.js");
 const { defaultChannelMeta, getChannelMeta, getUser, saveChannelMeta, setUser, upsertChannelEntry } = store;
 const accountStore = await import("../src/gateway/email-account-store.js");
 const { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount, setEmailAccountVerifierForTests } = accountStore;
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 
 const entry = await upsertChannelEntry("C_EMAIL", { name: "email-routes", type: "channel", isDM: false });
 await saveChannelMeta(entry.slug, defaultChannelMeta({ channelId: "C_EMAIL", name: "email-routes", type: "channel", isDM: false }));

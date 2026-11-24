@@ -3832,6 +3832,12 @@ control-plane status.
 
 ## Email accounts (IMAP + SMTP, per person and per conversation)
 
+- **Admin switch, off by default.** Settings → *Email accounts (IMAP/SMTP)* →
+  **Enable email accounts** (`emailAccountsEnabled`, `getEmailAccountsEnabled()`). While off, the
+  Email accounts sections are hidden on every surface (Activity Settings, Slack ⚙️ Settings MCP
+  and You pages, Teams/Google Chat settings, the private browser form), every save is refused in
+  the store (`email-account-store.js`), and runs get no email tool (`src/mcp/tools/email.js` does
+  not register them). Stored accounts are kept and come back when it is switched on.
 - A mailbox is connected **once, on one form** — name, address, optional display name, IMAP
   server/port/user/password, SMTP server/port/user/password — to a conversation (channel scope,
   shared by everyone who talks there) or to one person (personal scope, usable only in runs they

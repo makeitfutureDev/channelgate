@@ -1100,6 +1100,7 @@ test("Connections pages and APIs bind the authenticated Activity owner and works
     create: async input => { await input.authorize(); calls.push(["create", input]); return { redirectUrl: "https://connect.composio.dev/link/fixture" }; },
   } });
   const mine = await f.login(), other = await f.login("U_OTHER");
+  (await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
   for (const suffix of ["/settings/connections", "/settings/connections/new", "/settings/email"]) {
     const page = await f.request(mine.url + suffix, { headers: mine.headers });
     assert.equal(page.status, 200); const html = await page.text();

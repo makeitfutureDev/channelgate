@@ -4,7 +4,7 @@ import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Card state carries identifiers only; stored credentials never become input defaults.
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
-import { getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
+import { getOrgAccessGrants, getComposioMode, getEmailAccountsEnabled } from '../../config/settings.js';
 import { getChannelMeta, getUser, setUser } from '../../config/store.js';
 import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
@@ -172,8 +172,10 @@ export async function mailAndPersonalRows(ctx, ui) {
   const body = [], meta = ctx.meta;
   // Email accounts: the list is masked (hosts, ports, user names — never a password). Inputs are
   // never prefilled, and a public space card gets no inputs at all.
-  body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
-  if (ctx.publicCredentials) body.push(ui.text('Connect or update an email account in your private browser settings.'));
+  const email = getEmailAccountsEnabled();
+  if (email) body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
+  if (!email) { /* Email accounts are off gateway-wide (Settings). */ }
+  else if (ctx.publicCredentials) body.push(ui.text('Connect or update an email account in your private browser settings.'));
   else {
     body.push(ui.text('Connect a mailbox by its IMAP and SMTP settings. Both logins are tested before anything is saved. Blank ports mean 993 (IMAP) and 587 (SMTP); blank SMTP user and password mean the IMAP ones. Leave passwords blank to keep the stored ones when editing.'),
       ...(ctx.isShared ? [] : [ui.choice('emailScope', 'Belongs to', EMAIL_SCOPES.includes(ctx.state.emailScope) ? ctx.state.emailScope : 'channel', [{ title: 'This conversation', value: 'channel' }, { title: 'Me (personal)', value: 'personal' }])]),
@@ -192,7 +194,7 @@ export async function mailAndPersonalRows(ctx, ui) {
     const remove = [];
     if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
     if (remove.length) body.push(ui.buttons(remove));
-    body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
+    if (email) body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
       ...(ctx.publicCredentials ? [] : [ui.text('Add or update one with the email account form above, choosing "Me (personal)". It is used only for your own requests.')]));
   }
   return body;

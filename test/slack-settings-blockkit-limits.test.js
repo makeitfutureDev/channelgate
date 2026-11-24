@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 const { buildChannelSettingsView, CHANNEL_SETTINGS_TABS } = await import("../src/slack/channel-settings.js");
 
 const len = (t) => (typeof t === "string" ? t : t?.text || "").length;

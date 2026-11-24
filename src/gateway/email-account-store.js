@@ -7,6 +7,7 @@
 // server hosts — never a password.
 import { getChannelMeta, getUser, patchChannelMeta, setUser } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
+import { getEmailAccountsEnabled } from "../config/settings.js";
 import { verifyEmailAccount } from "./email-client.js";
 import {
   findEmailAccount,
@@ -34,8 +35,14 @@ async function prepare(existingList, input, { verify, lookup }) {
   return record;
 }
 
+export class EmailAccountsDisabledError extends Error {}
+function assertEmailAccountsEnabled() {
+  if (!getEmailAccountsEnabled()) throw new EmailAccountsDisabledError("Email accounts are turned off on this gateway. An admin can enable them in Settings.");
+}
+
 /** Add or update one of a channel's email accounts (tested first). Returns the masked list. */
 export async function saveChannelEmailAccount(slug, input = {}, { actor = "", verify, lookup, authorize, now } = {}) {
+  assertEmailAccountsEnabled();
   if (!slug) throw new Error("No conversation to change.");
   const current = await getChannelMeta(slug);
   const record = await prepare(current?.emailAccounts, input, { verify, lookup });
@@ -65,6 +72,7 @@ export async function listUserEmailAccounts(userId) {
 
 /** Add or update one of a person's own email accounts (tested first). Returns the masked list. */
 export async function saveUserEmailAccount(userId, input = {}, { actor = "", verify, lookup, authorize, now } = {}) {
+  assertEmailAccountsEnabled();
   if (!userId) throw new Error("No user to change.");
   const record = await prepare((await getUser(userId))?.emailAccounts, input, { verify, lookup });
   if (authorize) await authorize();

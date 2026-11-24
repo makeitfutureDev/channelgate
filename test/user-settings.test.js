@@ -2,6 +2,7 @@ import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 const { setUser, getUser } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { getDb } = await import("../src/db/index.js");
