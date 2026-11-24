@@ -11,7 +11,7 @@ import { listConversationMemberIds } from "./members.js";
 import { logEvent } from "../util/logger.js";
 import {
   acceptPendingRunChoice,
-  clearActiveRun,
+  finishActiveRun,
   clearPendingRunChoice,
   getPendingRunChoice,
   listPendingRunChoices,
@@ -345,7 +345,7 @@ export function steerActiveRun(runQueue, runKey, { expectedRunId = "", requester
   // Steering intentionally abandons this exact run. Terminalize it before signalling the
   // in-memory process so a daemon crash in the handoff window cannot replay already-attempted
   // work alongside the durable successor.
-  if (active.runId) clearActiveRun(active.runId);
+  if (active.runId) finishActiveRun(active.runId);
   if (interruptWarm()) return "interrupted";
   active.controller?.abort();
   return "aborted";
@@ -406,7 +406,7 @@ async function applyQueuedMessageChoice({ choiceId, record, choice, client, chan
   let changed = false;
   if (choice === "cancel") {
     changed = runQueue.cancelQueued(key, runId);
-    if (changed) clearActiveRun(runId);
+    if (changed) finishActiveRun(runId);
     if (changed) text = "🚫 Queued message cancelled. The run already in progress is still going.";
   } else if (choice === "steer" && runQueue.isQueued(key, runId)) {
     const active = runQueue.activeHandle(key);

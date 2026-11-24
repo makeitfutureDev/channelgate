@@ -5,6 +5,7 @@
 // steer card, I didn't type anything"). Run ids encode the triggering message ts, so identity is
 // exact: a turn already live under that id IS this message, in both directions of the race.
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -162,4 +163,65 @@ test("boot recovery skips a turn a redelivered message already picked up", async
   } finally {
     runQueue.release(runKey, active);
   }
+});
+
+test("a completed native Slack message survives a fresh receiver without blocking a distinct message or a deliberate retry", async () => {
+  await setUser(USER, { name: "Dup User", approved: true });
+  const client = fakeSlack();
+  const event = message("4000.101");
+  const options = { botUserId: "U_BOT", teamId: "T_DUP", dedupeTrigger: true };
+  const { getDb } = await import("../src/db/index.js");
+  const paidTurns = () => getDb().prepare("SELECT COUNT(*) AS count FROM usage WHERE channel_id = ?").get(CHANNEL).count;
+  const before = paidTurns();
+  await Promise.all([processMessageEvent(event, client, options), processMessageEvent({ ...event, type: "app_mention" }, client, options)]);
+  assert.equal(paidTurns(), before + 1);
+  const probe = `
+    import { claimMessageTrigger } from "./src/slack/message-lifecycle.js";
+    const event = JSON.parse(process.argv[1]);
+    process.stdout.write(JSON.stringify([
+      claimMessageTrigger(event),
+      claimMessageTrigger({ ...event, channel: "D_ANOTHER" }),
+      claimMessageTrigger({ ...event, ts: "4000.102" }),
+    ]));`;
+  const fresh = execFileSync(process.execPath, ["--input-type=module", "-e", probe, JSON.stringify(event)], { cwd: projectRoot, encoding: "utf8" });
+  assert.deepEqual(JSON.parse(fresh), [false, true, true]);
+  await processMessageEvent(event, client, { ...options, dedupeTrigger: false });
+  assert.equal(paidTurns(), before + 2, "an explicit internal retry can intentionally run the original event again");
+});
+
+test("terminal receipts and recovery rows change atomically and stay bounded to the Slack namespace", async () => {
+  const { getDb } = await import("../src/db/index.js");
+  const { finishActiveRun, recordActiveRun } = await import("../src/gateway/active-runs.js");
+  const { hasCompletedSlackMessage } = await import("../src/slack/message-receipts.js");
+  const db = getDb();
+  const ts = "4000.201";
+  const id = "receipt-rollback";
+  recordActiveRun(id, { channelId: CHANNEL, slackMessageTs: ts });
+  db.exec(`CREATE TEMP TRIGGER reject_receipt BEFORE INSERT ON inbound_events
+    WHEN NEW.namespace = 'slack-terminal-message' BEGIN SELECT RAISE(ABORT, 'fixture'); END`);
+  try {
+    assert.equal(finishActiveRun(id), false);
+    assert.equal(hasCompletedSlackMessage(CHANNEL, ts), false);
+    assert.ok(listActiveRuns().some((row) => row.id === id));
+  } finally {
+    db.exec("DROP TRIGGER reject_receipt");
+  }
+  const now = Date.now();
+  db.prepare(`INSERT INTO inbound_events(namespace, event_id, conversation_id, status, created_ms, data)
+    VALUES ('other-fixture', 'untouched', 'another', 'done', 1, '{}'),
+           ('slack-terminal-message', 'expired', 'another', 'done', 1, '{}')`).run();
+  db.prepare(`WITH RECURSIVE series(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM series WHERE i < 10000)
+    INSERT INTO inbound_events(namespace, event_id, conversation_id, status, created_ms, data)
+    SELECT 'slack-terminal-message', 'capacity-' || i, 'another', 'done', ?, '{}' FROM series`).run(now - 1000);
+  assert.equal(finishActiveRun(id), true);
+  assert.equal(hasCompletedSlackMessage(CHANNEL, ts), true);
+  assert.equal(listActiveRuns().some((row) => row.id === id), false);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM inbound_events WHERE namespace = 'slack-terminal-message'").get().n, 10000);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM inbound_events WHERE event_id = 'expired'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM inbound_events WHERE namespace = 'other-fixture'").get().n, 1);
+  db.prepare("UPDATE inbound_events SET created_ms = 1 WHERE namespace = 'slack-terminal-message' AND event_id = ?").run(CHANNEL + ":" + ts);
+  assert.equal(hasCompletedSlackMessage(CHANNEL, ts), false);
+  recordActiveRun(id, { channelId: CHANNEL, slackMessageTs: ts });
+  finishActiveRun(id);
+  assert.equal(hasCompletedSlackMessage(CHANNEL, ts), true, "a new completion renews an expired receipt");
 });
