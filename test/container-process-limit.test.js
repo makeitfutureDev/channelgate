@@ -404,3 +404,22 @@ test("ensureUp: a container Podman lists as running whose process is gone is rem
   assert.ok(h.fake.calls.some((c) => c.argv[1] === "create" || c.argv[1] === "run"), "and created again");
   assert.ok(h.logs.some((m) => /listed as running but its process 4242 is gone/.test(m)));
 });
+
+test("ensureUp: a container stuck \"stopping\" with its process gone is removed and recreated, not refused", async () => {
+  const h = harness({ alive: () => false });
+  const t = target("dead-stopping");
+  await running(h, t);
+  h.state.status = "stopping";
+  await h.lifecycle.ensureUp(t, {});
+  assert.ok(h.fake.calls.some((c) => c.argv[1] === "rm"), "the stuck container is removed");
+  assert.ok(h.fake.calls.some((c) => c.argv[1] === "create" || c.argv[1] === "run"), "and created again");
+  assert.ok(h.logs.some((m) => /listed as stopping but its process 4242 is gone/.test(m)));
+});
+
+test("ensureUp: a container still genuinely stopping (process alive) is refused as before", async () => {
+  const h = harness({ alive: () => true });
+  const t = target("live-stopping");
+  await running(h, t);
+  h.state.status = "stopping";
+  await assert.rejects(h.lifecycle.ensureUp(t, {}), /is stopping — the gateway will not use it/);
+});
