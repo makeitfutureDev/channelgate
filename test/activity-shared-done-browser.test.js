@@ -1,3 +1,4 @@
+import { openActivityRowActions, selectActivityFilter } from "./activity-browser-controls.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -61,6 +62,7 @@ for (const width of [1440, 390]) {
     };
 
     assert.equal(await action(theirs, "Mark done").isVisible(), false, "participant cannot complete the owner's conversation");
+    await openActivityRowActions(mine, root.text);
     await action(mine, "Pin").click();
     await mine.locator("#pinned-threads tr").waitFor();
     await action(mine, "Mark done").click();
@@ -73,36 +75,40 @@ for (const width of [1440, 390]) {
     assert.equal(await action(theirs, "Reopen").isVisible(), false);
     assert.equal(await action(theirs, "Mark done").isVisible(), false);
 
-    await filter(mine, "done").click();
+    await selectActivityFilter(mine, "done");
     await action(mine, "Reopen").waitFor();
     await sharedDone(mine, "#threads");
+    await openActivityRowActions(theirs, root.text);
     await action(theirs, "Pin").click();
     await sharedDone(theirs, "#pinned-threads");
+    await openActivityRowActions(theirs, root.text);
     await action(theirs, "Hide").click();
     await empty(theirs);
-    assert.equal(await filter(theirs, "active").locator("span").textContent(), "0");
+    await filter(theirs, "active").locator("span").filter({ hasText: /^0$/ }).waitFor({ state: "attached" });
     await action(mine, "Reopen").waitFor();
     assert.equal(await filter(mine, "done").locator("span").textContent(), "1", "participant Hide leaves the owner's Completed entry intact");
 
     // Reopen restores the owner's automatic dismissal, but keeps the participant's manual Hide.
     await action(mine, "Reopen").click();
     await empty(mine);
-    await filter(mine, "active").click();
+    await selectActivityFilter(mine, "active");
     await mine.locator("#pinned-threads tr:not(.s-done)").waitFor();
     await action(mine, "Mark done").waitFor();
     await empty(theirs);
     await theirs.reload();
-    await filter(theirs, "hidden").click();
+    await selectActivityFilter(theirs, "hidden");
+    await openActivityRowActions(theirs, root.text);
     await action(theirs, "Show").waitFor();
     await theirs.locator("#threads tr:not(.s-done)").waitFor();
     await noOverflow(theirs);
     recordSlackThreadParticipation(channelId, threadTs, owner, (Date.now() / 1000 + 1).toFixed(6));
+    await openActivityRowActions(theirs, root.text);
     await action(theirs, "Show").waitFor();
     assert.equal(await filter(theirs, "active").locator("span").textContent(), "0", "another person's message cannot undo manual Hide");
     // This function is the authorized human-message ingress, as in the participant browser fixture.
     recordSlackThreadParticipation(channelId, threadTs, participant, (Date.now() / 1000 + 2).toFixed(6));
     await empty(theirs);
-    await filter(theirs, "active").click();
+    await selectActivityFilter(theirs, "active");
     await theirs.locator("#pinned-threads tr:not(.s-done)").waitFor();
     await visible(mine);
     assert.equal(await action(theirs, "Mark done").isVisible(), false);

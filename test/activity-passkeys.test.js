@@ -1,3 +1,4 @@
+import { openActivityPageMenu } from "./activity-browser-controls.js";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -63,6 +64,7 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     linkSession = await openLink();
     assert.equal(await page.locator('header a').filter({ hasText: 'Passkeys' }).count(), 0);
     assert.equal(await page.locator('.privacy a').filter({ hasText: /passkeys/i }).count(), 0);
+    await openActivityPageMenu(page);
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.getByRole('link', { name: 'Manage passkeys', exact: true }).click();
     await page.locator('#add-passkey').waitFor({ state: 'visible' });
@@ -291,6 +293,7 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     assert.equal((await api(passkeySession + '/api/threads', undefined, { method: 'GET' })).status, 200);
     assert.equal(await page.locator('header a').filter({ hasText: 'Passkeys' }).count(), 0);
     assert.equal(await page.locator('.privacy a').filter({ hasText: /passkeys/i }).count(), 0);
+    await openActivityPageMenu(page);
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.getByRole('link', { name: 'Manage passkeys', exact: true }).click();
     await page.locator('#passkey-list li').waitFor();

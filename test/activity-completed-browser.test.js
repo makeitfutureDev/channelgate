@@ -1,3 +1,4 @@
+import { selectActivityFilter } from "./activity-browser-controls.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -31,8 +32,7 @@ for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const errors = []; page.on("pageerror", error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/activity/fixture`);
-    const completed = page.locator('#filters button[data-filter="done"]');
-    await completed.click();
+    await selectActivityFilter(page, "done");
     const titles = page.locator("#threads .thread-title");
     await titles.first().waitFor();
     assert.equal(await page.locator("#group-by").inputValue(), "none");
@@ -43,9 +43,9 @@ for (const width of [1440, 390]) {
     for (const stream of streams) stream.write(`event: threads\ndata: ${JSON.stringify(snapshot())}\n\n`);
     await page.waitForFunction(() => globalThis.document.querySelector("#threads .thread-title")?.textContent === "Older completion");
     await page.locator("#group-by").selectOption("channel");
-    await page.locator('#filters button[data-filter="active"]').click();
+    await selectActivityFilter(page, "active");
     assert.equal(await page.locator("#group-by").inputValue(), "channel");
-    await page.reload(); await completed.click(); await titles.first().waitFor();
+    await page.reload(); await selectActivityFilter(page, "done"); await titles.first().waitFor();
     assert.equal(await page.locator("#group-by").inputValue(), "none");
     assert.deepEqual(await titles.allTextContents(), ["Older completion", "Latest completion", "Middle completion"]);
     assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
