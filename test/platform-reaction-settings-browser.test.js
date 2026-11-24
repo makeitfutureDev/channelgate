@@ -39,8 +39,8 @@ test("platform activation lists save independently and repaint after reload", { 
   assert.equal(await teams.inputValue(), "hearteyesrobot, alien, like, smilerobot");
   assert.equal(await google.inputValue(), "🤖");
   const card = teams.locator("xpath=../..");
-  assert.match(await card.textContent(), /Teams event delivery/);
-  assert.match(await card.textContent(), /Google Chat Reaction events topic/);
+  assert.match(await card.textContent(), /require Teams reaction events/i);
+  assert.match(await card.textContent(), /Google Chat reaction events topic/i);
   await openSetting(page, slack);
   await slack.fill("rocket");
   await teams.fill(":ALIEN:");

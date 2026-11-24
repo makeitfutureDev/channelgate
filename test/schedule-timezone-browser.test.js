@@ -18,6 +18,8 @@ test("one-time editor preserves the browser's chosen instant across daemon timez
   const fixture = addSchedule({ channelId: "CTZTEST", slug: "timezone-test", once: true, runAt: "2030-06-10T12:00:00.000Z", prompt: "Harmless test", description: "Timezone test", createdBy: "UTZTEST", notify: "none" });
   const app = express();
   app.use(express.json());
+  const { automationBoardModuleSource } = await import("../src/web/automation-board.js");
+  app.get("/automation-board.js", (_req, res) => res.type("js").send(automationBoardModuleSource()));
   // This focused router fixture represents an authenticated admin; real login is tested separately.
   app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
@@ -25,7 +27,7 @@ test("one-time editor preserves the browser's chosen instant across daemon timez
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false }, engines: {} }));
   app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }) } }));
   const publicDir = fileURLToPath(new URL("../public", import.meta.url));
-  app.use(express.static(publicDir));
+  app.use(express.static(publicDir, { dotfiles: "allow" }));
   app.get("/automations", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
@@ -35,20 +37,23 @@ test("one-time editor preserves the browser's chosen instant across daemon timez
     const context = await browser.newContext({ timezoneId });
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/automations`);
-    await page.locator(".sched-open").click();
-    const initial = await page.locator("#schedule-modal-run-at").inputValue();
+    await page.getByRole("button", { name: "Show everything", exact: true }).click();
+    await page.getByRole("heading", { name: fixture.description, exact: true }).click();
+    await page.getByRole("tab", { name: "Settings" }).click();
+    const time = page.getByLabel("Runs once at");
+    const initial = await time.inputValue();
     const initialInstant = await page.evaluate((value) => new Date(value).toISOString(), initial);
     assert.equal(initialInstant, getSchedules().find((s) => s.id === fixture.id).runAt);
     const chosen = "2030-06-11T15:42";
     const expected = await page.evaluate((value) => new Date(value).toISOString(), chosen);
-    await page.locator("#schedule-modal-run-at").fill(chosen);
-    const response = page.waitForResponse((r) => r.url().endsWith(`/api/schedules/${fixture.id}`) && r.request().method() === "PUT");
-    await page.locator("#schedule-modal-save").click();
+    await time.fill(chosen);
+    const response = page.waitForResponse((r) => r.url().endsWith(`/api/automation-board/${fixture.channelId}/${fixture.id}/update`) && r.request().method() === "POST");
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
     assert.equal((await response).status(), 200);
     assert.equal(getSchedules().find((s) => s.id === fixture.id).runAt, expected, `${timezoneId}: chosen instant must not be reinterpreted in daemon timezone`);
     await page.reload();
-    await page.locator(".sched-open").click();
-    assert.equal(await page.locator("#schedule-modal-run-at").inputValue(), chosen);
+    await page.getByRole("tab", { name: "Settings" }).click();
+    assert.equal(await time.inputValue(), chosen);
     await context.close();
   }
 });
