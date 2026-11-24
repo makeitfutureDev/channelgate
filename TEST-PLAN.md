@@ -2063,6 +2063,18 @@ can still name it, resolves to the normal default instead of ending a turn or re
       leaves the list unchanged, and an administrator picking Claude under Approved harnesses
       restores answers.
 
+## Dead "running" containers after a system-service restart (2026-11-24)
+
+- Automated: `test/container-process-limit.test.js` — "a container Podman lists as running whose
+  process is gone is removed and recreated" (injected `pidAlive` reports the init pid dead →
+  `rm` then `create`, the log names the pid).
+- Live (engine-independent — the container lifecycle runs before any engine): on a system-unit
+  install (Arise), send a DM message so its container is up, `systemctl restart channelgate`,
+  confirm `podman ps` (as the service user) still lists the container `Up` while its
+  `{{.State.Pid}}` no longer exists, then send another DM message. Pass: the reply arrives with no
+  "is not running" error, the journal logs "listed as running but its process … is gone —
+  removing and recreating it", and no manual `podman rm` was needed.
+
 ## Container process limit (2026-11-19)
 
 - [x] `test/container-process-limit.test.js` (always runs): the host-side reader returns the

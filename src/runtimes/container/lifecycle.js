@@ -392,12 +392,18 @@ export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerpri
 export const DEFAULT_RECREATE_WAIT_MS = 60_000; // repeat notice interval; never a run deadline
 export const DEFAULT_RECREATE_POLL_MS = 1_000;
 
+// Whether a host process still exists. EPERM means it exists under another user.
+export function hostPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
+}
+
 export function createContainerLifecycle({
   cli, image, reaper, log = () => {}, now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()),
   recreateWaitMs = DEFAULT_RECREATE_WAIT_MS,
   recreatePollMs = DEFAULT_RECREATE_POLL_MS,
   readPids = readPidsCounters,
+  pidAlive = hostPidAlive,
 } = {}) {
   const preparing = new Map(); // container → leases waiting for readiness, not running inside
 
@@ -655,6 +661,16 @@ export function createContainerLifecycle({
       }
       if (info.exists && !["running", "exited", "created", "stopped"].includes(info.status)) {
         throw new Error(`container ${name} is ${info.status} — the gateway will not use it. Inspect it by hand.`);
+      }
+
+      // Podman can report a container "running" whose processes are gone: on a system-service
+      // install the containers share the unit's cgroup, so systemd kills them on every gateway
+      // restart without Podman recording it, and every exec then fails "is not running". Its
+      // host init pid is the truth; a dead one is removed and recreated (HOME volume kept).
+      if (info.exists && info.status === "running" && info.pid > 1 && !pidAlive(info.pid)) {
+        log(`[container] ${name} is listed as running but its process ${info.pid} is gone — removing and recreating it`);
+        await removeContainer(caps, name, { preserveLeases: true });
+        info = { exists: false, status: "missing" };
       }
 
       let recreate = false;
