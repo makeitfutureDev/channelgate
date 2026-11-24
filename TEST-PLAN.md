@@ -8995,7 +8995,7 @@ Only metadata was queried. Host-reboot recovery remains a separate operator acce
 
 ## Admin-only sudo thread → direct host execution
 
-Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
+Automated regression: `test/sudo-thread.test.js` (incl. the 🔓 Sudo off button), `test/runtimes-core.test.js`,
 `test/session-carry.test.js`, `test/engine-runtime-isolated.test.js`,
 `test/codex-args.test.js`, `test/runtime-integration-run.test.js`, and
 `test/runtime-access-facts.test.js`.
@@ -9015,6 +9015,17 @@ Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
       Require exact task/attachment continuity; check status/off invoke no engine, busy boundary
       changes refuse, and approved non-admin inline requests never hydrate/download/queue/spawn.
       Restore sudo off. Private reusable case: `SUDO-INLINE-01`; live execution pending.
+- [x] A sudo thread's reply menu and its "Sudo enabled" notice lead with 🔓 Sudo off; another
+      thread of the same channel does not show it. A non-admin click and a click while work is
+      running or queued change nothing; a current admin's click clears the flag, is audited with
+      `via: "button"`, posts "Sudo disabled" in the thread and drops the button from later menus.
+      A stale click on an already-off thread only says so.
+- [ ] Live Claude and Codex: in disposable `cg-testing-claude-admin` and `cg-testing-codex-admin`
+      threads, send `@agent /sudo on` then `@agent Reply SUDO-BUTTON-OK`. Pass when the notice and
+      the reply menu both show 🔓 Sudo off as the first button, an approved non-admin's click is
+      refused with no state change, the admin's click posts "Sudo disabled … turned off by", the
+      next `@agent Run pwd` reports `/home/agent` (container) and its menu has no Sudo off button.
+      Private reusable case: `SUDO-BUTTON-01`; live execution pending.
 - [x] An approved non-admin cannot enable, disable, or query sudo. Once enabled, a non-admin
       message is rejected with “This is a sudo thread” before hydration, attachment reads,
       queueing, engine invocation, or process spawn.

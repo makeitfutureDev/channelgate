@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
+  the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
+  thread to its container.
 - Redesigned admin Settings with one scrolling column of cards, category jump links, compact
   platform connections and two-column fields on wide screens. Search now opens individual fields across categories, including settings
   inside closed cards. Messages and Calls have separate categories with directly editable controls.

@@ -185,3 +185,58 @@ test("inline sudo refuses a busy boundary change and malformed off/status withou
     assert.equal(await getThreadSudo(entry.slug, `5410.00${i}`), false);
   }
 });
+
+test("a sudo thread's reply menu leads with Sudo off, and the button returns the thread to the container", async () => {
+  const { menuButtons } = await import("../src/slack/footer.js");
+  const { handleSudoOffAction, SUDO_OFF_ACTION_ID } = await import("../src/slack/sudo-button.js");
+  await setUser(ADMIN, { name: "Admin", isAdmin: true, approved: true });
+  await setUser(MEMBER, { name: "Member", isAdmin: false, approved: true });
+  const client = fakeSlack();
+  const root = "5500.001";
+  await send(client, ADMIN, "/sudo", root);
+  const entry = await getChannelEntry(CHANNEL);
+  assert.equal(await getThreadSudo(entry.slug, root), true);
+
+  // The enable notice carries the button; so does every reply menu in the thread, FIRST.
+  const notice = client.posted.at(-1);
+  assert.equal(notice.blocks.at(-1).elements[0].action_id, SUDO_OFF_ACTION_ID);
+  const menu = menuButtons({ channel: CHANNEL, threadTs: root, authorId: ADMIN });
+  assert.equal(menu[0].action_id, SUDO_OFF_ACTION_ID);
+  assert.match(menu[0].text.text, /Sudo off/);
+  assert.notEqual(menuButtons({ channel: CHANNEL, threadTs: "5500.999", authorId: ADMIN })[0].action_id, SUDO_OFF_ACTION_ID,
+    "another thread of the same channel shows no sudo control");
+
+  const click = (user, button = menu[0]) => handleSudoOffAction({
+    ack: async () => {}, client, action: button,
+    body: { user: { id: user }, channel: { id: CHANNEL }, message: { ts: "bot.1", thread_ts: root } },
+  });
+
+  // A non-admin clicker changes nothing.
+  await click(MEMBER);
+  assert.equal(await getThreadSudo(entry.slug, root), true);
+  assert.match(client.posted.at(-1).text, /Only organization admins/);
+
+  // Running or queued work blocks the change, exactly like the typed command.
+  const key = `${entry.slug}::${root}`;
+  const blocker = { aborted: false, controller: new AbortController(), authorId: ADMIN, runId: `${key}::blocker` };
+  await runQueue.acquire(key, blocker);
+  try {
+    await click(ADMIN);
+    assert.match(client.posted.at(-1).text, /running or queued work/);
+    assert.equal(await getThreadSudo(entry.slug, root), true);
+  } finally { runQueue.release(key, blocker); }
+
+  // A current admin turns it off; the change is audited and announced in the thread.
+  await click(ADMIN);
+  assert.equal(await getThreadSudo(entry.slug, root), false);
+  assert.match(client.posted.at(-1).text, /Sudo disabled/);
+  assert.equal(client.posted.at(-1).thread_ts, root);
+  const change = readEvents({ limit: 200 }).find((event) => event.event === "sudo_thread_changed" && event.via === "button");
+  assert.equal(change.enabled, false);
+  assert.equal(change.author, ADMIN);
+  assert.notEqual(menuButtons({ channel: CHANNEL, threadTs: root, authorId: ADMIN })[0].action_id, SUDO_OFF_ACTION_ID);
+
+  // A stale button on an already-off thread only says so.
+  await click(ADMIN);
+  assert.match(client.posted.at(-1).text, /already OFF/);
+});
