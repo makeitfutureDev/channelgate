@@ -51,6 +51,7 @@ import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index
 // every future run here. The admin UI's grant/revoke/template routes already wrote these rows; the
 // chat path wrote nothing at all until now.
 import { logEvent } from "../../util/logger.js";
+import { patchSkillRoi, getSkillRoi, getDefaultRoiRate, roiMinutes, roiRate, ROI_MAX_MINUTES, ROI_MAX_RATE } from "../../gateway/roi.js";
 
 const MAX_TEXT = 12000;
 const FILE_INPUT = z.object({
@@ -81,6 +82,30 @@ function withModelFrontmatter(files, model, skill = null) {
   }
   const next = { path: "SKILL.md", content: setSkillModelFrontmatter(current, model), encoding: "utf8" };
   return index >= 0 ? files.map((f, i) => (i === index ? next : f)) : [...files, next];
+}
+
+// The optional ROI inputs of create_skill / update_skill (src/gateway/roi.js): minutes one
+// successful use saves and the hourly rate of that work, the same organization-wide record the
+// ROI board edits. Omitted keeps the stored value, 0 clears it.
+const ROI_INPUT = {
+  roi_minutes_saved: z.number().min(0).max(ROI_MAX_MINUTES).optional().describe("ROI: minutes of manual work ONE successful use of this skill saves (ask the user while creating it). 0 clears it; omit to keep the stored value."),
+  roi_hourly_rate: z.number().min(0).max(ROI_MAX_RATE).optional().describe("ROI: hourly rate in US dollars of the work the skill saves. 0 (or omitted on create) uses the gateway's default rate; omit on update to keep the stored value."),
+};
+const roiGiven = (a) => a.roi_minutes_saved !== undefined || a.roi_hourly_rate !== undefined;
+// Validate before anything is written (create_skill must not create a skill and then refuse).
+const roiCheck = (a) => { if (a.roi_minutes_saved !== undefined) roiMinutes(a.roi_minutes_saved); if (a.roi_hourly_rate !== undefined) roiRate(a.roi_hourly_rate); };
+
+function roiDescription({ minutes, rate }) {
+  if (!(minutes > 0) && !(rate > 0)) return "not set";
+  const fallback = getDefaultRoiRate();
+  const rateText = rate > 0 ? `$${rate}/h` : fallback > 0 ? `the gateway default rate ($${fallback}/h)` : "no hourly rate yet (the gateway has no default rate)";
+  return minutes > 0 ? `saves ${minutes} min per use at ${rateText}` : `hourly rate $${rate}/h, minutes saved per use not set`;
+}
+
+async function applySkillRoi(skillSlug, args, by) {
+  const stored = patchSkillRoi(skillSlug, { minutes: args.roi_minutes_saved, rate: args.roi_hourly_rate }, by);
+  await logEvent("skill_roi_set", { skill: skillSlug, by: String(by || "").slice(0, 64), minutes: stored.minutes, rate: stored.rate, via: "mcp" }).catch(() => {});
+  return `\nROI: ${roiDescription(stored)}.`;
 }
 
 function packageVersion() {
@@ -252,6 +277,7 @@ export function register(server, ctx) {
         skill.description,
         `Owner: ${describeOwner(skill)} · visibility: ${skill.visibility} · category: ${skill.category || "—"} · version: ${skill.version || "—"} · tags: ${skill.tags.join(", ") || "—"} · preferred model: ${skillModelPreference(skill)?.model || "—"}`,
         `Requires: ${skill.requires.join(", ") || "—"}`,
+        `ROI: ${roiDescription(getSkillRoi(skill.slug))}`,
         `Current revision: ${currentRev ? `#${currentRev.revisionNo}` : "none"}`,
         `Pin: ${skill.pinnedRevisionId == null ? "none (following current)" : skill.pinReason === "publication" ? "publication recovery — clears after successful publication" : skill.pinReason === "proposal" ? "approved source override — cleared only by an admin" : "manual or legacy — cleared only by an admin"}`,
         rev ? `Effective revision: #${rev.revisionNo}${skill.pinnedRevisionId ? " (pinned)" : ""} · ${files.length} file(s): ${files.join(", ")}${rev.publishedRef ? ` · published ${rev.publishedRef.slice(0, 7)}` : ""}` : `No approved revision yet${skill.stagedCount ? ` (${skill.stagedCount} staged for review)` : ""}.`,
@@ -479,7 +505,7 @@ export function register(server, ctx) {
   server.registerTool(
     "create_skill",
     {
-      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Where it lives: by default a CHANNEL skill of this conversation (active here automatically, editable by its members; in a DM, a personal skill). Only when the user explicitly asks for an organization-wide skill pass scope \"organization\": an admin's goes straight into the shared library; anyone else's is created here as a channel skill and an admin is asked to promote it. personal:true keeps it private to you. No approval card for channel or personal skills. Optional `model`: the model (and so the engine) this skill works best with, written into the SKILL.md `model:` frontmatter — honored when a conversation allows skill engine/model swapping. Read the skill-authoring skill first.",
+      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Where it lives: by default a CHANNEL skill of this conversation (active here automatically, editable by its members; in a DM, a personal skill). Only when the user explicitly asks for an organization-wide skill pass scope \"organization\": an admin's goes straight into the shared library; anyone else's is created here as a channel skill and an admin is asked to promote it. personal:true keeps it private to you. No approval card for channel or personal skills. Optional `model`: the model (and so the engine) this skill works best with, written into the SKILL.md `model:` frontmatter — honored when a conversation allows skill engine/model swapping. Optional ROI inputs `roi_minutes_saved` / `roi_hourly_rate` (minutes one use saves, USD hourly rate) feed the ROI board — ask the user for them while creating the skill. Read the skill-authoring skill first.",
       inputSchema: {
         slug: z.string().optional().describe("Folder name; defaults to the frontmatter name, slugified"),
         files: z.array(FILE_INPUT).min(1),
@@ -488,12 +514,15 @@ export function register(server, ctx) {
         grant_here: z.boolean().optional().describe("For an organization skill an admin creates, also activate it in this conversation (default true). Channel and personal skills are active automatically."),
         personal: z.boolean().optional().describe("Private to you and active in your own runs everywhere (default false). Cannot be combined with scope channel."),
         scope: z.enum(["channel", "organization", "library"]).optional().describe("Omit unless the user said where it belongs. channel (the default in a channel): this conversation's own skill. organization (alias library): the shared library for every conversation — only when the user explicitly asked for an organization-level skill."),
+        ...ROI_INPUT,
       },
     },
-    async ({ slug: wanted = "", files: inputFiles, model, note = "", grant_here = true, personal = false, scope }) => {
+    async (args) => {
+      const { slug: wanted = "", files: inputFiles, model, note = "", grant_here = true, personal = false, scope } = args;
       if (!(await approvedAuthor())) return text("Only approved members can add skills.");
       let files;
       try {
+        roiCheck(args);
         files = withModelFrontmatter(inputFiles, model);
       } catch (err) {
         return text(`🚫 Could not create the skill: ${err?.message || err}`);
@@ -533,9 +562,16 @@ export function register(server, ctx) {
             proposalLine = `\n⚠️ Could not file the promotion request: ${err?.message || err}`;
           }
         }
+        // The author may always set the inputs of a skill they just created.
+        let roiLine = "";
+        if (roiGiven(args)) {
+          try { roiLine = await applySkillRoi(r.skill.slug, args, createdBy); } catch (err) { roiLine = `\n⚠️ ROI not saved: ${err?.message || err}`; }
+        } else {
+          roiLine = "\nROI: not set — ask how many minutes one use saves (and the hourly rate) and save it with update_skill roi_minutes_saved / roi_hourly_rate.";
+        }
         const label = tier === "personal" ? "personal skill" : tier === "channel" ? "channel skill" : "organization skill";
         const where = tier === "personal" ? "active in your own runs" : tier === "channel" ? "active in this conversation automatically; any member here can edit or deactivate it" : r.granted ? `in the shared library and active here${r.granted.dependencies?.length ? ` (it requires ${r.granted.dependencies.map((d) => d.slug).join(", ")}, which load with it)` : ""}` : "in the shared library, not active anywhere yet";
-        return text(`✅ Created ${label} \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s)) — ${where}. Takes effect on the next message.${publishLine(r.published)}${proposalLine}\n${ANNOUNCE}`);
+        return text(`✅ Created ${label} \`${r.skill.slug}\` (revision ${r.revision.revisionNo}, ${r.revision.fileCount} file(s)) — ${where}. Takes effect on the next message.${publishLine(r.published)}${roiLine}${proposalLine}\n${ANNOUNCE}`);
       } catch (err) {
         return text(`🚫 Could not create the skill: ${err?.message || err}`);
       }
@@ -545,53 +581,68 @@ export function register(server, ctx) {
   server.registerTool(
     "update_skill",
     {
-      description: "Publish a new revision of a skill (pass only the files that change; the rest is kept). Personal skills: their author. Channel skills: any member of that channel. Organization skills: admins directly — anyone else's edit is filed as a change proposal for an admin. No approval card otherwise. A skill whose source this gateway cannot write to (bundled, another repository, a host folder, a peer gateway) is never edited in place: create a companion skill instead. Optional `model` sets (or, with \"\", clears) the skill's preferred model in its SKILL.md frontmatter — it may be the only change (files may then be empty).",
+      description: "Publish a new revision of a skill (pass only the files that change; the rest is kept). Personal skills: their author. Channel skills: any member of that channel. Organization skills: admins directly — anyone else's edit is filed as a change proposal for an admin. No approval card otherwise. A skill whose source this gateway cannot write to (bundled, another repository, a host folder, a peer gateway) is never edited in place: create a companion skill instead. Optional `model` sets (or, with \"\", clears) the skill's preferred model in its SKILL.md frontmatter — it may be the only change (files may then be empty). Optional ROI inputs `roi_minutes_saved` / `roi_hourly_rate` (minutes one use saves, USD hourly rate) update the skill's ROI record for the ROI board — they may also be the only change, and work on synced skills too.",
       inputSchema: {
         skill: z.string(),
-        files: z.array(FILE_INPUT).optional().describe("Files that change (required unless only `model` changes)"),
+        files: z.array(FILE_INPUT).optional().describe("Files that change (required unless only `model` or the ROI inputs change)"),
         model: z.string().optional().describe("Preferred model for this skill (\"sonnet\", \"gpt-6.1-sol\", …), written as `model:` in SKILL.md; pass \"\" to remove the preference."),
         remove: z.array(z.string()).optional(),
         note: z.string().optional(),
+        ...ROI_INPUT,
       },
     },
-    async ({ skill: key, files: inputFiles = [], model, remove = [], note = "" }) => {
+    async (args) => {
+      const { skill: key, files: inputFiles = [], model, remove = [], note = "" } = args;
       const skill = await visibleSkill(key);
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
-      if (!inputFiles.length && model === undefined && !remove.length) return text("Nothing to change: pass the files that change, a `model`, or files to remove.");
+      const fileChange = inputFiles.length > 0 || model !== undefined || remove.length > 0;
+      if (!fileChange && !roiGiven(args)) return text("Nothing to change: pass the files that change, a `model`, files to remove, or ROI inputs.");
       let files;
       try {
+        roiCheck(args);
         files = withModelFrontmatter(inputFiles, model, skill);
       } catch (err) {
         return text(`🚫 Could not update the skill: ${err?.message || err}`);
-      }
-      const edit = skillEditability(skill);
-      if (!edit.editable) {
-        return text(`\`${skill.slug}\` is ${describeOwner(skill)} — this gateway cannot write to that source, so it is not edited in place (a sync would bring the old files back). Extend it instead: create_skill a companion skill (e.g. \`${skill.slug}-extras\`, a channel skill by default) whose SKILL.md says when to use it together with \`${skill.slug}\`, lists \`requires: [${skill.slug}]\` in its frontmatter so the original loads with it, and carries the additional references/scripts.`);
       }
       const tier = skillTier(skill);
       const admin = await isAdminUser();
       let allowed = admin;
       if (!allowed && tier === "personal") allowed = Boolean(createdBy) && skill.createdBy === createdBy;
       if (!allowed && tier === "channel") allowed = skill.channelScope === ((await loadMeta())?.channelId || channelId) && (await memberHere());
+      // ROI inputs are gateway metadata, not files: whoever may edit the skill sets them, even on a
+      // skill whose source this gateway cannot write to. They never ride a change proposal.
+      let roiLine = "";
+      if (roiGiven(args)) {
+        if (!allowed) roiLine = `\n⚠️ ROI not changed: only ${tier === "channel" ? "that channel's members or an admin" : tier === "personal" ? "its author or an admin" : "an admin"} set \`${skill.slug}\`'s ROI inputs (admins also on the ROI board).`;
+        else {
+          try { roiLine = await applySkillRoi(skill.slug, args, createdBy); } catch (err) { return text(`🚫 Could not update the skill: ${err?.message || err}`); }
+        }
+        if (!fileChange) return text(allowed ? `✅ \`${skill.slug}\` ROI inputs saved.${roiLine}` : roiLine.trim());
+      }
+      const reply = (s) => text(`${s}${roiLine}`);
+      const edit = skillEditability(skill);
+      if (!edit.editable) {
+        return reply(`\`${skill.slug}\` is ${describeOwner(skill)} — this gateway cannot write to that source, so it is not edited in place (a sync would bring the old files back). Extend it instead: create_skill a companion skill (e.g. \`${skill.slug}-extras\`, a channel skill by default) whose SKILL.md says when to use it together with \`${skill.slug}\`, lists \`requires: [${skill.slug}]\` in its frontmatter so the original loads with it, and carries the additional references/scripts.`);
+      }
       if (!allowed) {
         if (tier === "organization" && (await approvedAuthor())) {
           try {
             const { proposal } = proposeSkillChange({ skill: skill.slug, kind: "change", files, note: note || `Edit requested by ${createdBy}.`, proposedBy: createdBy, channelSlug: slug });
-            return text(`📝 \`${skill.slug}\` is an organization skill, so an admin approves edits to it: change proposal #${proposal.id} is filed with your files${remove.length ? " (file removals cannot ride a proposal — mention them to the admin)" : ""}. Nothing changes until an admin approves it.`);
+            return reply(`📝 \`${skill.slug}\` is an organization skill, so an admin approves edits to it: change proposal #${proposal.id} is filed with your files${remove.length ? " (file removals cannot ride a proposal — mention them to the admin)" : ""}. Nothing changes until an admin approves it.`);
           } catch (err) {
-            return text(`🚫 Could not file the change proposal: ${err?.message || err}`);
+            return reply(`🚫 Could not file the change proposal: ${err?.message || err}`);
           }
         }
-        if (tier === "channel") return text(`\`${skill.slug}\` belongs to another channel; its members (or an admin) change it. File your edit with propose_skill_change — that channel's members (or an admin) approve it there with decide_skill_proposal.`);
-        return text(`\`${skill.slug}\` is someone else's; propose a change (propose_skill_change).`);
+        if (tier === "channel") return reply(`\`${skill.slug}\` belongs to another channel; its members (or an admin) change it. File your edit with propose_skill_change — that channel's members (or an admin) approve it there with decide_skill_proposal.`);
+        return reply(`\`${skill.slug}\` is someone else's; propose a change (propose_skill_change).`);
       }
       try {
         const r = await updateLocalSkill({ skill, files, remove, note, createdBy });
-        if (!r.changed && !r.published?.published) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.${r.skill.pinReason === "publication" ? `${publishLine(r.published)} Publication recovery is still pending; retry update_skill or publish_skill.` : ""}`);
+        if (!r.changed && !r.published?.published) return reply(`\`${skill.slug}\` is unchanged — those files match the current revision.${r.skill.pinReason === "publication" ? `${publishLine(r.published)} Publication recovery is still pending; retry update_skill or publish_skill.` : ""}`);
         const pinNote = r.skill.pinReason === "publication" ? " A publication recovery pin protects this edit from source sync; it clears after successful publication." : r.pinned ? " The existing intentional pin is retained on this revision." : r.published?.publicationPinCleared ? " Publication recovery pin cleared; following current again." : "";
-        return text(`✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Conversations that use it get the new files on their next message.${publishLine(r.published)}${pinNote}\n${ANNOUNCE}`);
+        return reply(`✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Conversations that use it get the new files on their next message.${publishLine(r.published)}${pinNote}\n${ANNOUNCE}`);
       } catch (err) {
-        return text(`🚫 Could not update the skill: ${err?.message || err}`);
+        return reply(`🚫 Could not update the skill: ${err?.message || err}`);
       }
     },
   );

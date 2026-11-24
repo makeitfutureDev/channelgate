@@ -28,6 +28,9 @@
   by side over 7, 30 or 90 days. Admins set a default hourly rate and the skills' values; creators
   set their own automations' and API tokens' values, on the page or by asking in chat. Skills show
   value only — their AI cost is part of the run that used them.
+- Skills: the agent now asks how many minutes a new skill saves per use and at what hourly rate
+  while creating it, and stores the answer as the skill's ROI. Anyone who may edit a skill can
+  change these numbers by asking in chat; admins can still set them on the ROI page.
 - Automations: HTTP API runs and scheduled automations now share one run history. API runs get
   everything schedules had — 90 days of runs, the full list of problem types with fix steps,
   **Acknowledge**, and the event timeline. A new **Trigger** filter separates Scheduled from API.

@@ -4,7 +4,9 @@
 //   hours saved = counted runs × minutes ÷ 60        value = hours saved × hourly rate
 //   net = value − AI cost                            ROI = net ÷ AI cost (a multiple)
 // A schedule keeps its inputs on its own record (roiMinutes, roiHourlyRate — schedule-patch.js);
-// an API source, a skill and the gateway's default hourly rate live in `roi_assignments`.
+// an API source, a skill and the gateway's default hourly rate live in `roi_assignments`. A
+// skill's row is set on the ROI board (admins) or by whoever may edit the skill, through the
+// create_skill / update_skill tools' roi_minutes_saved / roi_hourly_rate (patchSkillRoi).
 import { getDb } from "../db/index.js";
 
 export const ROI_WINDOWS = [7, 30, 90];
@@ -93,6 +95,19 @@ export function setRoiAssignment(kind, channelId, ref, { minutes, rate }, by = "
     .run(kind, channelId || "", String(ref), minutes || 0, rate || 0, now, String(by || "").slice(0, 64));
   return { minutes: minutes || 0, rate: rate || 0 };
 }
+// A skill's ROI inputs, patched from the create_skill / update_skill tools: a key left undefined
+// keeps its stored value, 0 / "" / null clears it. Validated (roiMinutes / roiRate) before
+// anything is written, so a bad number changes nothing.
+export function patchSkillRoi(slug, { minutes, rate } = {}, by = "") {
+  const next = {
+    minutes: minutes === undefined ? undefined : roiMinutes(minutes),
+    rate: rate === undefined ? undefined : roiRate(rate),
+  };
+  const current = getRoiAssignment("skill", "", slug) || { minutes: 0, rate: 0 };
+  return setRoiAssignment("skill", "", slug, { minutes: next.minutes ?? current.minutes, rate: next.rate ?? current.rate }, by);
+}
+export const getSkillRoi = (slug) => getRoiAssignment("skill", "", slug) || { minutes: 0, rate: 0 };
+
 export const getDefaultRoiRate = () => getRoiAssignment("default", "", "rate")?.rate || 0;
 export const setDefaultRoiRate = (rate, by = "") => setRoiAssignment("default", "", "rate", { minutes: 0, rate }, by).rate;
 

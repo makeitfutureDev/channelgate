@@ -97,6 +97,21 @@ Claude and Codex (run each once; the tools are the same, the engine phrases the 
 10. "Create a reminder for tomorrow 09:00 to send the report" (no numbers given). Pass: the
     schedule is created WITHOUT ROI values — the agent did not invent any.
 
+Skill ROI in chat — regression `test/skill-roi-tools.test.js` (create/update/get_skill_info, patch
+semantics, validation before any write, who may set it, a synced skill). Claude and Codex (run
+each once in the shared test channel as an approved non-admin tester, then the admin step):
+11. "Turn the steps above into a skill called roi-check-<engine>." Pass: before creating, the agent
+    asks how many minutes one use saves and the hourly rate (the skill-authoring guidance). Answer
+    "15 minutes, 70 dollars". Pass: the reply announces the channel skill and "ROI: saves 15 min
+    per use at $70/h"; the ROI page lists the skill with 15 min and $70.00/h.
+12. "Make that skill save 25 minutes instead." Pass: the reply confirms 25 min at $70/h,
+    `get_skill_info` shows it, and the skill's revision number is unchanged.
+13. Create another skill and answer "no idea" to the ROI question. Pass: the skill is created
+    without ROI values — none invented — and the ROI page lists it as not set.
+14. Tester: "Set skill-authoring to save 10 minutes per use." Pass: refused — only an admin sets
+    an organization skill's ROI; nothing stored. As an admin the same request succeeds although
+    the bundled skill's files cannot be edited.
+
 ## Automations health board (2026-11-24)
 
 Regression: `test/automation-health-board.test.js` (classifier, verdicts and fix steps; member vs

@@ -3,7 +3,8 @@
 // window. Scope is the Automations board's own (automationBoard) for automations and API
 // sources; skill uses follow the same conversations — every one for an admin, otherwise only
 // those the viewer may open. Skill inputs and the default hourly rate are organization-wide, so
-// only an admin sets them.
+// on this board only an admin sets them (a skill's own editors also set its inputs through
+// create_skill / update_skill — src/mcp/tools/skills.js).
 import { listChannels, getChannelMeta } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 import { automationBoard } from "./automations-view.js";
