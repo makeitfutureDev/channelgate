@@ -1,3 +1,4 @@
+import { openActivityPageMenu, openActivityRowActions, selectActivityFilter } from "./activity-browser-controls.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -217,7 +218,7 @@ test("mobile Activity preserves Done counts through durable worker events withou
   await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: root.user, teamId: "TFIXTURE" }));
   await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
   await page.locator("#connection-text").filter({ hasText: "Live updates" }).waitFor();
-  await page.locator('[data-filter="done"]').click();
+  await selectActivityFilter(page, "done");
   await page.locator("tbody tr .pill").filter({ hasText: "Done" }).waitFor();
   const sessionUrl = page.url();
   assert.equal(await page.evaluate(async () => {
@@ -356,6 +357,7 @@ test("Activity viewers see only subscription quick bars and can navigate to full
   assert.match(await page.locator("#subscription-quick").innerText(), /63%/);
   assert.doesNotMatch(await page.locator("#subscription-quick").innerText(), /API fixture|Missing fixture/);
   const activityUrl = page.url();
+  await openActivityPageMenu(page);
   await page.getByRole("link", { name: "Subscriptions", exact: true }).click();
   await page.locator(".subscription-card").nth(1).waitFor();
   assert.equal(page.url(), activityUrl + "/subscriptions");
@@ -377,10 +379,12 @@ test("Activity viewers see only subscription quick bars and can navigate to full
   const detailScreenshot = process.env.CG_ACTIVITY_DETAIL_SCREENSHOT || (process.env.CG_ACTIVITY_SCREENSHOT_DIR && `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/subscriptions-detail-mobile.png`);
   if (detailScreenshot) await page.screenshot({ path: detailScreenshot, fullPage: true });
   await page.reload(); await page.locator(".subscription-card").nth(1).waitFor();
+  await openActivityPageMenu(page);
   await page.getByRole("link", { name: "Activity", exact: true }).click();
   await page.locator(".subscription-quick").nth(1).waitFor();
   const quickScreenshot = process.env.CG_ACTIVITY_SUBSCRIPTIONS_SCREENSHOT || (process.env.CG_ACTIVITY_SCREENSHOT_DIR && `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/subscriptions-quick-mobile.png`);
   if (quickScreenshot) await page.screenshot({ path: quickScreenshot, fullPage: true });
+  await openActivityPageMenu(page);
   await page.getByRole("link", { name: "Subscriptions", exact: true }).click();
   await page.locator(".subscription-card").nth(1).waitFor();
   currentTime += ACTIVITY_SESSION_TTL_MS;
@@ -418,10 +422,11 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
     const page = await context.newPage(); page.setDefaultTimeout(5000);
     const errors = []; page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "T_LATER" }));
+    await openActivityRowActions(page, "Postpone this conversation");
     await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).waitFor();
     const layout = await page.locator("#threads .actions").evaluate((cell) => {
       const bounds = cell.getBoundingClientRect();
-      const controls = [...cell.querySelectorAll("a,button")].filter((item) => !item.hidden).map((item) => {
+      const controls = [...cell.querySelectorAll("a,button")].filter((item) => item.checkVisibility()).map((item) => {
         const r = item.getBoundingClientRect();
         return { text: item.textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
       });
@@ -435,17 +440,18 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
       assert.ok(a.right <= c.left + 1 || c.right <= a.left + 1 || a.bottom <= c.top + 1 || c.bottom <= a.top + 1, `${width}: ${a.text} overlaps ${c.text}`);
     }
     assert.equal(await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).innerText(), "Later");
-    // Each icon sits in the exact centre of its button; the hidden text label takes no space.
-    const icons = await page.locator("#threads .actions").evaluate((cell) => [...cell.querySelectorAll("a,button")].filter((item) => !item.hidden).map((item) => {
+    // Desktop icon-only controls centre each icon. In the expanded strip the icon precedes its label.
+    const icons = await page.locator("#threads .actions").evaluate((cell) => [...cell.querySelectorAll("a,button")].filter((item) => item.checkVisibility()).map((item) => {
       const icon = globalThis.getComputedStyle(item, "::before");
       return { label: item.getAttribute("aria-label"), width: item.clientWidth, height: item.clientHeight, size: parseFloat(icon.width),
-        left: parseFloat(icon.marginLeft), top: parseFloat(icon.marginTop), position: icon.position };
+        left: parseFloat(icon.left) + parseFloat(icon.marginLeft), top: parseFloat(icon.top) + parseFloat(icon.marginTop), position: icon.position };
     }));
-    assert.equal(icons.length, 5, "Slack, Done, Later, Pin and Hide each have a centred icon");
+    const expanded = await page.locator("#threads tr[data-more]").count() === 1;
+    assert.equal(icons.length, expanded ? 6 : 5, "Open, Done, Later, Pin and Hide plus the narrow disclosure");
     for (const icon of icons) {
       assert.equal(icon.position, "absolute", icon.label);
-      assert.ok(Math.abs(icon.left - (icon.width - icon.size) / 2) <= 0.5 && Math.abs(icon.top - (icon.height - icon.size) / 2) <= 0.5,
-        `${width}: ${icon.label} icon must be centred (${JSON.stringify(icon)})`);
+      assert.ok(Math.abs(icon.left - (expanded ? 11 : (icon.width - icon.size) / 2)) <= 0.5 && Math.abs(icon.top - (icon.height - icon.size) / 2) <= 0.5,
+        `${width}: ${icon.label} icon must align with its control (${JSON.stringify(icon)})`);
     }
     if (process.env.CG_LATER_LAYOUT_SCREENSHOT && [390, 768, 1440].includes(width)) {
       await page.screenshot({ path: process.env.CG_LATER_LAYOUT_SCREENSHOT.replace(".png", `-${width}.png`), fullPage: true });
@@ -453,12 +459,14 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
     await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).click();
     await page.waitForFunction(() => globalThis.document.querySelector('[data-filter="later"] span').textContent === "1");
     assert.equal(await page.locator("#threads tr").count(), 0);
-    await page.locator('[data-filter="later"]').click();
+    await selectActivityFilter(page, "later");
+    await openActivityRowActions(page, "Postpone this conversation");
     await page.getByRole("button", { name: "Resume: Postpone this conversation", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
     await page.getByRole("button", { name: "Resume: Postpone this conversation", exact: true }).click();
     await page.waitForFunction(() => globalThis.document.querySelector('[data-filter="later"] span').textContent === "0");
-    await page.locator('[data-filter="active"]').click();
+    await selectActivityFilter(page, "active");
+    await openActivityRowActions(page, "Postpone this conversation");
     await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).waitFor();
     assert.deepEqual(errors, []);
     await context.close();
@@ -606,7 +614,7 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
       assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, `${theme}/${width}: no horizontal overflow`);
       const pinnedBox = await page.locator("#pinned-section").boundingBox(), tableBox = await page.locator("#table").boundingBox();
       assert.ok(pinnedBox.y + pinnedBox.height <= tableBox.y, "pins appear above the ordinary table");
-      for (const button of await page.locator("#pinned-threads .actions button").all()) {
+      for (const button of await page.locator("#pinned-threads .actions button:visible").all()) {
         const box = await button.boundingBox();
         const cell = await page.locator("#pinned-threads .actions").boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `${theme}/${width}: controls fit`);
@@ -621,20 +629,22 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   await second.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TPINFIXTURE" }));
   await second.locator("#pinned-threads tr").waitFor();
   await second.close();
+  await openActivityRowActions(page, roots[0].text);
   await page.getByRole("button", { name: "Delay for later: " + roots[0].text, exact: true }).click();
+  await openActivityRowActions(page, roots[0].text);
   await page.getByRole("button", { name: "Resume: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#pinned-threads tr").count(), 1);
   await page.getByRole("button", { name: "Mark done: " + roots[0].text, exact: true }).click();
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 0);
-  await page.getByRole("button", { name: /^Completed/ }).click();
+  await selectActivityFilter(page, "done");
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#threads tr").count(), 1, "self-Done moves from pins to Completed");
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#threads tr").length === 0);
-  await page.getByRole("button", { name: /^Active/ }).click();
+  await selectActivityFilter(page, "active");
   await page.locator("#pinned-threads tr").waitFor();
   assert.equal(await page.locator("#pinned-threads tr").count(), 1, "Reopen restores the saved pin preference");
-  await page.getByRole("button", { name: /^Active/ }).click();
+  await selectActivityFilter(page, "active");
   await page.locator("#search").fill("Second");
   assert.equal(await page.locator("#pinned-section").isVisible(), false);
   await page.locator("#search").fill("");
@@ -648,8 +658,10 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   await otherContext.close();
   await page.getByRole("button", { name: "Mark done: " + roots[0].text, exact: true }).click();
   await page.waitForFunction(() => globalThis.document.getElementById("pinned-section").hidden);
-  await page.getByRole("button", { name: /^Completed/ }).click();
+  await selectActivityFilter(page, "done");
+  await openActivityRowActions(page, roots[0].text);
   await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
+  await openActivityRowActions(page, roots[0].text);
   await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).waitFor();
   assert.equal(await page.locator("#threads tr").count(), 1);
   assert.deepEqual(errors, []);
@@ -781,13 +793,13 @@ test("Activity channel pins collect future open threads, retain empty channels a
     }
   }
   await page.locator("#group-by").selectOption("channel");
-  await page.getByRole("button", { name: /^Completed/ }).click();
+  await selectActivityFilter(page, "done");
   assert.equal(await page.locator("#pinned-threads tr").count(), 0, "Completed excludes pinned open work");
   assert.equal(await page.locator("#threads tr").count(), 1, "completed channel work remains in the ordinary Completed view");
   await page.locator("#search").fill("no matches");
   assert.equal(await page.locator("#pinned-section").isVisible(), false);
   await page.locator("#search").fill("");
-  await page.getByRole("button", { name: /^Active/ }).click();
+  await selectActivityFilter(page, "active");
   roots.push({ ts: "400.000005", user: ownerId, text: "Future pinned channel conversation" });
   indexSlackThread({ channelId, slug: entry.slug, root: roots.at(-1), agentEngaged: true });
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 3);
@@ -801,16 +813,18 @@ test("Activity channel pins collect future open threads, retain empty channels a
   for (const root of roots.filter((root) => root.user === ownerId)) setSlackThreadDone(channelId, root.ts, ownerId, true);
   await page.waitForFunction(() => globalThis.document.querySelector("#pinned-channels .pinned-channel-count")?.textContent === "No visible conversations");
   assert.equal(await page.locator("#pinned-threads tr").count(), 0, "self-Done leaves both explicit and inherited pins");
-  await page.getByRole("button", { name: /^Completed/ }).click();
+  await selectActivityFilter(page, "done");
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).click();
   await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: /^Active/ }).click();
+  await selectActivityFilter(page, "active");
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 1);
+  await openActivityRowActions(page, roots[0].text);
   assert.equal(await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).count(), 1,
     "Reopen restores the saved explicit pin");
   await page.locator("#pinned-threads").getByRole("button", { name: "Unpin channel: Pinned channel with a long name", exact: true }).click();
   await page.waitForFunction(() => globalThis.document.getElementById("pinned-channels").hidden);
   assert.equal(await page.locator("#pinned-threads tr").count(), 1, "unpinning the channel preserves explicit thread pins");
+  await openActivityRowActions(page, roots[0].text);
   await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
   await page.waitForFunction(() => globalThis.document.getElementById("pinned-section").hidden);
   assert.deepEqual(errors, []);

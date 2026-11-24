@@ -1,3 +1,4 @@
+import { openActivityRowActions, selectActivityFilter } from "./activity-browser-controls.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -37,26 +38,29 @@ test("Activity Hide/Hidden/Show works for participants on desktop and phone, inc
   await page.locator("#pinned-threads tr").waitFor();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    const hidden = page.locator('#filters button[data-filter="hidden"]');
+    await openActivityRowActions(page, root.text);
     await page.getByRole("button", { name: "Hide: " + root.text, exact: true }).click();
     await page.waitForFunction(() => !globalThis.document.querySelector("#pinned-threads tr") && !globalThis.document.querySelector("#threads tr"));
     assert.equal(await page.locator('#filters button[data-filter="active"] span').textContent(), "0");
-    await hidden.click();
+    await selectActivityFilter(page, "hidden");
     const show = page.getByRole("button", { name: "Show: " + root.text, exact: true });
+    await openActivityRowActions(page, root.text);
     await show.waitFor();
     assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
     await show.click();
     await page.waitForFunction(() => !globalThis.document.querySelector("#threads tr"));
-    await page.locator('#filters button[data-filter="active"]').click();
+    await selectActivityFilter(page, "active");
     await title.waitFor();
   }
+  await openActivityRowActions(page, root.text);
   await page.getByRole("button", { name: "Hide: " + root.text, exact: true }).click();
   await page.reload();
-  await page.locator('#filters button[data-filter="hidden"]').click();
+  await selectActivityFilter(page, "hidden");
+  await openActivityRowActions(page, root.text);
   await page.getByRole("button", { name: "Show: " + root.text, exact: true }).waitFor();
   recordSlackThreadParticipation(channelId, threadTs, viewer, (Date.now() / 1000 + 1).toFixed(6));
   await page.waitForFunction(() => !globalThis.document.querySelector("#threads tr"));
-  await page.locator('#filters button[data-filter="active"]').click();
+  await selectActivityFilter(page, "active");
   await title.waitFor();
   assert.deepEqual(errors, []);
 });

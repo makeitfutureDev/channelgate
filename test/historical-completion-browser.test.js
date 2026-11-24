@@ -1,3 +1,4 @@
+import { selectActivityFilter } from "./activity-browser-controls.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -40,7 +41,7 @@ for (const width of [1440, 390]) test(`historical own check leaves Active while 
   await page.reload();
   await page.getByRole("link", { name: roots[1].text, exact: true }).waitFor();
   assert.equal(await page.getByRole("link", { name: roots[0].text, exact: true }).count(), 0);
-  await page.locator('#filters button[data-filter="done"]').click();
+  await selectActivityFilter(page, "done");
   await page.getByRole("link", { name: roots[0].text, exact: true }).waitFor();
   await page.getByRole("link", { name: roots[2].text, exact: true }).waitFor();
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
