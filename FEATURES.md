@@ -8027,33 +8027,16 @@ are retired, bullet by bullet; everything else stands.
 - Channel **Memory** sub-tab: view and edit the channel's folder-scoped `MEMORY.md` directly from the
   admin UI (lazy-loaded on first open, saved with its own button via `GET`/`PUT
   /api/channels/:id/memory`). Warns when folder memory is toggled off for the channel. → TEST-PLAN: Admin UI.
-- Settings is **ONE long page** — every section stacked in reading order and always in the DOM,
-  with a **sticky top bar** carrying only search and a **sticky left rail** carrying the section
-  names as **jump links**
-  (`/settings#set-<section>`, deep-linkable and restored on refresh/Back). The links scroll rather
-  than swap panes, and a **scroll-spy** marks the section you are actually reading; a jump lands
-  clear of the sticky bar (the offset is measured from the pinned bar, never assumed) and defers
-  the spy until the smooth scroll settles, while any real scroll input takes the mark back.
-  Sections: **Connection** (Slack bot tokens + status + the daemon's public URL), **Agent
-  defaults** (enabled harnesses, engine, cross-engine failover, keepalive, context window, progress
-  view, mention reactions, instructions, memory, schedule limits, nudges, codex rate),
-  **Access Templates**, **Integrations** (Composio mode + URL, SDK key),
-  **License**, **Access & security** (default channel access, trusted bot apps + network domains as
-  chip editors), **System** (admin password, run-API token, Reconnect Slack, and a red **danger
-  zone**: reset all channels' access, remove password, restart daemon, disconnect Slack).
-  **Live search** (`/` or ⌘/Ctrl-K to focus, Esc to clear) filters every card as you type: terms are
-  AND-ed, case- and typography-insensitive (curly quotes/dashes fold), a card is matched together
-  with its section's title and description (so "connection" surfaces that whole section), empty
-  sections recede in the left rail, the view lands on the first surviving section, and a query nothing
-  matches says so with a one-click Clear. Cards are HIDDEN, never unmounted, so the single Save
-  still persists every section — and the index is rebuilt per keystroke from `textContent` only, so
-  asynchronously-loaded cards are searchable and no token value can enter it. Typing in the search
-  box never marks settings dirty. Matching rules live in `public/admin-settings-search.js` (pure,
-  DOM-free, unit-tested). ONE sticky save bar with dirty tracking ("Unsaved changes" → "All changes
-  saved") persists everything; Slack reconnects only when a Slack token actually changed.
-  Destructive actions use branded in-app confirm dialogs (danger-tinted confirm, Escape cancels)
-  instead of native `confirm()`/`alert()`. Cross-page pointers (API docs → run-API token) scroll to
-  the exact control and pulse it. → TEST-PLAN: Admin UI (redesign).
+- Admin Settings groups categories under **Workspace**, **Agents** and **Administration**. Each
+  category has its own link, with expandable subcategories and a compact selector on phones.
+  Slack, Google Chat and Teams show connection status with setup collapsed. Optional features show
+  their state and expose dependent fields when enabled. Desktop forms and search results use the
+  available width. One global Save preserves pending edits across categories.
+- Settings search (`/` or Ctrl/⌘-K) finds fields, options, setup steps and actions across
+  categories. Each result shows its location and opens the matching control or its prerequisite.
+  Typing a search or opening a result leaves the form clean. Credential values stay out of search.
+  **System health → Engine harnesses** lists enabled licenses, CLI availability, sign-in status
+  and the warm-session count.
 - A reusable **new-channel template** is copied into a channel's metadata only when the bot first
   registers it. It defaults to Autonomous mode with approved-domain network egress; edits affect
   future joins without silently changing existing channels.

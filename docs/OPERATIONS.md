@@ -171,7 +171,7 @@ Claude inside every container (it crosses through the reviewed passthrough list 
 
 The daemon binds `127.0.0.1`. The supported way to reach it from outside the host — for the admin
 UI over the internet, and for approval links a phone can open — is a tunnel or reverse proxy in
-front of it on the SAME machine (cloudflared, nginx). Set *Settings → Connection → Public URL* to
+front of it on the SAME machine (cloudflared, nginx). Set *Settings → Gateway & runtime → Public URL* to
 the public address: it is what approval links are built from, and its hostname is automatically
 allowed past the DNS-rebinding guard (extra names go in `CG_ALLOWED_HOSTS`).
 

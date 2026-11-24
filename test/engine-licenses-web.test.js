@@ -5,6 +5,7 @@
 //      own picker (src/gateway/license-pool.js) — the admin UI must offer what the gateway accepts.
 //   2. The real page in a browser (only with CG_BROWSER_MODULE): the Settings licenses manager, the
 //      channel card's Harness → License → "If it fails, also use" controls, and the lock.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -208,13 +209,16 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   // ── Settings: the manager lists every license under its harness, and adds one ──
   await page.goto(`${origin}/settings`);
   const manager = page.locator("#engine-enabled-box");
+  await openSetting(page, manager);
   await manager.locator('.lic-group[data-harness="codex"]').waitFor();
   // The manager is its own Settings section, apart from the ChannelGate product license; the
   // harness card points to it.
   assert.equal(await page.locator("#set-engine-licenses #engine-enabled-box").count(), 1);
   assert.equal(await page.locator("#set-license #engine-enabled-box").count(), 0);
   assert.equal(await page.locator('#settings-nav a[data-sec="engine-licenses"]').textContent(), "Engine licenses");
-  await page.locator("#settings-body a.lic-jump").first().click();
+  const licenseJump = page.locator("#settings-body a.lic-jump").first();
+  await openSetting(page, licenseJump);
+  await licenseJump.click();
   await page.waitForURL(/#set-engine-licenses$/);
   assert.deepEqual(await manager.locator(".lic-group-title").allTextContents(), ["Claude Code licenses", "Codex licenses"]);
   const apiRow = manager.locator(`.lic-row[data-license="${apiLicense.id}"]`);
@@ -253,7 +257,7 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   const workRow = manager.locator(`.lic-row[data-license="${workId}"]`);
   await workRow.waitFor();
   assert.match(await workRow.textContent(), /Work ChatGPT/);
-  assert.match(await workRow.locator(".lic-status").textContent(), /Not signed in/);
+  await workRow.locator(".lic-status").filter({ hasText: "Not signed in" }).waitFor();
   assert.equal(await workRow.locator('input[type="checkbox"]').isChecked(), true, "a new license is switched on");
   assert.equal(await workRow.locator(".lic-signin").count(), 1, "a Codex sign-in license signs in from the browser");
   // The "Not signed in — run `…`" line under the row copies the command it quotes with one click.
@@ -372,15 +376,18 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
 
   // The gateway default picker now has a License control for Codex and none for Claude Code.
   const gatewayLicense = page.locator("#set-engine").locator("xpath=ancestor::label[1]/following-sibling::label[contains(@class,'lic-field')][1]");
+  await openSetting(page, "#set-engine");
   await page.locator("#set-engine").selectOption("claude");
   assert.equal(await gatewayLicense.isVisible(), false, "Claude Code still has one usable license");
   await page.locator("#set-engine").selectOption("codex");
   assert.equal(await gatewayLicense.isVisible(), true);
   // The license list changes with a page reload, so it waits for unsaved Settings edits.
+  await openSetting(page, manager);
   await manager.locator('.lic-group[data-harness="codex"] .lic-add').click();
   await manager.locator('.lic-group[data-harness="codex"] .lic-notice').filter({ hasText: "Save your settings changes first" }).waitFor();
   assert.equal(await manager.locator(".lic-form").count(), 0);
   // The gateway default is saved as engine + enginePool.
+  await openSetting(page, gatewayLicense);
   await gatewayLicense.locator("select").selectOption("any");
   const settingsSaved = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
   await page.locator("#save-settings").click();
@@ -391,6 +398,7 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   assert.equal(settingsBody.enginePool, "any");
   assert.equal(settingsForApi().enginePool, "any");
   await page.reload();
+  await openSetting(page, manager);
   await manager.locator('.lic-group[data-harness="codex"]').waitFor();
   assert.equal(await page.locator("#set-engine").inputValue(), "codex");
   assert.equal(await gatewayLicense.locator("select").inputValue(), "any", "the stored gateway selection is shown again");
@@ -455,6 +463,7 @@ test("the admin UI: licenses manager, harness → license picker and the lock", 
   // ── Removing a license asks first; a lock that still names it does not break the page ──
   await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), approvedEngines: ["claude", workId], engine: workId, licensePool: "" });
   await page.goto(`${origin}/settings`);
+  await openSetting(page, manager);
   await workRow.waitFor();
   await workRow.locator(".lic-remove").click();
   await page.locator("#confirm-ok").waitFor();

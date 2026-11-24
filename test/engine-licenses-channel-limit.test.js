@@ -4,6 +4,7 @@
 // what it can never be (the gateway default, part of its pool, "the last license left"), and that
 // both setting a limit and running on one need the Enterprise entitlement. ("License" here is an
 // engine license, never the product license of src/ee/ — which is what the entitlement reads.)
+import { openSetting } from "./settings-navigation-helper.js";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -405,6 +406,7 @@ test("the admin UI: 'Available in' limits a license, and only that conversation'
   // Settings → Engine licenses → the form: "Available in" lists the conversations by name.
   await page.goto(`${origin}/settings`);
   const manager = page.locator("#engine-enabled-box");
+  await openSetting(page, manager);
   const row = manager.locator(`.lic-row[data-license="${seat.id}"]`);
   await row.waitFor();
   assert.doesNotMatch(await row.textContent(), /Only in/);
@@ -440,6 +442,7 @@ test("the admin UI: 'Available in' limits a license, and only that conversation'
   await form.locator(".lic-cancel").click();
 
   // The gateway default never offers it; its own conversation does; the other one does not.
+  await openSetting(page, "#set-engine");
   await page.locator("#set-engine").selectOption("codex");
   const gatewayLicense = page.locator("#set-engine").locator("xpath=ancestor::label[1]/following-sibling::label[contains(@class,'lic-field')][1]");
   const gatewayOptions = (await gatewayLicense.isVisible()) ? await gatewayLicense.locator("option").evaluateAll((options) => options.map((o) => o.value)) : [];

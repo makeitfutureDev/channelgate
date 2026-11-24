@@ -5,6 +5,7 @@
 // time. Everything that used to be guaranteed by a fixed element id — the key reveals, the clear
 // button, the model picker, and above all which provider a typed key is saved under — is now
 // produced by code, so it is checked in a real browser against the real admin API.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -43,7 +44,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
 
   const cards = page.locator(".qwen-provider-card");
-  await cards.first().waitFor();
+  await cards.first().waitFor({ state: "attached" });
   assert.equal(await cards.count(), QWEN_PROVIDERS.length, "one card per provider in the table");
   for (const [i, entry] of QWEN_PROVIDERS.entries()) {
     assert.equal(await cards.nth(i).locator('[data-role="label"]').textContent(), entry.label);
@@ -62,6 +63,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   assert.match(await toggles.filter({ hasText: euEntry.label }).textContent(), /needs an API key \(Settings button\)/);
 
   // The model picker is the provider's OWN catalog, not the other provider's.
+  await openSetting(page, eu);
   const euModels = await eu.locator('[data-role="default-model"] option').allInnerTexts();
   assert.ok(euModels.includes("Kimi K2.7 Code"), `the EU catalog is offered: ${euModels.join(", ")}`);
   assert.equal(
@@ -82,6 +84,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   await eu.locator('[data-role="base-url"]').fill("https://ws-browser.eu-central-1.example/apps/anthropic");
   await eu.locator('[data-role="default-model"]').selectOption(euEntry.models[0].value);
   await eu.locator('[data-role="default-effort"]').selectOption("medium");
+  await openSetting(page, "#set-default-claude-effort");
   await page.locator("#set-default-claude-effort").selectOption("high");
   await page.locator("#set-default-codex-effort").selectOption("ultra");
   await persist();
@@ -89,7 +92,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   assert.equal(getDefaultEffort("codex"), "ultra");
   assert.equal(getDefaultEffort(euEntry.id), "medium");
   await page.reload();
-  await cards.first().waitFor();
+  await cards.first().waitFor({ state: "attached" });
   assert.equal(await page.locator("#set-default-claude-effort").inputValue(), "high");
   assert.equal(await page.locator("#set-default-codex-effort").inputValue(), "ultra");
   assert.equal(await eu.locator('[data-role="default-effort"]').inputValue(), "medium");
@@ -103,6 +106,7 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   assert.match(await toggles.filter({ hasText: euEntry.label }).textContent(), /^(?!.*needs an API key).*$/s, "the toggle stops asking for a key once one is stored");
 
   // Clearing is explicit: an untouched (masked) box on a later save must not wipe the credential.
+  await openSetting(page, eu);
   await eu.locator('[data-role="base-url"]').fill("https://ws-browser-2.eu-central-1.example/apps/anthropic");
   await persist();
   assert.equal(getQwenConfig(euEntry.id).apiKey, "sk-ws-BROWSER-FIXTURE-5678", "an unrelated save keeps the key");
@@ -111,19 +115,21 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   assert.equal(getQwenConfig(euEntry.id).apiKey, "", "the armed clear removed it");
   assert.equal(await eu.locator('[data-role="key-state"]').textContent(), "not set");
 
+  await openSetting(page, "#set-default-claude-effort");
   await page.locator("#set-default-claude-effort").selectOption("");
   await page.locator("#set-default-codex-effort").selectOption("");
+  await openSetting(page, eu);
   await eu.locator('[data-role="default-effort"]').selectOption("");
   await persist();
   assert.equal(getDefaultEffort("claude"), "");
   assert.equal(getDefaultEffort("codex"), "");
   assert.equal(getDefaultEffort(euEntry.id), "");
 
-  // The settings search indexes each card separately — they are siblings, not one wrapped block.
+  // The dynamically rendered provider description leads to the correct card.
   await page.locator("#settings-search").fill("Model Studio");
-  await page.waitForFunction(() => !globalThis.document.querySelectorAll(".qwen-provider-card")[1]?.classList.contains("filtered-out"));
-  assert.equal(await eu.evaluate((el) => el.classList.contains("filtered-out")), false, "the EU card matches its own text");
-  assert.equal(await first.evaluate((el) => el.classList.contains("filtered-out")), true, "the other provider's card is filtered out");
+  const result = page.locator("#settings-results button").filter({ hasText: euEntry.label }).first();
+  await result.click();
+  assert.equal(await eu.locator('[data-role="base-url"]').isVisible(), true);
 
   assert.deepEqual(errors, [], "no page or console errors");
   saveSettings(Object.fromEntries(QWEN_PROVIDERS.flatMap((e) => [[e.settings.apiKey, ""], [e.settings.baseUrl, ""], [e.defaultModelKey, ""]])));

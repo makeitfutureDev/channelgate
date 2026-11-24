@@ -1,4 +1,5 @@
 // Disposable real API + browser state. Set CG_BROWSER_MODULE to the installed Playwright module.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -40,6 +41,7 @@ test("platform activation lists save independently and repaint after reload", { 
   const card = teams.locator("xpath=../..");
   assert.match(await card.textContent(), /Teams event delivery/);
   assert.match(await card.textContent(), /Google Chat Reaction events topic/);
+  await openSetting(page, slack);
   await slack.fill("rocket");
   await teams.fill(":ALIEN:");
   await google.fill("🚀");
@@ -60,6 +62,7 @@ test("platform activation lists save independently and repaint after reload", { 
   await page.waitForFunction(() => globalThis.document.querySelector("#set-teams-mention-reactions")?.value === "alien");
   assert.equal(await slack.inputValue(), "rocket");
   assert.equal(await google.inputValue(), "🚀");
+  await openSetting(page, teams);
   await teams.fill("👍");
   const second = await persist();
   assert.equal(second.teamsMentionReactions, "👍");

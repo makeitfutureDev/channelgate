@@ -13771,29 +13771,19 @@ none` for its cases and live gates. Kept as history.
       remain usable without horizontal page overflow.
 - [x] Airtable: active engine-independent live definition `UI-USERS-SEARCH-01` covers masked
       server-side search, UI debounce/race behavior, clear/no-results states, and secret non-match.
-- [ ] Settings danger zone: Reset all channels' access / Remove password / Restart daemon /
-      Disconnect Slack live in the red zone; each opens the branded confirm dialog (danger-tinted
-      confirm button, Escape cancels, backdrop cancels); reset completion shows an in-app notice
-      (no native confirm()/alert() anywhere).
-- [x] Unit: settings search + scroll-spy rules (`test/settings-single-page.test.js`) — AND-ed terms,
-      typography folding, section title/description folded into every card, "no match" only when the
-      page is actually indexed, spy skips filtered-out sections and picks the last one at the
-      bottom; plus the markup contract (one stacked page, `#set-<section>` ids + headings + jump
-      links in a sticky left rail with search alone in the top bar, no pane show/hide left anywhere)
-      and an end-to-end index built from the real
-      index.html (xoxb → Connection, composio → Integrations, danger zone → System, …).
-- [ ] Live (Settings is ONE page): every section is visible by scrolling — no pane swaps anywhere.
-      Clicking a left-rail jump link scrolls to that section, lands it clear of the sticky bar,
-      marks it in the rail, and writes `/settings#set-<section>`; reloading that URL restores the same
-      position; scrolling by hand re-marks the rail as you pass each section; scrolling to the
-      very bottom marks the last section.
-- [ ] Live (Settings search): `/` (and ⌘/Ctrl-K) focuses the box, typing narrows to matching cards
-      only, sections with no hits disappear and their left-rail links dim, the page lands on the first
-      surviving section, Esc / × / "Clear search" restores everything, and a junk query shows the
-      "No settings match" line. Typing in the search box must NOT flip the save bar to "Unsaved
-      changes"; with a search active, changing a visible field and saving still persists every
-      section (hidden cards are hidden, not unmounted). API docs → "generate a token" jumps to the
-      HTTP run API card and pulses it.
+- [ ] Settings → Gateway & runtime → Danger zone offers the channel access reset, agent
+      defaults reset and daemon restart with their existing confirmation flows. Open the Slack
+      card under Chat connections for Disconnect and Reconnect.
+- [x] Automated Settings navigation checks (`test/settings-single-page.test.js`,
+      `test/settings-navigation-browser.test.js`) cover ranking, collapsed chat setup, disabled
+      feature discovery, secret exclusion, focus, responsive navigation and global save.
+- [ ] Live admin UI, engine-independent. In a disposable gateway open Settings at 1680px and
+      390px. Confirm one category is visible, all three platform setups start collapsed, and
+      desktop cards use the available width. Search “slack signing secret” and “Gemini API key”
+      with voice calls off. Selecting a result must open its field or focus its enable switch.
+      Edit settings in two categories, clear a no-match search, save once and reload. Both edits
+      must persist. Open System health and verify harness status and warm sessions against the
+      fixture's health response. The sidebar should carry no per-license rows.
 - [ ] Settings chip editors (trusted bot apps, network egress domains): Enter/comma adds a chip,
       × removes, Backspace on empty removes last; saving persists the same comma-separated values
       as before the redesign.

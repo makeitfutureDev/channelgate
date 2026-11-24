@@ -170,10 +170,10 @@ export function secretEditorMarkup() {
   root.innerHTML = `
     <div class="secret-list"></div>
     <div class="secret-add">
-      <input class="secret-name" type="text" autocomplete="off" spellcheck="false" />
-      <input class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
+      <input aria-label="Variable name" class="secret-name" type="text" autocomplete="off" spellcheck="false" />
+      <input aria-label="Variable value" class="secret-value" type="password" placeholder="value — stored, never shown again" autocomplete="new-password" />
       <label class="toggle" title="Programs see a stand-in; the real value is only sent to servers an admin approves. Email and database passwords stay usable automatically. Untick for plain configuration (an id, a region, a URL)."><input class="secret-is-secret" type="checkbox" checked /> Secret</label>
-      <input class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Allowed domains (optional) — api.example.com" title="Restricts the secret to only these domains: the egress proxy swaps the real value in there and nowhere else, with no approval needed. Leave empty and each new server asks an admin once. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
+      <input aria-label="Allowed domains" class="secret-hosts" type="text" autocomplete="off" spellcheck="false" placeholder="Allowed domains (optional) — api.example.com" title="Restricts the secret to only these domains: the egress proxy swaps the real value in there and nowhere else, with no approval needed. Leave empty and each new server asks an admin once. Avoid multi-tenant suffixes such as *.vercel.app or *.github.io: they cover other customers' sites too." />
       <button type="button" class="ghost secret-save">Save variable</button>
     </div>
     <em class="state secret-hint"></em>`;

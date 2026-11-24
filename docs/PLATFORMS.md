@@ -73,7 +73,7 @@ reactions (step 8).
      on the topic. Google instructs you to clear *Build this Chat app as a Google Workspace
      add-on* when configuring a new standalone app. This publisher is **not** the one to use for
      an add-on.
-6. **ChannelGate:** in Settings → Connection → *Google Chat*, paste the JSON key from step 3,
+6. **ChannelGate:** in Settings → Chat connections → *Google Chat*, paste the JSON key from step 3,
    enter `projects/<project>/subscriptions/<subscription>`, **Save**, then **Connect**. A
    *Connected — pulling …* status confirms the subscription can be polled; it does not establish
    that Google Chat can publish to the topic.
@@ -111,7 +111,7 @@ short-circuit that.
       Configuration-page service account, or `chat-api-push@system.gserviceaccount.com` for a
       standalone app), so the step 5 grant on the topic already covers it. Events then arrive
       through the subscription ChannelGate already pulls.
-   4. In Settings → Connection → *Google Chat*, enter **Reaction events topic**
+   4. In Settings → Chat connections → *Google Chat*, enter **Reaction events topic**
       `projects/<project>/topics/<topic>` (the same topic), **Save** and **Connect**. The status
       line reads `reactions N/M spaces` once subscriptions are active, or names the error.
 
@@ -132,7 +132,7 @@ short-circuit that.
    ([Google's connection settings](https://developers.google.com/workspace/chat/configure-chat-api);
    the Workspace Events API has no click event type). ChannelGate serves that endpoint on the same
    HTTPS listener as the admin UI and the Teams webhook:
-   1. Set the gateway **Public URL** (Settings → Connection). The Google Chat card then shows the
+   1. Set the gateway **Public URL** (Settings → Gateway & runtime). The Google Chat card then shows the
       endpoint, `<Public URL>/api/googlechat/events`.
    2. **Workspace add-on apps:** in Settings → Google Chat, enter the **Chat app service account**
       — the *Service account email* shown under Connection settings on the Chat API Configuration
@@ -266,7 +266,7 @@ You need a Microsoft 365 account permitted to register the app and install custo
    An expired code needs a fresh login. Do not request passwords or authentication tokens in chat.
 
 2. **Create the public event URL.** Teams cannot deliver events to `localhost`. For production,
-   set Settings → Connection → *Public URL* to the daemon's public HTTPS origin. For local use,
+   set Settings → Gateway & runtime → *Public URL* to the daemon's public HTTPS origin. For local use,
    expose the daemon with a persistent HTTPS tunnel and use that origin. The Admin UI shows the
    resulting endpoint: `<public-url>/api/teams/messages`.
 3. **Generate the bot and Teams app with that endpoint.** Run this in a private operator terminal;
@@ -292,7 +292,7 @@ You need a Microsoft 365 account permitted to register the app and install custo
    (client) ID. Keep personal, team and groupChat scopes for the conversations you intend to use.
    For an existing registration, use `teams app list` and `teams app get <teamsAppId>` to inspect
    it before creating a duplicate.
-4. **Configure ChannelGate** — Settings → Connection → *Microsoft Teams*: paste `CLIENT_ID` as the
+4. **Configure ChannelGate** — Settings → Chat connections → *Microsoft Teams*: paste `CLIENT_ID` as the
    Application ID, `CLIENT_SECRET` as the client secret, and `TENANT_ID` as the tenant, Save, then
    **Connect**.
 5. **Install the generated app in Teams:**
@@ -315,7 +315,7 @@ You need a Microsoft 365 account permitted to register the app and install custo
 ### Optional all-message edit and reaction events (experimental)
 
 The `teams-ms` branch adds an opt-in **Observe edits and robot reactions on all messages**
-setting under Settings → Connection → Microsoft Teams (`teamsAllMessageEvents`, default `false`).
+setting under Settings → Chat connections → Microsoft Teams (`teamsAllMessageEvents`, default `false`).
 It requests Graph subscriptions for known installed conversations, not a tenant-wide message feed.
 Normal group/channel messages still need a real bot mention. A robot reaction is an explicit
 activation by the reacting user and is checked against that user's current ChannelGate access.
@@ -629,7 +629,7 @@ does not mint or send supplemental links; failed card delivery refuses the actio
 guidance there. Opening a link shows a confirmation
 page and decides nothing; the page's Confirm button performs the decision through exactly the code
 a button click runs. The gateway needs a **Public URL** for a link to be reachable from outside the
-host, and the behaviour is Settings → Connection → **Approval links** (`auto` / `always` / `off`).
+host, and the behaviour is Settings → Chat connections → **Approval links** (`auto` / `always` / `off`).
 See `FEATURES.md` → Modes & approvals for the security properties.
 
 On `teams-ms`, native Teams approval cards call the shared actor-checked decision path. Inline

@@ -16,7 +16,7 @@ import {
   loadChannelGuestOptions,
   reconcileChannelMeta,
 } from "./admin-state.js";
-import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
+import { createSettingsNavigation } from "./admin-settings-navigation.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
 import { setSubscriptionsActive } from "./admin-subscriptions.js";
@@ -376,7 +376,7 @@ function capLabelOf(m = {}) {
 
 // ── View switching + URL history ────────────────────────────────────────────────
 function loadView(name, { refreshIdentity = true } = {}) {
-  if (name === "system-health") setSystemHealthActive(true);
+  if (name === "system-health") setSystemHealthActive(true, engineLabel);
   if (name === "subscriptions") setSubscriptionsActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
@@ -412,7 +412,7 @@ function setView(name, { history = "push", load = true } = {}) {
   if (view !== "system-health") setSystemHealthActive(false);
   if (view !== "subscriptions") setSubscriptionsActive(false);
   if (load) loadView(view);
-  if (view === "settings") enterSettingsView(hash);
+  if (view === "settings") settingsNavigation.enter(hash);
 }
 
 // ── API docs (static reference for the HTTP run API) ────────────────────────────
@@ -422,7 +422,7 @@ function setView(name, { history = "push", load = true } = {}) {
 function gotoApiTokenSettings() {
   setView("settings");
   if (!viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
-  revealSetting("set-apikey");
+  settingsNavigation.reveal(document.getElementById("set-apikey"));
 }
 
 async function loadApiDocs() {
@@ -1816,7 +1816,7 @@ function wireGrantTierNavigation(select, currentTier) {
     const next = select.value;
     if (next === "organization") {
       setView("settings");
-      selectSettingsSection("access");
+      settingsNavigation.reveal(document.getElementById("org-grant-tier"));
     } else if (next === "channel") {
       setView("channels");
     } else if (next === "user") {
@@ -2464,7 +2464,7 @@ function renderChannelDetail(ch) {
   card.querySelector(".ch-licenses-all")?.addEventListener("click", (e) => {
     e.preventDefault();
     setView("settings");
-    selectSettingsSection("engine-licenses");
+    settingsNavigation.choose("engine-licenses");
   });
   syncModelOptions({ engineSelect, modelSelect, value: meta.model || "", blankLabel: "gateway default (Settings)" });
   syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: meta.effort || "" });
@@ -2732,7 +2732,7 @@ function renderChannelDetail(ch) {
   card.querySelector(".ch-ins-global-link").addEventListener("click", (ev) => {
     ev.preventDefault();
     setView("settings");
-    selectSettingsSection("agent"); // land on Agent defaults (where the global instructions live)
+    settingsNavigation.reveal(document.getElementById("set-agents-instructions"));
   });
   card.querySelector(".ch-instructions-save").addEventListener("click", async () => {
     insSaved.textContent = "saving…";
@@ -3491,11 +3491,21 @@ function openUserDrawer(id) {
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────────
+function updateConnectionSummary(banner, connection) {
+  const badge = banner.closest(".setcard").querySelector(".setcard-state");
+  const state = connection?.connected ? "Connected" : ({
+    connecting: "Connecting…", disconnecting: "Disconnecting…", error: "Connection error",
+  })[connection?.status] || "Not connected";
+  badge.textContent = state;
+  badge.dataset.tone = connection?.connected ? "ok" : connection?.status === "error" ? "error" : "";
+}
+
 function renderSlackStatus(slack) {
   // The Make.com help block names the bot's own member ID once Slack is connected.
   for (const el of document.querySelectorAll("[data-bot-user-id]")) if (slack?.botUserId) el.textContent = slack.botUserId;
   const el = document.getElementById("slack-status");
   if (!slack) return;
+  updateConnectionSummary(el, slack);
   if (slack.connected) {
     el.className = "status-banner ok";
     el.textContent = `● Connected as @${slack.user} in ${slack.team}`;
@@ -3517,6 +3527,7 @@ function renderPlatformStatus(id, platform) {
   const el = document.getElementById(id);
   if (!el) return;
   const connection = platform?.connection;
+  updateConnectionSummary(el, connection);
   if (connection?.connected) {
     el.className = "status-banner ok";
     el.textContent = `● Connected${connection.detail ? ` — ${connection.detail}` : ""}`;
@@ -3568,174 +3579,21 @@ function toggleClearTok(btn) {
   markSettingsDirty();
 }
 
-// ── Settings: ONE long page — jump nav (scroll-spy) + live search filter ──────────
-// Every section is always rendered and always in the DOM (the single Save has always depended on
-// that). The header links no longer swap panes, they scroll; the search box hides the cards that
-// don't match. Matching rules live in admin-settings-search.js so they can be tested headlessly.
-const settingsScroller = () => document.getElementById("view-settings");
+const settingsNavigation = createSettingsNavigation();
 
-// How much of the page the sticky header covers — a scroll target must land BELOW it, and the
-// scroll-spy's reading line sits at the same place.
-function settingsBarOffset() {
-  const bar = document.getElementById("settings-bar");
-  const scroller = settingsScroller();
-  if (!bar || !scroller) return 0;
-  // Where the PINNED bar's bottom edge sits, measured from the top of the scroll view. A sticky
-  // element pins to the scrollport's padding edge, offset by its own `top` (which is negative here
-  // so the bar also covers the view's top padding) — read both instead of assuming, so changing
-  // the padding or the bar's height in CSS can never start dropping jump targets behind it.
-  const pad = parseFloat(getComputedStyle(scroller).paddingTop) || 0;
-  const top = parseFloat(getComputedStyle(bar).top) || 0;
-  return Math.max(0, pad + top) + bar.offsetHeight + 18;
-}
-
-// Rebuilt on every query rather than cached: half these cards (MCP checklists,
-// license state, template grants) are filled in asynchronously, and a stale index would silently
-// make freshly-loaded settings unsearchable. ~30 blocks of textContent is cheap.
-// Input VALUES are deliberately not indexed — textContent skips them, so no token can be surfaced
-// (or leaked into a match) by typing part of it into the search box.
-function buildSettingsIndex() {
-  const index = [];
-  for (const sec of document.querySelectorAll("#settings-body .setsec")) {
-    const sectionTitle = sec.querySelector(".setsec-head h3")?.textContent || "";
-    const sectionDesc = sec.querySelector(".setsec-head .setsec-desc")?.textContent || "";
-    let n = 0;
-    for (const block of sec.children) {
-      if (block.classList.contains("setsec-head")) continue;
-      if (!block.dataset.setkey) block.dataset.setkey = `${sec.dataset.sec}-${n}`;
-      n += 1;
-      index.push({
-        id: block.dataset.setkey,
-        section: sec.dataset.sec,
-        sectionTitle,
-        sectionDesc,
-        title: block.querySelector("h4")?.textContent || "",
-        text: block.textContent || "",
-      });
-    }
+function refreshFeatureCards() {
+  for (const card of document.querySelectorAll("[data-feature-toggle]")) {
+    const on = document.getElementById(card.dataset.featureToggle).checked;
+    card.querySelector(".setcard-state").textContent = on ? "On" : "Off";
+    const fields = card.querySelector(".feature-fields");
+    if (fields) fields.hidden = !on;
   }
-  return index;
-}
-
-function applySettingsFilter(query = "") {
-  const result = filterSettings(buildSettingsIndex(), query);
-  for (const block of document.querySelectorAll("#settings-body [data-setkey]")) {
-    block.classList.toggle("filtered-out", result.active && result.cards.get(block.dataset.setkey) === false);
+  for (const fields of document.querySelectorAll("[data-requires-setting]")) {
+    fields.hidden = !document.getElementById(fields.dataset.requiresSetting).checked;
   }
-  for (const sec of document.querySelectorAll("#settings-body .setsec")) {
-    sec.classList.toggle("filtered-out", result.active && !(result.sections.get(sec.dataset.sec) > 0));
+  for (const card of document.querySelectorAll(".setcard[data-engine-id]")) {
+    card.querySelector(".setcard-state").textContent = ENGINE_ENABLED[card.dataset.engineId] === false ? "Off" : "On";
   }
-  for (const a of document.querySelectorAll("#settings-nav a")) {
-    a.classList.toggle("dim", result.active && !(result.sections.get(a.dataset.sec) > 0));
-  }
-  const notice = document.getElementById("settings-no-results");
-  if (notice) {
-    notice.hidden = !result.empty;
-    document.getElementById("settings-no-results-q").textContent = `“${result.query.trim()}”`;
-  }
-  const clear = document.getElementById("settings-search-clear");
-  if (clear) clear.hidden = !result.query;
-  const kbd = document.getElementById("settings-search-kbd");
-  if (kbd) kbd.hidden = Boolean(result.query);
-  document.getElementById("view-settings")?.classList.toggle("searching", result.active);
-  updateSettingsSpy();
-  return result;
-}
-
-function clearSettingsSearch() {
-  const input = document.getElementById("settings-search");
-  if (input && input.value) input.value = "";
-  applySettingsFilter("");
-}
-
-// Which section the reader is actually in. Filtered-out sections are skipped so a search can't
-// leave the nav pointing at something invisible.
-function updateSettingsSpy() {
-  const scroller = settingsScroller();
-  if (!scroller || !scroller.classList.contains("active")) return;
-  // A smooth jump fires scroll events all the way there. Until it settles the nav shows what was
-  // CLICKED, not whatever section the animation is passing through.
-  if (settingsJumpTarget && Date.now() < settingsJumpUntil) return markSettingsNav(settingsJumpTarget);
-  const base = scroller.getBoundingClientRect().top - scroller.scrollTop + settingsBarOffset();
-  // Rounded on both sides: a section scrolled exactly to the reading line can otherwise land a
-  // fraction of a pixel below it and hand the mark back to the section above.
-  const sections = [...document.querySelectorAll("#settings-body .setsec")].map((sec) => ({
-    id: sec.dataset.sec,
-    visible: !sec.classList.contains("filtered-out"),
-    top: Math.round(sec.getBoundingClientRect().top - base),
-  }));
-  markSettingsNav(activeSectionFor(sections, Math.round(scroller.scrollTop), scroller.clientHeight, scroller.scrollHeight));
-}
-
-function markSettingsNav(sec) {
-  for (const a of document.querySelectorAll("#settings-nav a")) a.classList.toggle("on", a.dataset.sec === sec);
-}
-
-function scrollSettingsTo(el, { smooth = true } = {}) {
-  const scroller = settingsScroller();
-  if (!scroller || !el) return;
-  const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - settingsBarOffset();
-  scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
-}
-
-// Every explicit jump bumps this. Restoring the #set-… position on view entry is deferred by a
-// frame (the view must lay out first), and a caller that jumped somewhere on purpose in the
-// meantime must win over the stale hash.
-let settingsJumps = 0;
-// The section a smooth jump is heading for, and how long the spy defers to it.
-let settingsJumpTarget = null;
-let settingsJumpUntil = 0;
-const SETTINGS_JUMP_SETTLE_MS = 1200;
-function releaseSettingsJumpLock() { settingsJumpUntil = 0; }
-
-// Jump to a section by id. A live search is cleared first — scrolling to a card the filter has
-// hidden would look like a dead link.
-function selectSettingsSection(sec, { smooth = true, hash = true } = {}) {
-  settingsJumps += 1;
-  clearSettingsSearch();
-  const target = document.getElementById(`set-${sec}`);
-  if (!target) return;
-  settingsJumpTarget = sec;
-  settingsJumpUntil = smooth ? Date.now() + SETTINGS_JUMP_SETTLE_MS : 0;
-  markSettingsNav(sec);
-  scrollSettingsTo(target, { smooth });
-  // A section is a position on this page, not a history step — replaceState, and the router only
-  // ever reads the pathname.
-  if (hash && window.location.pathname === pathForView("settings")) {
-    window.history.replaceState(window.history.state, "", `${pathForView("settings")}#set-${sec}`);
-  }
-}
-
-// Restore #set-<section> when the Settings page is opened (deep link, refresh, browser Back).
-function enterSettingsView(hash = "") {
-  const match = /^#set-([a-z-]+)$/.exec(hash || "");
-  const stamp = settingsJumps;
-  requestAnimationFrame(() => {
-    if (settingsJumps !== stamp) return; // an explicit jump already claimed the scroll position
-    if (match && document.getElementById(`set-${match[1]}`)) selectSettingsSection(match[1], { smooth: false });
-    else updateSettingsSpy();
-  });
-}
-
-// Deep-jump to ONE control (not a whole section) and mark it, for cross-page links like the API
-// docs' "generate a token" pointer.
-function revealSetting(id) {
-  const el = document.getElementById(id);
-  revealSettingsNode(el?.closest(".setcard") || el);
-}
-
-// The same jump for a node that has no id of its own (a card cloned from a template, one field).
-function revealSettingsNode(card) {
-  if (!card) return;
-  settingsJumps += 1;
-  settingsJumpTarget = null;
-  settingsJumpUntil = 0;
-  clearSettingsSearch();
-  scrollSettingsTo(card);
-  card.classList.remove("pulse");
-  void card.offsetWidth; // restart the animation when the same card is targeted twice
-  card.classList.add("pulse");
-  setTimeout(() => card.classList.remove("pulse"), 2000);
 }
 
 // ── Settings: dirty tracking for the one global Save ──────────────────────────────
@@ -3829,11 +3687,14 @@ async function copyTerminalCommand(command) {
 function paintTerminalHarnesses(harnesses, settings) {
   const tpl = document.getElementById("terminal-harness-tpl");
   if (!tpl) return;
+  const openCards = new Set(Array.from(document.querySelectorAll(".terminal-harness-card[open]"), (card) => card.dataset.engineId));
   for (const old of document.querySelectorAll(".terminal-harness-card")) old.remove();
   TERMINAL_HARNESS_CARDS = [];
   for (const harness of harnesses || []) {
     const card = tpl.content.firstElementChild.cloneNode(true);
     const at = (role) => card.querySelector(`[data-role="${role}"]`);
+    card.dataset.engineId = harness.id;
+    card.open = openCards.has(harness.id);
     at("label").textContent = harness.label;
     at("description").textContent = harness.description;
     at("command").textContent = harness.command;
@@ -3866,11 +3727,14 @@ function collectTerminalHarnesses() {
 function paintQwenProviders(providers) {
   const tpl = document.getElementById("qwen-provider-tpl");
   if (!tpl) return;
+  const openCards = new Set(Array.from(document.querySelectorAll(".qwen-provider-card[open]"), (card) => card.dataset.engineId));
   for (const old of document.querySelectorAll(".qwen-provider-card")) old.remove();
   QWEN_PROVIDER_CARDS = [];
   for (const p of providers || []) {
     const card = tpl.content.firstElementChild.cloneNode(true);
     const at = (role) => card.querySelector(`[data-role="${role}"]`);
+    card.dataset.engineId = p.id;
+    card.open = openCards.has(p.id);
     at("label").textContent = p.label;
     at("description").textContent = p.description || "";
     at("endpoint-hint").textContent = p.endpointHint || "";
@@ -3963,6 +3827,7 @@ function paintEngineLicenses() {
     health: (id) => HEALTH_ENGINES?.[id] || null,
     setEnabled: (id, on) => {
       ENGINE_ENABLED[id] = on;
+      refreshFeatureCards();
       licensesManager.paint();
       // Switching off the license that IS the default re-points the default at one that is on —
       // visibly, in the picker, before the admin saves.
@@ -3974,7 +3839,7 @@ function paintEngineLicenses() {
     // fails in Slack.
     builtinNote: (m) => !m.optIn || SETTINGS_HAVE_PROVIDER_KEY[m.id] ? ""
       : m.terminalSetup ? " · configure in a terminal (Settings button)" : " · needs an API key (Settings button)",
-    openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => revealSettingsNode(builtinLicenseSettings(m.id)) : null,
+    openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => settingsNavigation.reveal(builtinLicenseSettings(m.id)) : null,
     blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
     reload: loadSettings,
     // Only the step this page can account for: its own version → the one the check produced.
@@ -4361,6 +4226,7 @@ function paintSettings(s) {
   // nobody touched here is never re-asserted over another writer's newer value.
   SETTINGS_SNAPSHOT = s;
   SETTINGS_VERSION = s?.settingsVersion ? String(s.settingsVersion) : "";
+  refreshFeatureCards();
   SETTINGS_BASELINE = readSettingsForm();
 }
 
@@ -4574,12 +4440,14 @@ function bindSettings() {
         const el = document.getElementById(banner);
         el.className = "status-banner";
         el.textContent = action === "connect" ? "○ Connecting…" : "○ Disconnecting…";
+        updateConnectionSummary(el, { status: action === "connect" ? "connecting" : "disconnecting" });
         try {
           const res = await api(`/api/platforms/${platform}/${action}`, { method: "POST" });
           renderPlatformStatus(banner, { connection: res.connection });
         } catch (error) {
           el.className = "status-banner bad";
           el.textContent = `● ${error.message}`;
+          updateConnectionSummary(el, { status: "error" });
         } finally {
           btn.disabled = false;
         }
@@ -4881,33 +4749,14 @@ async function loadHealth() {
   try {
     const h = await api("/api/health");
     const slackOk = !!h.slack?.connected;
-    const warm = h.warmSessions ?? 0;
     const slackLabel = slackOk ? `Slack · @${h.slack.user}` : `Slack · ${h.slack?.status || "off"}`;
-    // One chip per harness. An installed CLI that is signed OUT looks healthy to a version probe
-    // and then fails every turn, so the chip reports the credential, not just the binary.
     const engines = h.engines && typeof h.engines === "object" ? h.engines : { claude: h.claude || {} };
     const firstHealth = !HEALTH_ENGINES;
     HEALTH_ENGINES = engines;
     if (firstHealth) licensesManager?.paint();
-    const engineChips = Object.entries(engines).filter(([, check]) => check?.enabled !== false).map(([id, check]) => {
-      // Named from the manifest — a license an admin added has an id nobody can read.
-      const name = ENGINE_MANIFESTS.some((m) => m.id === id) ? engineLabel(id) : id.charAt(0).toUpperCase() + id.slice(1);
-      const signedOut = check?.auth?.known === true && check.auth.authenticated === false;
-      const ok = !!check?.available && !signedOut;
-      const label = !check?.available
-        ? `${name} · unavailable`
-        : signedOut ? `${name} · signed out` : `${name} · ${check.version || "ready"}`;
-      // A login that still works but dies in a few days is not "signed out" — it gets the chip's
-      // tooltip rather than a red dot, which is where the remedy belongs before it becomes urgent.
-      const title = signedOut ? check.auth.detail : check?.available ? check?.auth?.expiring || "" : check?.reason || "";
-      return `<div class="statuschip"${title ? ` title="${escapeHtml(title)}"` : ""}><span class="dot ${ok ? "ok" : "off"}"></span>${escapeHtml(label)}</div>`;
-    }).join("");
     // Gateway root goes in a tooltip rather than wrapping raw text in the rail.
     el.title = h.gatewayRoot || "";
-    el.innerHTML =
-      `<div class="statuschip"><span class="dot ${slackOk ? "ok" : "off"}"></span>${escapeHtml(slackLabel)}</div>` +
-      engineChips +
-      `<div class="statuschip"><span class="dot ${warm > 0 ? "ok" : "off"}"></span>Warm sessions · <span class="tabnum">${escapeHtml(String(warm))}</span></div>`;
+    el.innerHTML = `<div class="statuschip"><span class="dot ${slackOk ? "ok" : "off"}"></span>${escapeHtml(slackLabel)}</div>`;
     document.getElementById("logout").style.display = h.authEnabled ? "" : "none";
     paintContainerRuntimeHealth(h.containerRuntime);
   } catch (e) {
@@ -5195,79 +5044,26 @@ for (const b of document.querySelectorAll("#conv-seg button")) {
   });
 }
 
-// Settings header — the section names are jump links into the one long page (real hrefs, so
-// copy-link / new-tab still work), and the search box filters every card live.
-for (const a of document.querySelectorAll("#settings-nav a")) {
-  a.addEventListener("click", (e) => {
-    e.preventDefault();
-    selectSettingsSection(a.dataset.sec);
-  });
-}
-// The pointer from "Engine & runtime" to the licenses section is the same kind of jump.
-for (const a of document.querySelectorAll("#settings-body a.lic-jump")) {
-  a.addEventListener("click", (e) => {
-    e.preventDefault();
-    selectSettingsSection("engine-licenses");
-  });
-}
-
-{
-  const search = document.getElementById("settings-search");
-  const clear = document.getElementById("settings-search-clear");
-  const scroller = document.getElementById("view-settings");
-  if (search) {
-    // Filtering re-lays out the whole page, so put the reader at the first surviving section
-    // instead of leaving them at an offset that now points at something else. Instant, not smooth:
-    // this happens on every keystroke.
-    search.addEventListener("input", () => {
-      const result = applySettingsFilter(search.value);
-      if (!result.active) return;
-      releaseSettingsJumpLock();
-      const first = document.querySelector("#settings-body .setsec:not(.filtered-out)");
-      if (first) scrollSettingsTo(first, { smooth: false });
-      else scroller?.scrollTo({ top: 0 });
-    });
-    search.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.preventDefault(); clearSettingsSearch(); search.blur(); }
-    });
-  }
-  clear?.addEventListener("click", () => { clearSettingsSearch(); search?.focus(); });
-  document.getElementById("settings-no-results-clear")?.addEventListener("click", () => { clearSettingsSearch(); search?.focus(); });
-
-  // Any real scroll input cancels the post-jump lock immediately — the reader's own scrolling
-  // always outranks where a link was pointing.
-  for (const event of ["wheel", "touchstart", "pointerdown"]) {
-    scroller?.addEventListener(event, () => releaseSettingsJumpLock(), { passive: true });
-  }
-
-  // Scroll-spy. rAF-coalesced so a fast scroll does one measurement per frame.
-  let spyQueued = false;
-  scroller?.addEventListener("scroll", () => {
-    if (spyQueued) return;
-    spyQueued = true;
-    requestAnimationFrame(() => { spyQueued = false; updateSettingsSpy(); });
-  }, { passive: true });
-  window.addEventListener("resize", () => updateSettingsSpy());
-
-  // "/" or ⌘/Ctrl-K focuses the search — but only on Settings, and never while the user is typing
-  // into an actual setting.
-  document.addEventListener("keydown", (e) => {
-    if (!scroller?.classList.contains("active") || !search) return;
-    const typing = /^(input|textarea|select)$/i.test(e.target?.tagName || "") || e.target?.isContentEditable;
-    const shortcut = e.key === "k" && (e.metaKey || e.ctrlKey);
-    if (!shortcut && (typing || e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey)) return;
-    e.preventDefault();
-    search.focus();
-    search.select();
-  });
-}
+// Guide links can point to a control in another category.
+document.getElementById("settings-body").addEventListener("click", (event) => {
+  const link = event.target.closest('a[href^="#set-"]');
+  if (!link || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  const target = document.getElementById(link.hash.slice(1));
+  if (!target) return;
+  event.preventDefault();
+  if (target.matches(".setsec")) settingsNavigation.choose(target.dataset.sec);
+  else settingsNavigation.reveal(target);
+});
+document.getElementById("settings-body").addEventListener("change", (event) => {
+  if (event.target.matches("input[type=checkbox]")) refreshFeatureCards();
+});
 
 // Settings dirty tracking — any input/change in the panes flips the savebar to "Unsaved changes"
 // (the savebar's own controls + the Access Templates tool filter boxes are exempt — filtering a
 // checklist is a view action, not a config change). A successful save re-loads settings, clearing it.
 {
   const view = document.getElementById("view-settings");
-  const onEdit = (e) => { if (!e.target.closest(`.settings-savebar, .checks-filter, .setbar, ${SELF_SAVING_CONTROLS}`)) markSettingsDirty(); };
+  const onEdit = (e) => { if (e.target.closest("#settings-body") && !e.target.closest(`.checks-filter, ${SELF_SAVING_CONTROLS}`)) markSettingsDirty(); };
   view.addEventListener("input", onEdit);
   view.addEventListener("change", onEdit);
 }

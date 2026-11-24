@@ -1,4 +1,5 @@
 // Real settings UI against a disposable gateway store. No production settings change.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -39,6 +40,7 @@ test("settings creates, repoints and removes model shortcuts through the live ca
   };
   assert.equal(await page.locator(".model-shortcut-row").count(), 6, "fresh settings render all inherited families");
   assert.equal(await page.locator('.shortcut-name').evaluateAll(nodes => nodes.some(n => n.value === "sonet")), true);
+  await openSetting(page, "#set-keepalive");
   await page.locator("#set-keepalive").fill("15m");
   await persist();
   assert.equal(Object.hasOwn(getSettings(), "modelShortcuts"), false, "an unrelated API save keeps defaults inherited");
@@ -48,6 +50,7 @@ test("settings creates, repoints and removes model shortcuts through the live ca
   saveSettings({ modelShortcuts: {} });
   await page.reload();
   await page.waitForFunction(() => globalThis.document.querySelector("#add-model-shortcut")?.disabled === false);
+  await openSetting(page, "#add-model-shortcut");
   await page.locator("#add-model-shortcut").click();
   const row = page.locator(".model-shortcut-row").first();
   await row.locator(".shortcut-name").fill("astra");
@@ -58,6 +61,7 @@ test("settings creates, repoints and removes model shortcuts through the live ca
   await persist();
   assert.deepEqual(getModelShortcuts().astra, { engine: "codex", model: modelIds[0] });
   await page.reload();
+  await openSetting(page, "#add-model-shortcut");
   await row.locator(".shortcut-model").waitFor();
   assert.equal(await row.locator(".shortcut-name").inputValue(), "astra");
   assert.equal(await row.locator(".shortcut-model").inputValue(), modelIds[0]);

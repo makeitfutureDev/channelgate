@@ -1,4 +1,5 @@
 // Disposable real API + browser state. Set CG_BROWSER_MODULE to the installed Playwright module.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -34,9 +35,10 @@ test("parallel run controls save, reload and explain reservations independently 
   const total = page.locator("#set-max-concurrent-runs");
   const reserved = page.locator("#set-reserved-interactive-runs");
   await page.waitForFunction(() => globalThis.document.querySelector("#set-max-concurrent-runs")?.value === "8");
+  await openSetting(page, total);
   await total.scrollIntoViewIfNeeded();
   assert.equal(await reserved.inputValue(), "2");
-  assert.match(await total.locator("xpath=../..").textContent(), /separate from the running-container limit/);
+  assert.match(await total.locator("xpath=ancestor::details[1]").textContent(), /separate from the running-container limit/);
   await reserved.fill("");
   await page.locator("#save-settings").click();
   await page.waitForFunction(() => globalThis.document.querySelector("#settings-saved")?.textContent.includes("Reserved interactive slots must be a whole number"));
@@ -53,6 +55,7 @@ test("parallel run controls save, reload and explain reservations independently 
   await page.waitForFunction(() => globalThis.document.querySelector("#set-max-concurrent-runs")?.value === "32");
   assert.equal(await reserved.inputValue(), "0");
   await page.setViewportSize({ width: 390, height: 844 });
+  await openSetting(page, total);
   await total.scrollIntoViewIfNeeded();
   assert.equal(await total.isVisible(), true);
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);

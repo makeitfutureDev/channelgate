@@ -1,5 +1,6 @@
 // Real browser + disposable admin API state; no production users or settings are modified.
 // CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test test/ai-testing-picker-browser.test.js
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -42,6 +43,7 @@ test("testing user search selects, removes and persists with keyboard and pointe
   const picker = page.locator("#set-ai-testing-users");
   const search = picker.getByRole("combobox");
   const save = page.locator("#save-settings");
+  await openSetting(page, picker);
   await search.waitFor();
   await picker.getByRole("button", { name: "Remove USAVEDMISSING" }).waitFor();
   assert.equal(await picker.getByRole("listbox").isVisible(), false, "directory starts collapsed");
@@ -67,6 +69,7 @@ test("testing user search selects, removes and persists with keyboard and pointe
   await persist();
   assert.deepEqual(getAiTestingUsers(), ["USAVEDMISSING", "UTESTALPHA", "UTESTBETA"]);
   await page.reload();
+  await openSetting(page, picker);
   await picker.getByRole("button", { name: "Remove Alpha Tester" }).waitFor();
   await picker.getByRole("button", { name: "Remove USAVEDMISSING" }).click();
   await search.fill("");
@@ -88,6 +91,8 @@ test("testing user search selects, removes and persists with keyboard and pointe
   await persist();
   assert.deepEqual(getAiTestingUsers(), []);
   await page.reload();
+  await openSetting(page, picker);
+  await openSetting(page, picker);
   await search.waitFor();
   assert.equal(await picker.locator(".user-picker-chip").count(), 0);
   await page.setViewportSize({ width: 1440, height: 1000 });

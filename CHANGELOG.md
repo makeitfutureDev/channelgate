@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Redesigned admin Settings with grouped categories, compact platform connections, and
+  full-width layouts. Search now opens individual fields across categories, including settings
+  inside closed cards. Harness versions, sign-in diagnostics and warm sessions appear in System health.
 - Composio script relay (SDK mode): scripts in a channel container can now call Composio tools
   without any Composio API key. Each turn gets a short-lived grant; the gateway runs every call as
   the requester's or the channel's identity, with app policy, account checks and the Slack

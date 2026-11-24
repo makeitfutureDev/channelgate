@@ -1,4 +1,5 @@
 // Disposable authenticated-admin fixture; never touches serving settings or provider accounts.
+import { openSetting } from "./settings-navigation-helper.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -31,6 +32,7 @@ test("SDK policy controls save and reload multi-account and strict app restricti
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
   const panel = page.locator("#composio-sdk-policy");
+  await openSetting(page, panel);
   await panel.waitFor();
   assert.equal(await panel.locator(".csdk-multi").isChecked(), true);
   await panel.locator(".csdk-max").fill("3");
@@ -45,6 +47,7 @@ test("SDK policy controls save and reload multi-account and strict app restricti
   await persist();
   assert.deepEqual(getComposioSdkPolicy(), { multiAccount: true, maxAccountsPerToolkit: 3, allowedApps: ["custom_aioutreach", "gmail", "slack"] });
   await page.reload();
+  await openSetting(page, panel);
   await panel.waitFor();
   assert.equal(await panel.locator(".csdk-apps").inputValue(), "custom_aioutreach, gmail, slack");
   for (const width of [1440, 390]) {
@@ -57,12 +60,14 @@ test("SDK policy controls save and reload multi-account and strict app restricti
   await persist();
   assert.deepEqual(getComposioSdkPolicy(), { multiAccount: false, maxAccountsPerToolkit: 3, allowedApps: [] });
   await page.reload();
+  await openSetting(page, panel);
   await panel.waitFor();
   assert.equal(await panel.locator(".csdk-app-mode").inputValue(), "selected");
   await panel.locator(".csdk-app-mode").selectOption("all");
   assert.equal(await panel.locator(".csdk-app-list").isVisible(), false);
   await persist();
   assert.equal(getComposioSdkPolicy().allowedApps, null);
+  await openSetting(page, "#set-composio-mode");
   await page.locator("#set-composio-mode").selectOption("personal");
   assert.equal(await panel.isVisible(), false);
   await persist();
