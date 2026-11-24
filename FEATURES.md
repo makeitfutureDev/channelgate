@@ -9041,6 +9041,8 @@ are retired, bullet by bullet; everything else stands.
   early control path. Loop rows disappear synchronously before Slack calls; status clearing and
   unrelated acknowledgements cannot block another stopped thread’s notice. Stream cleanup gets a
   one-second foreground grace, continues draining afterward, and marks delivered text partial.
+  An active tick records an explicit Stop as interrupted and preserves its usage. A tick finishing
+  Slack delivery after Stop cannot recreate the loop or spend a replacement loop’s budget.
   Slack can still throttle the acknowledgement API itself. `run_stopped` records each affected
   active/queued turn once with its run ID/state; `run_stop_requested` records command-level totals.
 - **Live numeric progress counts:** fraction/count details and outputs render in the replaceable

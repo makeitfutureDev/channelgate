@@ -189,8 +189,7 @@ export async function applyLoopWakeup({ client, channelId, slug = "", threadTs, 
 export function consumeTick(sched) {
   if (!isLoopRow(sched)) return null;
   const left = Math.max(0, (Number(sched.ticksRemaining) || 0) - 1);
-  updateSchedule(sched.id, { ticksRemaining: left });
-  return left;
+  return updateSchedule(sched.id, { ticksRemaining: left }, { enabled: true }) ? left : null;
 }
 
 export { isLoopRow };

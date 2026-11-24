@@ -8,7 +8,7 @@ import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
 import { plainFailureText } from "../util/process-outcome.js";
 import { cronMatches, elapsedMinutes } from "../util/cron.js";
 import { runMessage as defaultRunMessage } from "./run.js";
-import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loops.js";
+import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops, threadLoops } from "./loops.js";
 import { logEvent } from "../util/logger.js";
 import { automationPrompt, classifyScheduleResult, suppressScheduleResult } from "./schedule-outcome.js";
 import { createScheduleRun, getScheduleRun, updateScheduleRun, appendScheduleRunEvent } from "./schedule-runs.js";
@@ -70,7 +70,16 @@ function isQuietMatch(sched, result) {
     result.content.trimStart().startsWith(sched.matchPrefix || "FOUND:");
 }
 
+function loopWasRemoved(sched) {
+  return isLoopRow(sched) && sched.resumeThread &&
+    !threadLoops(sched.channelId, sched.threadTs).some(row => row.id === sched.id && row.enabled);
+}
+
 async function deliverScheduledResult(client, sched, result, threadTs, deliver) {
+  if (loopWasRemoved(sched)) {
+    updateScheduleRun(sched.activeRunId, { deliveryStatus: "suppressed" });
+    return;
+  }
   const run = getScheduleRun(sched.activeRunId);
   updateScheduleRun(sched.activeRunId, { deliveryAttempts: (run?.deliveryAttempts || 0) + 1, deliveryStatus: "pending" });
   appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_attempt" });
@@ -354,10 +363,11 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     const loopHandle = loopTick ? { aborted: false, controller: new AbortController(), authorId: sched.createdBy, loop: true } : null;
     if (loopTick) await runQueue.acquire(loopRunKey, loopHandle);
     let result;
+    let stoppedResult;
     try {
       // A `stop` in the thread while this tick waited its turn already deleted the loop row and
       // marked the handle aborted. Honor it rather than spending a turn nobody is waiting for.
-      if (loopTick && loopHandle.aborted) {
+      if (loopHandle?.aborted || loopWasRemoved(sched)) {
         updateScheduleRun(run.id, { status: "skipped", completedAt: new Date().toISOString(), deliveryStatus: "suppressed", summary: "Loop cancelled before execution." });
         await logEvent("loop_tick_aborted", { id: sched.id, loopId: sched.loopId, channel: sched.channelId });
         return;
@@ -385,10 +395,31 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           ? { questionThreadKey: isSlackTs(threadTs) ? threadTs : "" } : {}),
         sudoScheduleId: sched.sudo === true ? sched.id : "",
       });
+    } catch (err) {
+      if (!loopHandle?.aborted) throw err;
+      stoppedResult = err.details?.result || err.details || {};
     } finally {
       if (loopTick) runQueue.release(loopRunKey, loopHandle);
     }
 
+    if (loopHandle?.aborted) {
+      // A Stop can race either the engine error or its final result. Retain any usage already
+      // incurred, but never deliver a stale answer, report a scheduled failure or re-arm the loop.
+      const partial = result || stoppedResult || {};
+      const started = getScheduleRun(run.id);
+      recordTaskOutcome(run.id, {
+        ...partial,
+        engine: partial.engine || started.engine,
+        model: partial.runtimeModel || partial.model || started.model,
+        durationMs: partial.durationMs ?? Date.now() - Date.parse(started.startedAt),
+        interrupted: true,
+        automationOutcome: { status: "skipped", source: "gateway", summary: "Loop stopped by request." },
+      });
+      updateScheduleRun(run.id, { deliveryStatus: "suppressed" });
+      // runMessage already accounts for a failed attempt. A resolved result is the scheduler's responsibility.
+      if (result) await bankUsage({ channelId: sched.channelId, slug: sched.slug, authorId: sched.createdBy, engine: result.engine, taskKind: "scheduled", result });
+      return;
+    }
     result = classifyScheduleResult(result);
     recordTaskOutcome(run.id, result);
     sched.executionState = "completed";
@@ -423,7 +454,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       ...(sched.executionState === "running" ? err.details?.replaySafe === true ? { executionState: "failed" } : { enabled: false, executionState: "interrupted" } : {}) });
     await logEvent("schedule_error", { id: sched.id, error: safeError });
     try {
-      if (client && sched.failureNotify !== false && sched.delivery !== "dm-on-match") await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${safeError}` });
+      if (client && sched.failureNotify !== false && sched.delivery !== "dm-on-match" && !loopWasRemoved(sched)) await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${safeError}` });
     } catch {
       /* ignore */
     }
@@ -463,6 +494,9 @@ async function finishScheduleDelivery(client, sched, result, threadTs) {
   // budget stop always says so in the thread.
   if (loopTick) {
     const left = consumeTick(sched);
+    // Stop (or a new loop) may have removed this tick while Slack was delivering its result.
+    // Only the surviving tick owns the right to schedule another turn or exhaust its budget.
+    if (left === null) return;
     const outcome = left === 0 ? null : await applyLoopWakeup({
       client,
       channelId: sched.channelId,
