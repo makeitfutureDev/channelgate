@@ -94,6 +94,12 @@ export function plainFailureText(value, maxChars = 400) {
   const limit = Number.isFinite(Number(maxChars)) ? Math.max(1, Number(maxChars)) : 400;
   const raw = String(value ?? "").trim();
   const body = embeddedJsonObject(raw);
+  // A CLI may already have clipped its JSON body. An incomplete string cannot be decoded
+  // reliably. Keep the provider's leading explanation, if present, without displaying the fragment.
+  if (!body) {
+    const fragment = /\{\s*"(?:error|message|detail|type|status)"\s*:/.exec(raw);
+    if (fragment) return (raw.slice(0, fragment.index).trim().replace(/:\s*$/, "") || "the provider rejected the request").slice(0, limit);
+  }
   const sentence = body ? providerSentence(body) : "";
   // Keep the prose the CLI wrapped around the body ("Codex provider error: {…}") and replace only
   // the document itself, so a message that was already a sentence is returned untouched.

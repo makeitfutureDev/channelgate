@@ -67,6 +67,7 @@ import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
 import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
+import { plainFailureText } from "../util/process-outcome.js";
 import { resolveRunAccessGrants, skippedSkillGrantsWarning, userOnlySkillGrants } from "./access-grants.js";
 import { threadConnectionMeta, threadGrantTier, threadSettingsForRun } from "./thread-settings.js";
 import { getSkill } from "./skills/catalog.js";
@@ -2738,6 +2739,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (error && typeof error === "object") {
       if (typeof error.message === "string") error.message = redactSecretValues(error.message, outputSecrets);
       if (typeof error.stack === "string") error.stack = redactSecretValues(error.stack, outputSecrets);
+      if (error.details?.askFallback?.bothFailed && error.details.fallbackError) {
+        // The card stores a bounded sentence. Decode it before exact-value redaction, then
+        // let the surface clip the safe text. Preserve the original diagnostic in error.message.
+        error.details.fallbackError = plainFailureText(error.details.fallbackError, Number.MAX_SAFE_INTEGER);
+      }
       if (error.details) error.details = redactSecretFields(error.details, outputSecrets);
     }
     // Failed terminal results never reach callers' success-only usage bankers. Bank once here

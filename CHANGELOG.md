@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- When both harnesses fail, Slack’s retry card shows a readable reason even when the second
+  provider returns a long JSON error.
+
 - A thread in `/sudo` now shows a red **🔓 Sudo off** button first in every reply menu (and on
   the "Sudo enabled" notice), so the host posture is visible and one admin click returns the
   thread to its container.

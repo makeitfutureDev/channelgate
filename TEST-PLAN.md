@@ -12448,7 +12448,9 @@ placeholders and `--network none`).
       expired clicks, the ask-mode failure posts the card with *Switch* / *Try again* buttons,
       *Switch* re-runs the original message on the other harness, pins the thread there and deletes
       the card, *Try again* re-runs where it failed and a second failure asks again; 🛑 discards a
-      pending card with its own wording; auto mode never posts a card.
+      pending card with its own wording. If automatic failover succeeds, no choice card appears. If
+      both harnesses fail, a long nested provider error is extracted before the 300-character limit
+      in the stored choice and its Slack card.
 - [ ] Cross-engine failover, both directions: with failover ON, a usage-limit response or pre-tool
       authentication failure answers via the OTHER harness with a reason note and observes its
       per-engine per-channel / gateway-wide ~15-min cooldown; with failover OFF, the engine's own

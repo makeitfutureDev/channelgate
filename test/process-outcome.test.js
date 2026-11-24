@@ -81,6 +81,8 @@ test("a provider's JSON response body becomes the sentence inside it, never the 
   // Prose is returned unchanged; a body with no readable message never leaks braces.
   assert.equal(plainFailureText("Codex exited before it completed"), "Codex exited before it completed");
   assert.equal(plainFailureText('{"status":500}'), "the provider rejected the request");
+  assert.equal(plainFailureText('Claude provider is temporarily unavailable: {"error":{"message":"incomplete'), "Claude provider is temporarily unavailable");
+  assert.equal(plainFailureText('{"error":{"message":"incomplete'), "the provider rejected the request");
   assert.equal(embeddedJsonObject("nothing structured here"), null);
   assert.equal(plainFailureText(`x${"y".repeat(500)}`).length, 400);
 });
