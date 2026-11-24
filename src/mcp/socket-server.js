@@ -23,6 +23,8 @@
 //   gateway       the control plane (src/mcp/gateway-server.js), tool surface fixed by the claims.
 //   composio-sdk  Enterprise SDK-mode Composio: args[0] is the session URL, which the capability's
 //                 `composioSessions` must grant (src/ee/composio-sdk-bridge.js).
+//   composio-exec the Composio script relay (./composio-exec.js): newline-delimited JSON requests,
+//                 not MCP, for scripts in the container; needs a "composio-exec" scoped capability.
 //   remote-mcp    a header-bearing remote MCP server (composio-user / composio-agent in token
 //                 mode, make-toolbox) relayed by the daemon: args[0] is the
 //                 server NAME. The capability's signed `remoteMcps` claim must name it AND the
@@ -68,6 +70,7 @@ import { authorizeRemoteMcp, retainRemoteMcps } from "./remote-mcp-registry.js";
 import { runRemoteRelay } from "./remote-relay.js";
 import { getPrivateMcpHosts } from "../config/settings.js";
 import { withComposioApproval } from "./composio-approval.js";
+import { COMPOSIO_EXEC_SERVICE, serveComposioExec } from "./composio-exec.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_MAX_BYTES = 64 * 1024;
@@ -75,7 +78,7 @@ const HELLO_MAX_BYTES = 64 * 1024;
 // a truncation. A gateway root deep enough to blow it must degrade to "container runs can't reach
 // the control plane", never to a failed boot.
 const MAX_SOCKET_PATH_BYTES = 100;
-const SERVICES = new Set(["gateway", "composio-sdk", "remote-mcp"]);
+const SERVICES = new Set(["gateway", "composio-sdk", "remote-mcp", COMPOSIO_EXEC_SERVICE]);
 const REFUSAL_BY_SERVICE = { "composio-sdk": "composio bridge unavailable", "remote-mcp": "remote MCP unavailable" };
 // At most this many relay connections at once per grant and server. A slot is held from the
 // accepted hello until BOTH the socket has closed AND the upstream dial has settled (and been torn
@@ -140,7 +143,7 @@ export function relaySlotStats() {
  * `secret()` is the daemon's own capability signing secret; `handlers` are the daemon-side
  * background/approval/restart functions the in-process tools call directly.
  */
-export function serveMcpConnection(socket, { handlers = {}, secret = () => process.env.CG_APPROVAL_SECRET || "", log = console, connectRemote = undefined } = {}) {
+export function serveMcpConnection(socket, { handlers = {}, secret = () => process.env.CG_APPROVAL_SECRET || "", log = console, connectRemote = undefined, composioExec = {} } = {}) {
   socket.setNoDelay?.(true);
   let head = Buffer.alloc(0);
   let settled = false;
@@ -197,6 +200,22 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     }
 
     const cap = typeof frame.cap === "string" ? frame.cap : "";
+    // The Composio script relay speaks plain JSON lines, not MCP, and opens ONLY with a
+    // composio-exec scoped capability (a gateway-tools token is refused here, and a composio-exec
+    // token is refused by every other service). Liveness is re-checked on every request.
+    if (frame.service === COMPOSIO_EXEC_SERVICE) {
+      const verifyExec = withCapabilityLiveness(() => verifyGatewayCapability(cap, { secret: secret(), scope: "composio-exec" }));
+      const checkedExec = verifyExec({ tool: "composio-exec" });
+      if (!checkedExec.ok) return refuse(socket, `capability rejected (${checkedExec.reason})`);
+      const daemon = createDirectDaemonIpc(handlers);
+      if (frame.framed === true) writeFrame(socket, { channelgate: "ready", v: 1, service: frame.service });
+      serveComposioExec(socket, rest, {
+        ...composioExec, // test seams only (client, entitlement, mode); production passes none
+        verify: () => verifyExec({ tool: "composio-exec" }),
+        requestApproval: (body) => daemon.call("approval", body),
+      });
+      return;
+    }
     // Signature and expiry, THEN liveness: a validly signed capability is authority only while
     // its conversation has live work (gateway/capability-liveness.js). Re-run on every tool call
     // and every relayed request, so a token copied out of the container stops working when the

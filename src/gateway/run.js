@@ -37,6 +37,7 @@ import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./pe
 import { getPerplexityResearchConfig } from "../config/settings.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
+import { writeComposioExecGrant } from "./composio-exec-grant.js";
 import { getThreadEngine, getThreadLicensePool, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo, getThreadSkillModel, setThreadSkillModel } from "./thread-engine.js";
 import { decideSkillSwap, registerSkillSwapHandler, skillSwapKey, skillSwapReply } from "./skill-runtime.js";
 import { authorizedSudoSchedule } from "./schedule-sudo.js";
@@ -1649,6 +1650,23 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
   };
   const linkedGuidePrefix = await linkedWorkspaceGuidePreamble(meta, target);
+  // SDK-mode Composio: one grant file per turn for container scripts (src/mcp/composio-exec.js),
+  // written at the first engine attempt (post-admission, like the MCP config) and swept below.
+  let composioScript = null;
+  const composioScriptPrefix = async () => {
+    if (!composioScript) {
+      composioScript = await writeComposioExecGrant({
+        target, artifactRoot: runArtifactRoot(target), cwd,
+        channelId, slug: entry.slug, authorId, threadKey, origin, engine,
+        principalTrusted: !untrustedPrincipal, composioUserEndpoint, composioEndpoint,
+      }).catch((error) => {
+        console.warn(`[gateway] Composio script grant unavailable: ${error.message}`);
+        return null;
+      }) || { prefix: "", file: "" };
+      if (composioScript.file) mcpConfigFiles.push(composioScript.file);
+    }
+    return composioScript.prefix;
+  };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
@@ -1656,7 +1674,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
@@ -1988,7 +2006,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       attempt.spawned = true;
       const attemptResult = await fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
-        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,

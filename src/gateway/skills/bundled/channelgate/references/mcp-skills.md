@@ -35,10 +35,16 @@ user explicitly asked for. An inventory request never authorizes initiating conn
 
 Running code against connections has two paths (detail: `gateway-usage` →
 `references/composio-scripts.md`). Composio's remote Workbench works with either injected identity
-and needs no key in the container. A local SDK script in the channel container needs a Composio
-**project API key** stored as a channel or personal secret (hidden, approved for
-`backend.composio.dev`); the gateway's own Personal-mode tokens and its SDK-mode organization key
-stay daemon-side and are never exposed to a container. A project key can act as any user id in
+and needs no key in the container. In **SDK mode** a script in the channel container uses the
+gateway's **Composio script relay** — no key at all: each turn gets a short-lived grant file (named
+in its prompt) and the daemon executes every call with the organization key, as exactly the
+requester's (`identity: "user"`) or the channel's (`"agent"`) SDK identity, with the allowed-apps
+policy, account ownership and the membership approval card enforced. An organization admin's run
+in an Admin-mode channel may also pass any `userId` in the organization project (re-checked live
+per call). In **Personal mode** a local script still needs a Composio **project API key** stored
+as a channel or personal secret (hidden, approved for `backend.composio.dev`). The gateway's own
+Personal-mode tokens and its SDK-mode organization key stay daemon-side and are never exposed to a
+container. A project key can act as any user id in
 its project, so it is admin-level: keep it personal or in an admin-only conversation, never in
 organization scope or in channels with members or guests, and have scripts use only the userId and
 connected account of the identity the request selected. Both paths execute app calls on Composio;

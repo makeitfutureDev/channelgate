@@ -2,12 +2,18 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Composio script relay (SDK mode): scripts in a channel container can now call Composio tools
+  without any Composio API key. Each turn gets a short-lived grant; the gateway runs every call as
+  the requester's or the channel's identity, with app policy, account checks and the Slack
+  membership approval card. An admin in an Admin-mode channel can also use any user's connections
+  in the organization project. A channel no longer needs a `COMPOSIO_API_KEY_SDK`-style variable
+  for this.
 - Automations: the top of the Automations page (admin console and Activity dashboard) now shows
   the total number of runs and the total AI cost of the last 30 days, with the average cost per
   run. They stay on 30 days whichever window (24h / 7d / 30d) is selected for the rest of the board.
 - Agent guide: the built-in `gateway-usage` guide now describes only the Composio mode the gateway
-  runs. In SDK mode agents are told each identity's Composio user id and how a local
-  `@composio/core` script reaches the same connections (with an API key for the same project); in
+  runs. In SDK mode agents are told each identity's Composio user id and that container scripts
+  reach the same connections through the Composio script relay (no key); in
   Personal mode they are told the identities are each owner's own Composio account and the
   Workbench is the code path unless that account's own project key is provided.
 - Containers: on a system-service install (`scripts/install-systemd.sh`), restarting or updating

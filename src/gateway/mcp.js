@@ -103,7 +103,7 @@ export function composioIdentityPreamble({ user = false, agent = false, mode = "
   // run needs to write code against the same connections (gateway-usage composio-scripts.md).
   const ids = [user && sdkUserIds.user ? `\`composio-user\` = \`${sdkUserIds.user}\`` : "", agent && sdkUserIds.agent ? `\`composio-agent\` = \`${sdkUserIds.agent}\`` : ""].filter(Boolean);
   const backing = mode === "sdk"
-    ? " Composio mode: SDK — both identities are user ids in the organization's Composio project" + (ids.length ? ` (${ids.join(", ")})` : "") + "; a container script reaches those connections only with an API key for that same project (gateway-usage references/composio-scripts.md)."
+    ? " Composio mode: SDK — both identities are user ids in the organization's Composio project" + (ids.length ? ` (${ids.join(", ")})` : "") + "; a script in this container reaches the same connections with NO key through the gateway's Composio script relay (this turn's grant line, gateway-usage references/composio-scripts.md)."
     : " Composio mode: Personal — each identity is its owner's own Composio account behind a consumer key the gateway keeps; code runs in the Workbench, or locally only with a project API key from that same account (gateway-usage references/composio-scripts.md).";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
@@ -118,6 +118,12 @@ export function composioIdentityPreamble({ user = false, agent = false, mode = "
       "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + backing + files + "]\n\n";
   }
   return "";
+}
+
+// One signed SDK-session grant: the session URL the bridge may dial and, when known, the Composio
+// user id that session acts as (the script relay executes as exactly that id).
+export function sdkGrant(kind, endpoint) {
+  return { kind, url: endpoint.url, ...(typeof endpoint.identityId === "string" && endpoint.identityId ? { id: endpoint.identityId } : {}) };
 }
 
 // The per-run MCP config as the JSON string every existing caller writes to a file.
@@ -191,8 +197,8 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     engine: normalizedEngine,
     principalTrusted,
     composioSessions: [
-      ...(principalTrusted && composioUserEndpoint?.mode === "sdk" ? [{ kind: "user", url: composioUserEndpoint.url }] : []),
-      ...(composioEndpoint?.mode === "sdk" ? [{ kind: "channel", url: composioEndpoint.url }] : []),
+      ...(principalTrusted && composioUserEndpoint?.mode === "sdk" ? [sdkGrant("user", composioUserEndpoint)] : []),
+      ...(composioEndpoint?.mode === "sdk" ? [sdkGrant("channel", composioEndpoint)] : []),
     ],
     // Signed, so the bearer alone fixes the tool surface: the socket server has no environment of
     // its own to read these from (src/mcp/socket-server.js).

@@ -9251,6 +9251,33 @@ local fixtures are not claims of a production call.
   writes cannot restore them. Old organization settings are ignored and removed from settings.json
   at boot or the next save. Existing environment overrides no longer select a Toolbox endpoint.
 
+## Composio script relay (SDK mode, 2026-11-24)
+
+- Code running in a channel container (a Node script, a saved automation) calls Composio tools in
+  SDK mode **with no Composio key in the container**. Each turn with an SDK identity gets a grant
+  file (`src/gateway/composio-exec-grant.js`): a `composio-exec` scoped capability — it opens the
+  relay and nothing else, and a run's `gateway-tools` token does not open the relay — written 0600
+  into the channel's artifact dir, named in the turn's prompt and deleted when the turn settles.
+- The daemon serves it on the existing control socket as service `composio-exec`
+  (`src/mcp/composio-exec.js`, newline-delimited JSON: `whoami`, `accounts`, `schema`, `execute`,
+  admin-only `users`) and executes with the organization SDK key as exactly the signed identity:
+  `identity: "user"` (the author's SDK user id, trusted principals only) or `"agent"` (the
+  conversation's). Every request re-checks the capability (signature, expiry, channel liveness),
+  SDK mode and entitlement, the organization's allowed apps, that the connected account is an
+  active account of that user id (several accounts need an explicit `account`), refuses
+  `COMPOSIO_*` meta tools, and posts the same one-use approval card for Slack join/invite/create.
+  Connected-account listings carry id, toolkit, status, alias and dates only — never auth state.
+- **Admin-wide:** when the turn's author is a current organization admin AND the channel has Admin
+  mode on (both read live on every request, never from the token), a script may pass any
+  `userId` in the organization project and list the project's connected accounts (`users`).
+- A personal identity (the author's own, or another person's for an admin) is refused while a
+  different person has live work in the channel (shared container). Every execute is logged as a
+  `composio_exec` event (identity kind; the user id only for admin-wide calls).
+- Client: `gateway-usage/scripts/composio.mjs` (dependency-free library + CLI; the guide now ships
+  `scripts/*.mjs`). The SDK block of `references/composio-scripts.md`, the per-run identity line
+  and the `channelgate` skill describe the relay; Personal mode is unchanged (Workbench, or the
+  account's own project key).
+
 ## Operating guide follows the Composio mode (2026-11-24)
 
 - The `gateway-usage` guide is materialized per run with **feature conditions**
