@@ -1746,6 +1746,10 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     await bringRuntimeUp();
   };
 
+  // Decode the provider document before exact-value redaction. Bound the safe sentence only at
+  // the output boundary so a character limit cannot split a JSON field or a protected value.
+  const providerFailureSummary = (message) => redactSecretValues(plainFailureText(message, Number.MAX_SAFE_INTEGER), outputSecrets);
+
   // Run one attempt, and retry it in place on a transient, replay-safe provider failure — up to
   // transientRetryAttempts() more times, transientRetryDelayMs() apart, never past a cancel. The
   // result carries `transientRetries` when it took more than one attempt; an error that exhausted
@@ -1774,11 +1778,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           throw err;
         }
         retries += 1;
-        console.warn(`[gateway] transient ${engineName} ${kind} failure in ${entry.slug} (${String(err.message).slice(0, 200)}) — retry ${retries}/${maxAttempts} in ${delayLabel}`);
+        const diagnostic = providerFailureSummary(err.message);
+        console.warn(`[gateway] transient ${engineName} ${kind} failure in ${entry.slug} (${diagnostic.slice(0, 200)}) — retry ${retries}/${maxAttempts} in ${delayLabel}`);
         await logEvent("run_transient_retry", {
           channel: channelId, author: authorId, slug: entry.slug, threadKey, origin,
           engine: engineName, kind, attempt: retries, maxAttempts, delayMs,
-          error: String(err.message).slice(0, 300),
+          error: diagnostic.slice(0, 300),
         });
         // The pause is a waiting state, so it announces itself on the status line (same rule as the
         // queue and warm-up notices: silence that looks like death is the bug this prevents).
@@ -1911,13 +1916,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         return await runFallbackOn(candidate, note, failureContext, attempt);
       } catch (error) {
         if (fallbackEndsTurn(error)) throw error;
-        tried.push({ engine: candidate, label: engineLabel(candidate), message: String(error?.message || error) });
+        const diagnostic = providerFailureSummary(error?.message || error);
+        tried.push({ engine: candidate, label: engineLabel(candidate), message: diagnostic });
         const kind = replaySafeFallbackKind(error, candidate);
         if (kind === "authentication") await rememberAuthFailure(candidate);
         else if (kind === "usage_limit") engineLimitedUntil.set(`${candidate}::${entry.slug}`, Date.now() + LIMIT_COOLDOWN_MS);
         const untouched = !attempt.spawned || error?.details?.replaySafe === true || error?.details?.runtimeCredential === true;
         if (!untouched || candidate === order.at(-1)) throw Object.assign(error, { fallbackTried: tried });
-        console.warn(`[gateway] ${candidate} could not take over in ${entry.slug} (${error.message}) — trying the next one`);
+        console.warn(`[gateway] ${candidate} could not take over in ${entry.slug} (${diagnostic.slice(0, 300)}) — trying the next one`);
       }
     }
     throw new Error("no fallback engine is available");
@@ -2485,15 +2491,16 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
               // when a person is watching — hand it back as a choice instead of a dead end: the
               // other harness when ask mode kept it out of the walk, else "try either again".
               const tried = fallbackError?.fallbackTried?.length ? fallbackError.fallbackTried : [{ engine: fallbackEngine, label: engineLabel(fallbackEngine) }];
-              console.warn(`[gateway] ${tried.map((t) => t.engine).join(", ")} could not take over either (${fallbackError.message}) — preserving the original ${engine} provider error`);
+              const diagnostic = providerFailureSummary(fallbackError.message);
+              console.warn(`[gateway] ${tried.map((t) => t.engine).join(", ")} could not take over either (${diagnostic.slice(0, 300)}) — preserving the original ${engine} provider error`);
               err.details = {
                 ...(err.details || {}),
-                fallbackError: fallbackError.message,
+                fallbackError: diagnostic,
                 alsoFailed: tried.map((t) => t.engine),
                 ...(askEngine ? { askFallback: { to: askEngine, kind: fallbackKind } }
                   : canAsk ? { askFallback: { to: crossEngine, kind: fallbackKind, bothFailed: true } } : {}),
               };
-              err.message = `${err.message} — ${labelList(tried.map((t) => t.label))} could not answer either: ${fallbackError.message}`;
+              err.message = `${providerFailureSummary(err.message)} — ${labelList(tried.map((t) => t.label))} could not answer either: ${diagnostic}`;
               throw err;
             }
           } else if (!fresh && isSessionNotFound(err)) {
@@ -2739,11 +2746,6 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (error && typeof error === "object") {
       if (typeof error.message === "string") error.message = redactSecretValues(error.message, outputSecrets);
       if (typeof error.stack === "string") error.stack = redactSecretValues(error.stack, outputSecrets);
-      if (error.details?.askFallback?.bothFailed && error.details.fallbackError) {
-        // The card stores a bounded sentence. Decode it before exact-value redaction, then
-        // let the surface clip the safe text. Preserve the original diagnostic in error.message.
-        error.details.fallbackError = plainFailureText(error.details.fallbackError, Number.MAX_SAFE_INTEGER);
-      }
       if (error.details) error.details = redactSecretFields(error.details, outputSecrets);
     }
     // Failed terminal results never reach callers' success-only usage bankers. Bank once here

@@ -83,6 +83,12 @@ test("a provider's JSON response body becomes the sentence inside it, never the 
   assert.equal(plainFailureText('{"status":500}'), "the provider rejected the request");
   assert.equal(plainFailureText('Claude provider is temporarily unavailable: {"error":{"message":"incomplete'), "Claude provider is temporarily unavailable");
   assert.equal(plainFailureText('{"error":{"message":"incomplete'), "the provider rejected the request");
+  assert.equal(plainFailureText('503: {"request_id":"trace", "error":{"message":"unfinished'), "503");
+  assert.equal(plainFailureText('Unavailable: {"statusCode":503,"diagnostic":{"details":"unfinished'), "Unavailable");
+  assert.equal(plainFailureText('[{"error":{"message":"unfinished'), "the provider rejected the request");
+  assert.equal(plainFailureText('Unavailable: [{"message":"finished"}, {"message":"unfinished'), "Unavailable");
+  assert.equal(plainFailureText("Expected {placeholder} or [option] here"), "Expected {placeholder} or [option] here");
+  assert.equal(plainFailureText("Supported counts: [1, 2] or more"), "Supported counts: [1, 2] or more");
   assert.equal(embeddedJsonObject("nothing structured here"), null);
   assert.equal(plainFailureText(`x${"y".repeat(500)}`).length, 400);
 });

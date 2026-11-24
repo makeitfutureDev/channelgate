@@ -225,6 +225,8 @@ test("both-engine failure card extracts a long provider error before limiting it
     return spawn(target, { ...spec, cmd: process.execPath, args: ["-e", "console.log(process.argv[1]); process.exitCode = 1", eventLine] });
   });
 
+  const warnings = [];
+  t.mock.method(console, "warn", (...lines) => warnings.push(lines.join(" ")));
   const client = fakeSlack();
   await processMessageEvent(event("4000.700", "4000.700"), client, { botUserId: "U_BOT", teamId: "T_SWITCH" });
   const card = cardOf(client);
@@ -233,6 +235,9 @@ test("both-engine failure card extracts a long provider error before limiting it
   assert.doesNotMatch(card.text, /[{}]|"message"|fixture_overloaded/);
   assert.match(card.text, /\[REDACTED\]/);
   assert.ok(!card.text.includes(canary));
+  const diagnostics = [...warnings, ...readEvents({ limit: 30 }).filter(row => row.threadKey === "4000.700").map(row => row.error || "")].join("\n");
+  assert.match(diagnostics, /\[REDACTED\]/);
+  assert.doesNotMatch(diagnostics, /fixture-fallback-canary|ixture-fallback-canary|"error":/);
   assert.equal(card.blocks[0].text.text, card.text);
   const action = buttonOf(card, ENGINE_RETRY_ACTION);
   const record = engineSwitchChoices.take(action.value, USER, CHANNEL);
