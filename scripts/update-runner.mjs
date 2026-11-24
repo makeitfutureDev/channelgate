@@ -10,11 +10,13 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   statfsSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -565,8 +567,18 @@ function defaultOps({ root, repoRoot }) {
     test: async () => {
       // The same verification set CI runs, not just the unit suite: static analysis catches a
       // candidate whose tests pass but whose source violates the repo's structural invariants.
-      await runCommand("npm", ["run", "check:static"], { cwd: repoRoot });
-      await runCommand("npm", ["test"], { cwd: repoRoot });
+      // The suite runs in its own throwaway HOME: the live daemon keeps serving turns in the
+      // service user's real home meanwhile, and the runner's home-leak guard would otherwise
+      // count the daemon's own new folders as test leaks and roll a good candidate back.
+      const testHome = mkdtempSync(path.join(os.tmpdir(), "cg-update-test-home-"));
+      try {
+        const env = { ...process.env, HOME: testHome };
+        for (const name of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CG_WORKSPACE_DIR", "CLAUDE_GATEWAY_DIR", "CLAUDE_GATEWAY_DB"]) delete env[name];
+        await runCommand("npm", ["run", "check:static"], { cwd: repoRoot, env });
+        await runCommand("npm", ["test"], { cwd: repoRoot, env });
+      } finally {
+        rmSync(testHome, { recursive: true, force: true });
+      }
     },
     provision: () => runCommand("bash", [path.join(repoRoot, "scripts", "update-provision.sh")], { cwd: repoRoot, timeoutMs: 90 * 60_000 }),
     image: ({ context, owner }) => defaultImageBuild({ root, repoRoot, context, owner }),
