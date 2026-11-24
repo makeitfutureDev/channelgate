@@ -2,8 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
-- Redesigned admin Settings with grouped categories, compact platform connections, and
-  full-width layouts. Search now opens individual fields across categories, including settings
+- Redesigned admin Settings with one scrolling column of cards, category jump links, compact
+  platform connections and two-column fields on wide screens. Search now opens individual fields across categories, including settings
   inside closed cards. Messages and Calls have separate categories with directly editable controls.
   Conversation defaults now live in Conversations → Templates, shared grants and skill templates
   in Skills, and organization variables in Variables. System health shows Slack and harness status.

@@ -93,28 +93,40 @@ export function createSettingsNavigation(openDestination) {
   prerequisiteHint.setAttribute("role", "status");
   body.addEventListener("change", () => prerequisiteHint.remove());
 
+  let programmaticScroll = -1;
+  const toolbar = byId("settings-bar");
+
+  function markCurrent(section) {
+    current = section;
+    for (const link of nav.querySelectorAll("a")) {
+      if (link.dataset.sec === section.dataset.sec) link.setAttribute("aria-current", "location");
+      else link.removeAttribute("aria-current");
+    }
+    picker.value = section.dataset.sec;
+  }
+
   function choose(sec, { hash = true, scroll = true } = {}) {
     const next = sections.find((el) => el.dataset.sec === sec);
     if (!next) return;
     prerequisiteHint.remove();
     activeTarget?.classList.remove("setting-found");
-    current = next;
     input.value = "";
     renderSearch();
-    for (const section of sections) section.hidden = section !== current;
-    for (const link of nav.querySelectorAll("a")) {
-      if (link.dataset.sec === sec) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
-    }
-    picker.value = sec;
+    markCurrent(next);
     if (hash && window.location.pathname === "/settings") {
       window.history.replaceState(window.history.state, "", "/settings#set-" + sec);
     }
-    if (scroll) {
-      view.scrollTop = 0;
-      if (matchMedia("(max-width: 760px)").matches) nav.parentElement.scrollIntoView({ block: "start" });
-    }
+    if (scroll) view.scrollTop += next.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom - 12;
+    programmaticScroll = view.scrollTop;
   }
+
+  view.addEventListener("scroll", () => {
+    if (activeQuery || view.scrollTop === programmaticScroll || !view.classList.contains("active")) return;
+    const top = toolbar.getBoundingClientRect().bottom + 24;
+    const section = sections.findLast((el) => el.getBoundingClientRect().top <= top) || sections[0];
+    if (section !== current) markCurrent(section);
+    programmaticScroll = -1;
+  }, { passive: true });
 
   function reveal(target, title) {
     if (!target?.isConnected) return;
@@ -150,6 +162,7 @@ export function createSettingsNavigation(openDestination) {
     if (focus && !focus.disabled) focus.focus({ preventScroll: true });
     const visible = focus?.getClientRects().length ? focus : card || target;
     visible.scrollIntoView({ block: "center" });
+    programmaticScroll = view.scrollTop;
     activeTarget?.classList.remove("setting-found");
     activeTarget = visible.closest("label, summary, .field") || visible;
     activeTarget.classList.add("setting-found");
@@ -158,7 +171,6 @@ export function createSettingsNavigation(openDestination) {
   function renderSearch(limit = 40) {
     activeQuery = input.value.trim();
     const searching = Boolean(activeQuery);
-    body.hidden = searching;
     panel.hidden = !searching;
     byId("settings-search-clear").hidden = !input.value;
     byId("settings-search-kbd").hidden = !!input.value;
@@ -225,14 +237,17 @@ export function createSettingsNavigation(openDestination) {
     options.append(option);
   }
   picker.onchange = () => choose(picker.value);
-  input.oninput = () => { renderSearch(); view.scrollTop = 0; };
+  input.oninput = () => {
+    if (input.value.trim()) { renderSearch(); view.scrollTop = 0; }
+    else choose(current.dataset.sec, { hash: false });
+  };
   input.onkeydown = (e) => {
     if (e.key === "Enter") { e.preventDefault(); results.querySelector("button")?.click(); }
     if (e.key === "ArrowDown") { e.preventDefault(); results.querySelector("button")?.focus(); }
-    if (e.key === "Escape") { input.value = ""; renderSearch(); }
+    if (e.key === "Escape") { e.preventDefault(); choose(current.dataset.sec, { hash: false }); }
   };
   for (const id of ["settings-search-clear", "settings-no-results-clear"]) {
-    byId(id).onclick = () => { input.value = ""; renderSearch(); input.focus(); };
+    byId(id).onclick = () => { choose(current.dataset.sec, { hash: false }); input.focus({ preventScroll: true }); };
   }
   document.addEventListener("keydown", (e) => {
     if (!view.classList.contains("active")) return;
@@ -259,7 +274,7 @@ export function createSettingsNavigation(openDestination) {
       const linked = hash && byId(hash.slice(1));
       if (linked && body.contains(linked) && !linked.matches(".setsec")) return reveal(linked);
       const sec = sections.find((el) => "#" + el.id === hash) || current;
-      choose(sec.dataset.sec, { hash: false, scroll: false });
+      choose(sec.dataset.sec, { hash: false, scroll: !!hash });
     },
   };
 }

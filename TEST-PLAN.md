@@ -13778,8 +13778,11 @@ none` for its cases and live gates. Kept as history.
       `test/settings-navigation-browser.test.js`) cover ranking, collapsed chat setup, disabled
       feature discovery, secret exclusion, focus, responsive navigation and global save.
 - [ ] Live admin UI, engine-independent. In a disposable gateway open Settings at 1680px and
-      390px. Confirm one category is visible, all three platform setups start collapsed, and
-      desktop cards use the available width. Search “slack signing secret” and “Gemini API key”
+      390px. Scroll from Chat connections through Calls and Apps & integrations without using
+      the rail. Confirm each category link jumps to its heading, all platform setups start
+      collapsed, and every card occupies its own row. Select Composio SDK mode and enable Drive
+      sync. Check pairs of fields sit side by side on desktop and stack on mobile. Turn Drive
+      sync off and confirm its fields collapse. Search “slack signing secret” and “Gemini API key”
       with voice calls off. Selecting a result must open its field or focus its enable switch.
       Edit settings in two categories, clear a no-match search, save once and reload. Both edits
       must persist. Open System health and verify harness status and warm sessions against the

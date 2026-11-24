@@ -3667,6 +3667,7 @@ function syncComposioModeUi() {
   const mode = document.getElementById("set-composio-mode")?.value === "sdk" ? "sdk" : "personal";
   GLOBAL_COMPOSIO_MODE = mode;
   const entitled = document.getElementById("set-composio-mode")?.dataset.sdkEntitled === "true";
+  document.getElementById("composio-personal-url-field").hidden = mode !== "personal";
   const sdkField = document.getElementById("composio-sdk-key-field");
   if (sdkField) sdkField.hidden = mode !== "sdk";
   const policy = document.getElementById("composio-sdk-policy");
@@ -3711,7 +3712,11 @@ function refreshFeatureCards() {
     fields.hidden = !document.getElementById(fields.dataset.requiresSetting).checked;
   }
   for (const card of document.querySelectorAll(".setcard[data-engine-id]")) {
-    card.querySelector(".setcard-state").textContent = ENGINE_ENABLED[card.dataset.engineId] === false ? "Off" : "On";
+    const enabled = ENGINE_ENABLED[card.dataset.engineId] !== false;
+    const state = enabled ? "On" : "Off";
+    const badge = card.querySelector(".setcard-state");
+    if (badge.textContent !== state) card.open = enabled;
+    badge.textContent = state;
   }
 }
 
@@ -3806,14 +3811,12 @@ async function copyTerminalCommand(command) {
 function paintTerminalHarnesses(harnesses, settings) {
   const tpl = document.getElementById("terminal-harness-tpl");
   if (!tpl) return;
-  const openCards = new Set(Array.from(document.querySelectorAll(".terminal-harness-card[open]"), (card) => card.dataset.engineId));
   for (const old of document.querySelectorAll(".terminal-harness-card")) old.remove();
   TERMINAL_HARNESS_CARDS = [];
   for (const harness of harnesses || []) {
     const card = tpl.content.firstElementChild.cloneNode(true);
     const at = (role) => card.querySelector(`[data-role="${role}"]`);
     card.dataset.engineId = harness.id;
-    card.open = openCards.has(harness.id);
     at("label").textContent = harness.label;
     at("description").textContent = harness.description;
     at("command").textContent = harness.command;
@@ -3846,14 +3849,12 @@ function collectTerminalHarnesses() {
 function paintQwenProviders(providers) {
   const tpl = document.getElementById("qwen-provider-tpl");
   if (!tpl) return;
-  const openCards = new Set(Array.from(document.querySelectorAll(".qwen-provider-card[open]"), (card) => card.dataset.engineId));
   for (const old of document.querySelectorAll(".qwen-provider-card")) old.remove();
   QWEN_PROVIDER_CARDS = [];
   for (const p of providers || []) {
     const card = tpl.content.firstElementChild.cloneNode(true);
     const at = (role) => card.querySelector(`[data-role="${role}"]`);
     card.dataset.engineId = p.id;
-    card.open = openCards.has(p.id);
     at("label").textContent = p.label;
     at("description").textContent = p.description || "";
     at("endpoint-hint").textContent = p.endpointHint || "";
