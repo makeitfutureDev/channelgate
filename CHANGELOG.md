@@ -4,6 +4,8 @@
 
 - In Slack, a license fallback warning stays with the answer when the agent starts with a
   tool call. The live progress card appears above that answer.
+- Claude replies keep a paragraph break between tool narration and the next assistant message
+  when the provider supplies no spacing.
 - When both harnesses fail, Slack’s retry card shows a readable reason even when the second
   provider returns a long JSON error.
 - The Claude login watch remembers both daily warnings, so switching repeatedly between an

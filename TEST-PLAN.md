@@ -11571,6 +11571,11 @@ structural invariants are automated; rendered navigation and feature claims also
       still loading (`test/access-grants.test.js`).
 
 ### Observability (Slice 6)
+
+- [x] Claude message boundaries: both the live deltas and the completed text separate
+  narration from a subsequent assistant message. Tool-only messages and existing whitespace
+  introduce no extra paragraph. Covered by `test/claude-message-boundaries.test.js`.
+
 - [ ] Slack shows a live progress card as the first thread message, then an uninterrupted final
       answer beneath it with a token/cost line; expanding “Thinking completed” does not split text.
 - [ ] Live (SLK-204/SLK-202, both engines): a turn whose model writes a preamble sentence BEFORE its
