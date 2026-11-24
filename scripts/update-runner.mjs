@@ -575,7 +575,11 @@ function defaultOps({ root, repoRoot }) {
         const env = { ...process.env, HOME: testHome };
         for (const name of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CG_WORKSPACE_DIR", "CLAUDE_GATEWAY_DIR", "CLAUDE_GATEWAY_DB"]) delete env[name];
         await runCommand("npm", ["run", "check:static"], { cwd: repoRoot, env });
-        await runCommand("npm", ["test"], { cwd: repoRoot, env });
+        // Half the default file concurrency, with room for the slower run: the live daemon shares
+        // this host, and on small VPSs a full-width suite starves the timing-sensitive tests
+        // into spurious failures that roll a good candidate back.
+        const concurrency = Math.max(1, Math.floor(os.availableParallelism() / 2));
+        await runCommand("npm", ["test", "--", `--test-concurrency=${concurrency}`], { cwd: repoRoot, env, timeoutMs: 60 * 60_000 });
       } finally {
         rmSync(testHome, { recursive: true, force: true });
       }
