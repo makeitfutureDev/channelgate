@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Dashboard: Activity loads the newest 100 conversations per tab (plus everything working,
+  waiting or pinned) with a **Load more** button, instead of up to a thousand at once. Tab counts
+  still show the full totals.
 - Dashboard: Activity shows a thread as working, and then done, about as soon as it happens. The
   live feed no longer waits on Slack reads before each update. Dashboard lists report their load
   time to the browser (`Server-Timing`) and log slow loads.

@@ -1392,6 +1392,19 @@ authorization keep their live membership checks.
 
 → TEST-PLAN: Faster Activity and dashboard lists (2026-11-24).
 
+## Paged Activity feed (2026-11-24)
+
+The Activity feed sends a window instead of every tracked thread (`activityFeedWindow` in
+`src/web/activity.js`). Working and waiting threads, individually pinned threads and every thread
+of a pinned channel always come. The rest is split into Open, Completed and Hidden, newest
+activity first (Completed by completion time), 100 per page. A **Load more** button under the table
+widens the current tab's group by another 100 for this dashboard session
+(`POST /activity/<session>/api/threads/more`, CSRF-checked); live pushes over the stream keep that
+window, so a newly active thread always lands at the top. Tab counts come from the server and
+count every thread, not just the loaded ones.
+
+→ TEST-PLAN: Paged Activity feed (2026-11-24).
+
 ## Live Activity feed without Slack waits (2026-11-24)
 
 The Activity feed and its live stream (Server-Sent Events at `/activity/<session>/stream`) render

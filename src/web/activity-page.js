@@ -89,6 +89,10 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   let completingAll = false;
   let groupOrder = [...defaultGroupOrder], groupOrderVersion = -1, draftOrder = [], savingOrder = false;
   let rows = [], filter = "active", ended = false, loaded = false, stream = null;
+  // The server sends a window (newest 100 per group plus every working, waiting and pinned
+  // thread) and the true totals; "Load more" widens the current group's window.
+  let serverCounts = null, more = {}, loadingMore = false;
+  const feedGroupOf = (view) => view === "hidden" ? "hidden" : view === "done" ? "done" : "open";
   let revision = 0, requestId = 0, lastUpdated = 0, connected = false;
   let unavailable = false, message = "", actionMessage = "";
   // Table columns: the viewer's saved order and pixel widths (unset = the stylesheet default).
@@ -485,6 +489,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       // A Done/Hide/Later/Pin click in flight keeps its optimistic look over any snapshot that
       // lands before the write is confirmed, so the row never flickers back.
       .map((row) => optimistic.has(key(row)) ? { ...row, ...optimistic.get(key(row)) } : row);
+    serverCounts = data.counts && typeof data.counts === "object" ? data.counts : null;
+    more = data.more && typeof data.more === "object" ? data.more : {};
     pinnedChannels = Array.isArray(data.pinnedChannels) ? data.pinnedChannels.filter((entry) => entry
       && typeof entry.channelId === "string" && typeof entry.channelName === "string") : [];
     acceptOrder(data);
@@ -603,6 +609,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const currentGrouping = filter === "done" ? completedGroupBy : groupBy;
     const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0, hidden: 0 };
     for (const row of rows) { if (row.hidden) { counts.hidden++; continue; } counts[row.status]++; if (row.status !== "done") counts.open++; if (row.status !== "later" && !(row.status === "done" && row.dismissed)) counts.active++; }
+    if (serverCounts) for (const name of Object.keys(counts)) if (Number.isSafeInteger(serverCounts[name])) counts[name] = Math.max(counts[name], serverCounts[name]);
+    const loadMore = el("load-more");
+    if (loadMore) {
+      loadMore.hidden = ended || !loaded || !more[feedGroupOf(filter)];
+      loadMore.disabled = loadingMore;
+      loadMore.textContent = loadingMore ? "Loading…" : "Load more";
+    }
     for (const button of tabs.querySelectorAll("button")) {
       const selected = button.dataset.filter === filter;
       button.setAttribute("aria-pressed", String(selected));
@@ -1147,6 +1160,21 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       browser.open?.(channelAnchor.dataset.web, "_blank", "noopener,noreferrer");
     }
   }
+  async function loadMoreRows() {
+    if (ended || loadingMore) return;
+    loadingMore = true; render();
+    try {
+      const response = await fetch(base + "/api/threads/more", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf }, body: JSON.stringify({ group: feedGroupOf(filter) }) });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      revision++;
+      accept(await response.json());
+    } catch {
+      if (!ended) { actionMessage = "Older conversations couldn’t be loaded. Please try again."; }
+    } finally { loadingMore = false; render(); }
+  }
+  el("load-more")?.addEventListener("click", () => { void loadMoreRows(); });
   body.addEventListener("click", rowClick);
   pinnedBody.addEventListener("click", rowClick);
   pinnedChannelList.addEventListener("click", rowClick);
@@ -1760,6 +1788,9 @@ table[data-cards] thead tr{padding:0 16px 0 57px}
 .pinned-channels{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 12px}
 .pinned-channel{display:flex;align-items:center;gap:8px;max-width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
 .pinned-channel[hidden],.pinned-channels[hidden]{display:none}
+.load-more-row{display:flex;justify-content:center;margin:14px 0}.load-more[hidden]{display:none}
+.load-more{font:500 13px var(--font);padding:8px 18px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.load-more:disabled{opacity:.6;cursor:default}
 .pinned-channel .channel-link{overflow-wrap:anywhere;min-width:0;font-size:12px}
 .pinned-channel-count{color:var(--muted);font:10px var(--mono)}
 .pinned-channel .channel-pin{flex:none}
@@ -2050,7 +2081,7 @@ ${skillsView ? skillsInSettings(base) : automationsView ? AUTOMATION_BOARD_HTML 
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>
 <div id="pinned-channels" class="pinned-channels" aria-label="Pinned channels" hidden></div>
 <table id="pinned-table" aria-label="Pinned conversations">${tableHead()}<tbody id="pinned-threads"></tbody></table></section>
-<table id="table" hidden>${tableHead()}<tbody id="threads"></tbody></table>
+<table id="table" hidden>${tableHead()}<tbody id="threads"></tbody></table><div class="load-more-row"><button type="button" id="load-more" class="load-more" hidden>Load more</button></div>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="columns-button" class="link-button" type="button" aria-haspopup="dialog">▤ Columns</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
