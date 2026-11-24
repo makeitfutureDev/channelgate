@@ -81,6 +81,17 @@ export function listScheduleRuns({ scheduleId, channelId, limit = 50, before } =
   return db.prepare(`SELECT data FROM schedule_runs ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY rowid DESC LIMIT ?`).all(...args).map((r) => fromJson(r.data, {}));
 }
 
+// The latest run of every automation in one conversation, in one query: what the
+// Automations channel list needs (last status, acknowledged) without a full summary each.
+export function latestScheduleRuns(channelId) {
+  const rows = getDb().prepare(`SELECT schedule_id, data FROM schedule_runs WHERE rowid IN
+    (SELECT max(rowid) FROM schedule_runs WHERE channel_id = ? GROUP BY schedule_id)`).all(channelId);
+  return new Map(rows.map((r) => {
+    const run = fromJson(r.data, {}) || {};
+    return [r.schedule_id, { status: run.status || null, acknowledged: Boolean(run.acknowledgedAt) }];
+  }));
+}
+
 // Every run of one automation started at or after `sinceMs`, newest first (bounded).
 export function scheduleRunsSince({ scheduleId, channelId, sinceMs, limit = 500 }) {
   return getDb().prepare("SELECT data FROM schedule_runs WHERE schedule_id = ? AND channel_id = ? AND started_ms >= ? ORDER BY started_ms DESC LIMIT ?")

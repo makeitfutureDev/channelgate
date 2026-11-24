@@ -1392,6 +1392,21 @@ authorization keep their live membership checks.
 
 → TEST-PLAN: Faster Activity and dashboard lists (2026-11-24).
 
+## Live Activity feed without Slack waits (2026-11-24)
+
+The Activity feed and its live stream (Server-Sent Events at `/activity/<session>/stream`) render
+from the database only. The Slack reads that discover a new thread's root message and reconcile
+older completions run beside the feed, one pass per viewer at a time (`backgroundRootPass` in
+`src/slack/home-threads.js`); what they index announces itself through the thread-change event,
+which pushes the next snapshot. A run starting or finishing therefore reaches an open dashboard
+within the stream's 25 ms debounce instead of after up to 2 s of Slack reads. Thread eligibility
+skips the session/run scan when every row is already marked engaged, an access pass reads each
+conversation's settings once, the Automations list reads each conversation's latest runs in one
+query, and `/api/threads` and `/api/automations` answer with a `Server-Timing` header and log a
+`[activity] slow … load` line past one second.
+
+→ TEST-PLAN: Live Activity feed without Slack waits (2026-11-24).
+
 ## Activity dashboard layout, error filter and harness groups (2026-11-24)
 
 - Every dashboard page (Calls, Automations, Skills, Subscriptions, every Settings section) shares

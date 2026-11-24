@@ -1980,6 +1980,16 @@ that channel's threads and automations are gone (the leave event clears the cach
 from the dashboard's thread and require its row to change to working and then done on refresh with
 no extra delay.
 
+## Live Activity feed without Slack waits (2026-11-24)
+
+Regression: `test/home-threads.test.js` ("live Activity snapshots never wait on Slack root reads"),
+`test/activity.test.js` (accepted run event discovers its root through a follow-up stream event),
+`test/activity-automations.test.js`. Live, for Claude and for Codex: open Activity, send the agent
+a message in a NEW thread, and require the row to appear as working within about a second and to
+turn idle/done within about a second of the reply posting. In the browser's network panel the
+`/api/threads` response carries `Server-Timing: threads;dur=…` well under 1000. Automations still
+shows the failing filter count correctly.
+
 ## Activity dashboard layout, error filter and harness groups (2026-11-24)
 
 Engine-independent (dashboard rendering only). Regression: `test/activity-automations.test.js`

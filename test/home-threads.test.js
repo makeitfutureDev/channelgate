@@ -1802,3 +1802,26 @@ test("hidden history has its own capacity and cannot evict visible Activity", as
   assert.equal(snapshot.rows.filter((row) => !row.hidden_ms).length, 1);
   assert.equal(snapshot.rows.find((row) => !row.hidden_ms).thread_ts, "100.000001");
 });
+
+test("live Activity snapshots never wait on Slack root reads; the background pass indexes and pushes", async () => {
+  const { activityRootPassForTests } = await import("../src/slack/home-threads.js");
+  const { onThreadChanged } = await import("../src/gateway/thread-changes.js");
+  const c = await channel(); root(c, "100.000001");
+  // A new run in a thread the index has never seen: its root must be read from Slack.
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("bg-root", toJson({ channelId: c.channelId, threadKey: "200.000001" }));
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const original = client.conversations.replies;
+  client.conversations.replies = async (args) => { await gate; return original(args); };
+  roots.set(`${c.channelId}:200.000001`, { ts: "200.000001", user: "U_MINE", text: "New task" });
+  const started = Date.now();
+  const first = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses" }, { backgroundRootReads: true, rootReadBudgetMs: 5000 });
+  assert.ok(Date.now() - started < 1000, "the snapshot did not wait for the Slack read");
+  assert.deepEqual(first.rows.map((r) => r.thread_ts), ["100.000001"]);
+  const changed = [];
+  const off = onThreadChanged((e) => changed.push(e.threadTs));
+  release(); await activityRootPassForTests("U_MINE"); off();
+  assert.ok(changed.includes("200.000001"), "indexing announced the thread to live streams");
+  const next = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses" }, { backgroundRootReads: true });
+  assert.equal(next.rows.find((r) => r.thread_ts === "200.000001")?.status, "working");
+});
