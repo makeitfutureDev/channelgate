@@ -162,7 +162,8 @@ test("at a channel's top level the first spoken task is posted as a new channel 
   session.emit("input_transcript", { text: "Please build the export" });
   session.emit("tool_call", { id: "c1", name: "run_task", args: { request: "Build the export and run the tests" } });
   session.emit("tool_call", { id: "c2", name: "run_task", args: { request: "Then deploy it" } });
-  await tick(80);
+  // Wait for both turns rather than a fixed 80 ms: on a loaded host the second can start later.
+  for (const deadline = Date.now() + 10_000; (f.runs.length < 2 || f.delivered.length < 2) && Date.now() < deadline;) await tick(10);
   // One root message carrying the request itself; the second request lands inside its thread.
   const roots = f.posted.filter((p) => p.conversationId === "C_WORK" && !p.threadKey);
   assert.equal(roots.length, 1);
