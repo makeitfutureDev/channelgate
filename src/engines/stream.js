@@ -178,6 +178,7 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   const seenToolUses = new Set();
   let text = "";
   let awaitingMessageText = false;
+  let lastMessageId = "";
   let initialModel = "";
   let primaryModel = "";
   // Context occupancy of the LATEST top-level provider request: everything the model read for
@@ -357,7 +358,11 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     const ev = p.event;
     const et = ev?.type;
 
-    if (primary && et === "message_start") awaitingMessageText = true;
+    if (primary && et === "message_start") {
+      const id = ev.message?.id || "";
+      if (!id || id !== lastMessageId) awaitingMessageText = true;
+      lastMessageId = id;
+    }
 
     if (et === "content_block_start") {
       const cb = ev.content_block;
@@ -375,11 +380,11 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     if (et === "content_block_delta") {
       const d = ev.delta;
       const t = d?.text ?? d?.delta?.text ?? "";
-      if (t) {
+      if (primary && t) {
         // The CLI can emit a new assistant message after a tool result without any whitespace.
-        const separate = primary && awaitingMessageText && text && !/\s$/.test(text) && !/^\s/.test(t);
+        const separate = awaitingMessageText && text && !/\s$/.test(text) && !/^\s/.test(t);
         const chunk = separate ? "\n\n" + t : t;
-        if (primary) awaitingMessageText = false;
+        awaitingMessageText = false;
         text += chunk;
         onDelta?.(chunk);
       }
