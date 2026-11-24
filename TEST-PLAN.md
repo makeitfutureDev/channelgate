@@ -11663,6 +11663,9 @@ structural invariants are automated; rendered navigation and feature claims also
       `TodoWrite` snapshot maps completed→complete / in_progress and re-uses stable row ids across
       snapshots; a task-chunk append failure disables the card without dropping the streamed answer
       or forcing the plain-post fallback (`test/slack-progress.test.js`).
+- [x] Unit: a license or model warning followed by a tool call opens the native task card first.
+      The warning then leads the separate answer stream exactly once; a tool-only or text-only result
+      still delivers its full answer (`test/slack-progress.test.js`).
 - [x] Unit: a tool, failed tool or subagent event that arrives AFTER the first answer delta still
       opens the toolbox (its rows render, in a card message separate from the answer text), while a
       text-only turn that runs long enough to beat twice never opens a card just to show the

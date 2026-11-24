@@ -5492,7 +5492,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and the agent's plan render in Slack's native
   **task_update card**, streamed as its own message directly ABOVE the answer — a turn with progress
   is two bot messages (the live card, then the uninterrupted answer beneath it), a text-only turn
-  stays one. A tool, subagent, notice or progress-report row that arrives after the answer has
+  stays one. A gateway warning is held until the first tool, heartbeat, answer text or completion
+  so the warning can lead the answer without putting it above a tool card that opens first.
+  A tool, subagent, notice or progress-report row that arrives after the answer has
   started still opens the card; only the content-free liveness pulse is suppressed then, so one
   preamble sentence before the first tool call never costs the turn its toolbox. Rows are
   grouped into ONE collapsible "steps" card

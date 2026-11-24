@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- In Slack, a license fallback warning stays with the answer when the agent starts with a
+  tool call. The live progress card appears above that answer.
 - When both harnesses fail, Slack’s retry card shows a readable reason even when the second
   provider returns a long JSON error.
 - The Claude login watch remembers both daily warnings, so switching repeatedly between an
