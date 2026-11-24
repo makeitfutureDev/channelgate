@@ -49,6 +49,7 @@ const MEMBERSHIP_PREFETCH_CONCURRENCY = 6;
 export async function accessContext(client, userId) {
   const user = await getUser(userId) || {};
   const membership = new Map();
+  const metas = new Map(); // one settings read per conversation per access check pass
   let unavailable = false;
   const members = (channelId) => {
     if (!membership.has(channelId)) {
@@ -71,7 +72,8 @@ export async function accessContext(client, userId) {
     },
     async allows(entry, threadTs = "") {
       if (!entry || platformOfConversation(entry.channelId) !== "slack") return false;
-      const meta = await getChannelMeta(entry.slug);
+      if (!metas.has(entry.slug)) metas.set(entry.slug, getChannelMeta(entry.slug));
+      const meta = await metas.get(entry.slug);
       if (!meta || entry.disabled || entry.archived || entry.deleted || meta.disabled || meta.archived || meta.deleted
         || (meta.botMembership && meta.botMembership !== "member") || !isAuthorized(meta, userId, Boolean(entry.isDM || meta.isDM), { isAdminUser: user.isAdmin === true, isApprovedUser: user.approved === true })) return false;
       // Public channels need gateway admission. Private/group/DM conversation names and content
@@ -354,18 +356,40 @@ async function repairHistoricalCompletion(client, userId, access, now, deadline)
 
 // The web feed reads local state plus bounded root/legacy-completion repairs. Open resolves
 // a permalink after fresh click-time authorization.
-export async function activityThreadSnapshot(client, userId, requested = {}, { now = Date.now, rootReadBudgetMs = 2000 } = {}) {
+const backgroundRootPasses = new Map(); // userId -> running pass
+function backgroundRootPass(client, userId, now, rootReadBudgetMs) {
+  if (backgroundRootPasses.has(userId)) return backgroundRootPasses.get(userId);
+  const pass = (async () => {
+    const access = await accessContext(client, userId);
+    const channels = new Map((await listChannels()).map((entry) => [entry.channelId, entry]));
+    const deadline = Date.now() + rootReadBudgetMs;
+    await discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs);
+    await repairHistoricalCompletion(client, userId, await accessContext(client, userId), now, deadline);
+  })().catch(() => {}).finally(() => { backgroundRootPasses.delete(userId); });
+  backgroundRootPasses.set(userId, pass);
+  return pass;
+}
+export function activityRootPassForTests(userId) { return backgroundRootPasses.get(userId) || Promise.resolve(); }
+
+export async function activityThreadSnapshot(client, userId, requested = {}, { now = Date.now, rootReadBudgetMs = 2000, backgroundRootReads = false } = {}) {
   const view = requested.filter === "all-statuses" ? { ...normalizeThreadView(requested), filter: "all-statuses" } : normalizeThreadView(requested);
   const search = String(requested.search || "").trim().slice(0, 200);
   const size = Number(requested.pageSize);
   const pageSize = Number.isSafeInteger(size) && size > 0 ? Math.min(size, 1000) : 100;
   let access = await accessContext(client, userId);
   const channels = new Map((await listChannels()).map((entry) => [entry.channelId, entry]));
-  const repairDeadline = Date.now() + rootReadBudgetMs;
-  const discovery = await discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs);
-  const repair = await repairHistoricalCompletion(client, userId, access, now, repairDeadline);
-  // A content read may outlive membership/rank changes. Never render with its pre-read cache.
-  if (discovery.attempted || repair.attempted) access = await accessContext(client, userId);
+  let discovery = { unavailable: false }, repair = { unavailable: false };
+  if (backgroundRootReads) {
+    // The live dashboard renders from the database only. Slack root reads run beside it, one
+    // pass per viewer at a time; what they index reaches the page through thread-change events.
+    backgroundRootPass(client, userId, now, rootReadBudgetMs);
+  } else {
+    const repairDeadline = Date.now() + rootReadBudgetMs;
+    discovery = await discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs);
+    repair = await repairHistoricalCompletion(client, userId, access, now, repairDeadline);
+    // A content read may outlive membership/rank changes. Never render with its pre-read cache.
+    if (discovery.attempted || repair.attempted) access = await accessContext(client, userId);
+  }
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const workingSince = slackThreadWorkingSince();
   const authorized = [];
@@ -376,6 +400,7 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   let ordinaryCount = 0, hiddenCount = 0, archivedCount = 0;
   let truncated = false;
   const eligibleRows = eligibleSlackThreadsForUser(userId);
+  const names = new Map();
   await access.prefetch(eligibleRows.map((row) => channels.get(row.channel_id)));
   for (const row of eligibleRows) {
     if (row.hidden_ms > 0 && !requested.includeHidden) continue;
@@ -392,7 +417,8 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
     if (hidden) hiddenCount++; else if (archived) archivedCount++; else if (!saved) ordinaryCount++;
     // Completion does not cancel runtime work; the row keeps its shared Done state.
     const since = status === "working" ? workingSince.get(`${row.channel_id}::${row.thread_ts}`) : undefined;
-    authorized.push({ ...row, channelName: await activityChannelName(entry), isDM: isActivityDM(entry), status, ...(since ? { working_since_ms: since } : {}) });
+    if (!names.has(row.channel_id)) names.set(row.channel_id, await activityChannelName(entry));
+    authorized.push({ ...row, channelName: names.get(row.channel_id), isDM: isActivityDM(entry), status, ...(since ? { working_since_ms: since } : {}) });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>

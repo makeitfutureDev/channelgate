@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Dashboard: Activity shows a thread as working, and then done, about as soon as it happens. The
+  live feed no longer waits on Slack reads before each update. Dashboard lists report their load
+  time to the browser (`Server-Timing`) and log slow loads.
 - Automations is now a health board, the same page in the admin console and in every member's
   Activity dashboard: what didn't run or didn't arrive comes first, each automation shows its last
   30 runs as run + delivery, a plain-language problem and numbered fix steps, with views, filters,

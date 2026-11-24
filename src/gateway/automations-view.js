@@ -4,7 +4,7 @@
 // on every request; a schedule row is always looked up INSIDE the checked channel.
 import { listChannels, getChannelEntry, getChannelMeta, getUsers } from "../config/store.js";
 import { listForChannel, deleteSchedule, updateSchedule } from "../config/schedules.js";
-import { listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged } from "./schedule-runs.js";
+import { latestScheduleRuns, listScheduleRuns, scheduleRunSummary, visibleScheduleRun, scheduleRunsSince, getScheduleRun, setScheduleRunsAcknowledged } from "./schedule-runs.js";
 import { automationHealth, fixSteps, openProblem, runProblem } from "./automation-health.js";
 import { logEvent } from "../util/logger.js";
 import { buildSchedulePatch } from "../config/schedule-patch.js";
@@ -110,11 +110,11 @@ export async function automationChannels(access, userId) {
 export const FAILED_RUN_STATUSES = new Set(["failed", "blocked", "interrupted"]);
 // Enabled automations whose LAST run failed (a paused one is not asking for attention).
 function failingCount(schedules, channelId) {
-  const historyStart = costHistoryStart();
+  const latest = latestScheduleRuns(channelId);
   return schedules.filter((s) => {
     if (s.enabled === false) return false;
-    const summary = scheduleRunSummary(s.id, channelId, historyStart);
-    return FAILED_RUN_STATUSES.has(summary.lastStatus) && !summary.lastAcknowledged;
+    const last = latest.get(s.id);
+    return FAILED_RUN_STATUSES.has(last?.status) && !last.acknowledged;
   }).length;
 }
 

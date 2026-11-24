@@ -440,8 +440,11 @@ export function isSlackThreadEligible(row, evidence = engagementEvidence()) {
 }
 
 export function eligibleSlackThreadsForUser(userId) {
-  const evidence = engagementEvidence();
-  return slackThreadsForUser(userId).filter((row) => isSlackThreadEligible(row, evidence));
+  const rows = slackThreadsForUser(userId);
+  // Engagement evidence scans every session and run row. Rows already marked engaged (nearly
+  // all of them, since eligibility marks them) never need it, so build it only when one doesn't.
+  let evidence = null;
+  return rows.filter((row) => row?.agent_engaged === 1 ? Boolean(row.starter_id) : isSlackThreadEligible(row, evidence ||= engagementEvidence()));
 }
 
 export function slackThreadCandidates(channels) {

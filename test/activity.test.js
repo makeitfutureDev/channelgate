@@ -795,7 +795,10 @@ test("accepted run event discovers its missing human root before queue ownership
   assert.equal((await nextEvent(reader)).rows.length, 0);
   recordActiveRun("not-indexed", { channelId: "C_WORK", slug: entry.slug,
     authorId: "U_OTHER", threadKey: "100.000001" });
-  assert.equal((await nextEvent(reader)).rows[0].status, "working");
+  // The root read runs beside the snapshot; its indexing pushes the next event.
+  let event = await nextEvent(reader);
+  for (let i = 0; i < 3 && !event.rows.length; i++) event = await nextEvent(reader);
+  assert.equal(event.rows[0].status, "working");
   assert.equal(getSlackThread("C_WORK", "100.000001").starter_id, "U_MINE");
   clearActiveRun("not-indexed");
 });

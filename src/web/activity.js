@@ -159,6 +159,15 @@ export function forgetActivitySessionCacheForTests() {
   sessions.forgetCache();
 }
 
+// Dashboard timing: a Server-Timing header on every list response (visible in the browser's
+// network panel) and one log line when a load is slow, so a slow deployment shows WHERE.
+const SLOW_DASHBOARD_MS = 1000;
+function timed(res, name, started, rows) {
+  const ms = Math.round(performance.now() - started);
+  res.set("Server-Timing", `${name};dur=${ms}`);
+  if (ms >= SLOW_DASHBOARD_MS) console.warn(`[activity] slow ${name} load: ${ms} ms, ${rows ?? 0} rows`);
+}
+
 export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
@@ -291,7 +300,7 @@ export function createActivityRouter({
       if (platformOfConversation(channelId) === 'slack' ? await access.allows(entry && { ...entry, channelId }) : await platformActivityAccess(session.ownerId, channelId)) pinnedChannels.push({ channelId, channelName: await activityChannelName({ ...entry, channelId }) });
     }
     const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000, includeHidden: true,
-      pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });
+      pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) }, { backgroundRootReads: true });
     linkedIds.set(session.ownerId, await activityIdentityIds(session.ownerId));
     const external = await platformActivitySnapshot(session.ownerId);
     data.rows.push(...external.rows);
@@ -604,8 +613,10 @@ export function createActivityRouter({
   router.get("/:id/api/automations", async (req, res) => {
     try {
       const { session, client } = await context(req);
+      const started = performance.now();
       const data = await automationChannels(await accessContext(client, session.ownerId), session.ownerId);
       await context(req);
+      timed(res, "automations", started, data.length);
       return res.json({ channels: data });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
@@ -810,10 +821,11 @@ export function createActivityRouter({
   router.get("/:id/api/threads", async (req, res) => {
     try {
       const { session, client } = await context(req);
-      const version = configVersion;
+      const version = configVersion, started = performance.now();
       const data = await browserSnapshot(client, session, req.params.id);
       await context(req); // A disable/expiry while the snapshot awaited membership cannot publish it.
       if (version !== configVersion) return unavailable(res, 503);
+      timed(res, "threads", started, data.rows?.length);
       return res.json(data);
     } catch (error) { return unavailable(res, error.status || 503); }
   });
