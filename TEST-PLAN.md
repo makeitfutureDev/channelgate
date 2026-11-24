@@ -16429,7 +16429,8 @@ portable fixtures before landing.
   must remain a normal question.
 - [ ] **Throttled Stop, Claude and Codex:** use a disposable Slack API proxy holding an append and
   assistant status clear until released. Start two harmless long turns plus a queued turn and seed
-  one loop; invoke channel Stop. Require all controllers aborted and the loop removed before proxy
+  one loop; invoke channel Stop. Check both active controller signals and the queued controller
+  signal (`test/stop-card-engine.test.js`) and require the loop removed before proxy
   release; independent acknowledgement post attempts proceed; run cleanup releases within its
   one-second grace. After proxy release, delivered text is marked partial, queued text is not
   flushed as a new answer. Audit has three `run_stopped` rows with distinct run IDs (two active,

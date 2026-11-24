@@ -133,7 +133,8 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
     // Stop is a durable terminal action, not merely an in-memory abort signal. Clear every
     // accepted row synchronously before acknowledging the stop so a concurrent daemon exit can
     // never replay either the active turn or anything queued behind it.
-    clearActiveRunHandles([res.active, ...(res.queued || [])]);
+    const stoppedHandles = [res.active, ...res.queued];
+    clearActiveRunHandles(stoppedHandles);
     if (res.active?.replayStoppedTurn && res.active?.stoppedPrompt) {
       saveStoppedTurn({
         channelId,
@@ -144,7 +145,7 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
         attachments: res.active.attachments || [],
       });
     }
-    res.active?.controller?.abort(); // kills a cold (keep-alive off) child mid-run — Claude or Codex
+    for (const handle of stoppedHandles) handle?.controller?.abort();
     abortPooled(key); // terminates a warm (Claude) session
     if (!stoppedRuns.includes(key.slice(prefix.length))) stoppedRuns.push(key.slice(prefix.length));
     for (const [state, handles] of [["active", [res.active]], ["queued", res.queued || []]]) {
