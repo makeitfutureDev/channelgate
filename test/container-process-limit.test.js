@@ -98,7 +98,7 @@ test("the inspect format carries the init pid, and an older 10-field line still 
 
 // ── ensureUp ────────────────────────────────────────────────────────────────────────────────────
 
-function harness({ counters = null } = {}) {
+function harness({ counters = null, alive = () => true } = {}) {
   const state = { exists: false };
   const reads = [];
   const box = { counters };
@@ -123,6 +123,7 @@ function harness({ counters = null } = {}) {
   const lifecycle = createContainerLifecycle({
     cli, image, reaper, log: (m) => logs.push(m),
     readPids: async ({ pid }) => { reads.push(pid); return typeof box.counters === "function" ? box.counters(pid) : box.counters; },
+    pidAlive: (pid) => alive(pid),
   });
   return { fake, reaper, lifecycle, logs, state, reads, box };
 }
@@ -390,4 +391,16 @@ test("a stored old default is raised once at boot; a deliberate value, and a lat
     assert.deepEqual(boot(stored), { out: null, saves: [{ containerPidsLimitRev: 2 }] });
     assert.equal(stored.containerPidsLimit, before);
   }
+});
+
+test("ensureUp: a container Podman lists as running whose process is gone is removed and recreated", async () => {
+  let dead = false;
+  const h = harness({ alive: () => !dead });
+  const t = target("dead-running");
+  await running(h, t);
+  dead = true;
+  await h.lifecycle.ensureUp(t, {});
+  assert.ok(h.fake.calls.some((c) => c.argv[1] === "rm"), "the dead container is removed");
+  assert.ok(h.fake.calls.some((c) => c.argv[1] === "create" || c.argv[1] === "run"), "and created again");
+  assert.ok(h.logs.some((m) => /listed as running but its process 4242 is gone/.test(m)));
 });

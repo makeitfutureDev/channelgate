@@ -1528,6 +1528,11 @@ and aborts the same way, and the agent cannot run `kill` to help itself.
   stored: boot raises a stored 1,024 once (`raiseLegacyPidsLimitDefault`, marked by
   `containerPidsLimitRev`), leaves any other stored value alone, and never touches a 1,024 an
   operator sets afterwards. A limit change recreates each container at its next idle moment.
+- **A container killed behind Podman's back is recreated, not trusted.** On a system-service
+  install the containers share the unit's cgroup, so a gateway restart lets systemd kill them
+  while Podman still lists them `running`; every exec then failed "is not running" until someone
+  ran `podman rm` by hand. `ensureUp` now checks the container's host init pid: a "running"
+  container whose process is gone is removed and created again (HOME volume kept).
 - **A background job recovered after a daemon restart is leased again.** "Is anyone else inside?"
   is asked of leases, and the recovered job's lease died with the old daemon; without one, a
   rebuild or a reclaim would have seen an empty container and ended the job.
