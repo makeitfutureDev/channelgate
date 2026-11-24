@@ -38,7 +38,9 @@ test("parallel run controls save, reload and explain reservations independently 
   await openSetting(page, total);
   await total.scrollIntoViewIfNeeded();
   assert.equal(await reserved.inputValue(), "2");
-  assert.match(await total.locator("xpath=ancestor::details[1]").textContent(), /separate from the running-container limit/);
+  const card = page.getByRole("article").filter({ has: page.getByRole("heading", { name: "Parallel agent runs" }) });
+  assert.match(await card.innerText(), /separate from the running-container limit/);
+  assert.match(await card.innerText(), /live chat messages and foreground API requests/i);
   await reserved.fill("");
   await page.locator("#save-settings").click();
   await page.waitForFunction(() => globalThis.document.querySelector("#settings-saved")?.textContent.includes("Reserved interactive slots must be a whole number"));
