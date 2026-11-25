@@ -57,3 +57,12 @@ dies after Slack accepts a root but before the binding is saved, an orphan root 
 Omitting `conversationKey` preserves the previous behavior: independent threads for channel
 runs, with a headless fallback when Slack is unavailable, or the synthetic API workspace when
 `channel` is omitted.
+
+## Google Chat and Teams conversations
+
+A run in a Google Chat space or a Teams conversation works like a Slack channel run: name it in
+`channel` by its full id (`gchat:spaces/AAA…`, `teams:…`), its folder slug or its name. The
+kickoff opens a new thread in the space and the answer posts in that thread; there is no live
+progress card outside Slack. Responses carry `chatThread: true`, `platform` and `threadKey`;
+`slackThread` and `threadTs` stay Slack-only. `conversationKey` is Slack-only. While that
+platform's transport is disconnected the run proceeds headless.

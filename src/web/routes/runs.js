@@ -7,7 +7,7 @@
 //                           statusUrl, engine, slackThread }.
 //   GET  /api/runs/:id    → the job's status + result.
 import express from "express";
-import { startApiRun, getApiJob, listApiJobs, stopApiRun } from "../../gateway/api-runs.js";
+import { startApiRun, getApiJob, listApiJobs, stopApiRun, apiThreadFacts } from "../../gateway/api-runs.js";
 
 // A public (caller-facing) view of a job record — the internal webhook secret is never echoed.
 function publicJob(job) {
@@ -16,10 +16,8 @@ function publicJob(job) {
     status: job.status,
     engine: job.engine,
     slug: job.slug,
-    channelId: job.slackThread ? job.channelId : null,
-    slackThread: Boolean(job.slackThread),
+    ...apiThreadFacts(job),
     conversationKey: job.conversationKey || null,
-    threadTs: job.slackThread ? job.threadKey : null,
     threadReused: Boolean(job.threadReused),
     threadPermalink: job.threadPermalink || null,
     sessionId: job.sessionId,
@@ -54,7 +52,10 @@ export function createRunsRouter({ slack } = {}) {
         engine: started.engine,
         slug: started.slug,
         channelId: started.channelId,
+        platform: started.platform,
+        chatThread: started.chatThread,
         slackThread: started.slackThread,
+        threadKey: started.threadKey,
         conversationKey: started.conversationKey,
         threadTs: started.threadTs,
         threadReused: started.threadReused,
