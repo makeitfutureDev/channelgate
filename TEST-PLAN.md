@@ -1,5 +1,20 @@
 # ChannelGate — Test Plan
 
+## Network control description matches approved private routes (2026-11-25)
+
+- Automated: `node --test test/channel-policy-audit.test.js test/egress-private-hosts.test.js test/network-policy.test.js`.
+  Inspect the actual registered network tool description and proxy-mode confirmation: private and
+  loopback destinations require organization-admin approval for the exact channel host and port;
+  cloud metadata stays refused. The bundled administration guide must agree. Proxy-tunnelled raw
+  protocols remain enforced; legacy bridge, `rawNetwork` and `/sudo` remain advisory.
+- Live acceptance pending for both Claude and Codex: in owned private Worker fixtures with network
+  on, ask `Inspect the network-control and private-host approval tool descriptions. Explain when
+  this channel can reach private or loopback services and whether SSH tunnels obey Network off.
+  Do not change any setting or request an approval.` Pass only when actual tool discovery supports
+  the exact organization-admin-approved host-and-port exception, always-refused cloud metadata,
+  and proxy enforcement for raw tunnels. No network traffic or approvals are needed. The campaign
+  coordinator owns these retests and the private registry update; this patch claims neither.
+
 ## Admin Lean memory tool regression (2026-11-25)
 
 - Automated: `node --test test/memory-tool-mode.test.js test/channel-memory.test.js test/memory-search.test.js test/gateway-mcp-authz.test.js test/modes.test.js`.

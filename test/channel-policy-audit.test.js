@@ -5,7 +5,7 @@
 // gateway control MCP tools, and the diff helper both share.
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import express from "express";
 import { ensureTestEnv, tempDir } from "./helpers.js";
@@ -24,6 +24,7 @@ const { readEvents } = await import("../src/util/logger.js");
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 const { defaultChannelMeta, getChannelMeta, saveChannelMeta, upsertChannelEntry, setUser } = await import("../src/config/store.js");
 const { register: registerChannelAdmin } = await import("../src/mcp/tools/channel-admin.js");
+const { egressProvider, setEgressProvider } = await import("../src/runtimes/container/egress-hook.js");
 const { ctxFromClaims } = await import("../src/mcp/gateway-server.js");
 
 const CHANNEL_ID = "C_POLICY_AUDIT";
@@ -154,10 +155,16 @@ test("the network tool description distinguishes proxy enforcement from direct-h
   const description = definitions.get("set_channel_network").description;
   assert.match(description, /ordinary proxy-mode containers/i);
   assert.match(description, /\/sudo direct-host.*advisory.*no OS-level egress cutoff/i);
-  assert.match(description, /legacy open-bridge.*raw sockets.*advisory/i);
+  assert.match(description, /legacy open-bridge.*rawNetwork.*advisory/i);
+  assert.match(description, /Raw protocols tunnelled through the proxy remain subject to this policy/);
   assert.match(description, /any public host.*no domain allowlist/i);
   assert.match(description, /off limits.*engine endpoints.*selected connectors/i);
-  assert.match(description, /Private, loopback and cloud-metadata.*never reachable through the proxy/);
+  assert.match(description, /Private and loopback addresses are refused unless an organization admin approved that exact host and port for this channel/);
+  assert.match(description, /Cloud-metadata addresses are always refused/);
+  assert.doesNotMatch(description, /raw sockets make the policy advisory|Private, loopback and cloud-metadata.*never reachable/);
+  const guide = readFileSync(new URL("../src/gateway/gateway-usage/references/administration.md", import.meta.url), "utf8");
+  assert.match(guide, /private and loopback addresses are refused unless an organization admin approved that exact host and port for this channel/);
+  assert.match(guide, /Cloud-metadata addresses are always refused/);
   assert.match(description, /no host credential files or mounts/);
 });
 
@@ -184,6 +191,22 @@ test("the MCP set_channel_network handler logs the change with the Slack author"
   const noop = policyEvents().length;
   await tools.get("set_channel_network")({ enabled: false });
   assert.equal(policyEvents().length, noop, "re-setting the same value is not a change");
+});
+
+test("the network-on response preserves the approved private route exception", async () => {
+  const previousProvider = egressProvider();
+  setEgressProvider({ running: () => true, socketDirFor: () => "/unused-test-socket", caBundlePath: () => "/unused-test-ca" });
+  const tools = new Map();
+  const ctx = ctxFromClaims({ channelId: CHANNEL_ID, slug: entry.slug, authorId: ADMIN_ID, threadKey: "1700000000.000100", principalTrusted: true, engine: "claude" });
+  registerChannelAdmin({ registerTool: (name, _def, handler) => tools.set(name, handler) }, ctx);
+  try {
+    const result = await tools.get("set_channel_network")({ enabled: true });
+    assert.match(result.content[0].text, /private and loopback destinations require organization-admin approval for the exact host and port/);
+    assert.match(result.content[0].text, /cloud-metadata addresses stay blocked/);
+  } finally {
+    await tools.get("set_channel_network")({ enabled: false });
+    setEgressProvider(previousProvider);
+  }
 });
 
 test("the MCP admin-mode and workdir twins are audited too", async () => {

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The network-control tool and administration guide now explain the exact administrator-approved
+  private/loopback route exception and that raw tunnels still obey the network switch.
+
 - Composio calls the gateway refuses now say why (for example a batch's `tools` sent as text
   instead of a list, or a disabled executor and what to use instead), so the agent can correct the
   call. Previously every refusal claimed a channel membership change needed approval. A batch sent
