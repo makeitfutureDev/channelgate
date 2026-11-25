@@ -6,6 +6,7 @@
 // is a private surface: the value never becomes a message, is never echoed back, and never rides a
 // Home view. That makes this the preferred path; the DM tool stays as the fallback for people who
 // are already in a conversation with the bot.
+import { slackActorId } from "./actor.js";
 import { getUser, setUser } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 
@@ -121,7 +122,7 @@ export function registerComposioHomeActions(app, { publishHome } = {}) {
 
   app.action(COMPOSIO_HOME_SET_ACTION, async ({ ack, body, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     if (!userId || !body?.trigger_id) return;
     try {
       const user = await getUser(userId);
@@ -136,7 +137,7 @@ export function registerComposioHomeActions(app, { publishHome } = {}) {
 
   app.action(COMPOSIO_HOME_CLEAR_ACTION, async ({ ack, body, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     if (!userId) return;
     try {
       await setUser(userId, { composioToken: "", composioTokenLabel: "" });
@@ -149,7 +150,7 @@ export function registerComposioHomeActions(app, { publishHome } = {}) {
   });
 
   app.view(COMPOSIO_HOME_MODAL, async ({ ack, body, view, client }) => {
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     const token = normalizeComposioToken(inputValue(view, COMPOSIO_TOKEN_BLOCK, COMPOSIO_TOKEN_INPUT));
     const problem = userId ? composioTokenError(token) : "No user context — can't save a key here.";
     if (problem) {

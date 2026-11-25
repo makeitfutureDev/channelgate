@@ -2804,7 +2804,9 @@ save/disconnect returns to Connections, thread controls stay in Activity, and re
 in Help & settings.
 Navigation uses the authenticated clicking viewer, without a shared selection or new user setting. A
 navigation callback whose actor id or tab value is not a string (a number, object or array — `["activity"]`
-included) is ignored: nothing loads and nothing is published.
+included) is ignored: nothing loads and nothing is published. Every other Home control (reminder,
+mention and voice toggles, the Composio key modal and Clear, the My threads controls) refuses a
+non-string actor the same way, before any user-record write.
 
 Activity automatically checks local thread/runtime state every 15 seconds and republishes when
 status, completion, last-message date, title or the viewer's indexed threads change. The selected

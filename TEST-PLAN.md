@@ -4234,7 +4234,9 @@ Regression: `node --test test/home-tabs.test.js test/home-threads.test.js
 Check default Activity, all five labels and selection highlighting, exactly one content loader per
 view, actor-only navigation, invalid/mismatched tab rejection, rejection of non-string actors
 (`17`, `{id}`, `[id]`) and tab values (`["activity"]`) with zero loads and zero publications
-(HOME-TABS-06), stale-render suppression and
+(HOME-TABS-06) — and the same non-string actors on the reminder/mention/voice toggles, Composio
+Clear/modal and My threads controls with no user record created and no publication — stale-render
+suppression and
 ordered publication across failures, personal Composio save/disconnect
 returning to Connections, reminder changes staying on Help & settings and thread filters returning
 to Activity. Keep existing

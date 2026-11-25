@@ -1,5 +1,6 @@
 // The App Home personal work list. Every read and click uses the Slack interaction's viewer;
 // neither button values nor stored thread ownership can grant channel or sudo-thread access.
+import { slackActorId } from "./actor.js";
 import { getChannelEntry, getChannelMeta, getUser, listChannels } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
@@ -539,7 +540,7 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
   app.action("cg_home_threads_open", async ({ ack }) => { await ack(); });
   app.action(HOME_THREADS_ACTION, async ({ ack, body, action, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     if (!userId) return;
     try {
       const kind = action.action_id?.split("_").at(-1);

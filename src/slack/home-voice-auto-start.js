@@ -1,4 +1,5 @@
 // Voice auto-start is personal: only the authenticated clicking user can change their setting.
+import { slackActorId } from "./actor.js";
 import { setUser } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 
@@ -24,7 +25,7 @@ export function voiceAutoStartHomeBlocks({ enabled = false } = {}) {
 export function registerVoiceAutoStartHomeActions(app, { publishHome } = {}) {
   app.action(VOICE_AUTO_START_HOME_TOGGLE_ACTION, async ({ ack, body, action, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     const value = action?.value;
     if (!userId || !["on", "off"].includes(value)) return;
     const enabled = value === "on";
