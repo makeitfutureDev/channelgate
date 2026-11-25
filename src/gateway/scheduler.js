@@ -305,7 +305,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       });
       if (sched.ack && posted?.messageId) {
         const escalateAfterMin = sched.escalateAfterMin ?? 120;
-        addAck({
+        const ack = addAck({
           scheduleId: sched.id,
           channelId: sched.channelId,
           slug: sched.slug,
@@ -322,6 +322,7 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           dmAfterMin: sched.dmAfterMin ?? 60,
           escalationStyle: sched.escalationStyle || "thread",
         });
+        wakeForAck(Date.parse(ack.nextAt));
       }
       updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered.",
         ...(posted?.messageId ? { thread: String(posted.messageId) } : {}) });
@@ -531,13 +532,37 @@ async function finishScheduleDelivery(client, sched, result, threadTs) {
 // Escalation pass for reminder acknowledgments. An unacknowledged reminder steps stage1 → (2nd
 // notice in the channel/thread) → stage2 → (DM the creator) → close. Each step reschedules the
 // next via `nextAt`; a ✅ (handled in slack/app.js) deletes the entry, ending the chain.
+// The minute scan recovers persisted deadlines. Between scans only the nearest deadline
+// needs a timer. Its callback rereads the store so a reaction can still cancel the notice.
+let ackTimer;
+let ackWakeAt = Infinity;
+function wakeForAck(at) {
+  const delay = at - Date.now();
+  if (at >= ackWakeAt || delay <= 0 || delay > 60_000) return;
+  clearTimeout(ackTimer);
+  ackWakeAt = at;
+  ackTimer = setTimeout(() => {
+    ackWakeAt = Infinity;
+    processAcks(new Date()).catch(error => console.error("[scheduler] ack check failed:", error.message));
+  }, delay);
+  ackTimer.unref?.();
+}
+
 let acksTicking = false;
+let ackCheckPending = false;
 async function processAcks(now) {
-  if (acksTicking) return;
-  const due = getAcks().filter((a) => {
-    const t = Date.parse(a.nextAt);
-    return Number.isFinite(t) && t <= now.getTime();
-  });
+  if (acksTicking) {
+    ackCheckPending = true;
+    return;
+  }
+  const due = [];
+  let earliest = Infinity;
+  for (const ack of getAcks()) {
+    const at = Date.parse(ack.nextAt);
+    if (at <= now.getTime()) due.push(ack);
+    else if (at < earliest) earliest = at;
+  }
+  wakeForAck(earliest);
   if (!due.length) return;
   acksTicking = true;
   try {
@@ -561,7 +586,9 @@ async function processAcks(now) {
           // The 2nd notice invites a ✅, so make reacting on IT acknowledge too — not just the original.
           if (!repost?.messageId) throw new Error("Second reminder notice returned no message ID");
           const messageTsList = [...(ack.messageTsList || [ack.messageTs]), repost.messageId];
-          updateAck(ack.id, { stage: "sent2", messageTsList, deliveryRequestId: "", retryCount: 0, nextAt: new Date(now.getTime() + (ack.dmAfterMin ?? 60) * 60_000).toISOString() });
+          const nextAt = new Date(Date.now() + (ack.dmAfterMin ?? 60) * 60_000).toISOString();
+          const pending = updateAck(ack.id, { stage: "sent2", messageTsList, deliveryRequestId: "", retryCount: 0, nextAt });
+          if (pending) wakeForAck(Date.parse(nextAt));
           await logEvent("ack_escalate", { id: ack.id, stage: "sent2" });
         } else if (ack.stage === "sent2") {
           if (ack.createdBy) {
@@ -591,6 +618,10 @@ async function processAcks(now) {
     }
   } finally {
     acksTicking = false;
+    if (ackCheckPending) {
+      ackCheckPending = false;
+      await processAcks(new Date());
+    }
   }
 }
 
@@ -750,6 +781,8 @@ export function runScheduleNow(id, { by = "", runOptions = {} } = {}) {
 
 // Reset the module's tick bookkeeping (tests only — the daemon has exactly one scheduler).
 export function resetSchedulerState() {
+  clearTimeout(ackTimer);
+  ackWakeAt = Infinity;
   lastTickMs = null;
   firedThisMinute.clear();
   running.clear();
