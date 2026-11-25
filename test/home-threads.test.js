@@ -597,6 +597,33 @@ test("Refresh and Load older request one-shot full reads without changing the se
   assert.ok(states.every((state) => state.forceThreads && state.discoverThreads && state.filter === "idle" && state.page === 2));
 });
 
+test("every Home page keeps action ids unique per block and Previous/Next publish the requested page", async () => {
+  const c = await channel();
+  for (let n = 1; n <= 29; n++) root(c, `${100 + n}.000001`);
+  for (const page of [0, 1, 2]) {
+    const snapshot = await homeThreadsSnapshot(client, "U_MINE", { filter: "all", page });
+    assert.equal(snapshot.page, page); assert.equal(snapshot.pages, 3);
+    for (const block of homeThreadBlocks({ ...snapshot, moreHistory: true })) {
+      const ids = [...(block.elements || []), ...(block.accessory ? [block.accessory] : [])].map((el) => el.action_id).filter(Boolean);
+      assert.equal(new Set(ids).size, ids.length, `page ${page}: duplicate action_id in one block: ${ids.join(", ")}`);
+    }
+  }
+  const middle = homeThreadBlocks(await homeThreadsSnapshot(client, "U_MINE", { filter: "all", page: 1 }));
+  const nav = middle.filter((b) => b.type === "actions").flatMap((b) => b.elements).filter((el) => ["Previous", "Next"].includes(el.text?.text));
+  assert.deepEqual(nav.map((el) => [el.text.text, el.action_id, JSON.parse(el.value).page]),
+    [["Previous", "cg_home_threads_prev", 0], ["Next", "cg_home_threads_next", 2]]);
+  let handler; const states = [];
+  registerHomeThreadActions({ action: (id, fn) => { if (id instanceof RegExp) handler = fn; } }, { publishHome: async (_c, _u, state) => states.push(state) });
+  for (const el of nav) {
+    assert.match(el.action_id, /^cg_home_threads_(prev|next)$/);
+    await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client, action: { action_id: el.action_id, value: el.value } });
+  }
+  // A Next button published before the split still carries a valid page and keeps working.
+  await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client,
+    action: { action_id: "cg_home_threads_page", value: JSON.stringify({ filter: "all", page: 1 }) } });
+  assert.deepEqual(states.map((s) => [s.filter, s.page]), [["all", 0], ["all", 2], ["all", 1]]);
+});
+
 test("a stale full inspection cannot undo a newer completion or message-date observation", async () => {
   const c = await channel(); root(c, "100.000001");
   updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: true, lastMessageMs: 300000, inspectedAt: 400000 });

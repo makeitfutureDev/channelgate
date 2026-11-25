@@ -2855,6 +2855,9 @@ button aligned at the right. Each compact entry uses two text lines and no separ
 the linked title opens the original thread. Dates come from observed Slack messages and complete paginated transcript refreshes;
 run completion, inspection and Done clicks do not substitute their timestamps. Complete scans can
 correct the date when the latest reply was deleted.
+Previous and Next on a middle page carry distinct action ids, so Slack accepts the published page
+(a repeated id in one actions block made Slack reject the view and Next stayed on page 1); a Next
+button on a Home view published before that change still pages correctly.
 
 Both Home and the browser dashboard require positive participation by this gateway: an admitted
 turn, engine session, agent background job or gateway AI follow-up. Passive observation of human

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- App Home → Activity → My threads: Next now moves past page 1. Previous and Next on a middle
+  page shared one action id, so Slack rejected that page and the view stayed on page 1.
+
 - The network-control tool and administration guide now explain the exact administrator-approved
   private/loopback route exception and that raw tunnels still obey the network switch.
 
