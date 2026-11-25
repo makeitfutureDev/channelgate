@@ -38,6 +38,9 @@ stream_text="no"
 reject_model_body="no"
 reject_all_models_body="no"
 reject_after_tool="no"
+reject_model_native="no"
+reject_native_after_tool="no"
+reject_native_after_output="no"
 limit_fail="no"
 limit_stderr="no"
 limit_after_tool="no"
@@ -74,6 +77,8 @@ for arg in "$@"; do
     *CODEX_STUB_REJECT_MODEL*) reject_model="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
     *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
+    *CODEX_STUB_NATIVE_REJECT_AFTER_TOOL*) reject_model_native="yes"; reject_native_after_tool="yes" ;;
+    *CODEX_STUB_NATIVE_REJECT_AFTER_OUTPUT*) reject_model_native="yes"; reject_native_after_output="yes" ;;
     *CODEX_STUB_LIMIT_FAIL_SAFE*) limit_fail="yes" ;;
     # The same limit on every login, and on every login EXCEPT an added license's own
     # CODEX_HOME: the default sign-in is exhausted while a second license still answers.
@@ -87,6 +92,9 @@ for arg in "$@"; do
   esac
   previous="$arg"
 done
+# Independent of the usage-limit flag: a primary login may be limited while its pool candidate
+# reaches the native model refusal for the exact same prompt.
+case "$*" in *CODEX_STUB_NATIVE_MODEL_NOT_FOUND*) reject_model_native="yes" ;; esac
 # Checked outside the loop's case: a `case` runs only its FIRST matching branch per argument, so a
 # prompt that carries this sentinel ALONGSIDE another one (a rejection to stream the retry of)
 # would otherwise silence the other.
@@ -259,6 +267,16 @@ fi
 if [ "$limit_after_tool" = "yes" ]; then
   printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-limit","type":"command_execution","command":"already-ran"}}'
   printf '%s\n' '{"type":"error","error":{"type":"usage_limit_reached","message":"You'"'"'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits."}}'
+  exit 1
+fi
+if [ "$reject_model_native" = "yes" ] && [ "$model" = "gpt-5.6" ]; then
+  if [ "$reject_native_after_tool" = "yes" ]; then
+    printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-native-rejection","type":"command_execution","command":"already-ran"}}'
+  fi
+  if [ "$reject_native_after_output" = "yes" ]; then
+    printf '%s\n' '{"type":"item.completed","item":{"id":"answer-before-native-rejection","type":"agent_message","text":"Partial answer"}}'
+  fi
+  printf '{"type":"turn.failed","error":{"message":"The '\''%s'\'' model is not supported when using Codex with a ChatGPT account.","codex_error_info":"model_not_found"}}\n' "$model"
   exit 1
 fi
 if [ "$reject_after_tool" = "yes" ]; then

@@ -12634,6 +12634,28 @@ placeholders and `--network none`).
       the whole `{"type":"error","status":400,…}` document) is unwrapped and classified as
       `model_rejected`, so it takes the same gateway-default fallback instead of dead-ending
       (`test/engine-failover.test.js`, `test/invalid-model-handling.test.js`).
+- [x] Regression: Codex's statusless native `codex_error_info="model_not_found"` and exact
+      ChatGPT unsupported-model sentence classify as `model_rejected`. A rejected channel default
+      retries once with a distinct compatible gateway default; the streamed answer announces it
+      exactly once and records `run_model_fallback`. The same rejection after output or any tool
+      attempt cannot replay. Generic 400s and unsupported-model prose remain unclassified.
+- [x] Regression (Claude and Codex): an explicitly thread-pinned or per-run model rejection
+      preserves the provider error, pinned model metadata and `/model` manual-switch hint; no
+      substituted model or substitution note (`test/model-default-fallback.test.js`). A usage-limit
+      move to another selected license keeps that same model even if the second license rejects
+      it; terminal pool errors retain pin metadata (`test/engine-licenses-failover.test.js`).
+- [ ] Live (Codex, disposable testing gateway; no production-wide setting changes): signed-in
+      ChatGPT fixture, Auto mode, non-admin approved author, distinct compatible gateway default
+      captured beforehand. Set only the owned channel default to an unavailable Codex model,
+      leave thread/per-run pins unset, and send `One more sanity check — say hi in one line.`
+      Pass: pre-output/pre-tool rejection, one same-harness default retry, one visible streamed
+      note naming the actual default, matching footer and `run_model_fallback`; then restore the
+      channel default. Repeat with Claude and its own unavailable model/distinct valid default.
+- [ ] Live pinned negative (both engines, owned fresh threads on the same testing gateway):
+      pin an unavailable model to that thread with `/model` → just this thread, then send the
+      same prompt. Pass: the native rejection names the pinned model with a manual `/model`
+      remedy, no automatic model/harness substitution and no `run_model_fallback`. Repeat with
+      a per-run API model override on an owned API conversation; remove all owned pins afterward.
 - [x] Unit: `plainFailureText` turns a provider JSON body — bare, quoted inside prose, or wrapped in
       another body — into the sentence it carries, and never lets braces reach a thread
       (`test/process-outcome.test.js`); the Slack error card renders that sentence and, for a model

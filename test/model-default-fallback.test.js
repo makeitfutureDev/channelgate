@@ -17,6 +17,8 @@ const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/co
 const { saveSettings } = await import("../src/config/settings.js");
 const { runMessage, replaySafeGatewayDefaultModel } = await import("../src/gateway/run.js");
 const { runCodex } = await import("../src/engines/codex.js");
+const { setThreadModel } = await import("../src/gateway/thread-engine.js");
+const { engineSwitchHint } = await import("../src/slack/message-pipeline.js");
 
 async function codexChannel(id, { model = "gpt-5.6" } = {}) {
   await setUser(`U_${id}`, { name: id, approved: true, isAdmin: false });
@@ -86,6 +88,65 @@ test("a generic Codex failure is never replayed with the gateway default", async
   );
   assert.deepEqual(runtimes, [{ engine: "codex", model: "gpt-5.6" }]);
 });
+
+test("a statusless native Codex model rejection retries a channel default and announces the replacement", async () => {
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-5.6-sol", composioMode: "personal" });
+  const channel = await codexChannel("NATIVE_MODEL_FALLBACK");
+  const notes = [];
+  const result = await runMessage({
+    ...channel, text: "CODEX_STUB_NATIVE_MODEL_NOT_FOUND", threadKey: "2100.210", preferCold: true, origin: "slack_foreground",
+    onEvent: (event) => { if (event?.kind === "answer_note") notes.push(event.text); },
+  });
+  assert.equal(result.model, "gpt-5.6-sol");
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /using gateway default gpt-5\.6-sol/);
+});
+
+for (const pin of ["thread", "run"]) {
+  for (const engine of ["codex", "claude"]) {
+    test(`${engine}: a ${pin}-pinned rejected model keeps the native error and manual-switch hint`, async () => {
+      saveSettings({ engine, defaultCodexModel: "gpt-5.6-sol", defaultClaudeModel: "sonnet", composioMode: "personal" });
+      const model = engine === "codex" ? "gpt-5.6" : "opus";
+      const channel = engine === "codex"
+        ? await codexChannel(`NATIVE_PIN_${pin}`)
+        : await claudeChannel(`CLAUDE_PIN_${pin}`);
+      const threadKey = "2100.220";
+      if (pin === "thread") await setThreadModel(channel.entry.slug, threadKey, model);
+      const runtimes = [];
+      const notes = [];
+      await assert.rejects(runMessage({
+        ...channel, threadKey, preferCold: true, origin: "slack_foreground",
+        text: engine === "codex" ? "CODEX_STUB_NATIVE_MODEL_NOT_FOUND" : "CLAUDE_STUB_REJECT_MODEL",
+        ...(pin === "run" ? { overrides: { model } } : {}),
+        onRuntimeResolved: ({ model }) => runtimes.push(model),
+        onEvent: (event) => { if (event?.kind === "answer_note") notes.push(event.text); },
+      }), (error) => {
+        assert.equal(error.details?.providerKind, "model_rejected");
+        assert.equal(error.details?.runtimePinned, true);
+        assert.equal(error.details?.pinnedModel, model);
+        assert.match(engineSwitchHint(error), /pinned.*\/model to repin/i);
+        return true;
+      });
+      assert.deepEqual(runtimes, [model]);
+      assert.deepEqual(notes, []);
+    });
+  }
+}
+
+for (const work of ["TOOL", "OUTPUT"]) {
+  test(`a native Codex model rejection after ${work.toLowerCase()} is never replayed`, async () => {
+    const target = fakeTarget(fakeBackend, `native-model-after-${work}`, { platform: "slack", channelId: `D_NATIVE_${work}` });
+    await assert.rejects(runCodex({
+      cwd: projectRoot, prompt: `CODEX_STUB_NATIVE_REJECT_AFTER_${work}`, sessionId: "", isNewSession: true,
+      clean: true, model: "gpt-5.6", timeoutMs: 1_000, target, artifactDir: target.artifactDir,
+    }), (error) => {
+      assert.equal(error.details?.providerKind, "model_rejected");
+      assert.equal(error.details?.replaySafe, false);
+      assert.equal(replaySafeGatewayDefaultModel(error, { engine: "codex", model: "gpt-5.6", defaultModel: "gpt-5.6-sol" }), "");
+      return true;
+    });
+  });
+}
 
 test("a model rejection after a tool attempt is marked non-replayable", async () => {
   const target = fakeTarget(fakeBackend, "model-default-direct", { platform: "slack", channelId: "D_MODEL_DIRECT" });

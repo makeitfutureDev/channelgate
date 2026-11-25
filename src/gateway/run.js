@@ -286,7 +286,7 @@ export function replaySafeFallbackKind(error, engine = "") {
     : "";
 }
 
-// A provider may reject a syntactically valid thread/channel/per-run model before generation
+// A provider may reject a syntactically valid default model before generation
 // starts (for example, a model unavailable to the authenticated Codex account). Retry once with
 // the gateway default only when the runner positively classified that pre-work rejection. The
 // requested model must match the failed spawn, and the default must be distinct and engine-valid;
@@ -2058,7 +2058,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     try {
       cx = await execWithSessionHeal(fallbackModel);
     } catch (err) {
-      const defaultModel = replaySafeGatewayDefaultModel(err, {
+      const defaultModel = sameHarnessMove && modelPinnedByUser ? "" : replaySafeGatewayDefaultModel(err, {
         engine: fallbackEngine,
         model: fallbackModel,
         defaultModel: fallbackGatewayDefaultModel,
@@ -2389,7 +2389,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         model = continuationModel;
         capacityContinuationNote = note;
       } else {
-        const defaultModel = replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
+        // A thread/per-run model is an explicit choice. Preserve its provider error and let the
+        // normal pinned-runtime path below attach the manual-switch hint instead of substituting it.
+        const defaultModel = modelPinnedByUser ? "" : replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
         if (defaultModel) {
           const rejectedModel = model;
           console.warn(`[gateway] ${engine} rejected model ${rejectedModel} before execution in ${entry.slug} — retrying with gateway default ${defaultModel}`);
@@ -2723,10 +2725,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       model: model || resolveCurrentModel(finalResult),
     };
   } catch (error) {
-    // Backend credential gates fail before the provider catch. Add only diagnostic pin facts;
-    // keep the runtimeCredential classification, and never treat it as a reason to cross to the
-    // other harness (the selection's own other licenses were already tried at the gate).
-    if (error?.details?.runtimeCredential && runtimePinned) {
+    // Credential gates and license-pool failures can bypass the primary provider catch. Preserve
+    // diagnostic pin facts for their terminal error too, without authorizing any new replay.
+    if (runtimePinned && (error?.details?.runtimeCredential || error?.details?.providerError === true)) {
       error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
     }
     // A retry/fallback can hit a newly exhausted cap after a primary attempt. Preserve that

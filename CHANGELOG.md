@@ -5,6 +5,10 @@
 - The network-control tool and administration guide now explain the exact administrator-approved
   private/loopback route exception and that raw tunnels still obey the network switch.
 
+- Codex recognizes statusless ChatGPT unsupported-model refusals and retries rejected channel
+  defaults with the compatible gateway default. Explicit thread and per-run model pins retain
+  the provider error and manual-switch hint.
+
 - Composio calls the gateway refuses now say why (for example a batch's `tools` sent as text
   instead of a list, or a disabled executor and what to use instead), so the agent can correct the
   call. Previously every refusal claimed a channel membership change needed approval. A batch sent
