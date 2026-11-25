@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Native session adoption retains shared channel history (2026-11-25)
+
+- [x] `test/slack-resume.test.js`: send `/resume` through the real native command handler,
+  validating a Claude or Codex transcript visible only through the current container, then run the
+  next administrator turn through the real orchestrator and stub engine. It must keep the adopted id, pass the native
+  resume flag, stamp `channel-v1`, and spawn once. Separate-history licenses and nonshared targets
+  must not acquire the shared-history marker.
+- [x] `test/session-adopt.test.js` and `test/runtime-integration-run.test.js`: retain wrong-folder,
+  duplicate-binding, unapproved-license and older-private-history reset coverage.
+- [ ] Live Claude and Codex: in a prepared Read channel, as an administrator, use a fresh thread
+  and the selected harness. Ask it to read an owned file containing a fresh synthetic marker via
+  the authorized workspace reader and reply only `READY`. Capture the native session id through
+  `/resume`; confirm the native transcript contains the marker and that the chat history does not.
+  Remove only the owned, hash-verified file, `/clear`, then `/resume <captured-id>`. Ask
+  `What was the marker in the file you read? Reply with the marker only; if unavailable reply CODE_UNAVAILABLE. Do not use tools.`
+  Pass: native session id unchanged, `isNewSession=false`, exact marker recalled from native
+  history, no new tool call or chat replay substituting for the native context. Repeat on the
+  other harness, including a separate-history license as a compatibility control.
+  In a separate thread, attempt to adopt an id still bound to the first thread: refuse without
+  changing either session. Attempt a transcript whose recorded cwd belongs to a different
+  channel: refuse even if the pasted command claims the current folder. Live checks remain pending.
+
+
 ## Activity channel cards rank within their own pinned/ordinary section (2026-11-25)
 
 - Regression: `node --test test/activity-page.test.js` ("pinned and ordinary channel cards rank by

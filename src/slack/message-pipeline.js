@@ -1,3 +1,4 @@
+import { sessionRuntimeStamp } from "../gateway/session-runtime.js";
 import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { resolveStreamRecipientTeam } from "./stream-recipient.js";
 import { shouldAutoStartVoice } from "./voice-auto-trigger.js";
@@ -1121,7 +1122,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // engine resolution could hand a Claude session to Codex (or back), or to a license that
         // keeps its transcripts elsewhere, and run.js would drop it or start over. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
-        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
+        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, sessionRuntimeStamp(runtimeTarget, plan.engine));
         // The adopted id names one license. A thread already pinned to it keeps the further
         // licenses it may move to; any other pin's pool belonged to that pin and goes.
         await setThreadEngine(entry.slug, threadKey, plan.engine, {

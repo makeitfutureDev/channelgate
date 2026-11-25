@@ -1,3 +1,4 @@
+import { sessionRuntimeStamp, sharesChannelHistory as targetSharesChannelHistory } from "./session-runtime.js";
 import { assertChannelBudget, budgetRefusal } from "./channel-budget.js";
 import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 import { effectiveMeta } from "./effective-meta.js";
@@ -58,7 +59,7 @@ import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, engineSessionState, fallbackEffortFor } from "../engines/registry.js";
+import { modelBelongsToEngine, unservedModelReason, effortBelongsToModel, fallbackEffortFor } from "../engines/registry.js";
 import { codexHarnessFor } from "./channel-codex-paths.js";
 import { engineRuntimeTarget } from "./engine-target.js";
 import { LICENSE_POOL_ANY, licensePoolCandidates, readLicensePool, selectableLicenses } from "./license-pool.js";
@@ -1033,15 +1034,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // harness: a thread that stays on Codex while the channel default moved to a harness without
   // shared history (Codex EU) must still be stamped — and reset — as a shared Codex session, or
   // the next turn resumes a session whose rollout the shared mount now hides (2026-11-12).
-  const sharesChannelHistory = (engineId) => target.container?.sharedHistory === true && engineSessionState(engineId)?.channelHistory === true;
-  const runtimeStampFor = (engineId) => JSON.stringify({
-    backend: target.backend,
-    scope: target.runtimeScope,
-    history: sharesChannelHistory(engineId) ? "channel-v1" : "",
-    container: target.container?.name || "",
-    fingerprint: target.runtime.fingerprint(target),
-    image: target.container?.image || "",
-  });
+  const sharesChannelHistory = (engineId) => targetSharesChannelHistory(target, engineId);
+  const runtimeStampFor = (engineId) => sessionRuntimeStamp(target, engineId);
   // What the live surfaces need to say "this turn is running in a container": the heartbeat row's
   // suffix, the reply footer's image tag, the dashboard's active-run record. A declared capability
   // rather than a backend id, so no display layer has to know what backends exist.

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A session adopted with `/resume` now retains its native conversation on the next turn when
+  the channel uses shared history, including for administrator authors.
+
 - Stopping a thread loop now confirms how many pending ticks were removed. Engine attempts
   receive the gateway's pending count so session-local timer results cannot stand in for it.
 

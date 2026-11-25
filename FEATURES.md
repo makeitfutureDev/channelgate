@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Native session adoption retains shared channel history (2026-11-25)
+
+After `/resume <id>` validates a transcript in the channel's current container history,
+the adopted session receives the same runtime stamp as an ordinary turn. The next turn resumes
+that native session, including for an administrator, instead of treating it as private history
+from before shared history was enabled and silently starting over. The stamp uses the adopted
+license's history capability; licenses with separate histories keep their separate namespace.
+The same-channel lookup and the guard that resets older private or unknown history are unchanged.
+
+
 ## A channel's own account is a license limited to it (2026-11-24)
 
 Channel settings → Runtime no longer has the *Connect a Codex account for this channel* block
