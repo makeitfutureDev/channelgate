@@ -1,5 +1,23 @@
 # ChannelGate — Test Plan
 
+## Admin Lean memory tool regression (2026-11-25)
+
+- Automated: `node --test test/memory-tool-mode.test.js test/channel-memory.test.js test/memory-search.test.js test/gateway-mcp-authz.test.js test/modes.test.js`.
+  Both Claude and Codex MCP contexts must search, read and save the durable channel memory for
+  a trusted current admin in Admin + saved Lean, without changing saved Lean. Negative controls:
+  ordinary approved member, admin outside Admin mode, revoked admin, agent-message principal,
+  memory explicitly off and reduced member memory reviewer; spoofed tool arguments grant nothing.
+  The fixed API admin principal follows the orchestrator's same effective-context rule.
+- Live acceptance pending (both Claude and Codex): use an owned private Admin fixture with
+  enabled memory and a synthetic fact in its durable memory. Capture the saved Lean setting,
+  enable Lean, and as an organization admin ask: `Search channel memory for the synthetic fact,
+  read its returned source, then save that this fixture uses release checklists.` Pass only on
+  actual successful search/read/save tool results and persisted fact, with saved Lean still on.
+  Repeat as an approved non-admin and as an admin in an owned Worker + Lean fixture: memory
+  tools must refuse. Set memory off in the Admin fixture and repeat as admin: refuse. Restore
+  every fixture setting and remove only owned synthetic facts. Unit MCP contexts do not replace
+  these live engine checks; no live run or deployment is claimed by this patch.
+
 ## Native session adoption retains shared channel history (2026-11-25)
 
 - [x] `test/slack-resume.test.js`: send `/resume` through the real native command handler,

@@ -1,5 +1,14 @@
 # ChannelGate — Features
 
+## Admin Lean memory tools match the effective run context (2026-11-25)
+
+Channel-memory search, source reads and saves apply the same effective author-mode decision as
+the run. A current organization administrator in an Admin channel retains enabled memory when
+Lean is saved on the channel, including the fixed admin API principal. Ordinary members, agent
+messages and administrators outside Admin mode retain Lean's memory exclusion; an explicit
+memory-off setting remains off. Each call rechecks current authority from the verified capability
+context, and tool arguments cannot grant the exception. Saved channel settings are unchanged.
+
 ## Native session adoption retains shared channel history (2026-11-25)
 
 After `/resume <id>` validates a transcript in the channel's current container history,
