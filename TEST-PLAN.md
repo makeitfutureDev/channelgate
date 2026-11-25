@@ -1754,6 +1754,15 @@ live cases name the harness where it matters and are run once for Claude Code an
       follow-up digest. PASS only if both hints name ✅/✔️ only, and a ✅ on the digest dismisses the
       listed threads while a 👍 does not.
 
+## The gateway's own answers count as the thread's last turn (2026-11-25)
+- [x] Automated: `node --test test/followup-gateway-reply.test.js` — a full channel-thread message
+      through `processMessageEvent` leaves the thread pending for the human who asked (the bot is
+      the last author), while a DM answer records nothing (`recordGatewayReply`, followups.js).
+- [ ] Live (engine-independent; needs a REAL person typing in Slack, since Composio-posted tester
+      messages carry a `bot_id` and are automation by design): in a QA channel a human asks the bot
+      something and gets an answer; that human then sends `pending` in their DM. PASS only if the
+      thread is listed with the ✅/✔️ hint; after a ✅ on the thread it is no longer listed.
+
 ## Admin sign-in remedies are not masked (2026-11-25)
 - [x] Automated: `node --test test/admin-user-link-http.test.js` — when the private identity code
       cannot be delivered, `POST /api/auth/link/options` answers 503 with the remedy text ("could not

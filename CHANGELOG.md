@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The follow-up digest and `pending` list work again: the gateway's own answers in a channel thread
+  are recorded as the thread's last turn (Slack's event layer drops the bot's own posts, so since
+  late August no thread ever looked like it was waiting on someone).
 - A run's network note no longer implies raw SSH/database tunnels skip the egress proxy or work
   with Allow network off: they go through the proxy, only while the switch is on.
 - The pending-threads list and the follow-up digest DM no longer say 👍 completes a thread; only ✅
