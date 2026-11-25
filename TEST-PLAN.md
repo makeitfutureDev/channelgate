@@ -14801,7 +14801,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       without claiming one applies here.
 - [x] Unit (raw tunnels are proxied and ON-only): the enforced network note, with the switch on and
       off, says raw sockets go through the same proxy, only while the switch is on, only to
-      `github.com:22` and admin-declared hosts, and are refused while off — matching
+      `github.com:22` and the host:ports approved for the channel (`allow_channel_ssh_host` or an
+      admin), and are refused while off — matching
       `src/gateway/egress/policy.js` (automated: `test/runtime-access-facts.test.js`).
 - [ ] Live raw-tunnel wording (Claude AND Codex, SKL-16, as Contact and as Apps): in each Auto
       fixture ask the stored SKL-16 prompt. PASS only if the answer never says raw SSH/database

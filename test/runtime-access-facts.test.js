@@ -113,6 +113,8 @@ test("an enforced network note says raw tunnels use the proxy and only while the
     const note = runtimeAccessPreamble(enforced, { clean: false, allowNetwork });
     assert.match(note, /Raw sockets \(ssh, database protocols\) go through the same proxy/);
     assert.match(note, /only while the switch is on/);
+    assert.match(note, /github\.com:22/);
+    assert.match(note, /allow_channel_ssh_host/);
     assert.match(note, /while it is off they are refused like everything else/);
     assert.doesNotMatch(note, /Raw sockets \(ssh, database protocols\) work only to hosts an admin declared\./);
   }
