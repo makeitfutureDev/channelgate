@@ -221,6 +221,9 @@ for (const engine of ["claude", "codex"]) {
         assert.doesNotMatch(prompt, /resolved runtime includes the operator-home mount/);
       }
       assert.match(prompt, /operator-home mount is available ONLY to a trusted admin author.*Admin\/Full-access channel while that gateway switch is on/);
+      // Whether or not this run has it, the note says what a granted mount contains, so a
+      // hypothetical "what if Full access is on?" answer cannot shrink it (SKL-16).
+      assert.match(prompt, /When granted, that mount is the daemon user's WHOLE home, read-write: other conversations' work folders, repositories, the gateway runtime root and database, logs and credential stores; only the container engine's storage is masked\./);
     }
   });
 }

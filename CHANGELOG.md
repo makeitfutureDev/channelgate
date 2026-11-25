@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Asked what Full access would expose, an agent in a channel without the home grant now explains
+  it correctly: the granted mount is the whole operator home, including other conversations and
+  the gateway's own store, not a narrower view.
+
 - In Activity's Channel grouping, pinned channel cards keep their order when a newer unpinned
   conversation arrives in one of those channels; each section ranks cards by its own conversations.
 

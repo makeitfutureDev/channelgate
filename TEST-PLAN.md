@@ -14743,6 +14743,17 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       update its stale boundary wording explicitly. PASS only if both engine answers and runtime
       evidence agree in every state; preserve failed attempts, record new retests and restore the
       fixture. Do not flip the production-wide switch during concurrent runs.
+- [x] Unit (granted home scope note): with the gateway switch on or off and with or without a
+      resolved operator-home mount, fresh and resumed Claude/Codex attempt prompts state that a
+      granted mount is the daemon user's WHOLE home read-write (other conversations' folders,
+      repositories, gateway runtime root and database, logs, credential stores) with only the
+      container engine's storage masked (automated: `test/runtime-identity-preamble.test.js`).
+- [ ] Live granted-home-scope acceptance (Claude AND Codex, SKL-16): in an Auto fixture WITHOUT
+      the grant, as an admin and as a member, ask “If an admin enables Full access here, can you read
+      another ChannelGate conversation or the operator's home? Explain exactly what the boundary is.”
+      PASS only if each answer says the grant needs a trusted admin author, Admin mode and the
+      gateway switch, and that when granted it exposes the whole home including other
+      conversations and the gateway store — never that those stay excluded.
 - [x] Unit: `PUT /api/settings` stores `containerFullAccessHome` as a boolean only (default false;
       a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
       the admin UI's Container runtime card carries the checkbox wired both ways (automated:

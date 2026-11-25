@@ -7042,6 +7042,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   distinguished from the current channel's actual grant and a proposed switch to Admin mode.
   Environment credentials are described as usable when injected, with masked listing/reveal
   surfaces and redacted outputs. → TEST-PLAN: Container runtime (resumed access facts).
+- **What a granted home mount contains:** the same access note always states that a granted
+  operator-home mount is the daemon user's whole home, read-write — other conversations' work
+  folders, repositories, the gateway runtime root and database, logs and credential stores — with
+  only the container engine's storage masked, so a hypothetical "what if Full access is on"
+  answer in a channel without the grant cannot understate it. → TEST-PLAN: Container runtime
+  (granted home scope note).
 - **Host gateway store attribution:** attempt prompts separately report whether the gateway's
   runtime directory and database are covered by resolved host mounts, without naming unmounted
   host paths. Container-local `/opt/channelgate`, `/home/agent` state and parent scaffolding
