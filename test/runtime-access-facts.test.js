@@ -91,3 +91,18 @@ test("a sudo-host target states that the container boundary is absent", () => {
   assert.match(note, /runtime directory: \*\*directly accessible\*\*/);
   assert.match(note, /Only organization-admin messages are admitted/);
 });
+
+test("an enforced network note names the advisory-only setups without claiming one applies", () => {
+  const enforced = { backend: "container", container: { mounts: [], egress: { active: true, network: "none" } } };
+  for (const allowNetwork of [true, false]) {
+    const note = runtimeAccessPreamble(enforced, { clean: false, allowNetwork });
+    assert.match(note, /The switch is ENFORCED/);
+    assert.match(note, /advisory, not enforced, only in three other setups, none of which applies to this attempt/);
+    assert.match(note, /legacy open-bridge egress mode/);
+    assert.match(note, /rawNetwork/);
+    assert.match(note, /`\/sudo` direct-host thread/);
+  }
+  const bridge = runtimeAccessPreamble({ backend: "container", container: { mounts: [], egress: { active: false } } }, { allowNetwork: false });
+  assert.doesNotMatch(bridge, /none of which applies to this attempt/);
+  assert.match(bridge, /advisory, not container egress enforcement/);
+});

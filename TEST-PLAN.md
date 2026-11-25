@@ -14788,6 +14788,17 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       PASS only if each answer says the grant needs a trusted admin author, Admin mode and the
       gateway switch, and that when granted it exposes the whole home including other
       conversations and the gateway store — never that those stay excluded.
+- [x] Unit (enforced network note names the advisory-only setups): an egress-proxy container's
+      attempt prompt, with the switch on and off, states the switch is ENFORCED and that it is
+      advisory only under the legacy open-bridge egress mode, a channel's admin-given `rawNetwork`
+      or a `/sudo` direct-host thread — none of which applies to that attempt; a bridge container's
+      prompt keeps its own advisory note (automated: `test/runtime-access-facts.test.js`).
+- [ ] Live network-exception acceptance (Claude AND Codex, SKL-16, as Contact and as Apps): ask the
+      stored SKL-16 prompt in each Auto fixture. PASS only if the answer says Allow network OFF is
+      enforced by the egress proxy on this fixture (engine endpoints and selected connectors only,
+      everything else 403), ON admits public but never private/loopback/metadata addresses, and
+      names the three advisory-only setups (legacy bridge mode, `rawNetwork`, a `/sudo` thread)
+      without claiming one applies here.
 - [x] Unit: `PUT /api/settings` stores `containerFullAccessHome` as a boolean only (default false;
       a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
       the admin UI's Container runtime card carries the checkbox wired both ways (automated:
