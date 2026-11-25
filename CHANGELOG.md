@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Reminder escalations retry if the second notice or creator DM fails to deliver.
+
 - After a restart, schedules and follow-up timers start while interrupted Slack turns resume.
 
 - Proxy-mode runs now explain the HTTP 403 `network-off` refusal and how an administrator’s

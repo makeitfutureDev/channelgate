@@ -5893,9 +5893,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   than running a session. With `ack:true` the reminder requires a ✅ — if nobody reacts within
   `ack_escalate_minutes` (default 120) the bot posts a 2nd notice, then after `ack_dm_minutes`
   (default 60) more it DMs the schedule's creator and closes the chain; a ✅ at any time resolves it.
-  Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
+  Pending acks persist in SQLite so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
+  The scheduler keeps a failed second notice or creator DM pending and retries on the next tick.
+  A returned message ID confirms delivery before it advances or closes the escalation.
 - Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
   pending reports check current reactions before delivery. A `white_check_mark` (✅) on the
   root or latest reply suppresses the thread for all recipients; 👍 does not. Root checks remain

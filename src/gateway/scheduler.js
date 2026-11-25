@@ -553,7 +553,8 @@ async function processAcks(now) {
             text: msg,
           });
           // The 2nd notice invites a ✅, so make reacting on IT acknowledge too — not just the original.
-          const messageTsList = repost?.messageId ? [...(ack.messageTsList || [ack.messageTs]), repost.messageId] : ack.messageTsList;
+          if (!repost?.messageId) throw new Error("Second reminder notice returned no message ID");
+          const messageTsList = [...(ack.messageTsList || [ack.messageTs]), repost.messageId];
           updateAck(ack.id, { stage: "sent2", messageTsList, nextAt: new Date(now.getTime() + (ack.dmAfterMin ?? 60) * 60_000).toISOString() });
           await logEvent("ack_escalate", { id: ack.id, stage: "sent2" });
         } else if (ack.stage === "sent2") {
@@ -562,16 +563,20 @@ async function processAcks(now) {
             try { const p = await client.chat.getPermalink({ channel: ack.channelId, message_ts: ack.messageTs }); permalink = p?.permalink || ""; } catch { /* optional */ }
             try {
               const body = `👋 Your reminder — *${ack.title || ack.text}* — still hasn't been acknowledged after two notices.`;
-              await postDirectMessage(client, { userId: ack.createdBy, text: body,
+              const receipt = await postDirectMessage(client, { userId: ack.createdBy, text: body,
                 blocks: [
                   { type: "section", text: { type: "mrkdwn", text: body } },
                   ...(permalink ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "View conversation" }, url: permalink }] }] : []),
                 ],
               });
-            } catch (e) { await logEvent("ack_dm_error", { id: ack.id, error: e.message }); }
+              if (!receipt?.messageId) throw new Error("Reminder DM returned no message ID");
+            } catch (e) {
+              await logEvent("ack_dm_error", { id: ack.id, error: e.message });
+              continue; // Keep the due acknowledgment for the next scheduler tick.
+            }
           }
           deleteAck(ack.id);
-          await logEvent("ack_escalate", { id: ack.id, stage: "dm_done" });
+          await logEvent("ack_escalate", { id: ack.id, stage: ack.createdBy ? "dm_done" : "no_creator" });
         } else {
           deleteAck(ack.id);
         }
