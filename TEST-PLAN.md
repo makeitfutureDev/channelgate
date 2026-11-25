@@ -4242,6 +4242,15 @@ still works. Switch tabs: the launch button is absent. With no Public URL or an 
 it is absent on Activity too. Slack may wrap the shared row on narrow clients. This is a Slack
 view composition change; neither Claude nor Codex runs to build or handle this navigation.
 
+My threads paging (HOME-THREADS-03, HOME-TABS-05; engine-independent — no engine builds or handles
+the Home view). Unit: `test/home-threads.test.js` "every Home page keeps action ids unique per
+block…" renders pages 1–3 of a 29-thread fixture with Load older, requires no repeated action id in
+any block, `cg_home_threads_prev`/`cg_home_threads_next` on the middle page, and the handler
+publishing the requested page for both plus a pre-change `cg_home_threads_page` button. Live: as an
+approved user with ≥ 21 owned engaged roots, open Home → Activity → My threads, select All open,
+press Next (Page 2 of N with Previous and Next), Next again (last page, Previous only), then
+Previous. Pass: each click republishes the requested page; Filter, Refresh and Done still work.
+
 In the disposable approved-user Slack fixtures, open Home → Activity → Open live dashboard; a
 second viewer must see only their own roots. Test public/private/DM/sudo access and a new browser
 without admin login. Repeat lifecycle/ownership cases with both Claude and Codex Worker tasks:

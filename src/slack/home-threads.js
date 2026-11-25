@@ -18,7 +18,10 @@ import {
   eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadIsDone, slackThreadRuntime, slackThreadStatus, slackThreadWorkingSince, liveSlackThreadCandidates,
 } from "../gateway/slack-threads.js";
 
-export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen|doneall)$/;
+// Previous and Next share one actions block, and Slack rejects a view whose block repeats an
+// action_id, so each page button has its own id. `page` stays admitted for Home views published
+// before the split (their single Next/Previous button still carries a valid page).
+export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|prev|next|refresh|history|done|reopen|doneall)$/;
 export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_INDEX_BATCH = 100;
 const HISTORY_BATCH = 10;
@@ -478,8 +481,8 @@ export function homeThreadBlocks(snapshot) {
     );
   }
   const navigation = [];
-  if (page > 0) navigation.push(button("Previous", "page", { filter, page: page - 1 }));
-  if (page + 1 < pages) navigation.push(button("Next", "page", { filter, page: page + 1 }));
+  if (page > 0) navigation.push(button("Previous", "prev", { filter, page: page - 1 }));
+  if (page + 1 < pages) navigation.push(button("Next", "next", { filter, page: page + 1 }));
   if (moreHistory) navigation.push(button("Load older threads", "history", state));
   if (navigation.length) blocks.push({ type: "actions", elements: navigation });
   blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Page ${page + 1} of ${pages} · ${total} indexed thread${total === 1 ? "" : "s"} in this view${moreHistory ? " · Older tracked threads are indexed in small batches; use Load older threads." : ""}${unavailable ? " · Some threads could not be verified. Refresh later." : ""}` }] });

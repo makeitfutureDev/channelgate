@@ -14,7 +14,7 @@ const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChan
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, setSlackThreadHidden, indexSlackThread, indexSlackFork, slackThreadRootOwner, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+const { HOME_THREADS_ACTION, homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
@@ -595,6 +595,34 @@ test("Refresh and Load older request one-shot full reads without changing the se
   for (const action of ["refresh", "history"]) await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client,
     action: { action_id: `cg_home_threads_${action}`, value: JSON.stringify({ filter: "idle", page: 2 }) } });
   assert.ok(states.every((state) => state.forceThreads && state.discoverThreads && state.filter === "idle" && state.page === 2));
+});
+
+test("every Home page keeps action ids unique per block and Previous/Next publish the requested page", async () => {
+  const c = await channel();
+  for (let n = 1; n <= 29; n++) root(c, `${100 + n}.000001`);
+  for (const page of [0, 1, 2]) {
+    const snapshot = await homeThreadsSnapshot(client, "U_MINE", { filter: "all", page });
+    assert.equal(snapshot.page, page); assert.equal(snapshot.pages, 3);
+    for (const block of homeThreadBlocks({ ...snapshot, moreHistory: true })) {
+      const ids = [...(block.elements || []), ...(block.accessory ? [block.accessory] : [])].map((el) => el.action_id).filter(Boolean);
+      assert.equal(new Set(ids).size, ids.length, `page ${page}: duplicate action_id in one block: ${ids.join(", ")}`);
+    }
+  }
+  const middle = homeThreadBlocks(await homeThreadsSnapshot(client, "U_MINE", { filter: "all", page: 1 }));
+  const nav = middle.filter((b) => b.type === "actions").flatMap((b) => b.elements).filter((el) => ["Previous", "Next"].includes(el.text?.text));
+  assert.deepEqual(nav.map((el) => [el.text.text, el.action_id, JSON.parse(el.value).page]),
+    [["Previous", "cg_home_threads_prev", 0], ["Next", "cg_home_threads_next", 2]]);
+  let handler; const states = [];
+  registerHomeThreadActions({ action: (id, fn) => { if (id instanceof RegExp) handler = fn; } }, { publishHome: async (_c, _u, state) => states.push(state) });
+  for (const id of ["cg_home_threads_prev", "cg_home_threads_next", "cg_home_threads_page"]) assert.ok(HOME_THREADS_ACTION.test(id), `${id} must route to the handler`);
+  for (const el of nav) {
+    assert.match(el.action_id, /^cg_home_threads_(prev|next)$/);
+    await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client, action: { action_id: el.action_id, value: el.value } });
+  }
+  // A Next button published before the split still carries a valid page and keeps working.
+  await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client,
+    action: { action_id: "cg_home_threads_page", value: JSON.stringify({ filter: "all", page: 1 }) } });
+  assert.deepEqual(states.map((s) => [s.filter, s.page]), [["all", 0], ["all", 2], ["all", 1]]);
 });
 
 test("a stale full inspection cannot undo a newer completion or message-date observation", async () => {
