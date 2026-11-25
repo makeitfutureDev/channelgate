@@ -1,5 +1,13 @@
 # ChannelGate — Test Plan
 
+API runs into Google Chat (hotfix): `test/api-runs-chat-platforms.test.js` — a visible run in a
+`gchat:spaces/…` conversation posts a defanged Markdown kickoff, keys the session on the opened
+thread and posts every answer into it; disconnected transport stays headless; `conversationKey`
+refused; Slack unchanged; recovery re-delivers through Chat. Live (UNEXECUTED, Claude and Codex):
+in a Google Chat space with the app as member, `POST /api/runs` with a token for that space and
+`{"message":"Reply with exactly: API-GCHAT-OK","harness":"claude"|"codex"}`; pass = 202 with
+`chatThread:true`, a new thread in the space with the kickoff and `API-GCHAT-OK` in it.
+
 Google Chat reaction token regression (engine-independent): verify signed OAuth assertions include both `chat.bot` and `chat.app.messages.readonly`, while ordinary auth excludes the admin-approved scope. With approved app credentials, list reaction subscriptions must return HTTP 200; reconnect and verify subscriptions become active. Live emoji delivery remains a separate end-to-end check.
 
 ## Company domain auto-approval (2026-10-28)

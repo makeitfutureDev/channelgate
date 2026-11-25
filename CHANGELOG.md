@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Hotfix: an HTTP run API call into a Google Chat space (or a Teams conversation) now posts
+  there — the kickoff opens a thread in the space and the answer follows in it — instead of
+  running headless. Responses add `platform`, `chatThread` and `threadKey`; Slack's fields are
+  unchanged.
+
 - Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
 
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now

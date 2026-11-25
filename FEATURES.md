@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## API runs post into Google Chat spaces (hotfix)
+
+`POST /api/runs` into a Google Chat space or Teams conversation resolves that conversation's own
+live connector (`apiRunTarget()` → `automationTarget()`, `src/gateway/api-runs.js`) instead of
+Slack's client only: the kickoff opens a thread there (Markdown, request text defanged), the
+answer posts into it, and restart recovery re-delivers through the same surface. No live progress
+card outside Slack. Responses add `platform`, `chatThread`, `threadKey`; `slackThread`/`threadTs`
+stay Slack-only. `conversationKey` stays Slack-only; a disconnected transport leaves the run
+headless.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
