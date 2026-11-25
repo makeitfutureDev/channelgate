@@ -9,6 +9,7 @@ import { listChannels, getChannelMeta } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 import { automationBoard } from "./automations-view.js";
 import { getSkill } from "./skills/catalog.js";
+import { gatewaySpend } from "./usage.js";
 import { ROI_WINDOWS, roiOf, roiTotals, roiAssignments, setRoiAssignment, setDefaultRoiRate, roiMinutes, roiRate, skillUsesSince, skillUsageSlugsSince } from "./roi.js";
 
 const isDM = (entry) => Boolean(entry?.isDM || entry?.type === "im" || /^D[A-Z0-9]+$/.test(entry?.channelId || ""));
@@ -55,18 +56,44 @@ export async function roiOverview(access, userId, { days = 30, now = new Date(),
   }).sort(byValue);
   const sections = { automations: section(automations), api: section(api), skills: section(skills) };
   const worked = [sections.automations.totals, sections.api.totals];
-  const cost = worked.reduce((n, t) => n + t.costUsd, 0);
-  const value = worked.reduce((n, t) => n + t.valueUsd, 0) + sections.skills.totals.valueUsd;
   const round = (n) => Math.round(n * 100) / 100;
+  // The cost side is the WHOLE ChannelGate AI spend in the window and scope — every chat, automation,
+  // API run, background job and memory review — not only what automations and API runs are charged:
+  // the value side includes skill uses, which happen in ordinary chats whose spend is not attributed
+  // to any item. Every automation/API run is itself in that ledger; the attributed figure is a floor
+  // only for a ledger that is missing rows.
+  const attributed = [...automations, ...api].reduce((n, i) => n + (i.roi.costUsd || 0), 0);
+  const channelIds = everything ? null : await viewerChannelIds(access, userId, [...automations, ...api]);
+  const spend = gatewaySpend({ start: since, end: now.toISOString(), channelIds });
+  const cost = Math.max(spend.costUsd, attributed);
+  const value = worked.reduce((n, t) => n + t.valueUsd, 0) + sections.skills.totals.valueUsd;
   return {
     viewer: { isAdmin: everything, adminConsole, userId: userId || "" },
     windowDays: board.windowDays, generatedAt: board.generatedAt, since, limited: board.roi.limited, defaultRate: board.roi.defaultRate,
-    // Value from all three; spend only where it is attributed (automations and API runs).
+    // Value from all three; cost is everything the gateway spent in the scope and window.
     totals: { hoursSaved: round(worked.reduce((n, t) => n + t.hoursSaved, 0) + sections.skills.totals.hoursSaved), valueUsd: round(value), costUsd: round(cost), netUsd: round(value - cost),
       multiple: cost > 0 ? Math.round(((value - cost) / cost) * 10) / 10 : null,
-      configured: worked.reduce((n, t) => n + t.configured, 0) + sections.skills.totals.configured, items: worked.reduce((n, t) => n + t.items, 0) + sections.skills.totals.items },
+      configured: worked.reduce((n, t) => n + t.configured, 0) + sections.skills.totals.configured, items: worked.reduce((n, t) => n + t.items, 0) + sections.skills.totals.items,
+      cost: { scope: everything ? "all" : "accessible", runs: spend.runs, unpricedRuns: spend.unpricedRuns, attributedUsd: round(attributed), otherUsd: round(Math.max(0, cost - attributed)) } },
     ...sections,
   };
+}
+
+// The conversations (by id) whose spend a non-admin viewer's ROI counts: every conversation they
+// may open (their own DM only), plus the ones the automations and API sources they see run in.
+async function viewerChannelIds(access, userId, items) {
+  const ids = new Set(items.map((i) => i.channelId).filter(Boolean));
+  const candidates = await listChannels();
+  await access.prefetch?.(candidates);
+  for (const entry of candidates) {
+    if (ids.has(entry.channelId) || !await access.allows(entry)) continue;
+    if (isDM(entry)) {
+      const meta = await getChannelMeta(entry.slug);
+      if (meta?.dmUserId && meta.dmUserId !== userId) continue;
+    }
+    ids.add(entry.channelId);
+  }
+  return [...ids];
 }
 
 const adminOnly = (access) => { if (access.user?.isAdmin !== true) throw Object.assign(new Error("Only an organization admin can change this."), { status: 403, userFacing: true }); };

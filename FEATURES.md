@@ -85,6 +85,14 @@ the arithmetic (`src/gateway/roi.js`):
   run's cost and is not split out, so skills show time and value only — no cost, net or multiple.
 - The window never reaches further back than the license's cost history, so value is never set
   against spend the page may not show; the page says so when the window was shortened.
+- The ROI page's combined totals set the value against the **ChannelGate cost** — everything the
+  gateway spent on AI in the window and scope (`gatewaySpend` in `src/gateway/usage.js`: the same
+  canonical ledger as the usage dashboard's "Chat gateway only" total — chats, automations, API
+  runs, background jobs, memory reviews; usage outside the gateway is not counted). Its tile names
+  the automation + API part and any runs without a price. An admin's page counts the whole
+  ledger; a member's counts the conversations they may open (their own DM only). The per-section
+  and per-row figures keep their own attributed cost, and the Automations page's band still sets
+  automations against their own cost.
 
 Where it is stored: a schedule keeps `roiMinutes` / `roiHourlyRate` on its own record; API sources
 (per conversation + source), skills (per slug) and the default rate live in `roi_assignments`

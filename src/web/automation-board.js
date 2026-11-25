@@ -497,9 +497,9 @@ export function automationBoardBrowser(config, browser) {
     return h("div", { class: "ab-roi-tiles" },
       tile("Time saved", hrs(t.hoursSaved), o.runsNote || ""),
       tile("Value of that time", usd(t.valueUsd), o.valueNote || ""),
-      tile("AI cost", usd(t.costUsd), o.costNote || ""),
-      tile("Net value", usd(t.netUsd), "value − AI cost", netTone(t.netUsd)),
-      tile("ROI", mult(t.multiple), t.multiple === null ? (t.costUsd ? "" : "no AI cost recorded") : "net value ÷ AI cost", netTone(t.multiple)));
+      tile(o.costLabel || "AI cost", usd(t.costUsd), o.costNote || ""),
+      tile("Net value", usd(t.netUsd), "value − " + (o.costShort || "AI cost"), netTone(t.netUsd)),
+      tile("ROI", mult(t.multiple), t.multiple === null ? (t.costUsd ? "" : "no AI cost recorded") : "net value ÷ " + (o.costShort || "AI cost"), netTone(t.multiple)));
   }
   // The Automations page's own ROI dashboard: what the automations in scope returned in the
   // window, and how many of them have the two inputs it needs.
@@ -596,6 +596,15 @@ export function automationBoardBrowser(config, browser) {
       sec.items.length ? h("div", { class: "ab-roi-scroll" }, h("table", { class: "ab-roi-table" }, h("thead", {}, head), body))
         : h("p", { class: "ab-muted", text: skills ? "No skill was used in this window." : kind === "api" ? "No API source in the conversations you can see." : "No automations yet." }));
   }
+  // What the cost tile counts: every AI run in the window, of which automations and API runs are
+  // the attributed part; runs without a price are named, never silently treated as free.
+  function roiCostNote(t) {
+    const c = t.cost;
+    if (!c) return "automations and API runs";
+    const parts = [(c.scope === "all" ? "every AI run" : "every AI run you can see") + " · " + usd(c.attributedUsd) + " automations & API"];
+    if (c.unpricedRuns) parts.push(plural(c.unpricedRuns, "run") + " without a price");
+    return parts.join(" · ");
+  }
   function paintRoi() {
     if (state.loading && !state.roi) { root.replaceChildren(h("p", { class: "ab-muted ab-loading", text: "Loading ROI…" }), toastHost); return; }
     const o = state.roi;
@@ -625,7 +634,7 @@ export function automationBoardBrowser(config, browser) {
     const hero = h("section", { class: "ab-hero ab-roi-hero" }, h("div", { class: "ab-hero-main" },
       h("p", { class: "ab-eyebrow" }, icon("trend"), "Return on investment · " + (o.viewer.adminConsole ? "all conversations" : o.viewer.isAdmin ? "all conversations you can access, every skill use" : "conversations you can access") + " · " + windowWords(o.windowDays) + (o.limited ? " (from " + shortDate(o.since) + ", where cost history starts)" : "")),
       h("h2", { class: "ab-headline" }, t.configured ? [h("span", { class: "ab-t-" + netTone(t.netUsd), text: usd(t.netUsd) }), " net value from ", h("span", { text: hrs(t.hoursSaved) }), " of saved work"] : "Set ROI values to see what your automations are worth"),
-      roiTiles(t, { runsNote: t.configured + " of " + t.items + " items have ROI values", valueNote: "automations, API runs and skills", costNote: "automations and API runs" }), split));
+      roiTiles(t, { runsNote: t.configured + " of " + t.items + " items have ROI values", valueNote: "automations, API runs and skills", costLabel: "ChannelGate cost", costShort: "total cost", costNote: roiCostNote(t) }), split));
     root.replaceChildren(
       state.error ? h("p", { class: "ab-banner", text: state.error }) : "",
       h("div", { class: "ab-toolbar ab-roi-toolbar" }, h("h2", { class: "ab-view-title" }, icon("trend"), "ROI"), rateBox, seg,
@@ -634,7 +643,7 @@ export function automationBoardBrowser(config, browser) {
       roiTable("Automations", o.automations, "automation", "Scheduled tasks, reminders and loops. A run counts when it succeeded and its answer arrived."),
       roiTable("API runs", o.api, "api", "Runs started over the HTTP run API, by token" + (o.viewer.isAdmin ? "." : " — the ones your own tokens started.")),
       roiTable("Skills", o.skills, "skill", "One use per run that loaded the skill. A skill’s AI cost is part of its run and is not split out, so skills show value without a cost." + (o.viewer.isAdmin ? "" : " Only an admin sets a skill’s values.")),
-      h("p", { class: "ab-muted ab-roi-note", text: "How it is calculated: time saved = successful runs × minutes saved per run; value = time saved × hourly rate (* = the default rate); net = value − AI cost; ROI = net ÷ AI cost. The minutes and rates are estimates people entered. Items without them are listed but not counted." }),
+      h("p", { class: "ab-muted ab-roi-note", text: "How it is calculated: time saved = successful runs × minutes saved per run; value = time saved × hourly rate (* = the default rate); net = value − ChannelGate cost; ROI = net ÷ ChannelGate cost. ChannelGate cost is everything the gateway spent on AI in the window and scope — chats, automations, API runs, background jobs and memory reviews — not only the automations’ and API runs’ own cost shown per row. The minutes and rates are estimates people entered. Items without them are listed but not counted." }),
       toastHost);
   }
 
