@@ -2,6 +2,7 @@
 // server may have just written from a gated AI run) and fires any enabled schedule whose cron
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
 // (as the schedule's creator) and posts the result to the channel.
+import { randomUUID } from "node:crypto";
 import { getSchedules, updateSchedule, deleteSchedule, getSchedulerCursor, saveSchedulerCursor, claimScheduleMinute } from "../config/schedules.js";
 import { getChannelMeta } from "../config/store.js";
 import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
@@ -544,36 +545,36 @@ async function processAcks(now) {
       const client = automationTarget(slackRef, ack.channelId);
       if (!client) continue;
       try {
+        // A reaction may have closed this row while the preceding reminder was in flight.
+        // Persist the Slack request ID before posting so a restart can retry the same stage.
+        const clientMessageId = ack.deliveryRequestId || randomUUID();
+        if (!updateAck(ack.id, { deliveryRequestId: clientMessageId })) continue;
         if (ack.stage === "sent1") {
           const prefix = ack.notify === "channel" ? "<!channel> " : ack.notify === "user" && ack.notifyUserId ? `<@${ack.notifyUserId}> ` : "";
           const msg = `${prefix}🔔 *Reminder — 2nd notice:* ${ack.title || ack.text} — still not acknowledged. React :${ack.ackEmoji}: when done.`;
           const repost = await postNotice(client, {
             conversationId: ack.channelId,
+            clientMessageId,
             threadKey: ack.escalationStyle === "toplevel" ? "" : ack.threadTs,
             text: msg,
           });
           // The 2nd notice invites a ✅, so make reacting on IT acknowledge too — not just the original.
           if (!repost?.messageId) throw new Error("Second reminder notice returned no message ID");
           const messageTsList = [...(ack.messageTsList || [ack.messageTs]), repost.messageId];
-          updateAck(ack.id, { stage: "sent2", messageTsList, nextAt: new Date(now.getTime() + (ack.dmAfterMin ?? 60) * 60_000).toISOString() });
+          updateAck(ack.id, { stage: "sent2", messageTsList, deliveryRequestId: "", retryCount: 0, nextAt: new Date(now.getTime() + (ack.dmAfterMin ?? 60) * 60_000).toISOString() });
           await logEvent("ack_escalate", { id: ack.id, stage: "sent2" });
         } else if (ack.stage === "sent2") {
           if (ack.createdBy) {
             let permalink = "";
             try { const p = await client.chat.getPermalink({ channel: ack.channelId, message_ts: ack.messageTs }); permalink = p?.permalink || ""; } catch { /* optional */ }
-            try {
-              const body = `👋 Your reminder — *${ack.title || ack.text}* — still hasn't been acknowledged after two notices.`;
-              const receipt = await postDirectMessage(client, { userId: ack.createdBy, text: body,
-                blocks: [
-                  { type: "section", text: { type: "mrkdwn", text: body } },
-                  ...(permalink ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "View conversation" }, url: permalink }] }] : []),
-                ],
-              });
-              if (!receipt?.messageId) throw new Error("Reminder DM returned no message ID");
-            } catch (e) {
-              await logEvent("ack_dm_error", { id: ack.id, error: e.message });
-              continue; // Keep the due acknowledgment for the next scheduler tick.
-            }
+            const body = `👋 Your reminder — *${ack.title || ack.text}* — still hasn't been acknowledged after two notices.`;
+            const receipt = await postDirectMessage(client, { userId: ack.createdBy, text: body, clientMessageId,
+              blocks: [
+                { type: "section", text: { type: "mrkdwn", text: body } },
+                ...(permalink ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "View conversation" }, url: permalink }] }] : []),
+              ],
+            });
+            if (!receipt?.messageId) throw new Error("Reminder DM returned no message ID");
           }
           deleteAck(ack.id);
           await logEvent("ack_escalate", { id: ack.id, stage: ack.createdBy ? "dm_done" : "no_creator" });
@@ -581,7 +582,11 @@ async function processAcks(now) {
           deleteAck(ack.id);
         }
       } catch (e) {
-        await logEvent("ack_error", { id: ack.id, error: e.message });
+        // Keep the stage for recovery, spacing repeated delivery failures up to an hour apart.
+        const retryCount = Math.min((ack.retryCount || 0) + 1, 7);
+        const minutes = Math.min(2 ** (retryCount - 1), 60);
+        updateAck(ack.id, { retryCount, nextAt: new Date(now.getTime() + minutes * 60_000).toISOString() });
+        await logEvent(ack.stage === "sent2" ? "ack_dm_error" : "ack_error", { id: ack.id, error: e.message });
       }
     }
   } finally {

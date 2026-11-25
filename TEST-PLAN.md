@@ -14002,7 +14002,8 @@ none` for its cases and live gates. Kept as history.
 - [x] Engine-independent scheduler regression (`test/scheduler-ack-retry.test.js`): return no
       message ID for a second notice, then recover. For the creator DM, throw a transport error,
       return no conversation, and return no message ID. The stored stage stays pending through
-      each failure. Restore delivery and tick twice. One successful creator DM closes the row
+      each failure. Simulate Slack accepting the DM and dropping its response. Check the stored
+      retry time and same client message ID on replay. One confirmed creator DM closes the row
       and emits one completion event.
 - [x] Unit: weekday `7` aliases Sunday after numeric list/range/step expansion; `5-7/2`
       selects Friday and Sunday, `0-7/2` selects Sunday/Tuesday/Thursday/Saturday, duplicate

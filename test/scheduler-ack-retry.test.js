@@ -10,14 +10,18 @@ const { startScheduler, tick } = await import("../src/gateway/scheduler.js");
 
 test("reminder escalation retains failed deliveries and closes once after recovery", async (t) => {
   let failure = "empty-notice";
-  const delivered = [];
+  const delivered = new Map();
+  const attempts = [];
   const client = {
     conversations: { open: async () => failure === "missing-dm" ? {} : { channel: { id: "D_CREATOR" } } },
-    chat: { postMessage: async ({ channel }) => {
+    chat: { postMessage: async ({ channel, client_msg_id }) => {
+      assert.match(client_msg_id, /^[0-9a-f-]{36}$/);
+      attempts.push({ channel, client_msg_id });
       if (failure === "throw-dm") throw new Error("Transport temporarily offline");
       if (failure === "empty-notice" || failure === "empty-dm") return {};
-      delivered.push(channel);
-      return { ts: "1000000000.00000" + delivered.length };
+      if (!delivered.has(client_msg_id)) delivered.set(client_msg_id, { channel, ts: "1000000000.00000" + (delivered.size + 1) });
+      if (failure === "lost-receipt") throw new Error("Slack accepted this request; its response was lost");
+      return { ts: delivered.get(client_msg_id).ts };
     } },
   };
   const timer = startScheduler({ slack: { snapshot: () => ({ connected: true }), getClient: () => client }, immediate: false });
@@ -40,16 +44,23 @@ test("reminder escalation retains failed deliveries and closes once after recove
   failure = "";
   await advance(1);
   assert.equal(saved()?.stage, "sent2");
-  for (const [index, fault] of ["throw-dm", "missing-dm", "empty-dm"].entries()) {
+  for (const [minute, fault] of [[2, "throw-dm"], [3, "missing-dm"], [5, "empty-dm"], [9, "lost-receipt"]]) {
     failure = fault;
-    await advance(index + 2);
+    await advance(minute);
     assert.equal(saved()?.stage, "sent2", fault);
     assert.deepEqual(stages(), ["sent2"], fault);
   }
   failure = "";
-  await advance(5);
-  await advance(6);
+  const attemptsBeforeBackoff = attempts.length;
+  await advance(10);
+  assert.equal(attempts.length, attemptsBeforeBackoff);
+  await advance(17);
+  await advance(18);
   assert.equal(saved(), undefined);
   assert.deepEqual(stages(), ["sent2", "dm_done"]);
-  assert.deepEqual(delivered, ["C_REMINDER", "D_CREATOR"]);
+  assert.deepEqual([...delivered.values()].map(post => post.channel), ["C_REMINDER", "D_CREATOR"]);
+  for (const channel of ["C_REMINDER", "D_CREATOR"]) {
+    assert.equal(new Set(attempts.filter(p => p.channel === channel).map(p => p.client_msg_id)).size, 1);
+  }
+  assert.notEqual(attempts[0].client_msg_id, attempts.at(-1).client_msg_id);
 });

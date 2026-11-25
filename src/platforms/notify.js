@@ -40,7 +40,7 @@ export function asConnector(clientOrConnector) {
 // `card` is an Adaptive Card and `chatCard` a Google Chat Cards v2 card, each sent only where that
 // format renders natively; `text` is still the message's fallback, and the whole notice on every
 // other surface.
-export async function postNotice(target, { conversationId, threadKey = "", text, blocks = null, card = null, chatCard = null, ephemeralTo = "" } = {}) {
+export async function postNotice(target, { conversationId, threadKey = "", text, blocks = null, card = null, chatCard = null, ephemeralTo = "", clientMessageId = "" } = {}) {
   const connector = asConnector(target);
   if (!connector) return null;
   const richCards = connector.capabilities?.richCards;
@@ -49,6 +49,7 @@ export async function postNotice(target, { conversationId, threadKey = "", text,
     return connector.postCard({ conversationId, threadKey, card: native, text });
   }
   const payload = { conversationId, threadKey, text, ephemeralTo };
+  if (clientMessageId) payload.clientMessageId = clientMessageId;
   if (blocks && connector.capabilities?.richCards === "block-kit") payload.blocks = blocks;
   return connector.post(payload);
 }
@@ -75,12 +76,12 @@ export async function postPrivately(target, { conversationId, threadKey = "", us
 
 // Open (or find) the 1:1 conversation with a user and post into it. The scheduler's acknowledgement
 // DMs and the follow-up digest both need this, and "open a DM" is a different API on every surface.
-export async function postDirectMessage(target, { userId, text, blocks = null } = {}) {
+export async function postDirectMessage(target, { userId, text, blocks = null, clientMessageId = "" } = {}) {
   const connector = asConnector(target);
   if (!connector) return null;
   const conversationId = await connector.openDm(userId);
   if (!conversationId) return null;
-  return postNotice(connector, { conversationId, text, blocks });
+  return postNotice(connector, { conversationId, text, blocks, clientMessageId });
 }
 
 // Resolve readiness for the destination surface. An unrelated Slack outage must never hold a

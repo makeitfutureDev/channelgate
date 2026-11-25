@@ -5896,7 +5896,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in SQLite so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
-  The scheduler keeps a failed second notice or creator DM pending and retries on the next tick.
+  The scheduler keeps a failed second notice or creator DM pending and retries after one minute. Repeated failures back off to hourly.
+  Slack retries reuse the same stored client message ID for that escalation stage.
   A returned message ID confirms delivery before it advances or closes the escalation.
 - Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
   pending reports check current reactions before delivery. A `white_check_mark` (✅) on the

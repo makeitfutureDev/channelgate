@@ -25,7 +25,7 @@ export function createSlackConnector(client, { capabilities } = {}) {
     // One message. `threadKey` is a SESSION key, not necessarily a Slack ts — slackThreadFor is the
     // single rule that turns it into a legal thread_ts (or null = post top-level), shared with the
     // MCP tool servers so a scheduled run's synthetic key can never reach Slack as a thread_ts.
-    async post({ conversationId, threadKey, text, ephemeralTo = "", ephemeralOnly = false, blocks = null } = {}) {
+    async post({ conversationId, threadKey, text, ephemeralTo = "", ephemeralOnly = false, blocks = null, clientMessageId = "" } = {}) {
       const thread_ts = threadKey ? slackThreadFor(threadKey) : null;
       const payload = { channel: conversationId, text, ...(thread_ts ? { thread_ts } : {}), ...(blocks ? { blocks } : {}) };
       if (ephemeralTo) {
@@ -43,6 +43,7 @@ export function createSlackConnector(client, { capabilities } = {}) {
           if (ephemeralOnly) return null;
         }
       }
+      if (clientMessageId) payload.client_msg_id = clientMessageId;
       const res = await client.chat.postMessage(payload);
       return { messageId: res?.ts || "", conversationId: res?.channel || conversationId, threadKey };
     },
