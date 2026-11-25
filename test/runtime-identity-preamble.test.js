@@ -398,3 +398,40 @@ for (const engine of ["claude", "codex"]) {
     });
   });
 }
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: daemon loop state reaches the actual prompt and refreshes after stop`, async () => {
+    const { armLoop, stopThreadLoops } = await import("../src/gateway/loops.js");
+    const context = await fixture(`LOOP_STATE_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol");
+    armLoop({ channelId: context.channelId, threadTs: context.threadKey, wakeup: { kind: "loop_wakeup", mode: "dynamic", delaySeconds: 300, prompt: "check" } });
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "Stop the check loop now. Do not cancel any normal reminders." });
+    stopThreadLoops(context.channelId, context.threadKey);
+    await runMessage({ ...context, text: "What loop is waiting now?" });
+    const calls = attempts(start);
+    assert.equal(calls.length, 2);
+    for (const [index, count] of [1, 0].entries()) {
+      const prompt = calls[index].args.find(arg => String(arg).includes("[Gateway runtime for THIS attempt:"));
+      assert.match(prompt, new RegExp(`pending_loop_ticks":${count}`));
+      assert.match(prompt, /session-local.*does not describe.*gateway/i);
+      assert.match(prompt, /after.*reply.*actual.*removed count/i);
+    }
+    assert.equal(metadata(calls[1]).session, "resumed");
+  });
+}
+
+test("fallback receives current daemon loop state rather than the harness timer count", async () => {
+  const { armLoop, stopThreadLoops } = await import("../src/gateway/loops.js");
+  const context = await fixture("LOOP_STATE_FALLBACK", "claude", "sonnet");
+  armLoop({ channelId: context.channelId, threadTs: context.threadKey, wakeup: { kind: "loop_wakeup", mode: "dynamic", delaySeconds: 300, prompt: "check" } });
+  const start = backend.calls.spawn.length;
+  try {
+    await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE" });
+    const calls = attempts(start);
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      const prompt = call.args.find(arg => String(arg).includes("[Gateway runtime for THIS attempt:"));
+      assert.match(prompt, /pending_loop_ticks":1/);
+    }
+  } finally { stopThreadLoops(context.channelId, context.threadKey); }
+});

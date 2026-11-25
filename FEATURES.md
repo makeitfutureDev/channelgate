@@ -5888,7 +5888,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   cadence floor is 1 min rather than the unattended-cron minimum, because a loop is bounded by a
   tick budget (24) instead. Every arm, refusal, and budget stop is announced in the thread, `stop`
   in the thread cancels the pending tick as well as the running turn, and a re-arm replaces the
-  pending tick rather than stacking a second one. → TEST-PLAN: Automation.
+  pending tick rather than stacking a second one. Native stop acknowledgements and thread/channel
+  Stop notices report the actual number of pending loop ticks removed per affected thread.
+  Thread-scoped stops preserve other threads' loops; all loop stops preserve ordinary reminders.
+  Each engine attempt receives the
+  current thread's durable pending count so a session-local tool's zero does not imply the
+  gateway tick already ran or disappeared. → TEST-PLAN: Automation.
 - Reminder schedules (`kind:"reminder"`): post a SINGLE message (no Claude run, no token cost) rather
   than running a session. With `ack:true` the reminder requires a ✅ — if nobody reacts within
   `ack_escalate_minutes` (default 120) the bot posts a 2nd notice, then after `ack_dm_minutes`

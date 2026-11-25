@@ -49,6 +49,7 @@ import { markLive } from "./egress/liveness.js";
 import { mcpConfigUrls, noteChannelMcpHosts } from "./egress/service.js";
 import { resolveCurrentModel } from "./model-info.js";
 import { linkedWorkspaceGuidePreamble } from "./guide.js";
+import { threadLoopPreamble } from "./loops.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { annotateProcessLimit, containerProcessNotice, containerProcessNoticeKind } from "./process-limit.js";
@@ -1676,6 +1677,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
     const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
+      + threadLoopPreamble(channelId, threadKey)
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
@@ -2014,6 +2016,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       const attemptResult = await fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
+          + threadLoopPreamble(channelId, threadKey)
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,

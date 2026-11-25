@@ -50,7 +50,7 @@ import { postVoiceTranscripts } from "./voice-transcripts.js";
 import { formatUpdateResult, startUpdate } from "../gateway/updater.js";
 import { isForceStopping } from "../gateway/shutdown.js";
 import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
-import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
+import { applyLoopWakeup, loopStopNotice, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser, recordGatewayReply } from "../gateway/followups.js";
 
 import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled, getDefaultModel } from "../config/settings.js";
@@ -226,11 +226,13 @@ export async function stopRunsInChannel(client, channelId, slug, byUser, threadK
   // the thread waking up again — the stop read as ignored. Every stop entry point (a `stop`
   // message, the 🛑 reaction, the `/stop` sweep) funnels through here, so the loop ends whichever
   // one the user reached for; a null threadKey means the channel-wide sweep, which ends them all.
-  for (const loopThread of new Set(droppedLoops.map((row) => row.threadTs))) {
+  const droppedByThread = new Map();
+  for (const row of droppedLoops) droppedByThread.set(row.threadTs, (droppedByThread.get(row.threadTs) || 0) + 1);
+  for (const [loopThread, count] of droppedByThread) {
     deliveries.push(client.chat.postMessage({
       channel: channelId,
       thread_ts: loopThread,
-      text: "🔁 Loop stopped — no further ticks are scheduled.",
+      text: loopStopNotice(count),
     }).catch(() => {}));
   }
 

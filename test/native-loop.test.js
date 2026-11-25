@@ -19,7 +19,7 @@ const {
   MIN_DELAY_SECONDS,
   MAX_DELAY_SECONDS,
 } = await import("../src/engines/loop-wakeup.js");
-const { armLoop, threadLoops, stopLoops, stopThreadLoops, consumeTick, DEFAULT_MAX_TICKS } = await import("../src/gateway/loops.js");
+const { applyLoopWakeup, armLoop, threadLoops, stopLoops, stopThreadLoops, consumeTick, DEFAULT_MAX_TICKS } = await import("../src/gateway/loops.js");
 const { addSchedule, getSchedules, deleteSchedule } = await import("../src/config/schedules.js");
 
 // ── Normalization ─────────────────────────────────────────────────────────────
@@ -296,4 +296,24 @@ test("a channel-wide stop ends every loop in the channel and names their threads
   assert.deepEqual(new Set(dropped.map((row) => row.threadTs)), new Set([THREAD, other]));
   assert.ok(getSchedules().some((row) => row.id === ordinary.id), "a sweep of loops must not delete real schedules");
   assert.deepEqual(stopLoops(CHANNEL), [], "a second sweep has nothing left to drop");
+});
+
+// ART-006: a native stop result describes the harness, not the durable gateway row.
+test("native stop acknowledgement reports actual removed ticks and preserves unrelated schedules", async () => {
+  reset();
+  const ordinary = addSchedule({ channelId: CHANNEL, cron: "0 9 * * *", prompt: "ordinary reminder", kind: "reminder" });
+  const other = armLoop({ channelId: CHANNEL, threadTs: "other-thread", wakeup: dynamic() }).schedule;
+  armLoop({ channelId: CHANNEL, threadTs: THREAD, wakeup: dynamic() });
+  const posts = [];
+  const client = { chat: { postMessage: async (args) => { posts.push(args); return { ok: true, ts: THREAD }; } } };
+  const outcome = await applyLoopWakeup({ client, channelId: CHANNEL, threadTs: THREAD, wakeup: { kind: "loop_wakeup", mode: "stop" } });
+  assert.equal(outcome.dropped, 1);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].thread_ts, THREAD);
+  assert.match(posts[0].text, /removed 1 pending loop tick\b/i);
+  assert.equal(threadLoops(CHANNEL, THREAD).length, 0);
+  assert.ok(getSchedules().some(row => row.id === ordinary.id));
+  assert.ok(getSchedules().some(row => row.id === other.id));
+  await applyLoopWakeup({ client, channelId: CHANNEL, threadTs: THREAD, wakeup: { kind: "loop_wakeup", mode: "stop" } });
+  assert.equal(posts.length, 1, "a repeated stop must not invent another cancellation");
 });
