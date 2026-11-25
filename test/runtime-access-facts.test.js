@@ -107,7 +107,7 @@ test("an enforced network note names the advisory-only setups without claiming o
   assert.match(bridge, /advisory, not container egress enforcement/);
 });
 
-test("an enforced network note says raw tunnels use the proxy and only while the switch is on", () => {
+test("an enforced network note describes OFF refusals, ON private approvals and raw tunnels", () => {
   const enforced = { backend: "container", container: { mounts: [], egress: { active: true, network: "none" } } };
   for (const allowNetwork of [true, false]) {
     const note = runtimeAccessPreamble(enforced, { clean: false, allowNetwork });
@@ -115,7 +115,10 @@ test("an enforced network note says raw tunnels use the proxy and only while the
     assert.match(note, /only while the switch is on/);
     assert.match(note, /github\.com:22/);
     assert.match(note, /allow_channel_ssh_host/);
-    assert.match(note, /while it is off they are refused like everything else/);
+    assert.match(note, /Allow network OFF, only engine endpoints and this conversation's selected remote MCP connectors are admitted\. The proxy refuses other destinations with HTTP 403 `network-off`/);
+    assert.match(note, /Allow network ON, public destinations are admitted\. Private and loopback destinations are blocked by default/);
+    assert.match(note, /organization admin can approve an exact host and port pinned to a private or loopback address for this channel/);
+    assert.match(note, /Cloud-metadata addresses remain blocked/);
     assert.doesNotMatch(note, /Raw sockets \(ssh, database protocols\) work only to hosts an admin declared\./);
   }
 });
