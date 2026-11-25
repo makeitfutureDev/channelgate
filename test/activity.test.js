@@ -827,33 +827,38 @@ for (const ending of ["drain timeout", "access ended"]) {
   test(`SSE releases a stalled client's stream on ${ending}: no write after end, no polling, slot freed`, async (t) => {
     // A browser that stops reading (sleeping laptop, stuck proxy) never lets res.end() finish, so
     // 'close' never fires. A socket whose writes never complete reproduces that deterministically:
-    // the snapshot write returns false, 'drain' never comes and the ended response stays unfinished.
+    // the snapshot write returns false, 'drain' never comes and an ended response never finishes.
     const rows = Array.from({ length: 200 }, (_, i) => ({ channel_id: "C_WORK", thread_ts: `100.${String(i).padStart(6, "0")}`,
       title: "T".repeat(500), channelName: "#C_WORK", status: "working", last_message_ms: 1 }));
     let snapshots = 0, stall = true;
     const stalled = { afterEnd: [], errors: [], res: null };
     const middleware = (req, res, next) => {
       if (stall && req.path.endsWith("/stream")) {
-        stall = false; stalled.res = res;
+        stall = false; stalled.res = res; stalled.socket = req.socket;
         req.socket._write = () => {}; req.socket._writev = () => {};
         res.on("error", (error) => stalled.errors.push(error.code));
         const write = res.write.bind(res);
-        res.write = (chunk, ...rest) => { if (res.writableEnded) stalled.afterEnd.push(String(chunk).slice(0, 40)); return write(chunk, ...rest); };
+        res.write = (chunk, ...rest) => { if (res.writableEnded || res.destroyed) stalled.afterEnd.push(String(chunk).slice(0, 40)); return write(chunk, ...rest); };
       }
       next();
     };
     const f = await fixture(t, { middleware, maxStreams: 1, pollMs: 10, accessRefreshMs: 60_000,
-      drainTimeoutMs: ending === "drain timeout" ? 40 : 60_000, snapshot: async () => { snapshots++; return { rows, total: rows.length }; } });
+      drainTimeoutMs: ending === "drain timeout" ? 40 : 300, snapshot: async () => { snapshots++; return { rows, total: rows.length }; } });
     const user = await f.login();
     const url = new URL(f.base + user.url + "/stream");
     const hung = httpRequest(url, { headers: { cookie: user.cookie } }); hung.on("error", () => {}); hung.end();
     t.after(() => hung.destroy());
     while (snapshots < 1) await new Promise((resolve) => setTimeout(resolve, 5));
     if (ending === "access ended") { await new Promise((resolve) => setTimeout(resolve, 30)); f.advance(ACTIVITY_SESSION_TTL_MS + 1); }
-    while (!stalled.res.writableEnded) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.equal(stalled.res.writableFinished, false, "the stalled client has not received the end");
+    while (!stalled.res.writableEnded && !stalled.res.destroyed) await new Promise((resolve) => setTimeout(resolve, 5));
     const seen = snapshots;
     await new Promise((resolve) => setTimeout(resolve, 150)); // many poll intervals
+    // The end can never reach a client that stopped reading: its socket and buffered snapshot
+    // are dropped (at once on drain timeout, after the grace period once access has ended).
+    while (!stalled.socket.destroyed) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(stalled.res.writableFinished, false, "the stalled client never received the end");
+    assert.equal(stalled.res.destroyed, true);
+    assert.equal(stalled.res.writableEnded, ending === "access ended", "only access loss tries to deliver its final event");
     assert.deepEqual(stalled.afterEnd, [], "nothing is written to the ended stream");
     assert.deepEqual(stalled.errors, []);
     assert.equal(snapshots, seen, "the ended stream stops polling");

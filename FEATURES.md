@@ -2446,8 +2446,10 @@ closes, is still dropped. Previously any snapshot above the high-water mark clos
 healthy connection, so the page cycled between **Reconnecting…** and **Live updates** every two
 seconds (the stream's `retry` hint) and refetched the same snapshot on every reconnect.
 Whichever way a stream stops (drain timeout, access ended or the browser closing), it releases its
-poll timer, change subscriptions and connection slot at once and writes nothing more, so a stalled
-browser cannot raise write-after-end errors or block the owner's next stream, and the page clears
+poll timer, change subscriptions and connection slot at once and writes nothing more, and a browser
+that is not reading has its connection closed (at once on a drain timeout, after `drainTimeoutMs`
+once access has ended), so a stalled browser cannot raise write-after-end errors, hold buffered
+snapshots or block the owner's next stream, and the page clears
 its tab and footer totals along with the rows when access ends (2026-11-25).
 
 ## Postpone conversations in Activity (2026-11-12)

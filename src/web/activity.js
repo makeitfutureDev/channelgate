@@ -1150,17 +1150,25 @@ export function createActivityRouter({
       || [...streams].filter((stream) => stream.ownerId === initial.session.ownerId).length >= 3) return unavailable(res, 429);
     res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", Connection: "keep-alive" });
     res.flushHeaders(); res.write("retry: 2000\n\n");
-    let closed = false, sending = false, dirty = false, lastKey, lastAccess = 0, queued, timer, unthread, unruns, release;
+    let closed = false, sending = false, dirty = false, lastKey, lastAccess = 0, queued, timer, unthread, unruns, release, grace;
     const queue = () => { if (!closed && !queued) queued = setTimeout(() => { queued = null; void send(); }, 25); };
     // Every way a stream stops (client gone, drain timeout, access ended, test reset) goes through
     // here once: a stalled client never fires 'close' after res.end(), so the poll timer, the
     // subscriptions and the stream slot must be released now, not when the socket finally dies.
-    const finish = (last = "") => {
+    // A client that stopped reading can never take the end either, so a drain timeout destroys the
+    // socket, and any other end gets drainTimeoutMs to complete before the socket is destroyed.
+    const finish = (last = "", { destroy = false } = {}) => {
       if (closed) return;
       closed = true;
       clearInterval(timer); clearTimeout(queued); queued = null;
       unthread?.(); unruns?.(); streams.delete(stream); release?.();
-      if (!res.writableEnded && !res.destroyed) { if (last) res.write(last); res.end(); }
+      if (res.destroyed) return;
+      if (destroy) { res.destroy(); return; }
+      if (!res.writableEnded) { if (last) res.write(last); res.end(); }
+      if (!res.writableFinished) {
+        grace = setTimeout(() => { if (!res.writableFinished) res.destroy(); }, drainTimeoutMs);
+        grace.unref?.();
+      }
     };
     const stream = { id: req.params.id, ownerId: initial.session.ownerId, end: () => finish(), changed: queue };
     streams.add(stream);
@@ -1190,7 +1198,7 @@ export function createActivityRouter({
           if (version !== configVersion) { dirty = true; continue; }
           lastKey = key; lastAccess = now();
           if (key !== combinedRefreshKey(initial.session.ownerId)) dirty = true;
-          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { finish(); break; }
+          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { finish("", { destroy: true }); break; }
         }
       } catch (error) {
         if (error.status === 401 || error.status === 403) endAccess();
@@ -1214,7 +1222,7 @@ export function createActivityRouter({
       finally { checking = false; }
     }, pollMs);
     timer.unref?.();
-    res.on("close", () => finish());
+    res.on("close", () => { clearTimeout(grace); finish(); });
     if (res.destroyed) finish(); else void send();
   });
   router.use((_error, _req, res, _next) => unavailable(res, 400));
