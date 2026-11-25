@@ -3543,6 +3543,15 @@ Task progress remain visible; older agent streams without optional task-type met
   refused. Independently supplied credentials, custom MCPs and browser sessions also remain
   outside that gate. The always-loaded guide forbids bypass through any route and treats
   sharing/posting requests as separate from permission to join or change the sender.
+- A batch whose `tools` (or one item's `arguments`) arrives as a JSON-encoded string is decoded
+  before inspection, and the decoded request is the one forwarded, so an encoded batch is checked
+  exactly like a structured one and a membership action inside it still needs the card.
+- Every refusal names its actual reason, so the engine can correct the call instead of guessing:
+  a malformed or uninspectable call says what is wrong and that nothing reached the connector
+  (for example `tools` that is not a JSON array, an item without `tool_slug`, or a disabled
+  executor with the structured or Workbench alternative); a membership change says its approval
+  was denied, timed out or is unavailable; expired or revoked run authority says so. Text from an
+  approval transport or authorization failure is never echoed.
 
 ## Google Chat native conversation controls
 

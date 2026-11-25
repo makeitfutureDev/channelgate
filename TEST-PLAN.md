@@ -5877,6 +5877,27 @@ inbox). Record the address and the servers; never the password.
   Hermetic tests do not count as live passes. Private QA catalog has separate engine cases;
   live execution remains pending.
 
+### Encoded batches and refusal reasons (2026-11-25)
+
+- [x] Automated: `test/composio-approval.test.js`: a batch whose `tools` is a JSON string (and an
+  item whose `arguments` is one) is forwarded upstream as the decoded array/object with no card;
+  an encoded batch hiding a Slack invite still raises the card with the invite's channel and
+  users, forwards nothing on denial and the decoded batch once on approval; refusals name the
+  reason (non-array `tools`, missing `tools`, missing `tool_slug`, disabled
+  `COMPOSIO_PROXY_EXECUTE` naming Workbench, denied approval, revoked authority) without the
+  membership text on non-membership refusals and without echoing authorization error text;
+  undecodable shapes and non-executor tools stay untouched and the caller's object is not mutated.
+- [ ] Live **[Claude] and [Codex]**, separately: private QA Auto fixture as the approved-member actor
+  with a connected fixture Google Drive account through `composio-user`. Stage a small harmless
+  file with `stage_file_for_composio`, then prompt: “Upload the staged file to my Drive with
+  COMPOSIO_MULTI_EXECUTE_TOOL, but pass the `tools` argument as a JSON-encoded string, not an
+  array. Report the tool result verbatim.” Then: “Call COMPOSIO_PROXY_EXECUTE for any harmless
+  GET endpoint and report the refusal verbatim.” **Pass:** the encoded upload executes once (file
+  present in Drive, no approval card); the proxy refusal names `COMPOSIO_PROXY_EXECUTE` as disabled
+  and suggests a structured tool or Workbench, without claiming a membership change; no card is
+  posted for either call. Delete the uploaded fixture file. Capture candidate, engine/model,
+  MCP calls/results and the Drive file ID.
+
 ### Workbench restoration (2026-10-23)
 
 - [x] Automated: `test/composio-approval.test.js` covers both identities, repeated Workbench calls
