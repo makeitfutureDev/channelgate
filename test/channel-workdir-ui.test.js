@@ -16,6 +16,7 @@ const slice = (start, end) => {
   return client.slice(from, to);
 };
 const setup = [
+  slice('  const manageSel = card.querySelector(".ch-manage");', '  card.querySelector(".ch-memory").checked'),
   slice('  const savebar = card.querySelector(".detail-savebar");', "  // Guest users checklist"),
   slice('  const workdirInput = card.querySelector(".ch-workdir");', '  card.querySelector(".ch-syncdrive").value'),
   slice('  savebar.querySelector(".save-channel").addEventListener', "  // Discard: re-render the detail"),
@@ -58,7 +59,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
   const ch = { channelId: "C/FOLDER", slug: "folder-fixture", meta: { workDir, engine: "codex" } };
   const calls = [];
   const context = {
-    card, ch, meta: ch.meta, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card, .ch-vpn-controls",
+    card, ch, meta: ch.meta, MANAGE_HELP: {}, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card, .ch-vpn-controls",
     engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: { dataset: {} }, mcpsCount: {}, skillsPicker: null,
     makeToolboxKeyInput: control(".ch-make-toolbox-key"),
     spendingLimitInput: control(".ch-monthly-spending-limit"),

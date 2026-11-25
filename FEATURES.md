@@ -9,6 +9,15 @@ messages and administrators outside Admin mode retain Lean's memory exclusion; a
 memory-off setting remains off. Each call rechecks current authority from the verified capability
 context, and tool arguments cannot grant the exception. Saved channel settings are unchanged.
 
+## Admin channel saves preserve named-manager policies (2026-11-25)
+
+The admin web channel form displays an existing custom management policy as **Named managers**.
+Saving another channel setting preserves the policy and manager list, including when another
+writer changes the policy while the form is open. Only an explicit management selection sends
+a management-policy change. A successful save reconciles the displayed policy with the accepted
+server record; changing between admins, members and named managers retains the saved manager
+list. Named managers continue using the existing channel Access settings to edit that list.
+
 ## Native session adoption retains shared channel history (2026-11-25)
 
 After `/resume <id>` validates a transcript in the channel's current container history,
