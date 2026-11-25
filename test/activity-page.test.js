@@ -1097,6 +1097,48 @@ test("an edit made while a comment save is in flight is saved next and its text 
   assert.match(elements.notice.textContent, /comment couldn’t be saved/);
 });
 
+test("queued edit, then row hidden → latest edit still saved and shown when the row returns", async () => {
+  const saves = [];
+  const { elements, stream, requests } = browser((url) => {
+    if (!url.endsWith("/api/comment")) return new Promise(() => {});
+    const save = deferred(); saves.push(save); return save.promise;
+  });
+  stream.snapshot([{ ...row(), comment: "saved X" }]);
+  const field = () => elements.threads.children[0] && cellsByClass(elements.threads.children[0])["comment-cell"].children[0];
+  const posts = () => requests.filter((r) => r.url.endsWith("/api/comment")).map((r) => JSON.parse(r.options.body).comment);
+  const hide = () => { elements.search.value = "no such conversation"; elements.search.fire("input"); assert.equal(elements.threads.children.length, 0); };
+  const show = () => { elements.search.value = ""; elements.search.fire("input"); assert.equal(elements.threads.children.length, 1); };
+  field().value = "edit A"; field().fire("change");
+  field().value = "edit B"; field().fire("change");
+  hide();
+  saves[0].resolve(response({ comment: "edit A" })); await flush();
+  assert.deepEqual(posts(), ["edit A", "edit B"], "the newest edit is sent even though its row left the view");
+  show();
+  assert.equal(field().value, "edit B", "a rebuilt row shows the edit being saved, not an empty or older text");
+  assert.equal(field().dataset.state, "saving");
+  saves[1].resolve(response({ comment: "edit B" })); await flush();
+  assert.equal(field().value, "edit B");
+  assert.equal(field().dataset.state, undefined);
+
+  // A save that fails while its row is out of view still shows the typed text and error on return.
+  field().value = "edit C"; field().fire("change");
+  hide();
+  saves[2].resolve(response({}, 500)); await flush();
+  show();
+  assert.equal(field().value, "edit C");
+  assert.equal(field().dataset.state, "error");
+  assert.match(elements.notice.textContent, /comment couldn’t be saved/);
+
+  // Editing back to the saved text while a save fails clears the error and its notice.
+  field().value = "edit D"; field().fire("change");
+  field().value = "edit B"; field().fire("change");
+  saves[3].resolve(response({}, 500)); await flush();
+  assert.deepEqual(posts().slice(2), ["edit C", "edit D"]);
+  assert.equal(field().value, "edit B");
+  assert.equal(field().dataset.state, undefined);
+  assert.doesNotMatch(elements.notice.textContent, /comment couldn’t be saved/);
+});
+
 test("a comment that failed to save keeps its red border while the row is hovered", () => {
   const css = activityPage({ sessionId: "session", csrf: "x" }).html;
   const hover = css.indexOf("tbody tr:hover .comment-input,");
