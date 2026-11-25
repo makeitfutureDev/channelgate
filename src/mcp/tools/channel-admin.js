@@ -221,9 +221,11 @@ export function register(server, ctx) {
         "on permits internet use (any public host, " +
         "no domain allowlist); off limits the channel to the engine endpoints and its selected connectors. " +
         "The gateway's egress proxy enforces this policy; the container has no network of its own. " +
-        "Legacy open-bridge egress or raw sockets make the policy advisory. In /sudo direct-host threads " +
+        "Legacy open-bridge egress or rawNetwork (the open bridge beside the proxy) makes the policy advisory. In /sudo direct-host threads " +
         "it is advisory, with no OS-level egress cutoff. " +
-        "Private, loopback and cloud-metadata addresses are never reachable through the proxy. It grants no " +
+        "Raw protocols tunnelled through the proxy remain subject to this policy. " +
+        "Private and loopback addresses are refused unless an organization admin approved that exact host and port for this channel. " +
+        "Cloud-metadata addresses are always refused. It grants no " +
         "host credential files or mounts. Takes effect on the next request.",
       inputSchema: { enabled: z.boolean() },
     },
@@ -235,10 +237,10 @@ export function register(server, ctx) {
       const enforced = networkEnforcedFor({ meta: (await loadMeta()) || {} });
       return text(
         enabled
-          ? `✅ Network ON — public internet allowed, with no domain allowlist${enforced ? " (through the egress proxy: private and metadata addresses stay blocked)" : ""}. Effective on the next request.`
+          ? `✅ Network ON — public internet allowed, with no domain allowlist${enforced ? " (through the egress proxy: private and loopback destinations require organization-admin approval for the exact host and port; cloud-metadata addresses stay blocked)" : ""}. Effective on the next request.`
           : enforced
             ? "✅ Network OFF — enforced by the egress proxy: only the engine endpoints and this channel's selected connectors are reachable. Effective on the next request."
-            : "✅ Network OFF — policy instructs the engine not to use the network; for this channel it is advisory, not an egress cutoff (legacy bridge egress or raw sockets). Effective next message."
+            : "✅ Network OFF — policy instructs the engine not to use the network; for this channel it is advisory, not an egress cutoff (legacy bridge egress or rawNetwork). Effective next message."
       );
     }
   );
