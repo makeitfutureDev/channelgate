@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- In Activity's Channel grouping, pinned channel cards keep their order when a newer unpinned
+  conversation arrives in one of those channels; each section ranks cards by its own conversations.
+
 - A schedule in an archived channel keeps its paused status and logs one pause event per
   archival, instead of a new pause event on every other cron fire.
 

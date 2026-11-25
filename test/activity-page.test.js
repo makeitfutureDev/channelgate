@@ -852,8 +852,8 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   assert.deepEqual(groups(), [undefined, undefined, undefined, undefined]);
   b.stream.snapshot([...pinned, ordinary], { groupBy: "channel", groupByVersion: 1 });
   assert.equal(e["pinned-threads"].dataset.groupBy, "channel");
-  assert.deepEqual(titles(), ["Alpha error pinned", "Alpha idle pinned", "Beta pinned", "Same name pinned"]);
-  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Beta · 1", "Alpha · 1"]);
+  assert.deepEqual(titles(), ["Beta pinned", "Alpha error pinned", "Alpha idle pinned", "Same name pinned"], "the newer ordinary Alpha row does not lift the pinned Alpha card");
+  assert.deepEqual(groups(), ["Beta · 1", "Alpha · 2", undefined, "Alpha · 1"]);
   assert.equal(e.threads.children[0].dataset.group, "Alpha · 1", "regular counts exclude pins");
   assert.ok(e["pinned-threads"].children.every((tr) => originalNodes.has(tr)), "grouping reuses existing row controls");
   e.search.value = "pinned"; e.search.fire("input");
@@ -1170,6 +1170,24 @@ test("channel cards follow newest activity across live updates, filters and pinn
   assert.deepEqual(titles("pinned-threads"), ["Beta", "Alpha old", "Alpha newest"]);
   stream.snapshot([a, aNew, { ...b, lastMessageMs: 500 }], { groupBy: "status", groupByVersion: 1 });
   assert.deepEqual(titles(), ["Beta", "Alpha old", "Alpha newest"], "status grouping retains its existing status priority");
+});
+
+test("pinned and ordinary channel cards rank by their own section's visible activity only", () => {
+  const { elements: e, stream } = browser(() => new Promise(() => {}));
+  const aardPinned = { ...row("idle", "Aardvark pinned"), channelId: "C_AARD", channelName: "aardvark", threadTs: "1", pinned: true, lastMessageMs: 500 };
+  const betaPinned = { ...row("idle", "Beta pinned"), channelId: "C_BETA", channelName: "beta", threadTs: "2", pinned: true, lastMessageMs: 200 };
+  const betaOrdinary = { ...row("idle", "Beta ordinary newer"), channelId: "C_BETA", channelName: "beta", threadTs: "3", lastMessageMs: 900 };
+  const alphaOrdinary = { ...row("idle", "Alpha ordinary"), channelId: "C_ALPHA", channelName: "alpha", threadTs: "4", lastMessageMs: 400 };
+  const aardOrdinary = { ...row("idle", "Aardvark ordinary"), channelId: "C_AARD", channelName: "aardvark", threadTs: "5", lastMessageMs: 100 };
+  const titles = (id) => e[id].children.map((tr) => tr.children[0].textContent);
+  stream.snapshot([betaPinned, aardPinned, alphaOrdinary, aardOrdinary], { groupBy: "channel" });
+  assert.deepEqual(titles("pinned-threads"), ["Aardvark pinned", "Beta pinned"]);
+  assert.deepEqual(titles("threads"), ["Alpha ordinary", "Aardvark ordinary"], "a newer pinned aardvark row does not lift its ordinary card");
+  stream.snapshot([betaPinned, aardPinned, betaOrdinary, alphaOrdinary, aardOrdinary]);
+  assert.deepEqual(titles("pinned-threads"), ["Aardvark pinned", "Beta pinned"], "a newer ordinary beta row does not reorder pinned cards");
+  assert.deepEqual(titles("threads"), ["Beta ordinary newer", "Alpha ordinary", "Aardvark ordinary"]);
+  stream.snapshot([{ ...betaPinned, lastMessageMs: 600 }, aardPinned, betaOrdinary, alphaOrdinary, aardOrdinary]);
+  assert.deepEqual(titles("pinned-threads"), ["Beta pinned", "Aardvark pinned"], "pinned activity itself still reorders pinned cards");
 });
 
 test("another person's Done remains in Active and pinned; my Done only appears under Completed", async () => {

@@ -638,22 +638,26 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const channelName = (row) => String(row.channelName || "Conversation");
     const groupKey = (row) => currentGrouping === "channel" ? row.channelId : row.status;
     const filtered = ended ? [] : rows.filter(matches);
-    // Rank whole channel cards by their newest visible conversation, on every snapshot.
-    const channelActivity = new Map();
-    for (const row of filtered) {
-      channelActivity.set(row.channelId, Math.max(channelActivity.get(row.channelId) || 0, Number(row.lastMessageMs) || 0));
-    }
-    const compareChannel = (a, b) => channelActivity.get(b.channelId) - channelActivity.get(a.channelId)
-      || channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
+    // Rank whole channel cards by their newest visible conversation, on every snapshot,
+    // separately per section so ordinary rows never reorder pinned cards (and vice versa).
+    const channelActivity = (section) => {
+      const activity = new Map();
+      for (const row of section) activity.set(row.channelId, Math.max(activity.get(row.channelId) || 0, Number(row.lastMessageMs) || 0));
+      return (a, b) => activity.get(b.channelId) - activity.get(a.channelId)
+        || channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
+    };
     const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
     const latest = filter === "done" ? (a, b) => (Number(b.completedMs) || 0) - (Number(a.completedMs) || 0) || newest(a, b) : newest;
-    const compareRows = (a, b) => (currentGrouping === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || latest(a, b);
+    const pinned = filtered.filter(isPinned);
+    const ordinary = filtered.filter((row) => !isPinned(row));
+    const comparePinnedChannel = channelActivity(pinned), compareOrdinaryChannel = channelActivity(ordinary);
+    const compareRows = (a, b) => (currentGrouping === "channel" ? compareOrdinaryChannel(a, b) : 0) || rank(a.status) - rank(b.status) || latest(a, b);
     // Individual pins lead the conversations inherited from a channel pin, within each channel.
-    const comparePinned = (a, b) => (currentGrouping === "channel" ? compareChannel(a, b) : 0)
+    const comparePinned = (a, b) => (currentGrouping === "channel" ? comparePinnedChannel(a, b) : 0)
       || Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
       || (currentGrouping === "channel" ? rank(a.status) - rank(b.status) : 0) || latest(a, b);
-    const pinned = filtered.filter(isPinned).sort(comparePinned);
-    const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
+    pinned.sort(comparePinned);
+    ordinary.sort(compareRows);
     const groupPinned = currentGrouping === "channel";
     // A stable hue per channel, nudged when it would match the card directly above it.
     const hues = new Map();

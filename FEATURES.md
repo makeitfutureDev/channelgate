@@ -2192,6 +2192,8 @@ raise the warning and remain retryable. Current access is rechecked before savin
 In Activity Channel grouping, channel cards sort by their newest visible conversation activity,
 including live updates, in both pinned and ordinary sections. Ties use channel name and ID;
 status priority and individual pin priority within a channel remain unchanged.
+Each section ranks its cards only from its own visible rows, so a newer ordinary conversation never
+reorders the pinned channel cards, and a newer pinned conversation never reorders ordinary cards.
 
 ## Pinned Activity channels (2026-11-14)
 

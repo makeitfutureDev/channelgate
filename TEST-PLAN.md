@@ -1,5 +1,17 @@
 # ChannelGate — Test Plan
 
+## Activity channel cards rank within their own pinned/ordinary section (2026-11-25)
+
+- Regression: `node --test test/activity-page.test.js` ("pinned and ordinary channel cards rank by
+  their own section's visible activity only") pins aardvark (newer) and beta (older), then adds a
+  newer ordinary beta conversation; the pinned cards stay aardvark, beta while the ordinary beta card
+  moves first, and a newer pinned aardvark row does not lift its ordinary card. Red before the fix.
+- Engine-independent live acceptance: on the viewer's own Activity dashboard in Channel grouping,
+  with two pinned channels A (newer) and B (older), send a reply in an unpinned thread of B so it
+  becomes the newest conversation overall. The pinned section keeps A above B without reload; the
+  ordinary section moves B's card first. No Claude or Codex turn is needed. Private QA:
+  ACTIVITY-WEB-CHANNEL-GROUPING.
+
 ## A channel's own account is a license limited to it (2026-11-24)
 
 Automated:
