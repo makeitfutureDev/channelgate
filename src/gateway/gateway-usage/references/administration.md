@@ -173,8 +173,9 @@ These channel modes do not leave the container. The separate organization-admin-
   no network of its own: everything goes through the gateway's **egress proxy**, which applies the
   switch on every request — off: only the engine endpoints and this channel's selected connectors
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
-  cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
-  tunnelled only to `github.com:22` and hosts in this channel's `egressRawHosts`. For a new
+  cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) go
+  through the same proxy: tunnelled only while the switch is on, only to `github.com:22` and hosts
+  in this channel's `egressRawHosts` (off refuses them too). For a new
   public SSH server, call `allow_channel_ssh_host` with the exact hostname or public IP address and the actual SSH `port` (use 22 if unspecified). It posts a durable
   approval card: any authorized channel member with write access may approve, without `/sudo`
   or an admin. End the turn while pending; after approval retry with the existing key. The card

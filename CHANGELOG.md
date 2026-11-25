@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- A run's network note no longer implies raw SSH/database tunnels skip the egress proxy or work
+  with Allow network off: they go through the proxy, only while the switch is on.
 - The pending-threads list and the follow-up digest DM no longer say 👍 completes a thread; only ✅
   and ✔️ do, as the gateway already enforced.
 

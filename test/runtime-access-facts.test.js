@@ -106,3 +106,14 @@ test("an enforced network note names the advisory-only setups without claiming o
   assert.doesNotMatch(bridge, /none of which applies to this attempt/);
   assert.match(bridge, /advisory, not container egress enforcement/);
 });
+
+test("an enforced network note says raw tunnels use the proxy and only while the switch is on", () => {
+  const enforced = { backend: "container", container: { mounts: [], egress: { active: true, network: "none" } } };
+  for (const allowNetwork of [true, false]) {
+    const note = runtimeAccessPreamble(enforced, { clean: false, allowNetwork });
+    assert.match(note, /Raw sockets \(ssh, database protocols\) go through the same proxy/);
+    assert.match(note, /only while the switch is on/);
+    assert.match(note, /while it is off they are refused like everything else/);
+    assert.doesNotMatch(note, /Raw sockets \(ssh, database protocols\) work only to hosts an admin declared\./);
+  }
+});

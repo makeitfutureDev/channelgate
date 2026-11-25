@@ -14799,6 +14799,13 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       everything else 403), ON admits public but never private/loopback/metadata addresses, and
       names the three advisory-only setups (legacy bridge mode, `rawNetwork`, a `/sudo` thread)
       without claiming one applies here.
+- [x] Unit (raw tunnels are proxied and ON-only): the enforced network note, with the switch on and
+      off, says raw sockets go through the same proxy, only while the switch is on, only to
+      `github.com:22` and admin-declared hosts, and are refused while off — matching
+      `src/gateway/egress/policy.js` (automated: `test/runtime-access-facts.test.js`).
+- [ ] Live raw-tunnel wording (Claude AND Codex, SKL-16, as Contact and as Apps): in each Auto
+      fixture ask the stored SKL-16 prompt. PASS only if the answer never says raw SSH/database
+      connections bypass the proxy or work while Allow network is off.
 - [x] Unit: `PUT /api/settings` stores `containerFullAccessHome` as a boolean only (default false;
       a string is ignored, not stored), `settingsForApi` + `getContainerRuntime()` read it back, and
       the admin UI's Container runtime card carries the checkbox wired both ways (automated:
