@@ -78,3 +78,30 @@ for (const outcome of ["success", "error", "already-banked error"]) {
     assert.deepEqual([usage[0].taskKind, usage[0].tokensIn, usage[0].tokensOut], ["scheduled", 13, 4]);
   });
 }
+
+test("channel Stop reports actual removed counts separately for each affected thread", async () => {
+  const { addSchedule, getSchedules, deleteSchedule } = await import("../src/config/schedules.js");
+  const other = "1700000000.002000", outside = "C_OTHER_STOP_LOOP";
+  const created = [];
+  const add = (channelId, threadTs, loop = true) => {
+    const row = addSchedule({ channelId, threadTs, loop, cron: "*/5 * * * *", prompt: "check", kind: loop ? "task" : "reminder" });
+    created.push(row);
+    return row;
+  };
+  add(channel, thread); add(channel, thread); add(channel, other);
+  const ordinary = add(channel, thread, false), foreign = add(outside, thread);
+  const notices = [];
+  client.chat.postMessage = async args => { notices.push(args); return { ok: true, ts: thread }; };
+  try {
+    assert.equal(await stopRunsInChannel(client, channel, slug, "U_LOOP"), 3);
+    assert.equal(notices.length, 2);
+    assert.match(notices.find(row => row.thread_ts === thread).text, /removed 2 pending loop ticks\b/i);
+    assert.match(notices.find(row => row.thread_ts === other).text, /removed 1 pending loop tick\b/i);
+    assert.ok(getSchedules().some(row => row.id === ordinary.id));
+    assert.ok(getSchedules().some(row => row.id === foreign.id));
+    assert.equal(await stopRunsInChannel(client, channel, slug, "U_LOOP"), 0);
+    assert.equal(notices.length, 2);
+  } finally {
+    for (const row of created) deleteSchedule(row.id);
+  }
+});

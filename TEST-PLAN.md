@@ -11993,6 +11993,25 @@ structural invariants are automated; rendered navigation and feature claims also
       replaces the pending tick rather than stacking; the tick budget carries across re-arms and
       finally refuses with a stated reason; a stop reports how many ticks it dropped; loops are
       scoped per thread and never disturb a user's own schedules (`test/native-loop.test.js`).
+- [x] ART-006 regression: a native stop acknowledgement reports the actual removed count, keeps
+      ordinary reminders and other threads' loops, and stays quiet on a repeated no-op stop
+      (`test/native-loop.test.js`). Channel Stop groups actual counts by thread, including multiple
+      pending rows, and preserves other channels' loops (`test/loop-stop-delivery.test.js`).
+      Claude/Codex fresh and resumed prompts, plus cross-harness fallback, receive the current
+      daemon pending count and the distinction from session-local tool results
+      (`test/runtime-identity-preamble.test.js`).
+- [ ] Live ART-006, Claude and Codex: in each private Auto fixture as an approved non-admin,
+      create one quiet ordinary one-time reminder seven minutes out and a finite native loop
+      checking a disposable file every five minutes, at most twice. Verify one gateway-owned tick
+      is pending before its deadline. Ask “Stop the check loop now. Do not cancel any normal
+      reminders.” Require that only this thread's tick disappears, the gateway acknowledgement
+      explicitly reports one pending tick removed, and the reminder survives and fires once.
+      The model must not infer that the tick already ran or vanished from a session-local zero.
+      Record native tool support: if Codex lacks native pacing, retain that prerequisite as
+      inconclusive and exercise a gateway-seeded interval loop with mentioned `stop` as a separate
+      daemon-path check. Repeat `stop` between ticks and channel Stop across two loop threads;
+      count each affected thread separately and preserve an ordinary reminder. Keep earlier
+      failed Test Runs unchanged; unit results do not close the deployed native case.
 - [x] Scheduler regression (REL-RUNTIME-04). Stop a tick while its runner resolves or rejects and
       verify its usage, interrupted status and suppressed delivery. Stop while Slack delivery is
       held, with and without a replacement loop, including the old loop’s final budgeted tick.

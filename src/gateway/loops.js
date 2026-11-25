@@ -45,6 +45,24 @@ export function threadLoops(channelId, threadTs) {
   return listForChannel(channelId).filter((s) => isLoopRow(s) && s.threadTs === threadTs);
 }
 
+// Native tool results describe the harness's in-memory timers, not the daemon's durable rows.
+// Refresh this snapshot at every engine attempt, including resumed sessions and failover. Only
+// expose the current thread's count; prompts and other threads' schedules are not model context.
+export function threadLoopPreamble(channelId, threadTs) {
+  if (!channelId || !threadTs) return "";
+  const facts = { pending_loop_ticks: threadLoops(channelId, threadTs).length };
+  return `[Gateway thread loop state at attempt start: ${JSON.stringify(facts)}\n`
+    + "This is the gateway's durable pending tick count for this thread at attempt start. "
+    + "A session-local ScheduleWakeup/CronDelete result does not describe the gateway's stored loop. "
+    + "The gateway adopts a native stop request after your reply and confirms the actual removed count. "
+    + "Do not infer that a gateway tick already ran or disappeared from a zero session-local result. "
+    + "Ordinary reminders and schedules are separate and must be preserved when stopping only this loop.]\n\n";
+}
+
+export function loopStopNotice(dropped) {
+  return `🔁 Loop stopped — removed ${dropped} pending loop tick${dropped === 1 ? "" : "s"}; no further ticks are scheduled.`;
+}
+
 // Cancel loops and report WHICH ones were dropped, so each affected thread can be told. Pass a
 // `threadTs` for one thread; pass none to end every loop in the channel (what the channel-wide
 // `/stop` sweep means). Returns the dropped rows — an empty array when there was nothing to stop,
@@ -159,7 +177,7 @@ export async function applyLoopWakeup({ client, channelId, slug = "", threadTs, 
   // A stop always names its cause when it has one — "the model asked" and "it hit the tick budget"
   // read identically to the user otherwise, and only one of them means the work may be unfinished.
   if (outcome.action === "stopped") {
-    notice = outcome.reason ? `🔁 _Loop stopped — ${outcome.reason}._` : "🔁 _Loop stopped — no further ticks are scheduled._";
+    notice = outcome.reason ? `🔁 _Loop stopped — ${outcome.reason}._` : loopStopNotice(outcome.dropped);
   }
   else if (!outcome.ok && outcome.reason) notice = `🔁 _Couldn't schedule the next loop tick: ${outcome.reason}._`;
   else if (outcome.action === "armed") {

@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Stopping a thread loop now confirms how many pending ticks were removed. Engine attempts
+  receive the gateway's pending count so session-local timer results cannot stand in for it.
+
 - Reminder acknowledgment windows start at confirmed delivery. A deadline between scheduler
   ticks now triggers the second notice or creator DM without an extra minute of waiting.
 
