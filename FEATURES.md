@@ -2802,7 +2802,9 @@ personal/shared connection status and personal Composio controls; Skills shows p
 organization-wide counts; Channels lists currently authorized visible conversations. Connection
 save/disconnect returns to Connections, thread controls stay in Activity, and reminder changes stay
 in Help & settings.
-Navigation uses the authenticated clicking viewer, without a shared selection or new user setting.
+Navigation uses the authenticated clicking viewer, without a shared selection or new user setting. A
+navigation callback whose actor id or tab value is not a string (a number, object or array — `["activity"]`
+included) is ignored: nothing loads and nothing is published.
 
 Activity automatically checks local thread/runtime state every 15 seconds and republishes when
 status, completion, last-message date, title or the viewer's indexed threads change. The selected

@@ -73,6 +73,18 @@ test("tab clicks acknowledge first and publish only for the authenticated clicki
   assert.equal(calls.length, 3, "invalid and mismatched navigation cannot publish");
 });
 
+test("malformed tab callbacks (non-string actor or tab value) never load or publish a view", async () => {
+  const app = fakeApp(); const calls = [];
+  registerHomeTabActions(app, { publishHome: async (_client, userId, state) => calls.push({ userId, state }) });
+  const click = (user, value, actionId = "cg_home_tab_activity") => app.actionFor(actionId)({
+    ack: async () => {}, body: { user: user === undefined ? undefined : { id: user } }, action: { action_id: actionId, value }, client: {} });
+  for (const user of [17, { id: "U_ONE" }, ["U_ONE"], true, null]) await click(user, "activity");
+  for (const value of [["activity"], { toString: () => "activity" }, 0, null]) await click("U_ONE", value);
+  assert.deepEqual(calls, [], "no Activity load or views.publish for a malformed actor or tab");
+  await click("U_ONE", "activity");
+  assert.deepEqual(calls, [{ userId: "U_ONE", state: { tab: "activity" } }], "a well-formed click still publishes");
+});
+
 test("Composio stays on Connections, reminders on Help & settings, and thread controls on Activity", async () => {
   const app = fakeApp(); const calls = [];
   registerHomeActions(app, { publishHome: async (_client, userId, state = {}) => {

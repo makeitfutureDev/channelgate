@@ -128,7 +128,10 @@ export function registerHomeTabActions(app, { publishHome } = {}) {
     await ack();
     const userId = body?.user?.id;
     const tab = action?.value;
-    if (!userId || !Object.hasOwn(HOME_TABS, tab) || action.action_id !== `cg_home_tab_${tab}`) return;
+    // Slack sends both as strings. Anything else (a number, object or array) is a malformed
+    // callback: refuse it before a string coercion turns ["activity"] into a valid tab id.
+    if (typeof userId !== "string" || !userId || typeof tab !== "string" || !Object.hasOwn(HOME_TABS, tab)
+      || action.action_id !== `cg_home_tab_${tab}`) return;
     try { await publishHome(client, userId, { tab }); }
     catch (error) { console.error("[slack] Home tab navigation error:", error.message); }
   });
