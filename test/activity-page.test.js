@@ -289,6 +289,18 @@ test("activity browser clears private rows on access loss and rejects late fetch
   assert.equal(elements.table.hidden, true);
 });
 
+test("access loss also clears the server totals shown on status tabs, the summary and the narrow-screen menu", () => {
+  const { elements, stream } = browser(async () => new Promise(() => {}), "fixture-csrf", false, { responsive: true });
+  stream.snapshot([row()], { counts: { active: 250, open: 250, working: 120, waiting: 30, error: 5, idle: 95, later: 7, done: 40, hidden: 3 }, more: { open: true } });
+  const tab = (filter) => elements.filters.children.find((button) => button.dataset.filter === filter).querySelector("span").textContent;
+  assert.equal(tab("active"), "250");
+  assert.match(elements.summary.textContent, /^250 visible · 40 done/);
+  stream.fire("access-ended");
+  for (const button of elements.filters.children) assert.equal(button.querySelector("span").textContent, "0", button.dataset.filter);
+  assert.equal(elements.summary.textContent, "0 visible · 0 done · 0 later · 0 working · 0 waiting");
+  for (const option of elements["filter-select"].options) assert.match(option.textContent, / · 0$/, option.value);
+});
+
 test("activity browser handles authorization failures and hides transient server details", async () => {
   for (const status of [401, 403, 500]) {
     const { elements, stream } = browser(async () => response({ error: "private server detail" }, status));

@@ -462,6 +462,9 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     connected = false;
     stream?.close();
     rows = [];
+    // The server totals and "Load more" windows describe data this viewer may no longer see.
+    serverCounts = null;
+    more = {};
     pinnedChannels = [];
     pendingChannels.clear();
     pending.clear();

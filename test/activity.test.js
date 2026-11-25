@@ -101,7 +101,7 @@ test("reply Dashboard and private URL actions are registered and acknowledged", 
   assert.equal(acknowledged, true);
 });
 const defer = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
-async function fixture(t, options = {}) {
+async function fixture(t, { middleware, ...options } = {}) {
   let currentTime = Date.now(), team = "T_WORK", connected = true, base;
   const roots = new Map(), members = new LiveMembers(), reads = [];
   const markerCalls = [];
@@ -113,6 +113,7 @@ async function fixture(t, options = {}) {
     members: async ({ channel }) => { reads.push("members"); return { members: members.get(channel) || [] }; },
   }, chat: { getPermalink: async ({ channel, message_ts }) => { reads.push("link"); return { permalink: `https://example.slack.com/archives/${channel}/p${message_ts.replace(".", "")}` }; } } };
   const app = express();
+  if (middleware) app.use("/activity", middleware);
   app.use("/activity", createActivityRouter({ getClient: () => connected ? client : null, getTeamId: () => team,
     getBaseUrl: () => base, now: () => currentTime, pollMs: 20, accessRefreshMs: 40, ...options }));
   app.get("/activity", (_req, res) => res.status(401).send("administrator login"));
@@ -821,6 +822,56 @@ test("SSE keeps a healthy connection open while a large snapshot drains instead 
   assert.equal(second.rows.length, 400);
   assert.ok(snapshots >= 2);
 });
+
+for (const ending of ["drain timeout", "access ended"]) {
+  test(`SSE releases a stalled client's stream on ${ending}: no write after end, no polling, slot freed`, async (t) => {
+    // A browser that stops reading (sleeping laptop, stuck proxy) never lets res.end() finish, so
+    // 'close' never fires. A socket whose writes never complete reproduces that deterministically:
+    // the snapshot write returns false, 'drain' never comes and an ended response never finishes.
+    const rows = Array.from({ length: 200 }, (_, i) => ({ channel_id: "C_WORK", thread_ts: `100.${String(i).padStart(6, "0")}`,
+      title: "T".repeat(500), channelName: "#C_WORK", status: "working", last_message_ms: 1 }));
+    let snapshots = 0, stall = true;
+    const stalled = { afterEnd: [], errors: [], res: null };
+    const middleware = (req, res, next) => {
+      if (stall && req.path.endsWith("/stream")) {
+        stall = false; stalled.res = res; stalled.socket = req.socket;
+        req.socket._write = () => {}; req.socket._writev = () => {};
+        res.on("error", (error) => stalled.errors.push(error.code));
+        const write = res.write.bind(res);
+        res.write = (chunk, ...rest) => { if (res.writableEnded || res.destroyed) stalled.afterEnd.push(String(chunk).slice(0, 40)); return write(chunk, ...rest); };
+      }
+      next();
+    };
+    const f = await fixture(t, { middleware, maxStreams: 1, pollMs: 10, accessRefreshMs: 60_000,
+      drainTimeoutMs: ending === "drain timeout" ? 40 : 300, snapshot: async () => { snapshots++; return { rows, total: rows.length }; } });
+    const user = await f.login();
+    const url = new URL(f.base + user.url + "/stream");
+    const hung = httpRequest(url, { headers: { cookie: user.cookie } }); hung.on("error", () => {}); hung.end();
+    t.after(() => hung.destroy());
+    while (snapshots < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    if (ending === "access ended") { await new Promise((resolve) => setTimeout(resolve, 30)); f.advance(ACTIVITY_SESSION_TTL_MS + 1); }
+    while (!stalled.res.writableEnded && !stalled.res.destroyed) await new Promise((resolve) => setTimeout(resolve, 5));
+    const seen = snapshots;
+    await new Promise((resolve) => setTimeout(resolve, 150)); // many poll intervals
+    // The end can never reach a client that stopped reading: its socket and buffered snapshot
+    // are dropped (at once on drain timeout, after the grace period once access has ended).
+    while (!stalled.socket.destroyed) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(stalled.res.writableFinished, false, "the stalled client never received the end");
+    assert.equal(stalled.res.destroyed, true);
+    assert.equal(stalled.res.writableEnded, ending === "access ended", "only access loss tries to deliver its final event");
+    assert.deepEqual(stalled.afterEnd, [], "nothing is written to the ended stream");
+    assert.deepEqual(stalled.errors, []);
+    assert.equal(snapshots, seen, "the ended stream stops polling");
+    recordActiveRun("after-end", { channelId: "C_WORK", authorId: "U_MINE", threadKey: "100.000001" });
+    clearActiveRun("after-end");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(snapshots, seen, "the ended stream no longer listens for run changes");
+    const fresh = ending === "access ended" ? (f.advance(-ACTIVITY_SESSION_TTL_MS - 1), user) : user;
+    const next = await f.request(fresh.url + "/stream", { headers: fresh.headers });
+    assert.equal(next.status, 200, "the stalled stream's slot is released for the owner's next stream");
+    await next.body.cancel();
+  });
+}
 
 test("SSE removes revoked private access and rejects admission after user disable or Slack disconnect", async (t) => {
   const f = await fixture(t); await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");

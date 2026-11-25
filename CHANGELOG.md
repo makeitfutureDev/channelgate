@@ -5,6 +5,10 @@
 - In Activity's Channel grouping, pinned channel cards keep their order when a newer unpinned
   conversation arrives in one of those channels; each section ranks cards by its own conversations.
 
+- Activity no longer keeps a stalled browser's live connection: its slot frees for your next
+  tab right away, the server stops logging errors for it, and when your access ends the status
+  tabs and footer totals clear along with the conversations.
+
 - A schedule in an archived channel keeps its paused status and logs one pause event per
   archival, instead of a new pause event on every other cron fire.
 
