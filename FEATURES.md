@@ -5893,7 +5893,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   than running a session. With `ack:true` the reminder requires a ✅ — if nobody reacts within
   `ack_escalate_minutes` (default 120) the bot posts a 2nd notice, then after `ack_dm_minutes`
   (default 60) more it DMs the schedule's creator and closes the chain; a ✅ at any time resolves it.
-  Pending acks persist in SQLite so the chain survives a daemon restart. The renderer
+  Each window starts when the preceding post returns a message ID. The scheduler checks deadlines
+  between its minute scans, including pending deadlines recovered from SQLite after a restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
   The scheduler keeps a failed second notice or creator DM pending and retries after one minute. Repeated failures back off to hourly.

@@ -13999,6 +13999,12 @@ none` for its cases and live gates. Kept as history.
       two surfaces.
 
 ### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Engine-independent scheduler timing (`test/scheduler-ack-timing.test.js`). Start the real
+      minute interval on a controlled clock. Delay the first receipt by 250 ms or 60.25 s and
+      check that the second notice starts exactly two or one minutes later, respectively.
+      Delay the second receipt across another tick and check the full creator-DM window.
+      Start with persisted deadlines, close the earliest row, and let another deadline expire
+      during a slow post. Only the two remaining notices send.
 - [x] Engine-independent scheduler regression (`test/scheduler-ack-retry.test.js`): return no
       message ID for a second notice, then recover. For the creator DM, throw a transport error,
       return no conversation, and return no message ID. The stored stage stays pending through

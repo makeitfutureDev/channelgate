@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Reminder acknowledgment windows start at confirmed delivery. A deadline between scheduler
+  ticks now triggers the second notice or creator DM without an extra minute of waiting.
+
 - Reminder escalations retry if the second notice or creator DM fails to deliver.
 
 - After a restart, schedules and follow-up timers start while interrupted Slack turns resume.
