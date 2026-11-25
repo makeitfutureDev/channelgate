@@ -147,6 +147,17 @@ each once in the shared test channel as an approved non-admin tester, then the a
     an organization skill's ROI; nothing stored. As an admin the same request succeeds although
     the bundled skill's files cannot be edited.
 
+
+ROI cost is the whole ChannelGate spend (engine-independent: the figure comes from the usage
+ledger, whichever engine wrote it) — regression `test/automation-roi.test.js` ("the ROI page's
+cost is ChannelGate's whole AI spend…").
+
+15. As an organization admin open the admin console → Dashboard with "Chat gateway only" and the
+    last 30 days, note the total cost; then open ROI with 30d. Pass: the **ChannelGate cost** tile
+    equals that total (from the cost-history start when the page says the window was shortened),
+    its note names the automations & API part, and Net value = value − that cost, ROI = net ÷
+    that cost. A member's ROI page counts only the conversations they can open.
+
 ## Automations health board (2026-11-24)
 
 Regression: `test/automation-health-board.test.js` (classifier, verdicts and fix steps; member vs

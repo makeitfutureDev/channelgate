@@ -399,6 +399,21 @@ const CANONICAL_CTE = `WITH component_rollup AS (
     FROM usage u LEFT JOIN component_rollup c ON c.usage_id = u.id
 )`;
 
+// Everything the gateway spent on AI in [start, end): every run it launched — chats, automations,
+// API runs, background jobs, memory reviews — from the same canonical ledger the usage dashboard
+// totals ("Chat gateway only"). `channelIds` null = every conversation; otherwise only those.
+// Usage the gateway never launched (external_usage) is not ChannelGate's cost and is not counted.
+export function gatewaySpend({ start, end, channelIds = null } = {}) {
+  const scoped = Array.isArray(channelIds);
+  if (scoped && !channelIds.length) return { costUsd: 0, runs: 0, unpricedRuns: 0 };
+  const row = getDb().prepare(`${CANONICAL_CTE}
+    SELECT COUNT(*) AS runs, COALESCE(SUM(canonical_cost_usd), 0) AS cost,
+           COALESCE(SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced
+      FROM canonical_usage WHERE ts >= ? AND ts < ?${scoped ? " AND channel_id IN (SELECT value FROM json_each(?))" : ""}`)
+    .get(...[String(start), String(end), ...(scoped ? [JSON.stringify(channelIds)] : [])]);
+  return { costUsd: Number((Number(row.cost) || 0).toFixed(4)), runs: Number(row.runs) || 0, unpricedRuns: Number(row.unpriced) || 0 };
+}
+
 // Budget admission uses the complete ledger, independent of UI history retention and row limits.
 export function monthlyChannelSpend(channelId, now = Date.now()) {
   const date = new Date(now);

@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The ROI page now sets the value against everything ChannelGate spent on AI in the window —
+  chats, automations, API runs, background jobs and memory reviews — instead of only the
+  automations' and API runs' own cost, so the net value and the ROI multiple are no longer
+  overstated.
+
 - A session adopted with `/resume` now retains its native conversation on the next turn when
   the channel uses shared history, including for administrator authors.
 

@@ -168,8 +168,8 @@ test("the ROI page: automations, API sources and skills, scoped to what the view
   assert.deepEqual(mineView.api.items.map((i) => [i.id, i.roi.counted, i.roi.valueUsd, i.roi.costUsd]), [[api.id, 2, 20, 0.6]]);
   // Skills: the team channel only — not the closed conversation, not someone else's DM.
   assert.deepEqual(mineView.skills.items.map((i) => [i.id, i.runs, i.people, i.roi.valueUsd, i.roi.costUsd, i.roi.multiple, i.canEditRoi]), [["invoice-check", 2, 2, 10, null, null, false]]);
-  assert.deepEqual([mineView.totals.valueUsd, mineView.totals.costUsd, mineView.totals.netUsd, mineView.totals.hoursSaved, mineView.totals.configured, mineView.totals.items], [90, 3.6, 86.4, 1.7, 3, 4]);
-  assert.equal(mineView.totals.multiple, 24);
+  assert.deepEqual([mineView.totals.valueUsd, mineView.totals.costUsd, mineView.totals.netUsd, mineView.totals.hoursSaved, mineView.totals.configured, mineView.totals.items], [90, 5.6, 84.4, 1.7, 3, 4]);
+  assert.equal(mineView.totals.multiple, 15.1); // the cost counts every run in scope, the unconfigured briefing's too
   assert.equal(mineView.automations.items.find((i) => i.id === mine.id).canEditRoi, true);
 
   const all = await roiOverview(admin, "U_TIB", { days: 30, now: new Date(NOW) });
@@ -179,6 +179,32 @@ test("the ROI page: automations, API sources and skills, scoped to what the view
   assert.equal(all.skills.totals.valueUsd, 20); assert.equal(all.skills.totals.costKnown, false);
   assert.equal((await roiOverview(admin, "U_TIB", { days: 365, now: new Date(NOW) })).windowDays, 30); // unknown window → the default
   assert.equal((await roiOverview(admin, "U_TIB", { days: 90, now: new Date(NOW) })).windowDays, 90);
+});
+
+test("the ROI page's cost is ChannelGate's whole AI spend in the window and scope, not only automations and API runs", async () => {
+  const { api } = await fixture();
+  getDb().exec("DELETE FROM usage_components; DELETE FROM usage");
+  await setSkillRoi(admin, "U_TIB", { slug: "invoice-check", minutesSaved: 6, hourlyRate: 50 });
+  const entry = await view.checkedChannel(member, "U_ANA", "CROI1");
+  await view.setAutomationRoi(member, "U_ANA", entry, api.id, { minutesSaved: 15, hourlyRate: 40 });
+  // No ledger rows: the attributed automation + API cost is the floor, as before.
+  let all = await roiOverview(admin, "U_TIB", { days: 30, now: new Date(NOW) });
+  assert.deepEqual([all.totals.costUsd, all.totals.cost.attributedUsd, all.totals.cost.otherUsd, all.totals.cost.scope], [6, 6, 0, "all"]);
+  const spend = (channel, cost, agoMs = 60_000, kind = "interactive") => getDb().prepare("INSERT INTO usage(channel_id, ts, cost_usd, task_kind) VALUES(?, ?, ?, ?)")
+    .run(channel, new Date(NOW - agoMs).toISOString(), cost, kind);
+  spend("CROI1", 10); spend("CROI2", 20); spend("DROI1", 5); spend("DROI1", null);   // chats, incl. one unpriced run
+  spend("CROI1", 4, 60_000, "schedule");                                           // the automations' own runs are in the ledger too
+  spend("CROI1", 100, 40 * 86400000);                                              // outside the window
+  all = await roiOverview(admin, "U_TIB", { days: 30, now: new Date(NOW) });
+  assert.deepEqual([all.totals.costUsd, all.totals.cost.attributedUsd, all.totals.cost.otherUsd, all.totals.cost.runs, all.totals.cost.unpricedRuns], [39, 6, 33, 5, 1]);
+  assert.equal(all.totals.netUsd, Math.round((all.totals.valueUsd - 39) * 100) / 100);
+  assert.equal(all.totals.multiple, Math.round(((all.totals.valueUsd - 39) / 39) * 10) / 10);
+  assert.equal(all.automations.totals.costUsd, 3); // a section keeps its own attributed cost (configured items)
+  // A member counts only the conversations they may open: the team channel, never the closed one
+  // or someone else's DM (DROI1 belongs to U_TIB).
+  const mine = await roiOverview(member, "U_ANA", { days: 30, now: new Date(NOW) });
+  assert.deepEqual([mine.totals.costUsd, mine.totals.cost.runs, mine.totals.cost.scope], [14, 2, "accessible"]);
+  getDb().exec("DELETE FROM usage");
 });
 
 test("admin console routes: the ROI overview and its three setters", async () => {
