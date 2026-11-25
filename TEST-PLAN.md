@@ -18208,3 +18208,14 @@ Composio project key in the channel inventory:
 - [ ] Live: run `update_gateway` on a gateway whose `.env` configures Slack. Pass: the update's
   test step passes, the result is "updated", and when the image is stale the log shows
   "Channel image rebuilt".
+
+## Scheduled Slack tasks that launch background jobs
+
+- [x] `test/durable-delivery.test.js` verifies Slack wire destinations for the start, finish
+  and final report of scheduled background agents, including a nested launch and a saved
+  report recovered after restart. A schedule without a Slack root still posts at channel level.
+  A scheduled shell continuation resumes the original fire session and posts to the delivery thread.
+- [ ] Live Claude and Codex: in a private Slack test channel, schedule a task with thread
+  delivery and silent startup. Have the task delegate a harmless marker to a background agent.
+  Verify each job notice and the final marker have the original root as their Slack `thread_ts`
+  and appear once. Confirm the next schedule fire still starts a fresh engine session.

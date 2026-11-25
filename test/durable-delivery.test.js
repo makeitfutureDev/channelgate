@@ -286,6 +286,51 @@ test("a completed background agent delivers its report without a second model tu
   assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM bg_jobs").get().n, 0);
 });
 
+test("scheduled background agents keep their Slack delivery thread across nesting and restart", async () => {
+  const root = "1700000000.000321";
+  const fire = "sched-test-1700000000000";
+  for (const [session, admission, expected] of [
+    [fire, root, root],
+    [fire + "::agent-parent", root, root],
+    [fire, "schedule-fire-unthreaded", undefined],
+  ]) {
+    const { client, slack } = fakeSlack();
+    const jobs = new BackgroundJobs({ slack });
+    const rec = { ...jobRecord("scheduled-child", session), kind: "agent", admissionThreadKey: admission,
+      pendingDelivery: { outcome: { ok: true, summary: "completed successfully" }, report: "Child report" } };
+    jobs.jobs.set(rec.id, rec);
+    await jobs._postStarted(rec);
+    jobs._persist({ required: true });
+
+    const saved = fromJson(getDb().prepare("SELECT data FROM bg_jobs WHERE id=?").get(rec.id).data);
+    assert.equal(saved.threadKey, session);
+    assert.equal(saved.admissionThreadKey, admission);
+    await new BackgroundJobs({ slack }).recover();
+    assert.equal(client.posted.length, 3, "start, finish, and saved report");
+    assert.deepEqual(client.posted.map(post => post.thread_ts), [expected, expected, expected]);
+    assert.match(client.posted.at(-1).text, /Child report/);
+  }
+});
+
+test("scheduled shell continuations resume the fire session and deliver their reply to the Slack root", async () => {
+  const root = "1700000000.000321";
+  const session = "sched-shell-1700000000000";
+  const { client, slack } = fakeSlack();
+  const turns = [];
+  const jobs = new BackgroundJobs({ slack, runner: async args => {
+    turns.push(args);
+    return { content: "Shell continuation report", engine: "claude" };
+  } });
+  const rec = { ...jobRecord("scheduled-shell", session), admissionThreadKey: root };
+  jobs.jobs.set(rec.id, rec);
+  await jobs._postStarted(rec);
+  await jobs._finish(rec, { code: 0 });
+  assert.deepEqual(turns.map(turn => [turn.threadKey, turn.settingsThreadKey, turn.admissionThreadKey]), [[session, session, root]]);
+  assert.equal(client.posted.length, 3);
+  assert.ok(client.posted.every(post => post.thread_ts === root));
+  assert.match(client.posted.at(-1).text, /Shell continuation report/);
+});
+
 test("recovery gives an exhausted nested agent report one saved-output delivery attempt", async () => {
   getDb().exec("DELETE FROM bg_jobs");
   const original = new BackgroundJobs({});

@@ -23,7 +23,8 @@ import { effectiveWorkDir } from "./folders.js";
 import { gatewayRoot } from "../config/paths.js";
 import { runMessage, effectiveMeta } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
-import { slackThreadFor } from "../slack/thread-keys.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { isSlackTs, slackThreadFor } from "../slack/thread-keys.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { logEvent } from "../util/logger.js";
 import { recordSlackThreadOutcome } from "./slack-threads.js";
@@ -63,6 +64,16 @@ const MAX_PER_THREAD = 3; // concurrent jobs per Slack thread
 // loudly (mirrors active-runs' MAX_RECOVER_ATTEMPTS). Slack being unreachable never burns an
 // attempt — only a crash/failure mid-delivery does.
 const MAX_DELIVERY_ATTEMPTS = 2;
+
+// For a schedule fire, the scheduler signs its native delivery thread as the admission key.
+// Jobs, including nested and recovered jobs, already retain both that key and their own session.
+// Use the Slack address only for posting. A channel-level fire has no native thread.
+function backgroundDeliveryThread(rec) {
+  if (platformOfConversation(rec.channelId) === "slack" && rec.threadKey?.startsWith("sched-") && isSlackTs(rec.admissionThreadKey)) {
+    return rec.admissionThreadKey;
+  }
+  return rec.threadKey;
+}
 
 const fmtDur = (ms) =>
   ms < 1000 ? `${ms}ms`
@@ -725,7 +736,7 @@ export class BackgroundJobs {
         card: backgroundStartedCard(rec),
         chatCard: backgroundStartedChatCard(rec),
         conversationId: rec.channelId,
-        threadKey: rec.threadKey,
+        threadKey: backgroundDeliveryThread(rec),
         text: `${what} *${rec.label}* started (id ${rec.id}) — the result will be posted in this thread when it finishes.`,
         blocks: [
           { type: "section", text: { type: "mrkdwn", text: `${what} *${rec.label}* is running — I'll post the result in this thread when it finishes.` } },
@@ -810,6 +821,7 @@ export class BackgroundJobs {
     const resolvedOutcome = pending.outcome || describeProcessOutcome();
     const durMs = Number(pending.durMs) || Math.max(0, Date.now() - (rec.startedAt || Date.now()));
     const status = resolvedOutcome.summary;
+    const deliveryThread = backgroundDeliveryThread(rec);
     const isAgent = rec.kind === "agent";
     const what = isAgent ? "Background agent" : "Background job";
 
@@ -828,7 +840,7 @@ export class BackgroundJobs {
       try {
         await postNotice(client, {
           conversationId: rec.channelId,
-          threadKey: rec.threadKey,
+          threadKey: deliveryThread,
           text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't deliver the follow-up after ${MAX_DELIVERY_ATTEMPTS} attempts — check the job log and tell me how to continue.`,
         });
       } catch {
@@ -848,7 +860,7 @@ export class BackgroundJobs {
         // announce success or promise a continuation for work that never started.
         if (!(isAgent && resolvedOutcome.kind === "blocked")) await postNotice(client, {
           conversationId: rec.channelId,
-          threadKey: rec.threadKey,
+          threadKey: deliveryThread,
           text: backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }),
         });
       } catch {
@@ -880,7 +892,7 @@ export class BackgroundJobs {
         // Persisted outcome + report suffice after restart; never retry the refused work or
         // spend another engine turn interpreting a gateway admission notice.
         await this.deliver(client, {
-          channel: rec.channelId, threadKey: rec.threadKey,
+          channel: rec.channelId, threadKey: deliveryThread,
           result: { content: report || backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }), engine: rec.result?.engine || "" },
         });
       } else if (isAgent && report && resolvedOutcome.ok === true) {
@@ -892,13 +904,13 @@ export class BackgroundJobs {
         // sanitization, mention resolution, and chunking pipeline.
         await this.deliver(client, {
           channel: rec.channelId,
-          threadKey: rec.threadKey,
+          threadKey: deliveryThread,
           result: { content: report, engine: rec.result?.engine || "" },
         });
       } else if (pending.continuationResult) {
-        await this.deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result: pending.continuationResult });
+        await this.deliver(client, { channel: rec.channelId, threadKey: deliveryThread, result: pending.continuationResult });
       } else if (pending.continuationStarted) {
-        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey,
+        await postNotice(client, { conversationId: rec.channelId, threadKey: deliveryThread,
           text: `⚠️ ${what} *${rec.label}* finished, but its continuation was interrupted. Its external actions are unknown. Check the result before explicitly continuing; it was not run again.` });
       } else {
         // Shell output and failed/incomplete agent runs still need interpretation. Their
@@ -931,7 +943,7 @@ export class BackgroundJobs {
             await bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId, engine: result.engine, taskKind: "background", result });
             // Same sanitize/chunk pipeline as every unattended reply (deliverResult) — background
             // continuations are prompt-injection bait.
-            await this.deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result: pending.continuationResult });
+            await this.deliver(client, { channel: rec.channelId, threadKey: deliveryThread, result: pending.continuationResult });
           }
         } finally {
           runQueue.release(runKey, handle);
@@ -951,7 +963,7 @@ export class BackgroundJobs {
         plainFailureText(failure, Number.MAX_SAFE_INTEGER) || "The continuation failed.", outputSecrets,
       ).slice(0, 400);
       try {
-        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${noticeFailure}` });
+        await postNotice(client, { conversationId: rec.channelId, threadKey: deliveryThread, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${noticeFailure}` });
       } catch {
         /* ignore */
       }
