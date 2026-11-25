@@ -1747,8 +1747,9 @@ live cases name the harness where it matters and are run once for Claude Code an
 ## Follow-up completion hints name only checkmarks (2026-11-25)
 - [x] Automated: `node --test test/followups-store.test.js test/home-threads.test.js` — the
       digest DM says "react ✅ to dismiss all listed threads (✔️ also works)" and the pending-threads
-      report says "react ✅ (or ✔️) to complete it"; neither mentions 👍, which is answer feedback
-      and never completes a thread (`src/gateway/completion-reactions.js`).
+      report says "react ✅ (or ✔️) to complete it"; neither mentions 👍 — a 👍 emoji reaction never
+      completes a thread (`src/gateway/completion-reactions.js`); the owner's native 👍 feedback
+      button is a separate Done shortcut.
 - [ ] Live (engine-independent): ask the bot for pending threads in a DM and read the next
       follow-up digest. PASS only if both hints name ✅/✔️ only, and a ✅ on the digest dismisses the
       listed threads while a 👍 does not.

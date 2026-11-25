@@ -133,7 +133,7 @@ test("scheduled digest persists only the source threads visibly listed in the po
   assert.deepEqual(snapshot.threads[24], { channelId: "C2", threadTs: "300.25" });
   assert.equal(snapshot.threads.some((thread) => thread.threadTs === "300.26"), false);
   assert.match(postedText, /react ✅ to dismiss all listed threads \(✔️ also works\)/);
-  // Only checkmarks complete work (completion-reactions.js); 👍 is answer feedback and never dismisses.
+  // Only checkmark reactions complete work (completion-reactions.js); a 👍 emoji reaction never dismisses.
   assert.doesNotMatch(postedText, /👍/);
   assert.match(postedText, /…and 1 more/);
 });
