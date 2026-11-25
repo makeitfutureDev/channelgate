@@ -479,24 +479,29 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
   ]);
 }
 
+// The server's MCP `instructions`. A harness that DEFERS MCP tools shows the model only a namespace
+// line built from them — codex-cli 0.170 always defers and renders `mcp__gateway: <instructions>`,
+// FIRST LINE ONLY, cut at 247 characters + "..." — so without them the model saw a bare
+// `mcp__gateway`, found no `report_progress` in its visible tools, and told the user the progress
+// plan was unavailable. One line, critical clauses first (each ends inside that window): the
+// progress tool only when this run registered it, then that a deferred tool is searched for by
+// name; the descriptive tool-family list goes last, where truncation is harmless.
+export const NAMESPACE_LINE_WINDOW = 247;
+export function gatewayServerInstructions(ctx) {
+  const full = ctx.toolset === "full";
+  const parts = ["ChannelGate control plane."];
+  if (ctx.progressReport && full) parts.push("`report_progress` (live progress plan) is available this turn.");
+  parts.push("Tools here may be deferred: search this namespace by name before calling one unavailable.");
+  if (full) parts.push("Also: Slack/Teams posting, schedules, background work, approvals, memory, settings, skills.");
+  else if (ctx.toolset === SSH_TOOLSET) parts.push("Also: Slack/Teams posting, schedules, memory, settings, skills.");
+  else parts.push("Reduced tool set: channel memory and conversation tools.");
+  return parts.join(" ");
+}
+
 /**
  * The shared factory. One McpServer per run (host) or per socket connection (container), with the
  * capability chokepoint and the control-plane approval gate wrapped around every registration.
  */
-// The server's MCP `instructions`. A harness that DEFERS MCP tools shows the model only a namespace
-// line built from them — codex-cli 0.170 always defers and renders `mcp__gateway: <instructions>` —
-// so without them the model saw a bare `mcp__gateway`, found no `report_progress` in its visible
-// tools, and told the user the progress plan was unavailable. One short paragraph: what lives here,
-// the progress tool only when this run registered it, and that a deferred tool is searched for.
-export function gatewayServerInstructions(ctx) {
-  const parts = ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET
-    ? ["ChannelGate gateway: this conversation's control plane — Slack/Teams posting (tables, charts, files, history), schedules, background work, approvals and questions, channel memory, settings and skills."]
-    : ["ChannelGate gateway: this conversation's reduced tool set (channel memory and conversation tools)."];
-  if (ctx.progressReport && ctx.toolset === "full") parts.push("`report_progress` is available in this turn for the live progress plan.");
-  parts.push("If these tools are deferred, search this namespace for a tool by name before treating it as unavailable.");
-  return parts.join(" ");
-}
-
 export function createGatewayMcpServer(ctx) {
   const server = new McpServer({ name: "channelgate", version: "1.0.0" }, { instructions: gatewayServerInstructions(ctx) });
   const CONTROL_PLANE = buildControlPlane(ctx);

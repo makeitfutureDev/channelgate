@@ -134,9 +134,40 @@ test("gateway MCP instructions name the progress tool so a deferred namespace st
     assert.match(instructions, /ChannelGate/);
     assert.match(instructions, /report_progress/);
     assert.match(instructions, /deferred.*search/is);
-    assert.ok(instructions.length <= 600, "the namespace line stays one short paragraph");
+    assert.doesNotMatch(instructions, /\n/, "codex-cli shows only the first line of the namespace description");
   } finally {
     await client.close().catch(() => {});
     await transport.close().catch(() => {});
+  }
+});
+
+// codex-cli 0.170 renders the namespace description as its FIRST LINE cut at 247 characters + "..."
+// (reproduced with `codex debug prompt-input`, PR #392 review). Every clause a model needs — the
+// progress tool when registered, and "search before calling one unavailable" — must end inside
+// that window for every toolset; only the trailing tool-family list may be cut.
+test("gateway MCP instructions keep their critical clauses inside Codex's namespace-line window", async () => {
+  ensureTestEnv();
+  const { gatewayServerInstructions, NAMESPACE_LINE_WINDOW, SSH_TOOLSET } = await import("../src/mcp/gateway-server.js");
+  assert.equal(NAMESPACE_LINE_WINDOW, 247);
+  const search = "search this namespace by name before calling one unavailable.";
+  const cases = [
+    { toolset: "full", progressReport: true, progress: true },
+    { toolset: "full", progressReport: false, progress: false },
+    { toolset: SSH_TOOLSET, progressReport: true, progress: false },
+    { toolset: "agent-message", progressReport: true, progress: false },
+    { toolset: "memory-review", progressReport: false, progress: false },
+  ];
+  for (const { toolset, progressReport, progress } of cases) {
+    const text = gatewayServerInstructions({ toolset, progressReport });
+    assert.doesNotMatch(text, /\n/, `${toolset}: one line`);
+    const searchEnd = text.indexOf(search) + search.length;
+    assert.ok(text.indexOf(search) >= 0 && searchEnd <= NAMESPACE_LINE_WINDOW, `${toolset}: search clause ends inside the window (${searchEnd})`);
+    if (progress) {
+      const at = text.indexOf("`report_progress`");
+      assert.ok(at >= 0 && at < text.indexOf(search), `${toolset}: report_progress named before the search clause`);
+    } else {
+      assert.doesNotMatch(text, /report_progress/, `${toolset}: never advertise a tool this run does not have`);
+    }
+    if (toolset === SSH_TOOLSET) assert.doesNotMatch(text, /background work|approvals/, "SSH sessions have no background or approval tools");
   }
 });

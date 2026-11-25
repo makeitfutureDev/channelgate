@@ -11783,7 +11783,10 @@ structural invariants are automated; rendered navigation and feature claims also
       `test/codex-args.test.js`, `test/progress-report-availability.test.js`).
 - [x] Integration: the live gateway MCP `initialize` instructions (the namespace line a deferring
       harness such as codex-cli 0.170 shows) name `report_progress` only when the run has it and
-      say a deferred tool is searched for; the guide says to search before calling it unavailable;
+      say a deferred tool is searched for by name, on one line with both clauses ending inside
+      codex-cli's 247-character namespace window for every toolset (full, ssh, agent-message,
+      memory-review; SSH never claims background or approval tools); the guide says to search
+      before calling it unavailable;
       Codex's per-run "Untrusted project-local configuration" advisory never becomes the status
       row (`test/progress-report-mcp.test.js`, `test/progress-report-guide.test.js`,
       `test/codex-auth.test.js`).

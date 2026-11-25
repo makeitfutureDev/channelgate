@@ -5599,8 +5599,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   at meaningful checkpoints. Work that must outlive the turn still routes to daemon-owned agents;
   contexts without the Plan tool never claim one. A harness that defers MCP tools (codex-cli 0.170
   shows the model only the `mcp__gateway` namespace line) still advertises it: the gateway MCP
-  server's `instructions` — the text of that line — name `report_progress` when the run has it and
-  say a deferred tool is searched for, and the guide says to search before calling it unavailable.
+  server's `instructions` — the text of that line, which codex-cli shows as one line cut at 247
+  characters — name `report_progress` when the run has it and then say a deferred tool is searched
+  for by name, both inside that window (the tool-family list comes last), and the guide says to
+  search before calling it unavailable.
   Slack streams a
   `plan_update` title and rich `task_update` stage rows into the **same expandable toolbox** as the
   low-level tool/subagent history, in the turn's own progress-card message directly above the
