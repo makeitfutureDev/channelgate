@@ -1011,6 +1011,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Ignore Slack App Home navigation callbacks whose actor or tab value is not a string, so a
+  malformed `["activity"]` tab or a numeric/object actor no longer loads and publishes a Home view;
+  the other Home controls refuse a non-string actor before writing a user record.
 - Fix threads failing with `runtime usage inspection failed` after shared channel history
   activated: a thread born before shared history is now reset by the harness that owns its
   session even when the channel default moved to Codex EU, the Codex usage probe no longer aborts

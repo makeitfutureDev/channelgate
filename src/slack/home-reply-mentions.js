@@ -1,4 +1,5 @@
 // Reply mentions are personal: only the authenticated clicking user can change their setting.
+import { slackActorId } from "./actor.js";
 import { setUser } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 
@@ -24,7 +25,7 @@ export function replyMentionsHomeBlocks({ enabled = false } = {}) {
 export function registerReplyMentionsHomeActions(app, { publishHome } = {}) {
   app.action(REPLY_MENTIONS_HOME_TOGGLE_ACTION, async ({ ack, body, action, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     const value = action?.value;
     if (!userId || !["on", "off"].includes(value)) return;
     const enabled = value === "on";

@@ -1,6 +1,7 @@
 // Self-service quiet-thread reminder preference from Slack App Home. This is a personal setting:
 // clicking it can only update body.user.id, and the Home view is republished immediately so the
 // visible state always matches what the nudge sweep will read.
+import { slackActorId } from "./actor.js";
 import { setUser } from "../config/store.js";
 import { logEvent } from "../util/logger.js";
 
@@ -28,7 +29,7 @@ export function nudgeHomeBlocks({ enabled = false } = {}) {
 export function registerNudgeHomeActions(app, { publishHome } = {}) {
   app.action(NUDGE_HOME_TOGGLE_ACTION, async ({ ack, body, action, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     const value = action?.value;
     if (!userId || !["on", "off"].includes(value)) return;
     const enabled = value === "on";

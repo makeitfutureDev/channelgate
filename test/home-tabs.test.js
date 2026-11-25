@@ -73,6 +73,18 @@ test("tab clicks acknowledge first and publish only for the authenticated clicki
   assert.equal(calls.length, 3, "invalid and mismatched navigation cannot publish");
 });
 
+test("malformed tab callbacks (non-string actor or tab value) never load or publish a view", async () => {
+  const app = fakeApp(); const calls = [];
+  registerHomeTabActions(app, { publishHome: async (_client, userId, state) => calls.push({ userId, state }) });
+  const click = (user, value, actionId = "cg_home_tab_activity") => app.actionFor(actionId)({
+    ack: async () => {}, body: { user: user === undefined ? undefined : { id: user } }, action: { action_id: actionId, value }, client: {} });
+  for (const user of [17, { id: "U_ONE" }, ["U_ONE"], true, null]) await click(user, "activity");
+  for (const value of [["activity"], { toString: () => "activity" }, 0, null]) await click("U_ONE", value);
+  assert.deepEqual(calls, [], "no Activity load or views.publish for a malformed actor or tab");
+  await click("U_ONE", "activity");
+  assert.deepEqual(calls, [{ userId: "U_ONE", state: { tab: "activity" } }], "a well-formed click still publishes");
+});
+
 test("Composio stays on Connections, reminders on Help & settings, and thread controls on Activity", async () => {
   const app = fakeApp(); const calls = [];
   registerHomeActions(app, { publishHome: async (_client, userId, state = {}) => {
@@ -93,6 +105,33 @@ test("Composio stays on Connections, reminders on Help & settings, and thread co
   assert.deepEqual(calls.map((c) => c.tab), ["connections", "connections", "help", "help", "activity"]);
   assert.ok(calls.every((c) => c.userId === "U_TAB_SELF"));
   assert.equal(calls.at(-1).filter, "done");
+});
+
+test("every Home handler refuses a non-string actor before any user write, load or publication", async () => {
+  const { VOICE_AUTO_START_HOME_TOGGLE_ACTION } = await import("../src/slack/home-voice-auto-start.js");
+  const app = fakeApp(); const calls = []; const modals = [];
+  registerHomeActions(app, { publishHome: async (_client, userId, state = {}) => calls.push({ userId, tab: state.tab }) });
+  const client = { views: { open: async (args) => modals.push(args) } };
+  for (const actor of [17, { id: "U_TAB_SELF" }, ["U_TAB_SELF"]]) {
+    const body = { user: { id: actor }, trigger_id: "trigger-1" };
+    for (const id of [NUDGE_HOME_TOGGLE_ACTION, REPLY_MENTIONS_HOME_TOGGLE_ACTION, VOICE_AUTO_START_HOME_TOGGLE_ACTION]) {
+      await app.actionFor(id)({ ack: async () => {}, body, action: { value: "on" }, client });
+    }
+    await app.actionFor(COMPOSIO_HOME_CLEAR_ACTION)({ ack: async () => {}, body, client });
+    await app.views.get(COMPOSIO_HOME_MODAL)({ ack: async () => {}, body, client, view: {
+      state: { values: { [COMPOSIO_TOKEN_BLOCK]: { [COMPOSIO_TOKEN_INPUT]: { value: "forged-fixture-123" } } } } } });
+    for (const kind of ["filter", "refresh", "doneall"]) {
+      await app.actionFor(`cg_home_threads_${kind}`)({ ack: async () => {}, body, client,
+        action: { action_id: `cg_home_threads_${kind}`, value: "{}", selected_option: { value: "done" } } });
+    }
+  }
+  assert.deepEqual(calls, [], "no Home load or publication for a malformed actor");
+  assert.deepEqual(modals, []);
+  for (const phantom of ["17", "[object Object]", "U_TAB_SELF"]) {
+    const user = await getUser(phantom);
+    assert.ok(!user || user.composioToken !== "forged-fixture-123", `no forged write for ${phantom}`);
+  }
+  assert.equal(await getUser("17"), null, "a numeric actor must not create a user record");
 });
 
 function deferred() {

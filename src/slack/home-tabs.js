@@ -1,5 +1,6 @@
 // In-Home navigation: publish only the selected section and load its data on demand.
 // Selection is view state, never a gateway/user setting or an authorization credential.
+import { slackActorId } from "./actor.js";
 import { registerComposioHomeActions } from "./home-composio.js";
 import { registerNudgeHomeActions } from "./home-nudges.js";
 import { registerReplyMentionsHomeActions } from "./home-reply-mentions.js";
@@ -126,9 +127,12 @@ export async function buildHomeTabView({ tab, userId, role, sections, footer = [
 export function registerHomeTabActions(app, { publishHome } = {}) {
   app.action(HOME_TAB_ACTION, async ({ ack, body, action, client }) => {
     await ack();
-    const userId = body?.user?.id;
+    const userId = slackActorId(body);
     const tab = action?.value;
-    if (!userId || !Object.hasOwn(HOME_TABS, tab) || action.action_id !== `cg_home_tab_${tab}`) return;
+    // Slack sends the tab value as a string. Anything else is a malformed callback: refuse it
+    // before a string coercion turns ["activity"] into a valid tab id.
+    if (!userId || typeof tab !== "string" || !Object.hasOwn(HOME_TABS, tab)
+      || action.action_id !== `cg_home_tab_${tab}`) return;
     try { await publishHome(client, userId, { tab }); }
     catch (error) { console.error("[slack] Home tab navigation error:", error.message); }
   });
