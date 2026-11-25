@@ -220,6 +220,27 @@ gateway discards it when the conversation can never accept it, so the fix is re-
 
 → TEST-PLAN: Automations health board (2026-11-24).
 
+## API runs post into Google Chat spaces (0.7.1, 2026-11-25)
+
+`POST /api/runs` into a Google Chat space (or a Teams conversation) now behaves like a Slack
+channel run instead of running headless. `apiRunTarget()` (`src/gateway/api-runs.js`) resolves
+the conversation's OWN live connector through `automationTarget()` — the path schedules and
+background jobs already use — and keeps Slack on its WebClient exactly as before.
+
+- **Visible runs** post a kickoff that opens a thread in the space (Markdown through the
+  platform's outbound formatter, so a `<users/all>` or other mention markup in the request is
+  defanged and no Slack `<@…>` syntax appears), run with that thread name as the session key, and
+  post the final answer into it through `deliverResult`. There is no live progress card on Chat
+  (Slack-only); queue-position notices and the failure notice post into the thread.
+- **`on-failure`** posts its one alert into the space, in Markdown.
+- **Restart recovery** re-delivers a saved answer or interruption notice through the job's own
+  surface, never through Slack.
+- **Responses** (POST, GET, list, webhook) add `platform`, `chatThread` and `threadKey`.
+  `slackThread` and `threadTs` keep their Slack-only meaning (false/null for a Chat space), so
+  existing Slack clients read exactly what they did.
+- **Unchanged:** `conversationKey` stays Slack-only (400 for a Chat space). With the Chat
+  transport disconnected the run proceeds headless, as a Slack run does without Slack.
+
 ## Unattended work: visible, hidden, or only on failure (2026-11-24)
 
 API runs and scheduled tasks can now stay out of the conversation unless something goes wrong.

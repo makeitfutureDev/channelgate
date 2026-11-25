@@ -4,11 +4,11 @@
 //
 //   POST /api/runs        → start a run. Body: { message, channel?, author?, file?, fileUrl?,
 //                           fileName?, webhook?, successCriteria?, reportOutcome? }. Returns { jobId, sessionId, resumeCommand,
-//                           statusUrl, harness, engine, slackThread }.
+//                           statusUrl, harness, engine, platform, chatThread, slackThread }.
 //   GET  /api/runs/:id    → the job's status + result.
 import express from "express";
 import { costHistoryStart, costVisibleAt } from "../../ee/cost-history.js";
-import { startApiRun, getApiJob, listApiJobs, stopApiRun } from "../../gateway/api-runs.js";
+import { startApiRun, getApiJob, listApiJobs, stopApiRun, apiThreadFacts } from "../../gateway/api-runs.js";
 
 // A public (caller-facing) view of a job record — the internal webhook secret is never echoed.
 function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) {
@@ -19,10 +19,8 @@ function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) 
     engine: job.engine,
     harness: job.engine,
     slug: job.slug,
-    channelId: job.slackThread ? job.channelId : null,
-    slackThread: Boolean(job.slackThread),
+    ...apiThreadFacts(job),
     conversationKey: job.conversationKey || null,
-    threadTs: job.slackThread ? job.threadKey : null,
     threadReused: Boolean(job.threadReused),
     threadPermalink: job.threadPermalink || null,
     sessionId: job.sessionId,
@@ -79,7 +77,10 @@ export function createRunsRouter({ slack } = {}) {
         harness: started.harness,
         slug: started.slug,
         channelId: started.channelId,
+        platform: started.platform,
+        chatThread: started.chatThread,
         slackThread: started.slackThread,
+        threadKey: started.threadKey,
         conversationKey: started.conversationKey,
         threadTs: started.threadTs,
         threadReused: started.threadReused,

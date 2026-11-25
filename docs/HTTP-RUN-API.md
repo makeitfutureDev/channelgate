@@ -86,6 +86,16 @@ API runs appear on the Automations page beside scheduled automations, in the sam
 
 `conversationKey` keeps a visible thread, so it only works with `visible`.
 
+### Google Chat and Teams conversations
+
+A run in a Google Chat space or a Teams conversation works the same way: name it in `channel` by
+its full id (`gchat:spaces/AAA…`, `teams:…`), its folder slug or its name — or omit `channel` with
+a channel token created there. A visible run posts its kickoff as a new thread in the space and
+the answer in that thread; there is no live progress card outside Slack. Responses carry
+`chatThread: true`, `platform` (`googlechat`, `msteams`) and `threadKey` (the thread's name);
+`slackThread` and `threadTs` stay Slack-only and read `false` / `null`. `conversationKey` is
+Slack-only. While that platform's transport is disconnected the run proceeds headless.
+
 ## Harness and license selection
 
 There are two harnesses, Claude Code and Codex. Every registered engine ID is a **license** of one

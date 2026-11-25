@@ -1,5 +1,12 @@
 # Changelog — ChannelGate
 
+## 0.7.1 — in development
+
+- An HTTP run API call into a Google Chat space (or a Teams conversation) now posts there: the
+  kickoff opens a thread in the space and the agent's answer follows in it, as in Slack. Before,
+  such a run was silently headless and its answer only reachable through the API. Responses add
+  `platform`, `chatThread` and `threadKey`; Slack's fields are unchanged.
+
 ## 0.7.0 — candidate, pending approval
 
 - Composio calls the gateway refuses now say why (for example a batch's `tools` sent as text

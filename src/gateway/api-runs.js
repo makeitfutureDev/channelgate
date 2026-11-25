@@ -6,9 +6,10 @@ import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 //
 // Two shapes:
 //  - no channel  → a dedicated auto-provisioned `api` folder; headless (result via status/webhook).
-//  - channel given + Slack connected → runs as a REAL thread in that channel (a kickoff message
-//    starts the thread, its ts is the session key), so the answer posts back and it's continuable
-//    in Slack too. conversationKey binds related events to one durable channel-scoped root.
+//  - channel given + its chat surface connected → runs as a REAL thread in that conversation (a
+//    kickoff message starts the thread — a Slack ts, a Google Chat/Teams thread name — which is the
+//    session key), so the answer posts back and it's continuable there too. conversationKey (Slack
+//    only) binds related events to one durable channel-scoped root.
 //    Without a key, a failed kickoff falls back to a headless api-keyed thread.
 //
 // Either way the run is an ordinary admin's turn in that channel (its mode incl. Admin/Auto, memory,
@@ -59,9 +60,9 @@ import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
 import { PROFILE_FLAGS, API_PRINCIPAL, isAuthorized } from "./modes.js";
 import { isAdmin, isApproved } from "../config/store.js";
-import { postNotice, postDirectMessage, asConnector } from "../platforms/notify.js";
+import { postNotice, postDirectMessage, asConnector, automationTarget } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
-import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { DEFAULT_PLATFORM, capabilitiesFor, formatOutboundFor } from "../platforms/registry.js";
 import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule } from "./schedule-outcome.js";
 import { API_MAX_INFLIGHT, apiSourceId, backfillApiRunLedger, normalizeApiRunName, noteApiDuplicate, noteApiRejection, openApiRun, syncApiRun } from "./api-run-history.js";
 import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
@@ -161,6 +162,23 @@ function findByIdempotencyKey(key) {
   return null;
 }
 
+// Where a job's thread is, for every caller-facing shape (POST, GET, list, webhook). `chatThread`,
+// `platform` and `threadKey` describe the thread on any surface; `slackThread` and `threadTs` keep
+// their Slack-only meaning, so an existing Slack client reads exactly what it always has.
+export function apiThreadFacts(job = {}) {
+  const chatThread = Boolean(job.slackThread);
+  const platform = chatThread ? job.platform || platformOfConversation(job.channelId) || DEFAULT_PLATFORM : null;
+  const slackThread = chatThread && platform === DEFAULT_PLATFORM;
+  return {
+    channelId: chatThread ? job.channelId : null,
+    platform,
+    chatThread,
+    slackThread,
+    threadKey: chatThread ? job.threadKey : null,
+    threadTs: slackThread ? job.threadKey : null,
+  };
+}
+
 // The shape POST returns (also reused for an idempotent hit on an existing job).
 function startShape(job, reused = false) {
   return {
@@ -170,10 +188,8 @@ function startShape(job, reused = false) {
     engine: job.engine,
     harness: job.engine,
     slug: job.slug,
-    channelId: job.slackThread ? job.channelId : null,
-    slackThread: Boolean(job.slackThread),
+    ...apiThreadFacts(job),
     conversationKey: job.conversationKey || null,
-    threadTs: job.slackThread ? job.threadKey : null,
     threadReused: Boolean(job.threadReused),
     threadPermalink: job.threadPermalink || null,
     sessionId: job.sessionId,
@@ -243,8 +259,6 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
   const stale = getDb().prepare("SELECT data FROM api_jobs ORDER BY created_ms").all()
     .map((r) => fromJson(r.data, null)).filter((j) => j &&
       (["running", "queued"].includes(j.status) || j.deliveryPending || j.webhookPending || j.interruptionNoticePending));
-  const state = slack?.snapshot?.() || {};
-  const connectedClient = state.connected ? slack.getClient?.() ?? null : null;
   for (const rec of stale) {
     if (controllers.has(rec.id)) continue;
     const job = { ...rec };
@@ -258,7 +272,8 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
     }
     jobs.set(job.id, job);
     persist(job);
-    const client = job.slackThread || job.visibility === "on-failure" ? connectedClient : null;
+    // Each job's own surface: a Google Chat run re-delivers through Chat, never through Slack.
+    const client = job.slackThread || job.visibility === "on-failure" ? apiRunTarget(slack, job.channelId).client : null;
     try {
       if (client && job.slackThread && job.deliveryPending && job.result) {
         await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
@@ -469,10 +484,35 @@ function buildTextForRun({ msg, authorId, attachmentPath }) {
   return provenance + promptForClaude;
 }
 
-function displayRequest(msg, hasAttachment) {
+function clippedRequest(msg, hasAttachment, max = MAX_KICKOFF_CHARS) {
   const request = (msg || (hasAttachment ? "(file only)" : "(empty request)")).trim();
-  const clipped = request.length > MAX_KICKOFF_CHARS ? `${request.slice(0, MAX_KICKOFF_CHARS)}\n...(truncated in Slack; full request is stored for the run)` : request;
-  return mdToMrkdwn(clipped);
+  return request.length > max ? `${request.slice(0, max)}\n...(truncated here; full request is stored for the run)` : request;
+}
+
+// Where an API run's thread lives. Slack keeps its WebClient exactly as before (conversation keys,
+// permalinks and the live progress card need it); any other surface gets its live connector, or
+// null while that transport is down — the run then proceeds headless, as a Slack run does when
+// Slack is disconnected.
+export function apiRunTarget(slack, channelId) {
+  if (!channelId || channelId === API_CHANNEL_ID) return { client: null, platform: "" };
+  const platform = platformOfConversation(channelId);
+  if (platform === DEFAULT_PLATFORM) {
+    const client = slack?.snapshot?.().connected ? slack.getClient?.() ?? null : null;
+    return asConnector(client)?.platform === platform ? { client, platform } : { client: null, platform };
+  }
+  return { client: automationTarget(null, channelId), platform };
+}
+
+// The kickoff that opens the run's thread. Slack: mrkdwn plus the author's mention (unchanged).
+// Other surfaces: Markdown through that platform's outbound formatter, which also defangs any
+// mention/control markup in the caller's request text, within that surface's message cap.
+export function apiKickoffText({ platform = DEFAULT_PLATFORM, jobId, authorId, msg, hasFile }) {
+  if (!platform || platform === DEFAULT_PLATFORM) {
+    return `🚀 API run started (job \`${jobId}\`)` + (authorId !== API_PRINCIPAL ? ` for <@${authorId}>` : "") + `\n\n*Request:*\n${mdToMrkdwn(clippedRequest(msg, hasFile))}`;
+  }
+  const cap = Number(capabilitiesFor(platform).maxMessageChars) || 4_000;
+  const markdown = `🚀 API run started (job \`${jobId}\`)\n\n**Request:**\n${clippedRequest(msg, hasFile, Math.max(200, cap - 300))}`;
+  return formatOutboundFor(platform, markdown).chunks?.[0]?.text || markdown.slice(0, cap);
 }
 
 // ── Webhook ────────────────────────────────────────────────────────────────────
@@ -486,10 +526,9 @@ async function fireWebhook(job) {
     engine: job.engine,
     harness: job.engine,
     slug: job.slug,
-    channelId: job.slackThread ? job.channelId : null,
+    ...apiThreadFacts(job),
     costUSD: job.costUSD ?? null,
     conversationKey: job.conversationKey || null,
-    threadTs: job.slackThread ? job.threadKey : null,
     threadReused: Boolean(job.threadReused),
     threadPermalink: job.threadPermalink || null,
     costEstimated: Boolean(job.costEstimated),
@@ -703,8 +742,13 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   }
   const slug = entry.slug;
 
-  const client = slack?.snapshot?.().connected ? slack.getClient?.() ?? null : null;
-  const registeredSlack = entry.channelId !== API_CHANNEL_ID && platformOfConversation(entry.channelId) === asConnector(client)?.platform;
+  // The conversation's own chat surface: Slack's WebClient for a Slack channel (unchanged), the
+  // live Google Chat / Teams connector for theirs — the same resolution schedules and background
+  // jobs use (platforms/notify.js automationTarget), so a run in a Chat space posts its kickoff
+  // and its answer there instead of running headless.
+  const { client, platform: chatPlatform } = apiRunTarget(slack, entry.channelId);
+  const registeredChat = Boolean(client);
+  const registeredSlack = registeredChat && chatPlatform === DEFAULT_PLATFORM;
   if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
@@ -744,14 +788,14 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   // unkeyed events create their own, with the legacy headless fallback if the kickoff fails.
   // hidden / on-failure: no kickoff and no thread — the run is headless in its channel's folder;
   // on-failure posts one alert to the channel only when the run needs attention.
-  const canSlack = Boolean(channel) && registeredSlack && outcomeOptions.visibility === "visible";
+  const canSlack = Boolean(channel) && registeredChat && outcomeOptions.visibility === "visible";
   let threadKey = `api:${jobId}`;
   let slackThread = false;
   let threadReused = false;
   let permalink = null;
   if (canSlack) {
     try {
-      const kickoffText = `🚀 API run started (job \`${jobId}\`)` + (authorId !== API_PRINCIPAL ? ` for <@${authorId}>` : "") + `\n\n*Request:*\n${displayRequest(msg, hasFile)}`;
+      const kickoffText = apiKickoffText({ platform: chatPlatform, jobId, authorId, msg, hasFile });
       if (conversationKey) {
         const binding = await resolveApiConversation({ client, channelId: entry.channelId, conversationKey, kickoffText });
         threadKey = binding.threadTs;
@@ -760,10 +804,13 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
         slackThread = true;
       } else {
         const kickoff = await postNotice(client, { conversationId: entry.channelId, text: kickoffText });
-        if (kickoff?.messageId) {
-          threadKey = kickoff.messageId;
+        // Slack threads on the root message's ts; Google Chat and Teams name the thread the post
+        // opened (connector `threadKey`), which is what a reply must carry to land in it.
+        const root = kickoff?.threadKey || kickoff?.messageId;
+        if (root) {
+          threadKey = root;
           slackThread = true;
-          permalink = await threadPermalink(client, entry.channelId, threadKey);
+          if (registeredSlack) permalink = await threadPermalink(client, entry.channelId, threadKey);
         }
       }
     } catch (e) {
@@ -798,6 +845,9 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     sessionId: presetSessionId,
     resumeCommand,
     cwd,
+    // The chat surface the run's thread lives on ("slack", "googlechat", …); `slackThread` keeps
+    // its stored name for existing rows but means "a chat thread carries this run" on every surface.
+    platform: chatPlatform || "",
     slackThread,
     conversationKey: conversationKey || null,
     threadReused,
@@ -841,7 +891,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   // Drive the run in the background — the HTTP handler returns immediately. `driver` is injectable
   // for the same reason recoverApiRuns takes one: admission can then be tested without a subprocess.
   driver(job, { textForRun, attachmentPath, client: slackThread ? client : null,
-    alertClient: outcomeOptions.visibility === "on-failure" && registeredSlack ? client : null, notifyClient: client, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
+    alertClient: outcomeOptions.visibility === "on-failure" && registeredChat ? client : null, notifyClient: client, teamId: registeredSlack ? slack?.snapshot?.().teamId || null : null, overrides, signal: controller.signal, controller, queueMemoryReview });
 
   return startShape(job);
 }
@@ -892,8 +942,16 @@ export function failureAlertText(job) {
   const request = String(job.message || "(file only)").replace(/\s+/g, " ").trim();
   const reason = job.error || job.outcome?.summary || "";
   const broken = (job.outcome?.connections || []).filter((c) => c.status !== "available").map((c) => `${c.name} ${c.status}`);
+  const clipped = request.length > 300 ? `${request.slice(0, 300)}…` : request;
+  const platform = job.platform || platformOfConversation(job.channelId) || DEFAULT_PLATFORM;
+  if (platform !== DEFAULT_PLATFORM) {
+    const markdown = `⚠️ API run \`${job.id}\` ${FAILURE_WORDS[status] || status}` +
+      `\n**Request:** ${clipped}` + (reason ? `\n**Reason:** ${reason.slice(0, 1000)}` : "") +
+      (broken.length ? `\n**Connections:** ${broken.join(", ")}` : "");
+    return formatOutboundFor(platform, markdown).chunks?.[0]?.text || markdown;
+  }
   return `⚠️ API run \`${job.id}\` ${FAILURE_WORDS[status] || status}` +
-    `\n*Request:* ${mdToMrkdwn(request.length > 300 ? `${request.slice(0, 300)}…` : request)}` +
+    `\n*Request:* ${mdToMrkdwn(clipped)}` +
     (reason ? `\n*Reason:* ${mdToMrkdwn(reason.slice(0, 1000))}` : "") +
     (broken.length ? `\n*Connections:* ${broken.join(", ")}` : "");
 }
@@ -940,10 +998,13 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
       job.startedMs = Date.now();
       persist(job);
     }
-    const dir = client ? await getDirectory(client).catch(() => null) : null;
-    if (client) {
+    // The live progress card and the people directory are Slack's; other surfaces get the kickoff
+    // and the final answer, the same as a scheduled run there.
+    const slackClient = client && (job.platform || DEFAULT_PLATFORM) === DEFAULT_PLATFORM ? client : null;
+    const dir = slackClient ? await getDirectory(slackClient).catch(() => null) : null;
+    if (slackClient) {
       const destination = await getChannelEntry(job.channelId);
-      status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
+      status = startProgress(getProgressView(), slackClient, job.channelId, job.threadKey, {
         isDM: destination?.isDM === true || destination?.type === "im",
         authorId: job.author,
         replyMentions: job.principalKind === "user" && userReplyMentionsEnabled(await getUser(job.author)),
