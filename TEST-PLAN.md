@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## API runs post into Google Chat spaces (0.7.1, 2026-11-25)
+
+- [x] `test/api-runs-chat-platforms.test.js` (real driver, stub engine, fake container backend,
+  fake Google Chat transport): a visible run in `gchat:spaces/…` posts a Markdown kickoff with
+  the request's `<users/all>` defanged and no Slack mention, returns `chatThread:true`,
+  `platform:"googlechat"`, `threadKey` = the opened thread, `slackThread:false`, `threadTs:null`,
+  and every answer post carries that thread; a disconnected Chat transport leaves the run headless
+  with no client; `conversationKey` is refused (400); Slack keeps its WebClient and is never
+  handed a Chat conversation; the Slack kickoff text and thread facts are byte-identical; the
+  on-failure alert is Markdown and defanged; restart recovery re-delivers a saved Chat answer
+  through the Chat connector, not Slack.
+- [x] Existing `test/api-*.test.js` and `test/run-api.test.js` pass unchanged (Slack behavior).
+- [ ] UNEXECUTED live, Claude: fixtures — a Google Chat space where the ChannelGate app is a
+  member and the tester is an approved user; a channel token created in that space (ask the bot
+  there to create an API token, or Activity → Settings → API tokens). Action:
+  `curl -X POST <gateway>/api/runs -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"message":"Reply with exactly: API-GCHAT-OK","harness":"claude"}'`.
+  Pass: 202 with `chatThread:true`, `platform:"googlechat"`, a `threadKey` under the space; within
+  a minute the space shows a new thread starting "🚀 API run started" with the request, and the
+  answer `API-GCHAT-OK` in that thread; `GET statusUrl` reads `completed`; replying in that thread
+  with a follow-up continues the same session.
+- [ ] UNEXECUTED live, Codex: the same with `"harness":"codex"`. Same pass rule.
+- [ ] UNEXECUTED live, engine-independent: `"visibility":"on-failure"` with a request naming a
+  harness the space does not allow. Pass: the POST is refused (400/403) before any post, or, for a
+  run that fails after start, exactly one alert lands top-level in the space in Markdown.
+
 ## Native session adoption retains shared channel history (2026-11-25)
 
 - [x] `test/slack-resume.test.js`: send `/resume` through the real native command handler,
