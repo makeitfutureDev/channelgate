@@ -10,6 +10,12 @@ license's history capability; licenses with separate histories keep their separa
 The same-channel lookup and the guard that resets older private or unknown history are unchanged.
 
 
+## Background reports from threaded Slack schedules (2026-11-25)
+
+When a scheduled task has a Slack delivery thread, its background agents and shell jobs post
+their start notices, completion notices and reports there. A nested job or a report recovered
+after a daemon restart uses the same destination. Each fire retains its own engine session.
+
 ## A channel's own account is a license limited to it (2026-11-24)
 
 Channel settings → Runtime no longer has the *Connect a Codex account for this channel* block
