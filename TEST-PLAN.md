@@ -10200,6 +10200,9 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   its report and menu into the launching Slack thread; a synthetic scheduled key produces a
   channel-level post with no `thread_ts`. `test/durable-delivery.test.js` checks that a completed
   agent's report is delivered directly and its durable row retires only after delivery.
+- [x] Generated channel instructions route an explicit request for a background agent through
+  `run_agent_in_background` and tell a parent agent to use the same tool for a nested agent
+  (`test/folders-generator-paths.test.js`).
 - [ ] Live Claude and Codex, separate private Auto fixtures: start a background agent that starts
   another background agent returning a short read-only report. Capture the root thread timestamp
   and both synthetic session keys. Pass when the nested agent's completed report appears exactly
@@ -10832,8 +10835,10 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       (Airtable `SKL-16`): under the egress proxy (the default — the container runs with
       `--network none` and its only route is its own egress socket) *Allow network* OFF is ENFORCED,
       admitting only the engine endpoints and the channel's selected remote MCP connectors and
-      refusing everything else with `403 network-off`; ON admits public destinations but never
-      private, loopback or metadata addresses; the switch is advisory only under the legacy open
+      refusing other destinations with HTTP 403 `network-off`. ON admits public destinations.
+      Private and loopback addresses remain blocked for this fixture unless an organization admin
+      approved an exact pinned host:port for its channel. Cloud-metadata addresses stay blocked.
+      The switch is advisory only under the legacy open
       network (bridge) mode, for a channel given raw sockets (`rawNetwork`), or in a `/sudo` host
       thread (`src/engines/network-policy.js`, `src/gateway/egress/policy.js`). The retired "advisory,
       no egress cut-off" claim for an ordinary proxy-mode fixture is a FAIL; claims must match the

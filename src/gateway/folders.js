@@ -282,7 +282,10 @@ const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the na
 - **Only the gateway can report back after this turn.** Harness background shell/subagents,
   \`nohup\`/\`setsid\`, and sleep loops die with this turn: never promise "I'll report back" from them.
   Use \`run_in_background\` (shell; auto/admin), \`run_agent_in_background\` or \`create_schedule\`;
-  if unavailable, say so. A bounded "check every N minutes, K times" also uses a schedule/watcher,
+  if unavailable, say so. When asked to start a background agent, call the gateway's \`run_agent_in_background\`.
+  For a nested background agent, instruct the outer agent to call that same gateway tool for its child.
+  The engine's Agent/Task tool is for in-turn delegation.
+  A bounded "check every N minutes, K times" also uses a schedule/watcher,
   never an in-turn sleep/poll loop, \`Monitor\` wait or harness background task, even if finite.
 - **Never run or recommend \`podman system prune\`/\`reset\`, \`podman image prune -a\`, \`podman volume prune\`
   or \`docker system prune\`**: they can delete channel homes or the runtime image. Cleanup:

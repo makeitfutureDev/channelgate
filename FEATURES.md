@@ -5239,6 +5239,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (capped 12k chars) directly through the sanitized/chunked unattended-delivery path. A completed
   report never depends on a second model turn (and therefore cannot be stranded by that model's
   usage limit); shell jobs and failed/incomplete agents still use an interpreted continuation.
+  The managed instructions direct a parent to use the same gateway tool for a nested background agent.
   Nested agents keep their synthetic session keys for engine isolation, while Slack report delivery
   resolves the original thread timestamp. Synthetic scheduled keys post at channel level. Recovery
   gives an already completed nested report whose old delivery attempts were exhausted one bounded

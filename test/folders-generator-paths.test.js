@@ -400,7 +400,8 @@ test("the managed block carries the hard rules a run must never get wrong", () =
     //    (ART-005 / AU-07 promised "I'll report back" from a harness background shell).
     assert.match(block, /never promise "I'll report back"/);
     assert.match(block, /`run_in_background`/);
-    assert.match(block, /`run_agent_in_background`/);
+    assert.match(block, /When asked to start a background agent, call the gateway's `run_agent_in_background`/);
+    assert.match(block, /nested background agent, instruct the outer agent to call that same gateway tool/);
     assert.match(block, /`create_schedule`/);
     // …and a FINITE repeat-check ("every 10 minutes, 6 times") is a schedule, not an in-turn poll
     //  loop the turn would have to stay alive for.
