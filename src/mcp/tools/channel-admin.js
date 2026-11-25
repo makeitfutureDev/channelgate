@@ -11,6 +11,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { getChannelMeta, patchChannelMeta } from "../../config/store.js";
 import { effectiveWorkDir, updateChannelInstructions } from "../../gateway/folders.js";
+import { authorModeMeta } from "../../gateway/modes.js";
 import { memoryEnabled, applyMemoryOperations, MEMORY_SECTIONS } from "../../gateway/channel-memory.js";
 import { searchChannelMemory, readChannelMemorySource } from "../../gateway/memory-search.js";
 import { logEvent } from "../../util/logger.js";
@@ -821,6 +822,15 @@ export function register(server, ctx) {
   );
 }
 
+// The run derives its Lean exception from the authenticated author's current rank. Use
+// the same decision at each tool call: saved cleanMode alone can differ from the run's
+// effective context. requireAdmin is built from verified capability claims, handles the
+// fixed API admin principal, and refuses agent principals; arguments cannot confer rank.
+async function memoryToolMeta(ctx) {
+  const meta = (await getChannelMeta(ctx.slug)) || {};
+  return authorModeMeta(meta, { isAdminAuthor: await ctx.requireAdmin() });
+}
+
 export function registerMemoryReadTools(server, ctx) {
   const { slug, text } = ctx;
   server.registerTool(
@@ -831,7 +841,7 @@ export function registerMemoryReadTools(server, ctx) {
     },
     async ({ query, limit }) => {
       if (!slug) return text("No channel context — can't search memory here.");
-      const meta = (await getChannelMeta(slug)) || {};
+      const meta = await memoryToolMeta(ctx);
       if (!memoryEnabled(meta)) return text("Channel memory is disabled here.");
       try {
         const hits = await searchChannelMemory(effectiveWorkDir(slug, meta), slug, query, limit);
@@ -850,7 +860,7 @@ export function registerMemoryReadTools(server, ctx) {
     },
     async ({ source }) => {
       if (!slug) return text("No channel context — can't read memory here.");
-      const meta = (await getChannelMeta(slug)) || {};
+      const meta = await memoryToolMeta(ctx);
       if (!memoryEnabled(meta)) return text("Channel memory is disabled here.");
       try {
         const body = await readChannelMemorySource(effectiveWorkDir(slug, meta), source);
@@ -925,7 +935,7 @@ export function registerMemoryTool(server, ctx) {
           : [];
       if (!ops.length) return text("Memory not saved: pass an action (add, replace, remove, write_topic) or an `operations` array.");
       try {
-        const meta = (await getChannelMeta(slug)) || {};
+        const meta = await memoryToolMeta(ctx);
         if (!memoryEnabled(meta)) return text("Channel memory is disabled for this channel (enable it in the admin UI).");
         const r = await applyMemoryOperations(effectiveWorkDir(slug, meta), meta, ops);
         memoryFailures = 0;
