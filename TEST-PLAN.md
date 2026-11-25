@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Custom channel management survives unrelated admin saves (2026-11-25)
+
+- Engine-independent API regression: `node --test test/channel-management-browser.test.js`.
+  The real metadata PUT preserves omitted custom policy and named managers, accepts explicit
+  admins/members/custom selections, and leaves the named manager authorized and an unlisted
+  approved member unauthorized under custom. No server behavior change is needed.
+- Chromium regression: set `CG_BROWSER_MODULE` to the Playwright ESM module and optionally
+  `CG_BROWSER_EXECUTABLE` to Chromium, then run the same test. The shipped admin form must
+  display an existing custom policy as Named managers; change Network only and save/reload.
+  Pass: custom policy and manager list unchanged, no management fields in the unrelated PUT.
+  Change the stored policy from another writer while the card remains open, save another
+  Network change, and require the current server policy to survive and reconcile on screen.
+  Explicitly choose admins, custom and members, saving each; require exact persisted policies,
+  the same named-manager list and no page errors. This is browser/API behavior independent of
+  the coding engine; the test uses a disposable store and an authenticated-admin fixture boundary.
+- Live acceptance pending: in an owned private channel with custom management and an approved
+  named manager, open the real admin web Access form, change only Network, save and reload.
+  Require custom policy and manager IDs unchanged and the named manager still authorized;
+  an unlisted member remains unauthorized. Restore the original Network setting. Repeat an
+  explicit policy change and restore custom. No Slack test sends, production mutation or live
+  execution is claimed by this branch; the campaign coordinator owns that acceptance gate.
+
 ## Native session adoption retains shared channel history (2026-11-25)
 
 - [x] `test/slack-resume.test.js`: send `/resume` through the real native command handler,

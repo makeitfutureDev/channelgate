@@ -349,6 +349,7 @@ const ACCESS_HELP = {
 };
 const MANAGE_HELP = {
   admins: "Only gateway admins can edit the Slack Access page. Other authorized users can edit the ordinary Settings tabs. (Default.)",
+  custom: "Only named channel managers and organization admins can edit Slack Access settings. Edit the named manager list in the channel’s Slack Access settings.",
   members: "Any approved channel member can edit Slack Access settings: Read-only/Worker/Admin mode, Auto, Lean, network, access policy and named users/managers. Permission bypass still requires an admin author. Work-dir stays admin-only.",
 };
 function channelProfileOf(m = {}) {
@@ -2319,7 +2320,9 @@ function renderChannelDetail(ch) {
 
   const manageSel = card.querySelector(".ch-manage");
   const manageHelp = card.querySelector(".ch-manage-help");
-  manageSel.value = ["admins", "members"].includes(meta.manageAccess) ? meta.manageAccess : "admins";
+  const managementPolicy = (value) => ["admins", "members", "custom"].includes(value) ? value : "admins";
+  manageSel.value = managementPolicy(meta.manageAccess);
+  let savedManageAccess = manageSel.value;
   const applyManageUI = () => { manageHelp.textContent = MANAGE_HELP[manageSel.value] || ""; };
   applyManageUI();
   manageSel.addEventListener("change", applyManageUI);
@@ -2674,7 +2677,7 @@ function renderChannelDetail(ch) {
           } : {}),
           profile: card.querySelector(".ch-profile").value,
           access: card.querySelector(".ch-access").value,
-          manageAccess: card.querySelector(".ch-manage").value,
+          ...(manageSel.value !== savedManageAccess ? { manageAccess: manageSel.value } : {}),
           adminMode: card.querySelector(".ch-admin").checked,
           allowBash: card.querySelector(".ch-bash").checked,
           allowNetwork: card.querySelector(".ch-network").checked,
@@ -2703,6 +2706,9 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      savedManageAccess = managementPolicy(ch.meta.manageAccess);
+      manageSel.value = savedManageAccess;
+      applyManageUI();
       showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
       if (composioTok) void loadComposioConnections(true);
