@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Agent instructions explicitly route requested background agents, including nested agents, through
+  the gateway so their reports can reach the original thread after the launching turn ends.
 - The follow-up digest and `pending` list work again: the gateway's own answers in a channel thread
   are recorded as the thread's last turn (Slack's event layer drops the bot's own posts, so since
   late August no thread ever looked like it was waiting on someone).
