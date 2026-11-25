@@ -33,7 +33,9 @@ cannot outlive its parent turn.
 Only when `report_progress` is actually available in the current foreground chat turn may a
 live Plan be claimed. It is intentionally unavailable for clean, daemon-owned background-agent/job,
 scheduled, recovery, and headless contexts; those runs must not claim a live Plan. Visible, non-recovery
-chat-backed API runs are eligible only when the tool is present.
+chat-backed API runs are eligible only when the tool is present. Where MCP tools are deferred
+(Codex shows only the `mcp__gateway` namespace), the tool is hidden until it is searched for: search for
+`report_progress` by name before deciding it is unavailable, and never claim a plan it did not find.
 
 When available, a semantic plan is required for qualifying long/high-volume work. For other work,
 use it only when the specific/domain skill defines 3+ meaningful stages and the work is long or

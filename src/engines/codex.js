@@ -221,8 +221,11 @@ const DIAGNOSTIC_LINE_RE = /\b(?:error|warn(?:ing)?|fail(?:ed|ure)?|retry|retryi
 // The Codex CLI's own "Reading additional input from stdin..." notice is the same kind of
 // noise: it is printed whenever stdin is not a TTY, says nothing about why a turn failed, and
 // used to lead the failure sentence ("forcibly stopped before it finished: Reading additional
-// input from stdin... · Killed", 2026-09-27 campaign, EN-09).
-const NODE_RUNTIME_NOISE_RE = /\[UNDICI-EHPA\]|Use `node --trace-warnings|^\s*Reading additional input from stdin/;
+// input from stdin... · Killed", 2026-09-27 campaign, EN-09). codex-cli 0.170's project-trust
+// advisory ("Untrusted project-local configuration is disabled. Run `codex exec --trust`…") is
+// printed on every exec in a project folder; it disables nothing the gateway uses (MCP servers and
+// settings arrive as `-c` overrides, not project config) and became every turn's heartbeat label.
+const NODE_RUNTIME_NOISE_RE = /\[UNDICI-EHPA\]|Use `node --trace-warnings|^\s*Reading additional input from stdin|^\s*(?:warning:\s*)?Untrusted project-local configuration is disabled\b/;
 
 export function withoutNodeRuntimeNoise(text = "") {
   return String(text || "").split(/\r?\n/).filter((line) => !NODE_RUNTIME_NOISE_RE.test(line)).join("\n");

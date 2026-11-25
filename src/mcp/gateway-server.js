@@ -483,8 +483,22 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
  * The shared factory. One McpServer per run (host) or per socket connection (container), with the
  * capability chokepoint and the control-plane approval gate wrapped around every registration.
  */
+// The server's MCP `instructions`. A harness that DEFERS MCP tools shows the model only a namespace
+// line built from them — codex-cli 0.170 always defers and renders `mcp__gateway: <instructions>` —
+// so without them the model saw a bare `mcp__gateway`, found no `report_progress` in its visible
+// tools, and told the user the progress plan was unavailable. One short paragraph: what lives here,
+// the progress tool only when this run registered it, and that a deferred tool is searched for.
+export function gatewayServerInstructions(ctx) {
+  const parts = ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET
+    ? ["ChannelGate gateway: this conversation's control plane — Slack/Teams posting (tables, charts, files, history), schedules, background work, approvals and questions, channel memory, settings and skills."]
+    : ["ChannelGate gateway: this conversation's reduced tool set (channel memory and conversation tools)."];
+  if (ctx.progressReport && ctx.toolset === "full") parts.push("`report_progress` is available in this turn for the live progress plan.");
+  parts.push("If these tools are deferred, search this namespace for a tool by name before treating it as unavailable.");
+  return parts.join(" ");
+}
+
 export function createGatewayMcpServer(ctx) {
-  const server = new McpServer({ name: "channelgate", version: "1.0.0" });
+  const server = new McpServer({ name: "channelgate", version: "1.0.0" }, { instructions: gatewayServerInstructions(ctx) });
   const CONTROL_PLANE = buildControlPlane(ctx);
 
   async function passesAuthzPrecheck(authz) {

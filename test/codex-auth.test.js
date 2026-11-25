@@ -276,6 +276,14 @@ test("Node's UNDICI-EHPA warning never reaches the status row or the failure sen
   // The Codex CLI's own non-TTY stdin notice is dropped the same way (EN-09, 2026-09-27).
   assert.equal(withoutNodeRuntimeNoise("Reading additional input from stdin...\nKilled"), "Killed");
   assert.equal(codexDiagnosticLine("Reading additional input from stdin..."), "");
+  // codex-cli 0.170's per-run project-trust advisory is the same: printed on every `codex exec` in
+  // a project folder, it disables nothing the gateway relies on (MCP servers and settings arrive as
+  // `-c` overrides, not project config) and its `--trust` remedy is not a Slack user's to run. It
+  // became every Codex turn's heartbeat label (2026-11-25 overnight QA).
+  const trust = "warning: Untrusted project-local configuration is disabled. Run `codex exec --trust` to allow project configuration and MCP servers for this and future chats in the project, including MCP commands outside the sandbox. Explicitly untrusted projects must have their trust setting updated first.";
+  assert.equal(codexDiagnosticLine(trust), "", "the trust advisory alone is no diagnostic");
+  assert.equal(codexDiagnosticLine(`stream error: retrying 1/5\n${trust}`), "stream error: retrying 1/5");
+  assert.equal(withoutNodeRuntimeNoise(`a\n${trust}\nb`), "a\nb");
 
   const notes = [];
   const target = containerTarget(createFakeRuntimeBackend(), "codex-undici");

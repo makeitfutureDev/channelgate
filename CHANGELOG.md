@@ -6,6 +6,12 @@
   it correctly: the granted mount is the whole operator home, including other conversations and
   the gateway's own store, not a narrower view.
 
+- Codex turns show the live progress plan reliably again. Codex 0.170 lists the gateway's tools
+  only by name until searched, and the agent sometimes reported the plan as unavailable. The
+  gateway now describes its tools, including the progress plan, in that listing. The Slack status
+  no longer shows Codex's "Untrusted project-local configuration" warning, which appeared on every
+  turn and did not affect ChannelGate.
+
 - In Activity's Channel grouping, pinned channel cards keep their order when a newer unpinned
   conversation arrives in one of those channels; each section ranks cards by its own conversations.
 

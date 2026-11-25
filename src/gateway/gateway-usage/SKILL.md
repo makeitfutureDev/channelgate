@@ -153,6 +153,8 @@ invite the bot. See `references/messages.md`.
    for clean, daemon-owned background-agent/job, scheduled, recovery, and headless contexts; those
    runs must not claim a live Plan. Visible, non-recovery chat-backed API runs are eligible only when
    the tool is present. Routine or short work never qualifies, even if it has 3+ steps.
+   Where MCP tools are deferred (Codex lists only the `mcp__gateway` namespace), the tool is hidden
+   until searched: search for `report_progress` before deciding it is unavailable.
    Never invent filler stages. Read `references/progress-report.md` before reporting progress.
 7. **In a git repo, never edit the shared checkout — one worktree per task.** Other threads,
    schedules and background jobs may be working in this same folder concurrently, and two of them

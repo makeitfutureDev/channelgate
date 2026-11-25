@@ -112,6 +112,29 @@ test("live gateway MCP omits progress report without a foreground Slack surface"
     await client.connect(transport);
     const tools = await client.listTools();
     assert.equal(tools.tools.some((tool) => tool.name === "report_progress"), false);
+    assert.doesNotMatch(client.getInstructions() || "", /report_progress/, "never advertise a tool this run does not have");
+  } finally {
+    await client.close().catch(() => {});
+    await transport.close().catch(() => {});
+  }
+});
+
+// codex-cli 0.170 defers EVERY MCP tool behind its tool search and shows the model only the
+// namespace line `mcp__gateway: <server instructions>`. With no instructions the line was bare, so
+// a model following gateway-usage ("only when report_progress is actually available") saw no such
+// tool and told the user the progress plan was unavailable (2026-11-25 overnight QA, 2 of 3 runs).
+// The server's own instructions are what that namespace line carries: they must name the progress
+// tool when this run has it, and say that a deferred tool is found by searching, not by absence.
+test("gateway MCP instructions name the progress tool so a deferred namespace still advertises it", async () => {
+  const { client, transport } = gatewayClient({ progressReport: true });
+
+  try {
+    await client.connect(transport);
+    const instructions = client.getInstructions() || "";
+    assert.match(instructions, /ChannelGate/);
+    assert.match(instructions, /report_progress/);
+    assert.match(instructions, /deferred.*search/is);
+    assert.ok(instructions.length <= 600, "the namespace line stays one short paragraph");
   } finally {
     await client.close().catch(() => {});
     await transport.close().catch(() => {});

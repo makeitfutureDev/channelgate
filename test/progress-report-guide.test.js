@@ -30,6 +30,9 @@ test("gateway usage advertises progress reports without adding noise to routine 
   assert.match(guide, /only when.*report_progress.*available.*foreground chat turn/is);
   assert.match(guide, /unavailable.*clean.*daemon-owned background.*scheduled.*recovery.*headless/is);
   assert.match(guide, /visible.*non-recovery.*chat-backed API.*eligible.*tool.*present/is);
+  // A harness that defers MCP tools (Codex lists only the `mcp__gateway` namespace) hides the tool
+  // until it is searched for; "not in my tool list" must not read as "unavailable".
+  assert.match(guide, /deferred.*search.*report_progress.*before.*unavailable/is);
 });
 
 test("gateway usage mandates truthful visible subagent orchestration for long high-volume work", async () => {

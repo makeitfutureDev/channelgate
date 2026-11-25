@@ -11781,6 +11781,15 @@ structural invariants are automated; rendered navigation and feature claims also
       events without dropping ordinary progress
       (`test/progress-report-mcp.test.js`, `test/folders-settings.test.js`,
       `test/codex-args.test.js`, `test/progress-report-availability.test.js`).
+- [x] Integration: the live gateway MCP `initialize` instructions (the namespace line a deferring
+      harness such as codex-cli 0.170 shows) name `report_progress` only when the run has it and
+      say a deferred tool is searched for; the guide says to search before calling it unavailable;
+      Codex's per-run "Untrusted project-local configuration" advisory never becomes the status
+      row (`test/progress-report-mcp.test.js`, `test/progress-report-guide.test.js`,
+      `test/codex-auth.test.js`).
+- [ ] Live: a Codex (gpt-6.1-sol, codex-cli 0.170) Slack turn asked to "use your progress plan"
+      across several fresh roots shows the semantic stages every time, and its heartbeat never
+      shows the project-trust warning.
 - [x] Unit: progress-report snapshots stream a `plan_update` title and stable rich `task_update` rows into
       the answer's one expandable toolbox beside ordinary tool history; no supplementary Plan
       message is posted. Identical snapshots deduplicate, authoritative revisions remove stale rich
