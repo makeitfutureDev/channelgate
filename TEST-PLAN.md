@@ -2786,6 +2786,15 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   span the whole card. When the columns are wider than the window the table scrolls sideways;
   the card grows with it. Automated in `test/activity-cards-layout-browser.test.js` (real
   Chromium; fails on the pre-fix layout). Engine-independent: layout only.
+- Comment save-ordering regression (2026-11-25, QA UI-ACTIVITY-COMMENTS-01): delay the first
+  `POST /api/comment` by about 2 s (proxy or DevTools request blocking/throttling), type
+  `edit A delayed` + Enter, within 150 ms type `edit B latest` and leave the field. Expect the
+  field to keep `edit B latest` throughout, a second POST with `edit B latest` after the first
+  finishes, and `edit B latest` after reload. Repeat, clicking **Hide** on the row right after
+  the second edit: after the first save ends, `edit B latest` is still sent and shows when the row
+  is shown again. Make a save fail and hover the row: the red border
+  stays. Automated in `test/activity-page.test.js` (fails before the fix). Engine-independent:
+  browser script and account preference storage only; no Claude/Codex engine is selected or run.
 - Automated: `test/activity.test.js` (routes, ownership, privacy, validation),
   `test/activity-page.test.js` (browser script) and `test/activity-columns-browser.test.js` (real
   Chromium: comment save, edge-drag resize, header drag-reorder, reload persistence, reset, phone

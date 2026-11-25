@@ -9,6 +9,10 @@
   tab right away, the server stops logging errors for it, and when your access ends the status
   tabs and footer totals clear along with the conversations.
 
+- An Activity comment edited again while its previous save is still in progress now keeps the
+  latest text instead of reverting to the earlier one, and a comment that failed to save keeps
+  its red border when the row is hovered.
+
 - A schedule in an archived channel keeps its paused status and logs one pause event per
   archival, instead of a new pause event on every other cron fire.
 

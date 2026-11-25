@@ -1945,7 +1945,9 @@ The informational Slack `/mode` command describes the current container network 
 
 The Activity conversation table has a **Comment** column: a private one-line note (up to 500
 characters) on each of the viewer's own conversations. Enter or leaving the field saves it,
-Escape restores the saved text, and clearing it removes the note. Comments are stored on the
+Escape restores the saved text, and clearing it removes the note. Saves on one row run one at a
+time: an edit made while an earlier save is still in flight is sent right after it, so the latest
+text always wins and is never replaced by the older one. Comments are stored on the
 viewer's account, never shown to anyone else and never posted to Slack or the agent; search also
 matches comment text. Columns can be rearranged by dragging a header, or with **▤ Columns** in the
 footer (move left/right, Reset order and widths). They can be resized by dragging a header's edge;
