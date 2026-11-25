@@ -51,7 +51,7 @@ import { formatUpdateResult, startUpdate } from "../gateway/updater.js";
 import { isForceStopping } from "../gateway/shutdown.js";
 import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
-import { buildPendingReportForUser } from "../gateway/followups.js";
+import { buildPendingReportForUser, recordGatewayReply } from "../gateway/followups.js";
 
 import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled, getDefaultModel } from "../config/settings.js";
 import { parseModelShortcut, liftMentionSelector, effortShortcut, EFFORT_SHORTCUT_NAMES } from "../config/model-shortcuts.js";
@@ -2018,6 +2018,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       });
       // The bot just answered → track this thread against the requester's personal nudge setting.
       noteBotReply(event.channel, entry.slug, threadKey, event.user);
+      // ...and against the follow-up digest: the bot's own post is dropped by Bolt's ignoreSelf
+      // before the passive observer sees it, so record "the AI spoke last" here, at delivery.
+      if (replyTs) recordGatewayReply({ channelId: event.channel, slug: entry.slug, channelName: entry.name, threadTs: replyTs, botUserId, isDM: Boolean(meta.isDM) || entry.type === "mpim" || entry.type === "im" });
       // Background memory review (gateway/memory-review.js): after the answer is delivered, decide
       // whether this thread deserves a reviewer pass that saves what the model itself did not.
       // Fire-and-forget — it must never delay or fail the turn; the module rate-limits itself.

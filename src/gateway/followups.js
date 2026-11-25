@@ -239,6 +239,17 @@ export function recordActivity({ channelId, slug, channelName, threadTs, userId,
   pruneStale(db, at);
 }
 
+// The gateway delivered an answer in a channel thread → record that the AI spoke last. Its own
+// posts never reach the passive observer (app.js observeForFollowups): Bolt's default
+// `ignoreSelf` middleware drops every event whose `user` is the bot before any listener runs, so
+// without this explicit record no thread ever had the bot as last author and the digest's
+// "the AI is waiting on you" predicate could never match. Channels only — never DMs.
+export function recordGatewayReply({ channelId, slug, channelName, threadTs, botUserId, isDM = false, tsMs = Date.now() }) {
+  if (isDM || !channelId || !threadTs || !botUserId) return;
+  if (!getFollowupRemindersEnabled()) return;
+  recordActivity({ channelId, slug, channelName, threadTs, userId: botUserId, isBot: true, aiTurn: true, text: "", tsMs });
+}
+
 // Mark a thread done for one user (their ✅). Suppresses reminders until newer activity arrives.
 export function markDone(userId, channelId, threadTs, atMs = Date.now()) {
   if (!userId || !channelId || !threadTs) return;
