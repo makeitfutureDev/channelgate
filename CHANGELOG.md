@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- An Activity comment edited again while its previous save is still in progress now keeps the
+  latest text instead of reverting to the earlier one, and a comment that failed to save keeps
+  its red border when the row is hovered.
+
 - A schedule in an archived channel keeps its paused status and logs one pause event per
   archival, instead of a new pause event on every other cron fire.
 

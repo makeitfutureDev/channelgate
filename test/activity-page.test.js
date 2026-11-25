@@ -1050,6 +1050,62 @@ test("a failed comment save keeps the typed text and an expired session ends acc
   assert.match(elements.notice.textContent, /access has ended/);
 });
 
+// QA UI-ACTIVITY-COMMENTS-01: an edit made while an earlier save is still in flight is sent after
+// it, and the earlier save's reply never puts the older text back over it.
+test("an edit made while a comment save is in flight is saved next and its text is kept", async () => {
+  const saves = [];
+  const { elements, stream, requests } = browser((url) => {
+    if (!url.endsWith("/api/comment")) return new Promise(() => {});
+    const save = deferred(); saves.push(save); return save.promise;
+  });
+  stream.snapshot([row()]);
+  const input = cellsByClass(elements.threads.children[0])["comment-cell"].children[0];
+  const posts = () => requests.filter((r) => r.url.endsWith("/api/comment")).map((r) => JSON.parse(r.options.body).comment);
+  input.value = "edit A delayed"; input.fire("change");
+  input.value = "edit B latest"; input.fire("change");
+  assert.deepEqual(posts(), ["edit A delayed"], "still one save at a time");
+  saves[0].resolve(response({ comment: "edit A delayed" })); await flush();
+  assert.equal(input.value, "edit B latest", "the earlier save never restores its older text");
+  assert.deepEqual(posts(), ["edit A delayed", "edit B latest"], "the newest edit is sent after the first save");
+  assert.equal(input.dataset.state, "saving");
+  stream.snapshot([{ ...row(), comment: "edit A delayed" }]);
+  assert.equal(input.value, "edit B latest", "a live update cannot bring back the older comment");
+  saves[1].resolve(response({ comment: "edit B latest" })); await flush();
+  assert.equal(input.value, "edit B latest");
+  assert.equal(input.dataset.state, undefined);
+  assert.equal(posts().length, 2);
+
+  // A → B → A while the first save is in flight leaves nothing more to send.
+  input.value = "edit C"; input.fire("change");
+  input.value = "edit D"; input.fire("change");
+  input.value = "edit C"; input.fire("change");
+  saves[2].resolve(response({ comment: "edit C" })); await flush();
+  assert.deepEqual(posts().slice(2), ["edit C"]);
+  assert.equal(input.value, "edit C");
+  assert.equal(input.dataset.state, undefined);
+
+  // A failed save still shows its error, and an edit waiting behind it is then sent.
+  input.value = "edit E"; input.fire("change");
+  input.value = "edit F"; input.fire("change");
+  saves[3].resolve(response({}, 500)); await flush();
+  assert.deepEqual(posts().slice(3), ["edit E", "edit F"]);
+  assert.equal(input.value, "edit F");
+  assert.equal(input.dataset.state, "saving");
+  saves[4].resolve(response({}, 500)); await flush();
+  assert.equal(input.dataset.state, "error");
+  assert.equal(input.value, "edit F");
+  assert.match(elements.notice.textContent, /comment couldn’t be saved/);
+});
+
+test("a comment that failed to save keeps its red border while the row is hovered", () => {
+  const css = activityPage({ sessionId: "session", csrf: "x" }).html;
+  const hover = css.indexOf("tbody tr:hover .comment-input,");
+  const rule = /([^{}]*\.comment-input\[data-state=error\][^{}]*)\{border-color:var\(--danger\)\}/.exec(css);
+  assert.ok(hover >= 0 && rule);
+  assert.ok(rule[1].split(",").includes("tbody tr:hover .comment-input[data-state=error]"), "the error border outranks the hover border");
+  assert.ok(rule.index > hover);
+});
+
 test("saved column order reorders every row, and the Columns dialog saves a staged order once", async () => {
   const save = deferred();
   const { elements, stream, requests } = browser((url) => url.endsWith("/api/columns") ? save.promise : new Promise(() => {}));

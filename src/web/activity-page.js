@@ -99,7 +99,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const columnMeta = config.columns;
   const columnIds = columnMeta.ids;
   const columnsDialog = el("columns-dialog"), columnsList = el("columns-list"), columnsButton = el("columns-button");
-  const columnsNodes = new Map(), commentPending = new Set();
+  const columnsNodes = new Map(), commentPending = new Map(), commentQueued = new Map(); // row key → text in flight / newest edit waiting for it
   let columnOrder = [...columnIds], columnWidths = {}, columnHidden = new Set(), columnsVersion = -1, columnsSource = "", columnsSaving = 0, columnsSeq = 0, columnsTimer = null;
   let resizing = null, dragging = null, draftColumns = [], draftWidths = {}, draftHidden = new Set(), columnsDialogSaving = false;
   // Touch screens (phones, tablets) keep a layout of their own, separate from the computer one.
@@ -900,10 +900,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   }
   async function saveComment(rowKey, value) {
     const row = rows.find((item) => key(item) === rowKey), entry = nodes.get(rowKey);
-    if (ended || !row || !entry || commentPending.has(rowKey)) return;
+    if (ended || !row || !entry) return;
     const text = String(value).replace(/\s+/g, " ").trim();
+    if (commentPending.has(rowKey)) {
+      // One save per row at a time: the newest edit waits and is sent when the current save ends.
+      if (text === commentPending.get(rowKey)) commentQueued.delete(rowKey); else commentQueued.set(rowKey, text);
+      return;
+    }
     if (text === row.comment) { entry.comment.value = text; delete entry.comment.dataset.state; return; }
-    commentPending.add(rowKey);
+    commentPending.set(rowKey, text);
     entry.comment.dataset.state = "saving";
     actionMessage = "";
     try {
@@ -917,13 +922,18 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const data = await response.json();
       if (ended) return;
       for (const item of rows) if (key(item) === rowKey) item.comment = typeof data.comment === "string" ? data.comment : text;
-      delete entry.comment.dataset.state;
-      if (document.activeElement !== entry.comment) entry.comment.value = rows.find((item) => key(item) === rowKey)?.comment ?? text;
+      if (!commentQueued.has(rowKey)) { // A newer edit is still on its way; never put older text back over it.
+        delete entry.comment.dataset.state;
+        if (document.activeElement !== entry.comment) entry.comment.value = rows.find((item) => key(item) === rowKey)?.comment ?? text;
+      }
       revision++; // A snapshot fetched before this save must not bring back the old comment.
     } catch {
       if (!ended) { entry.comment.dataset.state = "error"; actionMessage = "That comment couldn’t be saved. Edit it to try again."; }
     } finally {
       commentPending.delete(rowKey);
+      const next = commentQueued.get(rowKey);
+      commentQueued.delete(rowKey);
+      if (next !== undefined && !ended) void saveComment(rowKey, next);
       render();
     }
   }
@@ -1814,7 +1824,7 @@ tbody tr:hover .comment-input,.comment-input:focus{border-color:var(--line-2)}
 .comment-input:placeholder-shown:not(:focus){opacity:0;transition:opacity .12s}
 tbody tr:hover .comment-input:placeholder-shown,tbody tr:focus-within .comment-input:placeholder-shown{opacity:1}
 .comment-input[data-state=saving]{opacity:.6}
-.comment-input[data-state=error]{border-color:var(--danger)}
+.comment-input[data-state=error],tbody tr:hover .comment-input[data-state=error]{border-color:var(--danger)}
 td{display:block;padding:0;border:0;min-width:0}
 tbody tr{min-height:40px;border-bottom:1px solid var(--line-soft);background-image:linear-gradient(90deg,var(--c) 0 3px,transparent 3px)}
 tbody tr:nth-child(even){background-color:var(--band)}
