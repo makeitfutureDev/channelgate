@@ -2245,6 +2245,20 @@ can still name it, resolves to the normal default instead of ending a turn or re
       recreating its container with `--pids-limit 4096` (`podman inspect --format
       '{{.HostConfig.PidsLimit}}'`). Set 1,024 in Settings, restart, and require it to stay 1,024.
 
+## Activity stream release for stalled browsers and cleared totals on access loss (2026-11-25)
+
+Regression: `test/activity.test.js` ("SSE releases a stalled client's stream on drain timeout…" and
+"…on access ended…": a socket whose writes never complete, so `res.end()` never finishes and
+`close` never fires; nothing is written after the end, polling and run-change pushes stop, and the
+owner's next stream is accepted with `maxStreams: 1`) and `test/activity-page.test.js` ("access
+loss also clears the server totals…": tabs, summary and the narrow-screen menu read 0).
+- [ ] Live `ACTIVITY-WEB-07` (engine-independent: the stream does not depend on the engine; run
+      once with a Claude and once with a Codex thread). With 300+ threads, open Activity's stream
+      from a client that stops reading (`web07-slow.mjs`), start and finish runs for longer than
+      `drainTimeoutMs`. Pass: the daemon logs no `ERR_STREAM_WRITE_AFTER_END`, and two fresh
+      streams on the same session both answer 200. Then revoke the viewer (`ACTIVITY-WEB-03`) on an
+      open dashboard. Pass: rows, status-tab counts and the footer summary all read empty/0.
+
 ## Faster Activity and dashboard lists (2026-11-24)
 
 Regression: `test/slack-members.test.js` (shared lookup, TTL, failure not cached, invalidation),

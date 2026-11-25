@@ -1150,19 +1150,30 @@ export function createActivityRouter({
       || [...streams].filter((stream) => stream.ownerId === initial.session.ownerId).length >= 3) return unavailable(res, 429);
     res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", Connection: "keep-alive" });
     res.flushHeaders(); res.write("retry: 2000\n\n");
-    let closed = false, sending = false, dirty = false, lastKey, lastAccess = 0, queued;
+    let closed = false, sending = false, dirty = false, lastKey, lastAccess = 0, queued, timer, unthread, unruns, release;
     const queue = () => { if (!closed && !queued) queued = setTimeout(() => { queued = null; void send(); }, 25); };
-    const stream = { id: req.params.id, ownerId: initial.session.ownerId, end: () => res.end(), changed: queue };
+    // Every way a stream stops (client gone, drain timeout, access ended, test reset) goes through
+    // here once: a stalled client never fires 'close' after res.end(), so the poll timer, the
+    // subscriptions and the stream slot must be released now, not when the socket finally dies.
+    const finish = (last = "") => {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer); clearTimeout(queued); queued = null;
+      unthread?.(); unruns?.(); streams.delete(stream); release?.();
+      if (!res.writableEnded && !res.destroyed) { if (last) res.write(last); res.end(); }
+    };
+    const stream = { id: req.params.id, ownerId: initial.session.ownerId, end: () => finish(), changed: queue };
     streams.add(stream);
-    const endAccess = () => { if (!closed) { res.write('event: access-ended\ndata: {}\n\n'); res.end(); } };
+    const endAccess = () => finish('event: access-ended\ndata: {}\n\n');
     // A false `write` only means the socket buffer is full (any snapshot above the stream's
     // high-water mark trips it on a healthy connection): wait for the buffer to drain rather
     // than closing, which would make the browser reconnect and refetch the same snapshot forever.
     const drained = () => new Promise((resolve) => {
       if (closed || res.destroyed) return resolve(false);
-      const settle = (ok) => { clearTimeout(limit); res.off("drain", onDrain); res.off("close", onClose); resolve(ok); };
+      const settle = (ok) => { release = null; clearTimeout(limit); res.off("drain", onDrain); res.off("close", onClose); resolve(ok); };
       const onDrain = () => settle(true), onClose = () => settle(false);
       const limit = setTimeout(() => settle(false), drainTimeoutMs);
+      release = () => settle(false);
       res.on("drain", onDrain); res.on("close", onClose);
     });
     const send = async () => {
@@ -1179,20 +1190,20 @@ export function createActivityRouter({
           if (version !== configVersion) { dirty = true; continue; }
           lastKey = key; lastAccess = now();
           if (key !== combinedRefreshKey(initial.session.ownerId)) dirty = true;
-          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { res.end(); break; }
+          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { finish(); break; }
         }
       } catch (error) {
         if (error.status === 401 || error.status === 403) endAccess();
         else if (!closed) res.write('event: threads-unavailable\ndata: {}\n\n');
       } finally { sending = false; }
     };
-    const unthread = onThreadChanged(({ channelId, threadTs }) => {
+    unthread = onThreadChanged(({ channelId, threadTs }) => {
       if (isSlackThreadParticipant(channelId, threadTs, initial.session.ownerId)
         || (linkedIds.get(initial.session.ownerId) || []).some(id => isPlatformThreadParticipant(channelId, threadTs, id))) queue();
     });
-    const unruns = onActiveRunsChanged(queue);
+    unruns = onActiveRunsChanged(queue);
     let checking = false;
-    const timer = setInterval(async () => {
+    timer = setInterval(async () => {
       if (checking || closed) return;
       checking = true;
       try {
@@ -1203,8 +1214,8 @@ export function createActivityRouter({
       finally { checking = false; }
     }, pollMs);
     timer.unref?.();
-    res.on("close", () => { closed = true; clearInterval(timer); clearTimeout(queued); unthread(); unruns(); streams.delete(stream); });
-    void send();
+    res.on("close", () => finish());
+    if (res.destroyed) finish(); else void send();
   });
   router.use((_error, _req, res, _next) => unavailable(res, 400));
   return router;

@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Activity no longer keeps a stalled browser's live connection: its slot frees for your next
+  tab right away, the server stops logging errors for it, and when your access ends the status
+  tabs and footer totals clear along with the conversations.
+
 - A schedule in an archived channel keeps its paused status and logs one pause event per
   archival, instead of a new pause event on every other cron fire.
 
