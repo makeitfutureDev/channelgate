@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { composioApprovalDetails, withComposioApproval } from "../src/mcp/composio-approval.js";
+import { composioApprovalDetails, normalizeComposioCall, withComposioApproval } from "../src/mcp/composio-approval.js";
 
 const invite = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{
   tool_slug: "SLACK_INVITE_USERS_TO_A_SLACK_CHANNEL", account: "requester",
@@ -194,4 +194,64 @@ test("preview shows every channel/account alias and arrays; oversized previews a
   const d = composioApprovalDetails({ name: "SLACK_INVITE_USER_TO_CHANNEL", arguments: { channel: "C_SAFE", channel_id: "C_OTHER", user_ids: ["U_A", "U_B"], account: "one", connected_account_id: "two" } }, "composio-user");
   for (const v of ["channel=C_SAFE", "channel_id=C_OTHER", "user_ids=[U_A, U_B]", "account=one", "connected_account_id=two"]) assert.ok(d.includes(v), v);
   assert.throws(() => composioApprovalDetails({ name: "SLACK_INVITE_USER_TO_CHANNEL", arguments: { users: "U".repeat(200) } }, "composio-user"));
+});
+
+const upload = { tool_slug: "GOOGLEDRIVE_UPLOAD_FILE", arguments: { file_to_upload: { name: "offer.pptx", mimetype: "application/vnd.openxmlformats-officedocument.presentationml.presentation", s3key: "k/offer.pptx" } } };
+
+test("a batch whose tools arrive as a JSON string is decoded, inspected and forwarded as the array", async (t) => {
+  const f = await fixture(t);
+  const encoded = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: JSON.stringify([upload]), sync_response_to_workbench: false } };
+  assert.equal((await f.client.callTool(encoded)).content[0].text, "executed");
+  assert.deepEqual(f.calls, [{ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [upload], sync_response_to_workbench: false } }]);
+  assert.equal(f.cards.length, 0);
+  // An item whose arguments are an encoded object is decoded the same way.
+  const itemEncoded = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: upload.tool_slug, arguments: JSON.stringify(upload.arguments) }] } };
+  assert.equal((await f.client.callTool(itemEncoded)).content[0].text, "executed");
+  assert.deepEqual(f.calls[1], { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [upload] } });
+});
+
+test("string encoding cannot hide a membership action from the approval card", async (t) => {
+  const f = await fixture(t);
+  const encoded = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: JSON.stringify([upload, invite.arguments.tools[0]]) } };
+  const result = await f.client.callTool(encoded);
+  assert.equal(result.isError, true);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.cards.length, 1);
+  assert.match(f.cards[0].toolInput.details, /SLACK_INVITE_USERS_TO_A_SLACK_CHANNEL: channel=C_PRIVATE; users=U_BOT/);
+  assert.match(result.content[0].text, /changes Slack channel membership/);
+  const approved = await fixture(t, { requestApproval: async () => ({ allow: true }) });
+  assert.equal((await approved.client.callTool(encoded)).content[0].text, "executed");
+  assert.deepEqual(approved.calls[0].arguments.tools, [upload, invite.arguments.tools[0]]);
+});
+
+test("refusals name the actual reason so the engine can correct the call", async (t) => {
+  const f = await fixture(t);
+  const text = async (params) => (await f.client.callTool(params)).content[0].text;
+  const notArray = await text({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: "[{\"tool_slug\": \"GOOGLEDRIVE_UPLOAD_FILE\"" } });
+  assert.match(notArray, /nothing was sent to the connector/);
+  assert.match(notArray, /JSON array of \{"tool_slug"/);
+  assert.match(notArray, /a string that is not a JSON array/);
+  assert.doesNotMatch(notArray, /membership/);
+  assert.match(await text({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: {} }), /got no tools/);
+  assert.match(await text({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ arguments: {} }] } }), /has no tool_slug/);
+  const proxy = await text({ name: "COMPOSIO_PROXY_EXECUTE", arguments: { endpoint: "/x" } });
+  assert.match(proxy, /COMPOSIO_PROXY_EXECUTE is disabled/);
+  assert.match(proxy, /COMPOSIO_REMOTE_WORKBENCH/);
+  assert.equal(f.calls.length, 0);
+  const denied = await fixture(t, { requestApproval: async () => ({ allow: false }) });
+  assert.match((await denied.client.callTool(invite)).content[0].text, /needs a one-use human approval, and that approval was denied/);
+  const revoked = await fixture(t, { authorize: () => { throw new Error("capability rejected with detail"); } });
+  const revokedText = (await revoked.client.callTool({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [upload] } })).content[0].text;
+  assert.match(revokedText, /authority is no longer valid/);
+  assert.doesNotMatch(revokedText, /with detail|membership/);
+});
+
+test("normalizeComposioCall leaves undecodable or non-executor shapes untouched", () => {
+  const odd = { name: "GMAIL_SEND_EMAIL", arguments: { tools: "[1]", body: "{\"a\":1}" } };
+  assert.deepEqual(normalizeComposioCall(odd), odd);
+  const bad = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: "{\"tool_slug\":\"X\"}" } };
+  assert.deepEqual(normalizeComposioCall(bad), bad);
+  const input = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: JSON.stringify([upload]) } };
+  normalizeComposioCall(input);
+  assert.equal(typeof input.arguments.tools, "string", "the caller's object is not mutated");
 });

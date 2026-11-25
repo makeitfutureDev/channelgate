@@ -2,6 +2,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Composio calls the gateway refuses now say why (for example a batch's `tools` sent as text
+  instead of a list, or a disabled executor and what to use instead), so the agent can correct the
+  call. Previously every refusal claimed a channel membership change needed approval. A batch sent
+  as JSON text is now decoded and run, with the same membership check as a structured one.
+
 - The ROI page now sets the value against everything ChannelGate spent on AI in the window —
   chats, automations, API runs, background jobs and memory reviews — instead of only the
   automations' and API runs' own cost, so the net value and the ROI multiple are no longer
