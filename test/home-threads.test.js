@@ -14,7 +14,7 @@ const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChan
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, setSlackThreadHidden, indexSlackThread, indexSlackFork, slackThreadRootOwner, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+const { HOME_THREADS_ACTION, homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
@@ -614,6 +614,7 @@ test("every Home page keeps action ids unique per block and Previous/Next publis
     [["Previous", "cg_home_threads_prev", 0], ["Next", "cg_home_threads_next", 2]]);
   let handler; const states = [];
   registerHomeThreadActions({ action: (id, fn) => { if (id instanceof RegExp) handler = fn; } }, { publishHome: async (_c, _u, state) => states.push(state) });
+  for (const id of ["cg_home_threads_prev", "cg_home_threads_next", "cg_home_threads_page"]) assert.ok(HOME_THREADS_ACTION.test(id), `${id} must route to the handler`);
   for (const el of nav) {
     assert.match(el.action_id, /^cg_home_threads_(prev|next)$/);
     await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client, action: { action_id: el.action_id, value: el.value } });

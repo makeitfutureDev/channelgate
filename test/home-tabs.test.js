@@ -120,7 +120,7 @@ test("every Home handler refuses a non-string actor before any user write, load 
     await app.actionFor(COMPOSIO_HOME_CLEAR_ACTION)({ ack: async () => {}, body, client });
     await app.views.get(COMPOSIO_HOME_MODAL)({ ack: async () => {}, body, client, view: {
       state: { values: { [COMPOSIO_TOKEN_BLOCK]: { [COMPOSIO_TOKEN_INPUT]: { value: "forged-fixture-123" } } } } } });
-    for (const kind of ["filter", "refresh", "doneall"]) {
+    for (const kind of ["filter", "refresh", "doneall", "prev", "next", "page"]) {
       await app.actionFor(`cg_home_threads_${kind}`)({ ack: async () => {}, body, client,
         action: { action_id: `cg_home_threads_${kind}`, value: "{}", selected_option: { value: "done" } } });
     }
