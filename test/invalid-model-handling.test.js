@@ -116,6 +116,20 @@ test("Codex: the substituted model is announced in the thread the reader sees", 
   assert.equal(text.match(/was rejected before the turn started/g).length, 1);
 });
 
+test("Codex: a statusless native model_not_found refusal streams one substitution notice and records the fallback", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-5.6-sol", engineFallback: false, composioMode: "personal" });
+  const entry = await channel("D_MODEL_NATIVE", { engine: "codex", model: "gpt-5.6" });
+  const client = fakeSlack();
+  await processMessageEvent(event("D_MODEL_NATIVE", "5100.250", "CODEX_STUB_NATIVE_MODEL_NOT_FOUND CODEX_STUB_STREAM_TEXT"), client, { botUserId: "U_BOT", teamId: "T_MODEL" });
+  const text = client.text();
+  assert.match(client.delivered.join(""), /gpt-5\.6 was rejected before the turn started — using gateway default gpt-5\.6-sol/);
+  assert.match(text, /model=gpt-5\.6-sol/);
+  assert.equal(text.match(/was rejected before the turn started/g).length, 1);
+  assert.equal(errorsFor(entry.slug).length, 0);
+  assert.equal(fallbacksFor(entry.slug).length, 1);
+});
+
 test("Codex: a rejection reported as the provider's raw JSON body is still a model rejection", async () => {
   resetEngineCooldowns();
   saveSettings({ engine: "codex", defaultCodexModel: "gpt-5.6-sol", engineFallback: false, composioMode: "personal" });

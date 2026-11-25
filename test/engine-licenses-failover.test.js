@@ -20,7 +20,7 @@ const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/co
 const { saveSettings, getSettings } = await import("../src/config/settings.js");
 const { runMessage, resetEngineCooldowns } = await import("../src/gateway/run.js");
 const { getSessionEngine } = await import("../src/gateway/sessions.js");
-const { setThreadEngine } = await import("../src/gateway/thread-engine.js");
+const { setThreadEngine, setThreadModel } = await import("../src/gateway/thread-engine.js");
 const { createLicense, deleteLicense } = await import("../src/config/engine-licenses.js");
 const { licenseLoginHome } = await import("../src/engines/license-state.js");
 
@@ -66,6 +66,27 @@ test("a limited license hands the turn to the next selected license of the same 
   const homes = codexHomes().slice(before);
   assert.ok(homes.some((home) => home.endsWith(`.cg-licenses/${second.id}`)), `the license ran on its own login directory (${homes.join(", ")})`);
   assert.ok(homes.some((home) => !home.includes(".cg-licenses")), "after the default sign-in was tried first");
+});
+
+test("a model pin survives a usage-limit pool move followed by a native model refusal", async () => {
+  fresh({ defaultCodexModel: "gpt-5.6-sol" });
+  const second = signedInLicense("Model refusal seat");
+  await setUser("U_LIC_MODEL_PIN", { name: "Model Pin", approved: true, isAdmin: false });
+  const entry = await channel("D_LIC_MODEL_PIN", "lic-model-pin", { model: "gpt-5.6", licensePool: [second.id] });
+  await setThreadModel(entry.slug, "2001.020", "gpt-5.6");
+  const models = [];
+  const notes = [];
+  await assert.rejects(turn("D_LIC_MODEL_PIN", "U_LIC_MODEL_PIN", "CODEX_STUB_LIMIT_DEFAULT_LICENSE CODEX_STUB_NATIVE_MODEL_NOT_FOUND", "2001.020", {
+    onRuntimeResolved: ({ model }) => models.push(model),
+    onEvent: (event) => { if (event?.kind === "answer_note") notes.push(event.text); },
+  }), (error) => {
+    assert.match(error.message, /model is not supported when using Codex with a ChatGPT account/);
+    assert.equal(error.details?.runtimePinned, true);
+    assert.equal(error.details?.pinnedModel, "gpt-5.6");
+    return true;
+  });
+  assert.deepEqual(models, ["gpt-5.6", "gpt-5.6"]);
+  assert.ok(notes.every((note) => !note.includes("using gateway default")));
 });
 
 test("`Any license` reaches a license added after the channel was configured", async () => {

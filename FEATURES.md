@@ -6226,11 +6226,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and `effort` pins (`/model` → "just this thread", a `claude`/`codex` directive) for those same
   channels and reports how many were cleared. Per-thread `clean` and `sudo` postures and DM threads
   are out of scope for both. → TEST-PLAN: Engines.
- - A thread/channel/per-run Codex model that the provider explicitly rejects before generation
+ - A channel-default model that the provider explicitly rejects before generation
    retries once with that harness's distinct gateway-default model — Codex (`invalid_request_error`) and Claude (`model_not_found`) alike. The runner must prove there was no output
    or tool attempt; generic failures and partially executed turns are never replayed. Slack status,
    the reply note/footer, and the audit event identify the default that actually ran. If the default
-   also fails, the original model error remains authoritative. → TEST-PLAN: Engines.
+   also fails, the original model error remains authoritative. An explicit thread or per-run model
+   pin keeps the provider's error and manual-switch hint instead of substituting another model.
+   → TEST-PLAN: Engines.
  - **The substitution is always visible in the thread.** The note is announced to the delivery
    layer (`answer_note`) before the retry spawns, so it leads the STREAMED answer a reader actually
    sees — a note only prepended to the finished reply text reaches surfaces that render that text,
@@ -6242,7 +6244,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
    refusals by handing back the whole HTTP response body as its error message; the runner unwraps
    that document (status, provider error type, sentence) before classifying, so a model the account
    cannot use is a `model_rejected` rejection with the same fallback + note instead of an
-   unclassifiable failure. Whatever still ends as an error is posted as a sentence — the provider's
+   unclassifiable failure. The statusless native `codex_error_info="model_not_found"` refusal and
+   the exact ChatGPT unsupported-model sentence are recognized too; output or a tool attempt
+   still prevents replay, and an explicit model pin still prevents substitution.
+   Whatever still ends as an error is posted as a sentence — the provider's
    own words, never a JSON document — and a model rejection names the model and the remedy
    (`/model`, or the admin UI). → TEST-PLAN: Engines.
 - **Transient provider failures are retried in place (2026-09-03).** When the provider does not

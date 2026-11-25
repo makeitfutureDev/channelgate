@@ -134,6 +134,9 @@ function parseJsonLine(line) {
 }
 
 const MODEL_REJECTION_RE = /(?:\bmodel\b[^\n]{0,180}\b(?:not supported|unsupported|not available|unavailable|does not exist|not found|requires (?:a )?newer version|invalid)\b|\b(?:unsupported|invalid)\s+model\b)/i;
+// `exec --json` can omit the native model_not_found metadata. Accept this exact ChatGPT
+// refusal only as a provider event; generic unsupported-model prose and stderr are insufficient.
+const CHATGPT_MODEL_REJECTION_RE = /^The '[^'\r\n]+' model is not supported when using Codex with a ChatGPT account\.$/;
 // Codex plan/credit exhaustion, e.g. "You've hit your usage limit. Visit
 // https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th…".
 // Like a model rejection this lands BEFORE any generation, so the turn did no work and is safe to
@@ -174,6 +177,7 @@ export function classifyCodexFailure({ message = "", providerType = "", status =
   // failure the CLI is still retrying: transient by definition, whatever status it quotes.
   const quoted = fromLog || /\breconnecting\b/i.test(message) ? null : /unexpected status (\d{3})\b/i.exec(message);
   const httpStatus = Number(status) || (quoted ? Number(quoted[1]) : 0);
+  if (!fromLog && CHATGPT_MODEL_REJECTION_RE.test(message)) return "model_rejected";
   if ((httpStatus === 400 || httpStatus === 404 || /invalid[_ -]?request|model[_ -]?not[_ -]?found/i.test(providerType)) && MODEL_REJECTION_RE.test(message)) return "model_rejected";
   if (httpStatus === 429 || /rate[_ -]?limit|quota|insufficient[_ -]?quota|usage[_ -]?limit/i.test(providerType) || USAGE_LIMIT_RE.test(text)) return "usage_limit";
   if (httpStatus === 401 || httpStatus === 403 || /auth|credential|unauthori[sz]ed/i.test(providerType) || AUTH_FAILURE_RE.test(text)) return "authentication";
@@ -268,7 +272,9 @@ export function codexTurnError(event) {
   const body = embeddedJsonObject(reported);
   const nested = body?.error && typeof body.error === "object" ? body.error : null;
   const message = plainFailureText(reported, 600) || reported;
-  const providerType = String(raw?.type || raw?.code || nested?.type || nested?.code || body?.type || "").trim();
+  const nativeCode = typeof raw?.codex_error_info === "string" ? raw.codex_error_info : "";
+  const nestedNativeCode = typeof nested?.codex_error_info === "string" ? nested.codex_error_info : "";
+  const providerType = String(nativeCode || raw?.type || raw?.code || nestedNativeCode || nested?.type || nested?.code || body?.type || "").trim();
   const status = Number(event?.status ?? raw?.status ?? body?.status ?? nested?.status ?? 0) || 0;
   // Recent Codex builds sometimes report a provider refusal as
   // `{ type: "turn.failed", error: "Selected model is at capacity…" }`: the error is a plain

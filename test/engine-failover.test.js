@@ -73,6 +73,28 @@ test("codexTurnError attaches the classification to the thrown details", () => {
   assert.equal(details.providerKind, "usage_limit");
 });
 
+test("Codex's statusless native model_not_found refusal preserves its code and classification", () => {
+  const message = "The 'gpt-qa-nonexistent' model is not supported when using Codex with a ChatGPT account.";
+  const failure = codexTurnError({ type: "turn.failed", error: { message, codex_error_info: "model_not_found" } });
+  assert.equal(failure.message, message);
+  assert.equal(failure.details.providerStatus, null);
+  assert.equal(failure.details.providerCode, "model_not_found");
+  assert.equal(failure.details.providerKind, "model_rejected");
+  const nativeOnly = codexTurnError({ type: "turn.failed", error: { message: "The requested model was not found.", codex_error_info: "model_not_found" } });
+  assert.equal(nativeOnly.details.providerKind, "model_rejected", "the native code suffices without the ChatGPT-specific sentence");
+  const structured = codexTurnError({ type: "turn.failed", error: { message: "The requested model was not found.", type: "invalid_request_error", codex_error_info: { unexpected: true } } });
+  assert.equal(structured.details.providerCode, "invalid_request_error", "an unknown native shape cannot shadow the existing provider type");
+  assert.equal(structured.details.providerKind, "model_rejected");
+});
+
+test("the exact statusless ChatGPT model refusal classifies even when exec omits its native code", () => {
+  const message = "The 'gpt-qa-nonexistent' model is not supported when using Codex with a ChatGPT account.";
+  assert.equal(codexTurnError({ type: "error", message }).details.providerKind, "model_rejected");
+  assert.equal(classifyCodexFailure({ message, source: "stderr" }), "", "a log line alone cannot authorize model replay");
+  assert.equal(classifyCodexFailure({ message: "The model is not supported by this tool." }), "");
+  assert.equal(classifyCodexFailure({ message: "Malformed request", providerType: "model_not_found" }), "");
+});
+
 test("a plain-text turn.failed capacity error is a transient provider failure", () => {
   const message = "Selected model is at capacity. Please try a different model.";
   const failure = codexTurnError({ type: "turn.failed", error: message });
