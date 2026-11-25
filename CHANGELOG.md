@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The admin sign-in page shows the actual remedy when a private identity code cannot be sent
+  (for example "Reconnect the user's chat platform and retry") instead of "internal error".
+
 - Asked what Full access would expose, an agent in a channel without the home grant now explains
   it correctly: the granted mount is the whole operator home, including other conversations and
   the gateway's own store, not a narrower view.

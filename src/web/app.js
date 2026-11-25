@@ -576,14 +576,18 @@ export function createWebApp({
   // The one error handler. Without it Express's default answers an unexpected throw with the
   // stack trace (absolute paths, the OS account) unless NODE_ENV says production — on public
   // routes like /approve and /api/runs. Client errors keep their status and the message the
-  // middleware marked as exposable (a malformed JSON body stays a 400 that says so); anything
-  // else is logged here and answered with a bare 500.
+  // middleware marked as exposable (a malformed JSON body stays a 400 that says so). A server-side
+  // status keeps its message only when the code that threw marked it exposable on purpose — the
+  // admin sign-in's 503 remedies ("Reconnect the user's chat platform") were masked as "internal
+  // error" (2026-11-25 QA, ADM-PASSKEY-BOOTSTRAP-01); http-errors never marks a 5xx exposable.
+  // Anything else is logged here and answered with a bare "internal error".
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, _next) => {
     const status = Number(err?.status || err?.statusCode) >= 400 && Number(err?.status || err?.statusCode) < 600 ? Number(err?.status || err?.statusCode) : 500;
     if (status >= 500) console.error(`[web] ${req.method} ${req.path} failed:`, err?.stack || err);
     if (res.headersSent) return res.end();
-    const message = status < 500 && err?.expose ? String(err.message || "bad request") : status < 500 ? "bad request" : "internal error";
+    const fallback = status < 500 ? "bad request" : "internal error";
+    const message = err?.expose === true ? String(err.message || fallback) : fallback;
     res.status(status);
     if (isApiPath(req.path) || /\bjson\b/.test(String(req.headers.accept || ""))) return res.json({ error: message });
     return res.type("text").send(message);

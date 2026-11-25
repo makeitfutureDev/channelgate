@@ -2341,6 +2341,13 @@ cost no extra Slack call. Change it in Slack App Home → **Help & settings**, o
 dashboard → **Settings**, or ask the agent (`set_my_voice_auto_start`, which changes only the
 verified requester). Slack only; Teams and Google Chat still need a mention.
 
+## Admin sign-in remedies are shown (2026-11-25)
+
+When the private identity code for admin sign-in cannot be sent (no chat transport, or access
+changed), the sign-in page shows the reason and remedy instead of "internal error". Only errors the
+gateway deliberately marks as safe to show keep their message on a server-side status; everything
+else still answers a bare "internal error". → TEST-PLAN: Admin sign-in remedies are not masked.
+
 ## Installed-app passkey sign-in (2026-11-14)
 
 On macOS, installed Chromium Activity apps continue passkey sign-in in a regular browser tab

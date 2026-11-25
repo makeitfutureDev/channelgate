@@ -46,7 +46,12 @@ test("private identity proof is session-bound, fails closed on delivery/role rac
   assert.equal((await request("/api/auth/link/options", { userId: "UHTTPMEMBER", isAdmin: true }, first.cookie)).status, 400);
   assert.equal((await request("/api/auth/link/options", { userId: "missing", isAdmin: true }, first.cookie)).status, 400);
   delivery = "fail";
-  assert.equal((await request("/api/auth/link/options", { userId: "UHTTPADMIN" }, first.cookie)).status, 503);
+  const undelivered = await request("/api/auth/link/options", { userId: "UHTTPADMIN" }, first.cookie);
+  assert.equal(undelivered.status, 503);
+  // The deliberate remedy reaches the login page (it was masked as "internal error"); the
+  // underlying delivery error never does.
+  assert.match(undelivered.body.error, /could not be delivered, or access changed\. Reconnect the user’s chat platform and retry\./);
+  assert.doesNotMatch(undelivered.body.error, /fixture delivery failure/);
   assert.equal(getDb().prepare("SELECT count(*) AS n FROM admin_identity_links").get().n, 0);
   delivery = "role-race";
   assert.equal((await request("/api/auth/link/options", { userId: "UHTTPADMIN" }, first.cookie)).status, 503);
