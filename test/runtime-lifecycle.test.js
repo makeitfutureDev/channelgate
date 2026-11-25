@@ -623,6 +623,12 @@ test("force shutdown skips the drain while preserving durable interruptions and 
   assert.deepEqual(events, ["mark-interrupted", "cold", "warm", "final-cold", "final-warm", "exit"]);
 });
 
+test("daemon startup can start the scheduler while an interrupted chat turn is still running", () => {
+  const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
+  assert.match(server, /void runRecovery\.start\(\)\.catch/);
+  assert.doesNotMatch(server, /await runRecovery\.start\(\)/);
+});
+
 test("the server restart callback passes force and the systemd relaunch exit code to shutdown", () => {
   const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
   const callback = server.match(/restart: (\(\{ reason[^\n]+?=> requestShutdown\([^\n]+?\)),\n/);

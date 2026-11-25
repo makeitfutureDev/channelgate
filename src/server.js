@@ -463,11 +463,16 @@ async function main() {
   // arriving after reconnect get fresh rows and aren't mistaken for stale ones.
   const staleRuns = takeStaleRuns();
   const runRecovery = createRunRecovery(staleRuns, { slack });
+  // Replaying an interactive turn can take hours. Reserve it through the recovery coordinator,
+  // but let independent boot services (cron, digests, API delivery) start while the agent runs.
+  const resumeInterruptedTurns = () => {
+    void runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+  };
   // Both wait for Slack membership: a survivor in a Slack channel is replayed when its channel is
   // verified, and the containers of Slack channels that kept running get their egress listener
   // back then (the boot pass above ran before Slack connected and could only count them).
   afterMembershipVerified = () => {
-    runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+    resumeInterruptedTurns();
     if (egressRestoreWaiting) {
       egressRestoreWaiting = false;
       bindRunningChannelEgress({ log: console })
@@ -505,7 +510,7 @@ async function main() {
   // Auto re-run interactive Slack turns that were interrupted mid-flight by the restart — resumes
   // the same thread/session and posts the answer. Runs after Slack is connected so it can post.
   if (staleRuns.length) console.log(`[gateway] recovering ${staleRuns.length} interrupted turn(s)…`);
-  await runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+  resumeInterruptedTurns();
 
   // Auto re-run API jobs that were queued/running when the daemon restarted. Slack-backed API jobs
   // resume in their original thread; headless jobs resume silently and finish through status/webhook.

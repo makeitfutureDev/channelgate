@@ -9850,6 +9850,9 @@ do not establish live model compliance. This changes guidance only, not resolver
 
 ## Incomplete turns and restart recovery
 
+- [x] Restart recovery starts long-running interactive replays without holding scheduler and follow-up timer startup (runtime lifecycle and recovery queue regressions).
+- [ ] On a deployed beta with a resumed Slack turn still active, confirm a due QA schedule starts on time.
+
 - [x] CTR-12 automated regression in `test/duplicate-delivery.test.js` and `test/recovery-queue.test.js`.
   A fresh receiver rejects a completed message while accepting another message or channel.
   Explicit retries and unfinished recovery still run. Receipt storage is atomic with recovery-row

@@ -2,6 +2,8 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- After a restart, schedules and follow-up timers start while interrupted Slack turns resume.
+
 - The follow-up digest and `pending` list work again: the gateway's own answers in a channel thread
   are recorded as the thread's last turn (Slack's event layer drops the bot's own posts, so since
   late August no thread ever looked like it was waiting on someone).
