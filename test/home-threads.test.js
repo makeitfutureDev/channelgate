@@ -351,7 +351,10 @@ for (const reaction of ["+1", "thumbsup", "+1::skin-tone-3", "thumbsup::skin-ton
     assert.deepEqual(markerCalls, []);
     recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "U_MINE", aiTurn: true, tsMs: 1000 });
     recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
-    assert.match(await buildPendingReportForUser(client, "U_MINE", "BOT", 3000), /waiting on your decision in 1 thread/);
+    const pendingReport = await buildPendingReportForUser(client, "U_MINE", "BOT", 3000);
+    assert.match(pendingReport, /waiting on your decision in 1 thread/);
+    assert.match(pendingReport, /react ✅ \(or ✔️\) to complete it/);
+    assert.doesNotMatch(pendingReport, /👍/, "👍 is answer feedback, not a completion reaction");
     const map = new Map(); noteBotReply(c.channelId, c.slug, "100.000001", "U_MINE", { map, nowMs: 1000 });
     let posts = 0;
     await sweepNudges({ snapshot: () => ({ connected: true }), getClient: () => client }, {

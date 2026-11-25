@@ -2,6 +2,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- The pending-threads list and the follow-up digest DM no longer say 👍 completes a thread; only ✅
+  and ✔️ do, as the gateway already enforced.
+
 - The admin sign-in page shows the actual remedy when a private identity code cannot be sent
   (for example "Reconnect the user's chat platform and retry") instead of "internal error".
 

@@ -1744,6 +1744,15 @@ live cases name the harness where it matters and are run once for Claude Code an
       `task_kind = 'memory_review'` carries the license id. With the lock set to a Codex license only: no
       review runs and none is announced.
 
+## Follow-up completion hints name only checkmarks (2026-11-25)
+- [x] Automated: `node --test test/followups-store.test.js test/home-threads.test.js` — the
+      digest DM says "react ✅ to dismiss all listed threads (✔️ also works)" and the pending-threads
+      report says "react ✅ (or ✔️) to complete it"; neither mentions 👍, which is answer feedback
+      and never completes a thread (`src/gateway/completion-reactions.js`).
+- [ ] Live (engine-independent): ask the bot for pending threads in a DM and read the next
+      follow-up digest. PASS only if both hints name ✅/✔️ only, and a ✅ on the digest dismisses the
+      listed threads while a 👍 does not.
+
 ## Admin sign-in remedies are not masked (2026-11-25)
 - [x] Automated: `node --test test/admin-user-link-http.test.js` — when the private identity code
       cannot be delivered, `POST /api/auth/link/options` answers 503 with the remedy text ("could not

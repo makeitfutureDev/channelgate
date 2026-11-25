@@ -374,7 +374,7 @@ export async function buildPendingReportForUser(c, userId, botUserId, nowMs = Da
   if (unverified) return "I couldn’t verify completion reactions for every thread. Please try again shortly.";
   if (!pending.length) return "✅ Nothing pending — I'm not waiting on your decision in any thread.";
   const body = await formatPendingReport(pending, nowMs, permalinkVia(c));
-  return body + `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ or 👍 to complete it._`;
+  return body + `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ (or ✔️) to complete it._`;
 }
 
 // Build and DM one user's digest of threads the AI is waiting on them for. Returns the count
@@ -401,7 +401,7 @@ export async function sendDigest(c, userId, botUserId, nowMs) {
     pending = pending.filter(stillOpen);
     if (!pending.length) return 0;
     const text = (await formatPendingReport(pending, nowMs, resolveLink)) +
-      `\n\n_Reply in a thread to answer — it clears automatically once you do. Or React ✅ to dismiss all listed threads (👍 also works). I check at the start of your day and again early afternoon._`;
+      `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ to dismiss all listed threads (✔️ also works). I check at the start of your day and again early afternoon._`;
     if (pending.some((rec) => !stillOpen(rec))) return 0;
     const posted = await postNotice(connector, { conversationId: dm, text });
     if (!posted) return 0;
