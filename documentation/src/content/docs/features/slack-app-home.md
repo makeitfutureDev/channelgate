@@ -45,7 +45,7 @@ participation is retained when its engine session is cleared.
 - **Idle**: no tracked work or decision is active. A finished reply does not declare the task done.
 - **Error**: the latest tracked foreground/recovery or background outcome failed or was refused.
 
-A ✅, ✔️ or 👍 on the root or **any reply**, or **✓ Done** in Activity, completes the thread.
+A ✅ or ✔️ reaction on the root or **any reply**, or **✓ Done** in Activity, completes the thread.
 The thread owner’s native 👍 feedback button below an answer also marks it Done.
 Completed work disappears from open views and stops quiet-thread reminders and pending-response
 digests, even if later messages arrive or work/forms remain active. Marking Done does not cancel
