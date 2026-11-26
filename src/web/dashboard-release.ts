@@ -16,12 +16,12 @@ export const callsReleaseSession = randomUUID();
 const selector = (root: string) => path.join(root, "activity-calls-release.json");
 
 export type AdminSource = Record<string, string>;
-export interface DashboardSources { calls?: CallsSource; admin?: AdminSource }
+export interface DashboardSources { calls?: CallsSource; admin?: AdminSource; activityLayout?: string }
 let cached: { key: string; session: string; sources: DashboardSources } | undefined;
 
 // During validation many browser requests may share the same immutable snapshot file.
 // Use the atomic rename identity so switching to/from an older release is visible immediately.
-function readDashboardRelease(root: string, session: string): DashboardSources | null {
+export function readDashboardRelease(root = gatewayRoot(), session: string = callsReleaseSession): DashboardSources | null {
   const file = selector(root);
   const stat = statSync(file, { throwIfNoEntry: false, bigint: true });
   if (!stat) { cached = undefined; return null; }
@@ -31,6 +31,7 @@ function readDashboardRelease(root: string, session: string): DashboardSources |
     if (data.session !== session) return null;
     const sources = data.sources ?? { calls: data.source };
     const { calls, admin } = sources;
+    if (sources.activityLayout !== undefined && typeof sources.activityLayout !== "string") throw new Error("Invalid Activity layout snapshot");
     if (calls && ![calls.html, calls.css, calls.ts].every(value => typeof value === "string")) {
       throw new Error("Invalid Calls release snapshot");
     }

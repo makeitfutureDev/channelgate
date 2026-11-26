@@ -28,8 +28,7 @@ export function buildCallsView(source: CallsSource): CallsView {
   };
 }
 
-function readCallsSource(): CallsSource {
-  const active = readCallsRelease();
+function readCallsSource(active = readCallsRelease()): CallsSource {
   if (active) return active;
   const root = new URL("../../", import.meta.url);
   return {
@@ -44,8 +43,8 @@ function readCallsSource(): CallsSource {
 export function createCallsViewAssets(readSource = readCallsSource) {
   const views = new Map<string, CallsView>();
   return {
-    current() {
-      const source = readSource();
+    current(active?: CallsSource | null) {
+      const source = readSource(active);
       const revision = revisionOf(source);
       const view = views.get(revision) ?? buildCallsView(source);
       views.delete(revision);

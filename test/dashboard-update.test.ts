@@ -148,3 +148,22 @@ test("browser-only typed modules ship at their .js URL and new modules require a
   writeFileSync(path.join(f.repo, "public/admin-routes.js"), 'export const path = "/test";');
   assert.equal(isDashboardOnlyUpdate(f.repo, complete, f.commit()), false);
 });
+
+
+test("the common Activity stylesheet can release alone and must match its serving session before checkout", async t => {
+  const { activityLayoutFile, buildActivityLayout } = await import("../src/web/activity-layout.ts");
+  const f = fixture(); t.after(() => rmSync(f.repo, { recursive: true, force: true }));
+  const file = path.join(f.repo, activityLayoutFile);
+  writeFileSync(file, ".top{color:red}");
+  const old = f.commit();
+  writeFileSync(file, ".top{color:blue}");
+  const target = f.commit();
+  assert.equal(isDashboardOnlyUpdate(f.repo, old, target), true);
+  assert.equal(prepareDashboardUpdate(f.repo, old, target, {}), null);
+  const release = prepareDashboardUpdate(f.repo, old, target, {
+    activityLayout: { session: "boot", revision: buildActivityLayout(".top{color:red}").revision },
+  });
+  assert.equal(release?.candidate.source.activityLayout, ".top{color:blue}");
+  assert.deepEqual(Object.keys(release!.candidate.revisions), ["activityLayout"]);
+  assert.throws(() => buildActivityLayout("/* </style> */"), /Invalid Activity layout/);
+});
