@@ -1,5 +1,10 @@
 # ChannelGate — Test Plan
 
+## Running Slack thread reaction
+
+- Automated coverage in `test/thread-running-reaction.test.ts` checks the root target, overlap and terminal cleanup, delayed requests, transient errors and restart reconciliation.
+- Live acceptance for each of Claude and Codex in a private Slack test channel: ask for a 30-second task in a thread. Observe ▶️ on its root from the channel view. Queue a second turn, let it finish, and verify the agent’s reaction clears. Repeat and press Stop during the run. A human’s own ▶️ reaction should remain. No completion reaction should appear automatically. Capture the thread link and root reactions before, during and after each test.
+
 ## Native Claude compaction transport and session guard (2026-11-26)
 
 - Automated: `node --test test/native-compact.test.js test/claude-args.test.js test/claude-completion.test.js test/claude-fallback-e2e.test.js test/inherited-file-commands.test.js test/claude-message-boundaries.test.js`.

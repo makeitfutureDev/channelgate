@@ -23,6 +23,10 @@ function fakeSlack(user) {
   const ok = async () => ({ ok: true });
   return {
     calls, posted, streamed,
+    reactions: {
+      add: async (args) => { calls.push({ method: "reactions.add", args }); return { ok: true }; },
+      remove: async (args) => { calls.push({ method: "reactions.remove", args }); return { ok: true }; },
+    },
     apiCall: async (method, args) => { calls.push({ method, args }); return { ok: true }; },
     chat: {
       postMessage: async (message) => { posted.push(message); return { ok: true, ts: `bot.${++seq}` }; },
@@ -65,6 +69,7 @@ test("Stop during directory preflight never starts progress or the runner afterw
     await processing;
     assert.equal(client.calls.slice(afterStop).some(({ args }) => args.status === "processing"), false);
     assert.equal(backend.calls.spawn.length, 0);
+    assert.equal(client.calls.some(call => call.method.startsWith("reactions.")), false);
     assert.equal(runQueue.isActive(`${slug}::${thread}`), false);
   } finally {
     release.resolve();
@@ -104,13 +109,16 @@ for (const engine of ["claude", "codex"]) {
     await useFakeRuntime(backend);
     const client = fakeSlack(user);
     const processing = processMessageEvent({ type: "message", channel, channel_type: "im", user,
-      text: "run the delayed abort fixture", ts: thread }, client, { botUserId: "U_BOT", teamId: `T_LATE_${engine}` });
+      text: "run the delayed abort fixture", ts: "9100.202", thread_ts: thread }, client, { botUserId: "U_BOT", teamId: `T_LATE_${engine}` });
     try {
       await ready.promise;
+      const reaction = { channel, timestamp: thread, name: "arrow_forward" };
+      assert.deepEqual(client.calls.filter(call => call.method === "reactions.add").map(call => call.args), [reaction]);
       await stopRunsInChannel(client, channel, slug, user, thread);
       const afterStop = client.calls.length;
       await late.promise;
       await processing;
+      assert.deepEqual(client.calls.filter(call => call.method === "reactions.remove").map(call => call.args), [reaction]);
       assert.equal(client.calls.slice(afterStop).some(({ args }) => args.status === "processing"), false);
       assert.doesNotMatch(JSON.stringify([...client.posted, ...client.streamed]), /LATE_ABORTED_ANSWER/);
       assert.equal(client.posted.filter((m) => m.text === "🛑 Stopped.").length, 1);

@@ -2,6 +2,7 @@
 import { getDb } from "../db/index.js";
 import { getSlackThread, slackThreadIsDone, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
+import { queueRunningReactionsForRecovery, retryRunningReactions } from "./thread-running-reaction.ts";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 
 const identities = new WeakMap();
@@ -91,14 +92,14 @@ export async function retryThreadDoneMarkers(client, { now = Date.now(), limit =
   }
 }
 
-export function startThreadDoneMarkerSync({ slack, intervalMs = 60_000 } = {}) {
+export function startThreadMarkerSync({ slack, intervalMs = 60_000 } = {}) {
+  queueRunningReactionsForRecovery();
   let running = false;
   const sweep = async () => {
     const client = slack.getClient();
     if (running || !client) return;
     running = true;
-    try { await retryThreadDoneMarkers(client); }
-    catch { /* a later sweep retries after a transient store/transport failure */ }
+    try { await Promise.allSettled([retryRunningReactions(client), retryThreadDoneMarkers(client)]); }
     finally { running = false; }
   };
   const timer = setInterval(() => { void sweep(); }, intervalMs);

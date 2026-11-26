@@ -1574,4 +1574,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 66,
+    up(db) {
+      db.exec(`
+        CREATE TABLE slack_running_reactions (
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          retry_ms INTEGER,
+          PRIMARY KEY (channel_id, thread_ts)
+        );
+      `);
+    },
+  },
 ];
