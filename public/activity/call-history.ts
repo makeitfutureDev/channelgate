@@ -1,4 +1,4 @@
-interface CallListEntry {
+export interface CallListEntry {
   id: string;
   startedMs: number;
   durationMs: number;
