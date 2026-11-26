@@ -2,11 +2,12 @@
 
 ## Dashboard-only updates
 
-The updater can publish changes to the Activity Calls HTML, CSS and TypeScript while agent turns
-continue. It validates the candidate, switches the complete view, checks its content revision and
-the original daemon instance, and restores the previous view on a failed check. Authenticated
-health exposes the served Calls revision separately from the daemon's boot revision. Backend and
-mixed updates use the full service update.
+The updater can release the admin dashboard shell, styles and independent browser modules
+together with the Activity Calls view while agent turns continue. Both surfaces can change in
+one transaction. It validates the candidate and its served revision on the original daemon
+instance and restores the previous design if verification fails. Previously opened tabs keep
+their versioned module URLs across the switch. Changes to sign-in code, server-imported
+modules or other backend files use the full update path.
 
 ## Claude native compaction preserves the thread session (2026-11-26)
 

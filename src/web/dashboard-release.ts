@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gatewayRoot } from "../config/paths.js";
 
@@ -15,30 +15,55 @@ export const callsFiles = {
 export const callsReleaseSession = randomUUID();
 const selector = (root: string) => path.join(root, "activity-calls-release.json");
 
-export function readCallsRelease(root = gatewayRoot(), session: string = callsReleaseSession): CallsSource | null {
-  let bytes: string;
-  try {
-    bytes = readFileSync(selector(root), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+export type AdminSource = Record<string, string>;
+export interface DashboardSources { calls?: CallsSource; admin?: AdminSource }
+let cached: { key: string; session: string; sources: DashboardSources } | undefined;
+
+// During validation many browser requests may share the same immutable snapshot file.
+// Use the atomic rename identity so switching to/from an older release is visible immediately.
+function readDashboardRelease(root: string, session: string): DashboardSources | null {
+  const file = selector(root);
+  const stat = statSync(file, { throwIfNoEntry: false, bigint: true });
+  if (!stat) { cached = undefined; return null; }
+  const key = JSON.stringify([file, String(stat.ino), String(stat.ctimeNs)]);
+  if (cached?.key !== key) {
+    const data = JSON.parse(readFileSync(file, "utf8"));
+    if (data.session !== session) return null;
+    const sources = data.sources ?? { calls: data.source };
+    const { calls, admin } = sources;
+    if (calls && ![calls.html, calls.css, calls.ts].every(value => typeof value === "string")) {
+      throw new Error("Invalid Calls release snapshot");
+    }
+    if (admin && (typeof admin !== "object" || Array.isArray(admin) ||
+        !Object.values(admin).every(value => typeof value === "string"))) {
+      throw new Error("Invalid admin release snapshot");
+    }
+    cached = { key, session, sources };
   }
-  const release = JSON.parse(bytes);
-  if (release.session !== session) return null;
-  const { html, css, ts } = release.source;
-  if (![html, css, ts].every(value => typeof value === "string")) throw new Error("Invalid Calls release snapshot");
-  return { html, css, ts };
+  return cached.session === session ? cached.sources : null;
 }
 
-export function selectCallsRelease(root: string, session: string, source: CallsSource) {
+export function readCallsRelease(root = gatewayRoot(), session: string = callsReleaseSession): CallsSource | null {
+  return readDashboardRelease(root, session)?.calls ?? null;
+}
+
+export function readAdminRelease(root = gatewayRoot(), session: string = callsReleaseSession): AdminSource | null {
+  return readDashboardRelease(root, session)?.admin ?? null;
+}
+
+export function selectDashboardRelease(root: string, session: string, sources: DashboardSources) {
   const file = selector(root);
   const temp = file + "." + randomUUID();
   try {
-    writeFileSync(temp, JSON.stringify({ session, source }), { flag: "wx", mode: 0o600 });
+    writeFileSync(temp, JSON.stringify({ session, sources }), { flag: "wx", mode: 0o600 });
     renameSync(temp, file);
   } finally {
     rmSync(temp, { force: true });
   }
+}
+
+export function selectCallsRelease(root: string, session: string, calls: CallsSource) {
+  selectDashboardRelease(root, session, { calls });
 }
 
 export function useCheckoutCallsRelease(root: string) {

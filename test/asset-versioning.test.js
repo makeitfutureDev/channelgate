@@ -97,3 +97,65 @@ test("stamped module URLs are served and revalidated", async () => {
     assert.match(String(response.header("content-type") || ""), /javascript/, name);
   }
 });
+
+test("Admin shell, CSP and stamped module bytes stay from one release across activation and rollback", async t => {
+  const { createHash } = await import("node:crypto");
+  const { adminAssets, adminVersion } = await import("../src/web/admin-assets.ts");
+  const { selectDashboardRelease, callsReleaseSession, useCheckoutCallsRelease } = await import("../src/web/dashboard-release.ts");
+  const { gatewayRoot } = await import("../src/config/paths.js");
+  const previous = adminAssets(publicDir).current();
+  const next = { ...previous.source,
+    "index.html": previous.source["index.html"].replace("<html", '<html data-design="second"'),
+    "admin-state.js": previous.source["admin-state.js"] + "\n// second design",
+    "styles.css": previous.source["styles.css"] + "\n/* second design */",
+  };
+  const version = adminVersion(next);
+  const css = "/styles.css?v=", js = "/admin-state.js?v=";
+  selectDashboardRelease(gatewayRoot(), callsReleaseSession, { admin: next });
+  t.after(() => useCheckoutCallsRelease(gatewayRoot()));
+  const shell = await get("/");
+  assert.match(shell.body, /data-design="second"/);
+  const map = shell.body.match(/<script type="importmap">([^<]+)<\/script>/)[1];
+  assert.equal(JSON.parse(map).imports["/admin-state.js"], js + version);
+  const policy = String(shell.header("content-security-policy"));
+  assert.ok(policy.includes("'sha256-" + createHash("sha256").update(map).digest("base64") + "'"));
+  assert.equal((await get(js + previous.version)).body, previous.source["admin-state.js"]);
+  assert.equal((await get(css + previous.version)).body, previous.source["styles.css"]);
+  assert.equal((await get(css + version)).body, next["styles.css"]);
+  assert.equal((await get(js + version)).body, next["admin-state.js"]);
+  assert.equal((await get(js + "000000000000")).status, 404);
+  useCheckoutCallsRelease(gatewayRoot());
+  assert.doesNotMatch((await get("/")).body, /data-design="second"/);
+  assert.equal((await get(js + version)).body, next["admin-state.js"]);
+});
+
+test("an open admin tab can import its own version after another tab opens the released shell", { skip: !process.env.CG_BROWSER_MODULE }, async t => {
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const { adminAssets } = await import("../src/web/admin-assets.ts");
+  const { selectDashboardRelease, useCheckoutCallsRelease, callsReleaseSession } = await import("../src/web/dashboard-release.ts");
+  const { gatewayRoot } = await import("../src/config/paths.js");
+  const original = adminAssets(publicDir).current().source;
+  const publish = name => selectDashboardRelease(gatewayRoot(), callsReleaseSession, { admin: {
+    ...original,
+    "index.html": '<!doctype html><title>' + name + '</title><!--ASSET_IMPORTMAP--><script type="module" src="/app.js?v={{ASSET_V}}"></script>',
+    "app.js": 'globalThis.loadState = () => import("./admin-state.js").then(mod => mod.name);',
+    "admin-state.js": 'export const name = ' + JSON.stringify(name) + ';',
+  } });
+  t.after(() => useCheckoutCallsRelease(gatewayRoot()));
+  const server = await new Promise(resolve => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const first = await browser.newPage(), second = await browser.newPage();
+  const url = "http://127.0.0.1:" + server.address().port;
+  publish("first");
+  await first.goto(url);
+  publish("second");
+  await second.goto(url);
+  assert.equal(await second.title(), "second");
+  assert.equal(await first.evaluate(() => globalThis.loadState()), "first");
+  publish("first");
+  await first.reload();
+  assert.equal(await first.title(), "first");
+  assert.equal(await second.evaluate(() => globalThis.loadState()), "second");
+});

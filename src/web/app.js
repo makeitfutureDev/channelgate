@@ -42,7 +42,7 @@ import { callsReleaseSession, dashboardHealth } from "./dashboard-release.ts";
 import { callsViewAssets } from "./calls-view-assets.ts";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
-import { renderShell, shellContentSecurityPolicy } from "./assets.js";
+import { adminAssets, adminShellResponse, assetVersion } from "./admin-assets.ts";
 import { automationBoardModuleSource } from "./automation-board.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 import { searchAgentDirectory } from "../gateway/agent-directory.js";
@@ -461,6 +461,7 @@ export function createWebApp({
       ok: true,
       instanceId,
       revision: runningRevision,
+      adminView: dashboardHealth(() => ({ revision: assetVersion(publicDir) }), callsReleaseSession),
       callsView: dashboardHealth(() => callsViewAssets.current(), callsReleaseSession),
       update: publicUpdateState(readUpdateStatus()),
       claude: engines.claude,
@@ -539,15 +540,17 @@ export function createWebApp({
   // and refreshes; app.js restores the matching view and manages in-page browser history.
   const sendAdminShell = (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir));
-    res.type("html").send(renderShell(publicDir, adminShell));
+    const { csp, html } = adminShellResponse(publicDir, adminShell);
+    res.setHeader("Content-Security-Policy", csp);
+    res.type("html").send(html);
   };
   // Stamp login dependencies with the same content version as their HTML. Edge/browser caches
   // must never pair the current form with an older script expecting removed fields.
   app.get("/login.html", (_req, res) => {
-    res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir, { inlineScriptHashes: [] }));
+    const { csp, html } = adminShellResponse(publicDir, "login.html");
+    res.setHeader("Content-Security-Policy", csp);
     res.setHeader("Cache-Control", "no-store");
-    res.type("html").send(renderShell(publicDir, "login.html"));
+    res.type("html").send(html);
   });
   // "/" and "/index.html" are handled here too, ahead of express.static: static would serve the
   // shell straight off disk with its `{{ASSET_V}}` placeholders unsubstituted and no import map,
@@ -568,6 +571,17 @@ export function createWebApp({
   // changed file a NEW url, and `no-cache` makes every cache revalidate the unstamped ones — ETag
   // keeps that a cheap 304. `index:false` leaves the shell to sendAdminShell above, which is the
   // only path allowed to serve it (static would ship the raw, unstamped template).
+  // This stays behind the existing auth middleware. Match just top-level CSS/JS, leaving
+  // API routes, unstamped files outside the graph and public login allowlists intact.
+  app.get(/^\/([a-z][a-z0-9-]*\.(?:js|css))$/, (req, res, next) => {
+    const name = req.params[0];
+    const stamp = req.query.v;
+    const version = typeof stamp === "string" && /^[0-9a-f]{12}$/.test(stamp) ? stamp : undefined;
+    const bytes = adminAssets(publicDir).asset(name, version);
+    if (bytes === undefined) return version ? res.status(404).end() : next();
+    res.set("Cache-Control", "no-cache");
+    return res.type(name.endsWith(".js") ? "application/javascript" : "text/css").send(bytes);
+  });
   app.use(
     express.static(publicDir, {
       index: false,
