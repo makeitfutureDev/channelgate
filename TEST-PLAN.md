@@ -2798,6 +2798,11 @@ Regression gate: historical reaction-only self-completion must dismiss the verif
 
 ## Activity call history (2026-11-16)
 
+- Change and roll back the Calls UI revision with the same Activity session open. A refreshed
+  tab shows the selected UI. Each shell's content-addressed script still loads on either side of
+  the release, and the original tab can refresh and expand its call history. Automated cases
+  exercise revision selection, the CSP-protected browser script and pagination in Chromium.
+
 - Automated: `test/call-history.test.js` verifies persistence from a fresh process and licensed
   cost visibility; `test/voice-calls.test.js` covers A → B → A segment aggregation, exact call
   duration, voice-only cost, slow accounting, failed summary delivery and idempotent hangup.

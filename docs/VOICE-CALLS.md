@@ -150,6 +150,11 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
 
 ## How it is built
 
+The Activity Calls view uses `public/activity/call-history.html`, `call-history.css` and
+`call-history.ts`. The gateway renders the selected HTML and CSS in the authenticated shell
+and serves the stripped browser script under a URL derived from all three files. Browser
+requests for call history continue to use the caller’s Activity session.
+
 - `src/gateway/voice/gemini-live.js` — the Gemini Live client: one WebSocket per connection
   (Node's built-in client, binary frames), the `setup` message (audio response, prebuilt voice,
   system instruction, function declarations with `NON_BLOCKING` where the call returns
