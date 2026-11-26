@@ -133,3 +133,18 @@ for (const interference of ["dirty file", "new commit", "different branch"]) {
     else assert.equal(readFileSync(path.join(f.repo, callsFiles.css), "utf8"), "/* concurrent */");
   });
 }
+
+test("browser-only typed modules ship at their .js URL and new modules require a complete pair", t => {
+  const f = fixture(); t.after(() => rmSync(f.repo, { recursive: true, force: true }));
+  const dir = path.join(f.repo, "ui/admin");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "admin-ui-test.ts"), 'export const title: string = "Test";');
+  const incomplete = f.commit();
+  assert.equal(isDashboardOnlyUpdate(f.repo, f.targetRevision, incomplete), false);
+  writeFileSync(path.join(f.repo, "public/admin-ui-test.js"), 'export const title = "Test";');
+  const complete = f.commit();
+  assert.equal(isDashboardOnlyUpdate(f.repo, f.targetRevision, complete), true);
+  writeFileSync(path.join(dir, "admin-routes.ts"), 'export const path = "/test";');
+  writeFileSync(path.join(f.repo, "public/admin-routes.js"), 'export const path = "/test";');
+  assert.equal(isDashboardOnlyUpdate(f.repo, complete, f.commit()), false);
+});
