@@ -1092,7 +1092,15 @@ automated: legal and operational owners must define it before enabling destructi
 
 ## Upgrade and rollback canary
 
-The transactional updater's phases are: preflight → snapshot → checkout → install → audit → test →
+Once the dashboard release support is running, eligible changes to the admin browser modules,
+styles, shell, or Activity Calls view can ship during an agent turn. Use the normal update entry
+point. It holds the previous UI active during checks, activates the complete view, and verifies
+the new content revision against the original gateway instance. A failed candidate restores the
+previous view. Open tabs can still request the preceding release's versioned assets. The
+authenticated health response reports the UI revisions separately from the daemon's boot revision.
+
+The first installation of this support, changes to server-consumed frontend files, login changes,
+and mixed backend releases use the full update. Its phases are: preflight → snapshot → checkout → install → audit → test →
 provision → **channel image** → restart → verify, with an automatic rollback (restore → install →
 restart → verify) on any failure up to the restart. The channel-image phase is the single exception
 to that rollback: it only runs when the image is provably behind this revision, and a failure

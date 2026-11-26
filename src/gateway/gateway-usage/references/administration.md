@@ -455,10 +455,11 @@ admin rights or change the permissions required by separate gateway control tool
 - The caller must still be a gateway admin. No approval card is posted in any mode: the update is
   transactional, verified and rolled back on failure, so it is automatic for an admin author.
 - Before changing Git it checks upstream/clean-tree safety, runtime/config/service prerequisites,
-  calculated disk space, current daemon health. The independent host service runs `bash scripts/update.sh`; provider logins and engine responses do not gate installation. A candidate is installed,
+  calculated disk space, current daemon health. The independent host service runs `bash scripts/update.sh`; provider logins and engine responses do not gate installation. A full update is installed,
   security-audited, fully tested, provisioned, restarted, and accepted only after daemon revision,
   runtime availability and Slack reconnect pass. Exact dependencies and provisioning are repaired even when Git is current. Image binaries receive local version-only checks without provider authentication.
-- If a post-change check fails, it restores the previous revision and dependencies, restarts, and
+- Eligible admin browser and Activity Calls asset edits can update while agent turns run. The updater validates the selected UI, verifies the content revision on the original gateway instance and rolls back a failed UI release on that instance. The first installation of this support and changes that include backend code follow the full update.
+- If a full update fails a post-change check, it restores the previous revision and dependencies, restarts, and
   proves the restored build. The final thread reply distinguishes success, preflight refusal,
   successful rollback, and candidate-plus-rollback failure. Details are in
   `~/.channelgate/logs/update.log`; recovery snapshots are under
