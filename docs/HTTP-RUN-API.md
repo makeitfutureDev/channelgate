@@ -93,8 +93,14 @@ its full id (`gchat:spaces/AAA…`, `teams:…`), its folder slug or its name �
 a channel token created there. A visible run posts its kickoff as a new thread in the space and
 the answer in that thread; there is no live progress card outside Slack. Responses carry
 `chatThread: true`, `platform` (`googlechat`, `msteams`) and `threadKey` (the thread's name);
-`slackThread` and `threadTs` stay Slack-only and read `false` / `null`. `conversationKey` is
-Slack-only. While that platform's transport is disconnected the run proceeds headless.
+`slackThread` and `threadTs` stay Slack-only and read `false` / `null`. While that platform's
+transport is disconnected an unkeyed run proceeds headless.
+
+`conversationKey` works there too: the first event opens a thread, every later event with the
+same key posts its request as a reply in that thread and resumes the same agent session. There is
+no permalink (`threadPermalink: null`). If the thread was deleted, Google Chat opens a new one; the
+binding moves to it and that event begins a fresh session. A keyed call while the platform is
+disconnected, or whose post fails, answers 503 without running.
 
 ## Harness and license selection
 
@@ -198,7 +204,8 @@ To keep separate events from an external conversation in the same Slack thread:
 ```
 
 `conversationKey` is an optional, case-sensitive, nonblank string of at most 200 characters,
-without control characters. Keys are preserved exactly. Supply a registered Slack channel ID,
+without control characters. Keys are preserved exactly. Supply a registered conversation — a
+Slack channel, a Google Chat space (`gchat:spaces/…`) or a Teams conversation — by ID,
 slug or name; all aliases resolve to the same canonical channel ID. Identical keys in different
 channels create independent threads. A key cannot name a timestamp or select another channel's
 thread. The mapping survives restarts and the seven-day run-history cleanup.

@@ -11,7 +11,18 @@
   handed a Chat conversation; the Slack kickoff text and thread facts are byte-identical; the
   on-failure alert is Markdown and defanged; restart recovery re-delivers a saved Chat answer
   through the Chat connector, not Slack.
-- [x] Existing `test/api-*.test.js` and `test/run-api.test.js` pass unchanged (Slack behavior).
+- [x] `test/api-runs-chat-platforms.test.js` keyed cases: two events with one `conversationKey` in a
+  Chat space share one top-level kickoff and one thread, the second request is posted as a reply,
+  and the second turn resumes the first session (`-r`, same `sessionId`, `resume=yes`); a vanished
+  thread is replaced once and the binding follows it; a disconnected Chat transport answers 503.
+  `test/api-conversations.test.js`: a registered Teams conversation without transport answers 503.
+- [x] Existing `test/api-*.test.js` and `test/run-api.test.js` pass (Slack behavior unchanged).
+- [ ] UNEXECUTED live, Claude and Codex (keyed): in the same Google Chat space send
+  `{"message":"Remember the code word PELICAN-7. Reply OK.","conversationKey":"qa-gchat-1","harness":"claude"}`,
+  then `{"message":"What was the code word? Reply with it only.","conversationKey":"qa-gchat-1","harness":"claude"}`.
+  Pass: both 202 with the same `threadKey`, the second `threadReused:true`; one thread in the space
+  with both requests and answers; the second answer is `PELICAN-7`; both jobs report the same
+  `sessionId`. Repeat with a new key and `"harness":"codex"`.
 - [ ] UNEXECUTED live, Claude: fixtures — a Google Chat space where the ChannelGate app is a
   member and the tester is an approved user; a channel token created in that space (ask the bot
   there to create an API token, or Activity → Settings → API tokens). Action:
