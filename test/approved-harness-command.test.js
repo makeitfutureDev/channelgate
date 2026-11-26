@@ -17,7 +17,8 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { createLicense, deleteLicense } = await import("../src/config/engine-licenses.js");
 const { parseApprovedHarnessesArg, runApprovedHarnessesCommand } = await import("../src/gateway/approved-harnesses.js");
 const { parseSlashCommand } = await import("../src/slack/message-normalize.js");
-const { createConversationControls } = await import("../src/platforms/conversation-controls.js");
+const { createIngest } = await import("../src/platforms/ingest.js");
+const { makeInbound } = await import("../src/platforms/inbound.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
 const { HELP_TEXT } = await import("../src/slack/help.js");
 const { GOOGLE_CHAT_CONTROL_COMMAND } = await import("../src/platforms/googlechat/events.js");
@@ -95,46 +96,54 @@ test("the shared command refuses what the tool refuses, and writes nothing", asy
   assert.equal(f.events().length, 1, "only the one accepted change is audited");
 });
 
-test("Teams and Google Chat text controls: /harnesses is answered by the gateway with the author's current role", async () => {
-  const f = await channel();
-  const controls = createConversationControls();
-  const meta = await getChannelMeta(f.entry.slug);
-  const say = async (userId, text, authorIsAdmin) => {
-    const replies = [];
-    const handled = await controls.command({
-      message: { text, conversationId: f.channelId, userId, trigger: "message" }, sessionKey: "s1", slug: f.entry.slug,
-      meta, authorIsAdmin, reply: async (t) => { replies.push(t); },
-    });
-    return { handled, text: replies.join("\n") };
-  };
-  const member = await say(`teams:${MEMBER}`, "/harnesses claude", false);
-  assert.equal(member.handled, true);
-  assert.match(member.text, /Only organization admins/);
-  assert.equal(await f.policy(), null);
+for (const [platform, conversationId, threadKey] of [
+  ["msteams", "19:harness@thread.tacv2", "12345"],
+  ["googlechat", "spaces/HCMD", "spaces/HCMD/threads/topic"],
+]) {
+  test(`${platform} ingest dispatches /harnesses with current authority and replies in the source thread`, async () => {
+    const posted = [];
+    const ingest = createIngest({ connector: { platform, post: async (message) => {
+      posted.push(message);
+      return { messageId: String(posted.length) };
+    } }, run: async () => assert.fail("chat commands must never start the engine") });
+    const admin = platform + ADMIN, member = platform + MEMBER;
+    await setUser(admin, { isAdmin: true, approved: true });
+    await setUser(member, { approved: true });
+    const say = async (userId, text) => {
+      const result = await ingest(makeInbound({ platform, conversationId, threadKey, userId,
+        kind: "channel", mentionsBot: true, text, conversationName: platform + "-harnesses" }));
+      assert.deepEqual(result, { command: true });
+      assert.equal(posted.at(-1).conversationId, conversationId);
+      assert.equal(posted.at(-1).threadKey, threadKey);
+      return posted.at(-1).text;
+    };
+    assert.match(await say(member, "/harnesses claude"), /Only organization admins/);
+    assert.match(await say(admin, "/harnesses claude, harness:codex"), /Approved for this channel: Codex \(any license\), Claude/);
+    assert.match(await say(member, "/HARNESSES"), /Approved here: Codex \(any license\), Claude/);
+    const changes = readEvents({ limit: 300 }).filter(e => e.event === "channel_meta_changed" && e.actor === admin);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].source, "chat-command");
+    assert.match(await say(member, "/help"), /harnesses/);
+  });
+}
 
-  const admin = await say(`teams:${ADMIN}`, "/harnesses claude, harness:codex", true);
-  assert.match(admin.text, /✅ Approved for this channel: Codex \(any license\), Claude\./);
-  assert.deepEqual(await f.policy(), ["harness:codex", "claude"], "stored in the canonical order");
-  const [event] = f.events();
-  assert.equal(event.actor, `teams:${ADMIN}`);
-  assert.equal(event.source, "chat-command");
-
-  assert.match((await say(`teams:${MEMBER}`, "/HARNESSES", false)).text, /Approved here: Codex \(any license\), Claude\./);
-  assert.match((await say(`teams:${MEMBER}`, "/help", false)).text, /\/harnesses \[all\|entry/);
-});
-
-test("Slack: a typed /harnesses in a thread is a control command — answered, audited, and no engine starts", async () => {
-  const f = await channel();
+function slackFixture(channelId) {
   const BOT = "BHCMD";
   const messages = [];
   const client = {
     chat: { postMessage: async (message) => { messages.push(message); return { ok: true, ts: "bot.1" }; }, update: async () => ({ ok: true }) },
     apiCall: async () => ({ ok: true }),
     users: { info: async ({ user }) => ({ user: { id: user, real_name: "Harness Person" } }), list: async () => ({ members: [] }) },
-    conversations: { info: async () => ({ channel: { id: f.channelId, is_channel: true, is_member: true } }), replies: async () => ({ messages: [] }), history: async () => ({ messages: [] }), members: async () => ({ members: [ADMIN, MEMBER], response_metadata: {} }) },
+    conversations: { info: async () => ({ channel: { id: channelId, is_channel: true, is_member: true } }), replies: async () => ({ messages: [] }), history: async () => ({ messages: [] }), members: async () => ({ members: [ADMIN, MEMBER], response_metadata: {} }) },
   };
+  const say = (user, text, ts, thread = ts) => processMessageEvent({ type: "message", channel: channelId, channel_type: "channel", user, text: `<@${BOT}> ${text}`, ts, thread_ts: thread }, client, { botUserId: BOT });
+  return { messages, say };
+}
+
+test("Slack: a typed /harnesses in a thread is a control command — answered, audited, and no engine starts", async () => {
+  const f = await channel();
+  const { messages, say } = slackFixture(f.channelId);
   const spawned = runtime.calls.spawn.length;
-  const say = (user, text, ts) => processMessageEvent({ type: "message", channel: f.channelId, channel_type: "channel", user, text: `<@${BOT}> ${text}`, ts }, client, { botUserId: BOT });
 
   await say(MEMBER, "/harnesses harness:claude", "1910.001");
   assert.match(messages.at(-1).text, /Only organization admins/);
@@ -150,4 +159,18 @@ test("Slack: a typed /harnesses in a thread is a control command — answered, a
   await say(MEMBER, "/harnesses", "1910.003");
   assert.match(messages.at(-1).text, /Approved here: Claude Code \(any license\)\./);
   assert.equal(runtime.calls.spawn.length, spawned, "a control command starts no engine");
+});
+
+test("Slack dispatches a typed agent question with its original actor, thread and destination", async () => {
+  const { setActiveAgentMail } = await import("../src/gateway/agent-mail.js");
+  const f = await channel(), { messages, say } = slackFixture(f.channelId);
+  const calls = [];
+  setActiveAgentMail({ async send(request) { calls.push(request); return { to: { name: "#sales" } }; } });
+  try {
+    await say(MEMBER, 'ask #sales check this order', '1911.002', '1911.001');
+    assert.deepEqual(calls, [{ channelId: f.channelId, slug: f.entry.slug, createdBy: MEMBER,
+      threadKey: '1911.001', to: 'sales', message: 'check this order', origin: 'slack_foreground' }]);
+    assert.equal(messages.at(-1).text, '💬 Asked the #sales agent — its replies land here.');
+    assert.equal(messages.at(-1).thread_ts, '1911.001');
+  } finally { setActiveAgentMail(null); }
 });
