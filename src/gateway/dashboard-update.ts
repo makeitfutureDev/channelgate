@@ -1,5 +1,6 @@
 import { acquireLandingLock, releaseLandingLock } from "../../scripts/with-landing-lock.mjs";
 import { execFileSync } from "node:child_process";
+import { activityLayoutFile, buildActivityLayout } from "../web/activity-layout.ts";
 import { adminAssetName, adminVersion } from "../web/admin-assets.ts";
 import { callsFiles, selectDashboardRelease, useCheckoutCallsRelease, type DashboardSources } from "../web/dashboard-release.ts";
 import { adminModuleName } from "../web/admin-module-names.ts";
@@ -36,19 +37,21 @@ function isTypedAsset(repo: string, to: string, file: string) {
   return pair.length === 2 && pair.every(entry => entry.startsWith("100644 blob "));
 }
 
-function dashboardChanges(repo: string, from: string, to: string): { calls: boolean; admin: boolean } | null {
+interface ViewsChanged { calls: boolean; admin: boolean; layout: boolean }
+function dashboardChanges(repo: string, from: string, to: string): ViewsChanged | null {
   if (![from, to].every(value => /^[0-9a-f]{40}$/.test(value)) || from === to) return null;
   try {
     git(repo, "merge-base", "--is-ancestor", from, to);
     const entries = git(repo, "diff", "--no-ext-diff", "--raw", "--no-renames", "-z", from, to).split("\0");
     entries.pop();
-    const changes = { calls: false, admin: false };
+    const changes = { calls: false, admin: false, layout: false };
     for (let i = 0; i < entries.length; i += 2) {
       const mode = entries[i], file = entries[i + 1];
       const edit = /^:100644 100644 [0-9a-f]+ [0-9a-f]+ M$/.test(mode);
       const add = /^:000000 100644 [0-9a-f]+ [0-9a-f]+ A$/.test(mode);
       if (edit && records.includes(file)) continue;
       if (edit && callsAssets.includes(file)) changes.calls = true;
+      else if (edit && file === activityLayoutFile) changes.layout = true;
       else if (edit && adminAssets.includes(file)) changes.admin = true;
       else if ((edit || add) && isTypedAsset(repo, to, file)) changes.admin = true;
       else return null;
@@ -61,7 +64,7 @@ function dashboardChanges(repo: string, from: string, to: string): { calls: bool
 
 export function isDashboardOnlyUpdate(repo: string, from: string, to: string, allowRevertedAssets = false) {
   const changes = dashboardChanges(repo, from, to);
-  return Boolean(changes && (changes.calls || changes.admin || allowRevertedAssets));
+  return Boolean(changes && (changes.calls || changes.admin || changes.layout || allowRevertedAssets));
 }
 
 // Both the installer and parallel development landings may own this checkout.
@@ -87,16 +90,21 @@ export function moveDashboardCheckout(repo: string, from: string, to: string, br
 
 interface Snapshot {
   source: DashboardSources;
-  revisions: { callsView?: string; adminView?: string };
+  revisions: { callsView?: string; adminView?: string; activityLayout?: string };
 }
 
-function loadRelease(repo: string, revision: string, changes: { calls: boolean; admin: boolean }): Snapshot {
+function loadRelease(repo: string, revision: string, changes: ViewsChanged): Snapshot {
   const read = (file: string) => git(repo, "show", revision + ":" + file);
   const snapshot: Snapshot = { source: {}, revisions: {} };
   if (changes.calls) {
     const calls = { html: read(callsFiles.html), css: read(callsFiles.css), ts: read(callsFiles.ts) };
     snapshot.source.calls = calls;
     snapshot.revisions.callsView = buildCallsView(calls).revision;
+  }
+  if (changes.layout) {
+    const layout = buildActivityLayout(read(activityLayoutFile));
+    snapshot.source.activityLayout = layout.css;
+    snapshot.revisions.activityLayout = layout.revision;
   }
   if (changes.admin) {
     const names = git(repo, "ls-tree", "-z", revision + ":public").split("\0").flatMap(entry => {
@@ -123,20 +131,23 @@ interface Health {
   containerRuntime?: { cli?: { ok?: boolean } };
   callsView?: { session: string; revision: string };
   adminView?: { session: string; revision: string };
+  activityLayout?: { session: string; revision: string };
 }
 
 export function prepareDashboardUpdate(repo: string, oldRevision: string, targetRevision: string, health: Health) {
   const changes = dashboardChanges(repo, oldRevision, targetRevision);
-  if (!changes || (!changes.calls && !changes.admin)) return null;
-  const session = changes.admin ? health.adminView?.session : health.callsView?.session;
-  if (!session || (changes.calls && health.callsView?.session !== session)) return null;
+  if (!changes || (!changes.calls && !changes.admin && !changes.layout)) return null;
+  const sessions = [changes.calls && health.callsView?.session, changes.admin && health.adminView?.session,
+    changes.layout && health.activityLayout?.session].filter(value => value !== false);
+  const session = sessions[0];
+  if (!session || !sessions.every(value => value === session)) return null;
   const previous = loadRelease(repo, oldRevision, changes);
   if (!servesSnapshot(health, previous, session)) throw new Error("Serving dashboard assets do not match the checkout; repair the checkout before updating.");
   return { previous, candidate: loadRelease(repo, targetRevision, changes), session };
 }
 
 function servesSnapshot(health: Health, snapshot: Snapshot, session: string) {
-  return (["callsView", "adminView"] as const).every(name => {
+  return (["callsView", "adminView", "activityLayout"] as const).every(name => {
     const revision = snapshot.revisions[name];
     return revision === undefined || (health[name]?.session === session && health[name]?.revision === revision);
   });

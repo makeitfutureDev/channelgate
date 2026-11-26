@@ -42,6 +42,7 @@ import { callsReleaseSession, dashboardHealth } from "./dashboard-release.ts";
 import { callsViewAssets } from "./calls-view-assets.ts";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
+import { activityLayout } from "./activity-layout.ts";
 import { adminAssets, adminShellResponse, assetVersion } from "./admin-assets.ts";
 import { automationBoardModuleSource } from "./automation-board.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
@@ -461,6 +462,7 @@ export function createWebApp({
       ok: true,
       instanceId,
       revision: runningRevision,
+      activityLayout: dashboardHealth(activityLayout, callsReleaseSession),
       adminView: dashboardHealth(() => ({ revision: assetVersion(publicDir) }), callsReleaseSession),
       callsView: dashboardHealth(() => callsViewAssets.current(), callsReleaseSession),
       update: publicUpdateState(readUpdateStatus()),

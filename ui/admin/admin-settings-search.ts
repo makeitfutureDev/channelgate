@@ -1,4 +1,4 @@
-interface SettingsEntry {
+export interface SettingsEntry {
   title: string;
   path: string;
   text?: string;

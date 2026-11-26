@@ -3,7 +3,7 @@
 ## Dashboard-only updates
 
 The updater can release the admin dashboard shell, styles and independent browser modules
-together with the Activity Calls view while agent turns continue. Both surfaces can change in
+together with the shared Activity dashboard layout and Calls view while agent turns continue. Both surfaces can change in
 one transaction. It validates the candidate and its served revision on the original daemon
 instance and restores the previous design if verification fails. Previously opened tabs keep
 their versioned module URLs across the switch. Changes to sign-in code, server-imported
