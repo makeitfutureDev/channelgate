@@ -129,9 +129,15 @@ export async function setThreadSkillModel(slug, threadKey, model) {
   setOverride(slug, threadKey, "skill_model", String(model || "").trim());
 }
 
-// One native form saves a complete runtime selection. Keep the triple atomic without touching
-// the thread's independent clean/sudo posture; callers validate model compatibility/authority.
-export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "", licensePool = "" }, { expected } = {}) {
+// Save the runtime selection atomically. A fork can also initialize the child's clean posture
+// in this transaction. A settings form omitting clean preserves that independent override.
+/**
+ * @param {string} slug
+ * @param {string} threadKey
+ * @param {{engine?: string, model?: string, effort?: string, licensePool?: string | string[], clean?: boolean}} selection
+ * @param {{expected?: {engine: string, model: string, effort: string}}} options
+ */
+export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "", licensePool = "", clean }, { expected } = {}) {
   if (engine && !VALID.has(engine)) throw new Error("Unknown thread engine.");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
@@ -143,6 +149,7 @@ export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model 
     setOverride(slug, threadKey, "license_pool", engine ? storeLicensePool(readLicensePool(licensePool)) : "");
     setOverride(slug, threadKey, "model", String(model || "").trim());
     setOverride(slug, threadKey, "effort", String(effort || "").trim());
+    if (clean !== undefined) setOverride(slug, threadKey, "clean", clean ? "1" : "");
     db.exec("COMMIT");
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }

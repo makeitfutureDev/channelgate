@@ -90,7 +90,8 @@ import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.
 
 import { hasCompletedSlackMessage } from "./message-receipts.js";
 import { pendingForkThreads, pendingForkSources } from "./fork-state.js";
-import { createForkThread, forkLicensePool } from "./fork-thread.js";
+import { resolveForkSettings } from "../gateway/fork-settings.ts";
+import { createForkThread } from "./fork-thread.js";
 
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
 // message in the same thread waits FIFO behind the running one instead of racing it in the same
@@ -962,7 +963,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const forkRefusal = channelEngineRefusal(meta, childEngine);
           if (forkRefusal) { await reply(forkRefusal); return; }
           const nativeFork = childEngine === sourceEngine;
-          const sourceClean = Boolean(meta.cleanMode || await getThreadClean(entry.slug, threadKey));
+          const settings = await resolveForkSettings({ slug: entry.slug, threadKey, engine: childEngine, meta },
+            forkTarget ? { model: forkTarget.model, effort: forkShortcut.effort || "" } : undefined);
+          const sourceClean = settings.clean;
           if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           let sourceContext = "";
@@ -987,12 +990,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
           const { forkKey, requestTs } = await createForkThread(client, {
             channelId: event.channel, slug: entry.slug, sourceThreadTs: threadKey, authorId: event.user, botUserId,
-            title: task, activityTitle: forkTitle, sourceUrl, handoffNote, engine: childEngine,
-            // A shortcut names its license (with the harness's other sign-ins when that is the
-            // harness's own sign-in); otherwise the fork keeps the source's license selection.
-            licensePool: forkTarget ? impliedLicensePool(forkTarget.engine, effectiveMeta(meta)) : await forkLicensePool({ slug: entry.slug, sourceThreadTs: threadKey, engine: childEngine, meta }),
-            model: forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey),
-            effort: forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey), clean: sourceClean,
+            title: task, activityTitle: forkTitle, sourceUrl, handoffNote, ...settings,
           });
           const pendingKey = `${entry.slug}::${forkKey}`;
           try {

@@ -35,7 +35,8 @@ const {
   MODEL_WIZARD_LICENSE_ACTION_PATTERN, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_PICKER_ACTION, EFFORT_PICKER_ACTION,
 } = await import("../src/slack/model-wizard.js");
 const { clipLabel, harnessChoices, licenseChoices, namedSelection, nextLicenseSelection } = await import("../src/slack/license-controls.js");
-const { createForkThread, forkLicensePool } = await import("../src/slack/fork-thread.js");
+const { resolveForkSettings } = await import("../src/gateway/fork-settings.ts");
+const { createForkThread } = await import("../src/slack/fork-thread.js");
 const { engineSwitchChoiceText, engineSwitchChoiceBlocks } = await import("../src/slack/engine-switch-choice.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
 
@@ -555,17 +556,17 @@ test("a fork keeps the license selection of the thread it was forked from", asyn
 
   // A pinned source: its own pool travels, in order, minus the license the fork starts on.
   await setThreadEngine(slug, source, work, { licensePool: [second, "codex"] });
-  assert.deepEqual(await forkLicensePool({ slug, sourceThreadTs: source, engine: work, meta }), [second, "codex"]);
+  assert.deepEqual((await resolveForkSettings({ slug, threadKey: source, engine: work, meta })).licensePool, [second, "codex"]);
   // The session already moved to a later license of the selection: the fork starts there and
   // keeps the others.
-  assert.deepEqual(await forkLicensePool({ slug, sourceThreadTs: source, engine: second, meta }), [work, "codex"]);
+  assert.deepEqual((await resolveForkSettings({ slug, threadKey: source, engine: second, meta })).licensePool, [work, "codex"]);
   // A license outside the pinned selection, or the other harness, carries nothing.
   await setThreadEngine(slug, source, work, { licensePool: [second] });
-  assert.equal(await forkLicensePool({ slug, sourceThreadTs: source, engine: "codex", meta }), "");
-  assert.equal(await forkLicensePool({ slug, sourceThreadTs: source, engine: "claude", meta }), "");
+  assert.equal((await resolveForkSettings({ slug, threadKey: source, engine: "codex", meta })).licensePool, "");
+  assert.equal((await resolveForkSettings({ slug, threadKey: source, engine: "claude", meta })).licensePool, "");
   // An unpinned source follows the conversation's selection for that harness.
-  assert.equal(await forkLicensePool({ slug, sourceThreadTs: "1904000000.000200", engine: "codex", meta }), "any");
-  assert.equal(await forkLicensePool({ slug, sourceThreadTs: "1904000000.000200", engine: "codex", meta: { engine: "claude" } }), "");
+  assert.equal((await resolveForkSettings({ slug, threadKey: "1904000000.000200", engine: "codex", meta })).licensePool, "any");
+  assert.equal((await resolveForkSettings({ slug, threadKey: "1904000000.000200", engine: "codex", meta: { engine: "claude" } })).licensePool, "");
 
   // The fork thread is pinned with the pool it was handed.
   let next = 1905;
@@ -573,7 +574,7 @@ test("a fork keeps the license selection of the thread it was forked from", asyn
     chat: { postMessage: async () => ({ ts: `${++next}.000001` }), getPermalink: async () => ({ permalink: "https://slack.test/p1" }) },
     apiCall: async () => ({ ok: true }),
   };
-  const licensePool = await forkLicensePool({ slug, sourceThreadTs: source, engine: work, meta });
+  const licensePool = (await resolveForkSettings({ slug, threadKey: source, engine: work, meta })).licensePool;
   const fork = await createForkThread(client, {
     channelId: "C_LIC_FORK", slug, sourceThreadTs: source, authorId: ADMIN, botUserId: "UBOT", title: "Side topic", activityTitle: "Fork: Side topic",
     sourceUrl: "https://slack.test/p1", engine: work, licensePool, model: "", effort: "", clean: false,

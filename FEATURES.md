@@ -9319,6 +9319,11 @@ upgrade host Node before updating; rebuilding the image alone does not upgrade t
 
 Foreground Slack agents can propose 1–10 titled discussion forks with exact opening prompts. One durable requester/admin approval card is mandatory even in Auto mode; the full proposal must fit its 2400-character preview. After approval, the daemon queues behind the source turn, creates independent native sessions from the same context, indexes each in Activity, and posts child/source links. Normal access, engine, license and run-slot gates apply. Sudo and code-channel sources are refused. Pending proposals deduplicate, clicks execute once, and partial creations retain their IDs; interrupted execution fails closed without automatically recreating threads.
 
+Slack and Google Chat share the fork settings resolver and batch execution. Each child inherits
+the selected license pool, model, effort and Lean posture in one transaction. Each batch checks
+the requester's current access before creating each thread and holds the source until all
+started children copy it or finish their first turn.
+
 ## Thread forks in Google Chat (2026-11-22)
 
 Google Chat (Beta) declares the `threadForks` capability. In a **named space that uses threads**

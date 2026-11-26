@@ -19,12 +19,13 @@ import { randomUUID } from 'node:crypto';
 import { getUser } from '../../config/store.js';
 import { threadForkTarget } from '../../gateway/thread-fork-approvals.js';
 import { transitionApprovalRequest } from '../../gateway/approval-requests.js';
-import { getThreadModel, getThreadEffort, getThreadClean, setThreadEngine, setThreadModel, setThreadEffort, setThreadClean } from '../../gateway/thread-engine.js';
+import { setThreadRuntimeOverrides } from '../../gateway/thread-engine.js';
 import { recordPlatformThreadMessage } from '../../gateway/platform-threads.js';
 import { abortPooled } from '../../engines/session-pool.js';
 import { assertEngineSelectable } from '../../engines/selection.js';
 import { isForceStopping } from '../../gateway/shutdown.js';
-import { forkLicensePool } from '../../slack/fork-thread.js';
+import { ForkBatch } from '../../gateway/fork-batch.ts';
+import { resolveForkSettings } from '../../gateway/fork-settings.ts';
 import { formatThreadExcerpt } from '../thread-hydration.js';
 import { parseModelShortcut } from '../../config/model-shortcuts.js';
 import { googleChatAdapter } from '../googlechat.js';
@@ -119,8 +120,7 @@ export function createGoogleChatThreadForks({ connector, conversation, formatTex
   async function createAll(job, signal) {
     const { conversationId, slug, sourceKey, authorId, forks, approvalId, action } = job;
     const space = spaceOf(conversationId);
-    const rows = forks.map(fork => ({ title: fork.title, status: 'pending' }));
-    const persist = () => {
+    const persist = rows => {
       if (!approvalId) return;
       // The approval is consumed as soon as the click returns; journal on whichever row state it has.
       for (const state of ['consumed', 'executing']) {
@@ -128,76 +128,59 @@ export function createGoogleChatThreadForks({ connector, conversation, formatTex
         catch (error) { log.warn?.(`[googlechat] fork journal failed: ${error?.message || error}`); return; }
       }
     };
-    const barrier = [];
+    const batch = new ForkBatch(forks, persist);
+    const rows = batch.rows;
     try {
       if (signal.aborted || isForceStopping()) throw new Error('The forks were stopped before creation.');
       const target = await threadForkTarget(action); // current access, lane, session and folder
       await assertEngineSelectable(target.sourceEngine, { channelId: conversationId, meta: target.meta });
       abortPooled(`${slug}::${sourceKey}`); // settle a warm source transcript before copying it
-      const model = await getThreadModel(slug, sourceKey), effort = await getThreadEffort(slug, sourceKey);
-      const clean = Boolean(target.meta.cleanMode || await getThreadClean(slug, sourceKey));
-      const licensePool = await forkLicensePool({ slug, sourceThreadTs: sourceKey, engine: target.sourceEngine, meta: target.meta });
+      const settings = await resolveForkSettings({ slug, threadKey: sourceKey, engine: target.sourceEngine, meta: target.meta });
       const sourceUrl = googleChatThreadUrl(space, sourceKey);
       const cutoff = new Date(now()).toISOString();
       const user = await getUser(authorId);
       const creator = oneLine(user?.name) || authorId;
       // The stored space name: a fork turn must never rename the conversation to its resource name.
       const spaceName = oneLine(target.entry?.name || target.meta?.name) || space;
-      for (let i = 0; i < forks.length; i++) {
-        const fork = forks[i], row = rows[i];
-        if (signal.aborted || isForceStopping()) { row.status = 'cancelled'; persist(); continue; }
-        let childKey = '';
-        try {
-          await threadForkTarget(action); // revocation while an earlier Chat call was in flight
-          row.status = 'creating';
-          persist();
+      await batch.start({
+        stopped: () => signal.aborted || isForceStopping(),
+        authorize: () => threadForkTarget(action),
+        create: async (fork, { created, startTurn }) => {
           // No thread name: Chat starts a new thread in the space for this top-level message.
           const root = await post(space, '', `↪️ ${label(creator)} Fork: ${label(fork.title)}`);
           const thread = String(root?.threadKey || '');
           if (!isThreadName(thread) || !thread.startsWith(`${space}/threads/`) || thread === sourceKey) {
             throw new Error('Google Chat did not return a new thread for the fork; creation is uncertain. Do not retry automatically.');
           }
-          row.threadKey = thread;
-          row.url = googleChatThreadUrl(space, thread);
-          row.status = 'created';
-          persist();
-          childKey = laneKey(conversationId, thread);
+          created(thread, googleChatThreadUrl(space, thread));
+          const childKey = laneKey(conversationId, thread);
           starting.add(childKey);
-          // Activity: the requester owns the fork's row, titled like Slack's.
           try {
-            recordPlatformThreadMessage({ slug, threadKey: thread, message: {
-              platform: 'googlechat', conversationId, rawConversationId: space, kind: 'channel', isDM: false,
-              userId: authorId, messageId: isMessageName(root.messageId) ? root.messageId : '', threadKey: thread,
-              text: `↪️ ${creator} Fork: ${fork.title}`.replace(/\s+/g, ' ').slice(0, 160),
-              raw: { message: { threadReply: false, createTime: new Date(now()).toISOString() } } } });
-          } catch (error) { log.warn?.(`[googlechat] fork Activity index failed: ${error?.message || error}`); }
-          await setThreadEngine(slug, thread, target.sourceEngine, { licensePool });
-          await setThreadModel(slug, thread, model);
-          await setThreadEffort(slug, thread, effort);
-          await setThreadClean(slug, thread, clean);
-          const request = await post(space, thread, `↪️ Fork of ${link('this thread', sourceUrl)} — opening request from ${label(creator)}:\n\n${fork.prompt}`);
-          if (!isMessageName(request?.messageId) || !request.messageId.startsWith(`${space}/messages/`)) {
-            throw new Error('Google Chat did not return the fork request message; its first response was not started.');
-          }
-          const id = randomUUID();
-          let copied;
-          barrier.push(new Promise(resolve => { copied = resolve; }));
-          hooks.set(id, { onSourceForked: copied, settled: () => { copied(); hooks.delete(id); } });
-          try {
-            connector.startForkTurn({ space, spaceName, threadKey: thread, messageId: request.messageId,
-              sender: { email: authorId, name: user?.googleChatUserName || '', displayName: creator }, text: fork.prompt,
-              fork: { id, sourceSessionId: target.sourceSessionId, sourceThreadKey: sourceKey, cutoff, clean } });
-          } catch (error) { hooks.get(id)?.settled(); throw error; }
-          row.status = 'starting';
-          persist();
-        } catch (error) {
-          row.status = row.threadKey ? 'created_with_error' : 'failed';
-          row.error = oneLine(error?.message || error).slice(0, 200);
-          persist();
-        } finally {
-          if (childKey) starting.delete(childKey);
-        }
-      }
+            // Activity: the requester owns the fork's row, titled like Slack's.
+            try {
+              recordPlatformThreadMessage({ slug, threadKey: thread, message: {
+                platform: 'googlechat', conversationId, rawConversationId: space, kind: 'channel', isDM: false,
+                userId: authorId, messageId: isMessageName(root.messageId) ? root.messageId : '', threadKey: thread,
+                text: `↪️ ${creator} Fork: ${fork.title}`.replace(/\s+/g, ' ').slice(0, 160),
+                raw: { message: { threadReply: false, createTime: new Date(now()).toISOString() } } } });
+            } catch (error) { log.warn?.(`[googlechat] fork Activity index failed: ${error?.message || error}`); }
+            setThreadRuntimeOverrides(slug, thread, settings);
+            const request = await post(space, thread, `↪️ Fork of ${link('this thread', sourceUrl)} — opening request from ${label(creator)}:\n\n${fork.prompt}`);
+            if (!isMessageName(request?.messageId) || !request.messageId.startsWith(`${space}/messages/`)) {
+              throw new Error('Google Chat did not return the fork request message; its first response was not started.');
+            }
+            const id = randomUUID();
+            startTurn(copied => {
+              hooks.set(id, { onSourceForked: copied, settled: () => { copied(); hooks.delete(id); } });
+              try {
+                connector.startForkTurn({ space, spaceName, threadKey: thread, messageId: request.messageId,
+                  sender: { email: authorId, name: user?.googleChatUserName || '', displayName: creator }, text: fork.prompt,
+                  fork: { id, sourceSessionId: target.sourceSessionId, sourceThreadKey: sourceKey, cutoff, clean: settings.clean } });
+              } catch (error) { hooks.delete(id); throw error; }
+            });
+          } finally { starting.delete(childKey); }
+        },
+      });
       const created = rows.filter(row => row.threadKey).length;
       const status = row => row.error ? row.error : row.status === 'starting' ? 'first response requested' : row.status;
       const summary = job.single
@@ -208,12 +191,12 @@ export function createGoogleChatThreadForks({ connector, conversation, formatTex
       return rows;
     } catch (error) {
       for (const row of rows) if (row.status === 'pending') { row.status = 'failed'; row.error = oneLine(error?.message || error).slice(0, 200); }
-      persist();
+      persist(rows);
       await post(space, sourceKey, `${job.single ? 'The fork' : 'The approved forks'} could not be created: ${oneLine(error?.message || error)} Nothing was created.`).catch(() => {});
       return rows;
     } finally {
       // Hold the source until every child copied it (or its first turn ended without a copy).
-      await Promise.all(barrier);
+      await batch.waitForCopies();
     }
   }
 
