@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { applyDashboardUpdate, isDashboardOnlyUpdate, moveDashboardCheckout, prepareDashboardUpdate, withDashboardCheckout } from "../src/gateway/dashboard-update.ts";
-import { callsFiles, readCallsRelease } from "../src/web/dashboard-release.ts";
+import { callsFiles, readCallsRelease, readDashboardRelease, selectDashboardRelease } from "../src/web/dashboard-release.ts";
 import { buildCallsView } from "../src/web/calls-view-assets.ts";
 
 function fixture() {
@@ -166,4 +166,74 @@ test("the common Activity stylesheet can release alone and must match its servin
   assert.equal(release?.candidate.source.activityLayout, ".top{color:blue}");
   assert.deepEqual(Object.keys(release!.candidate.revisions), ["activityLayout"]);
   assert.throws(() => buildActivityLayout("/* </style> */"), /Invalid Activity layout/);
+});
+
+test("an interrupted checkout keeps all old pins until a later update verifies on the same instance", async t => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "cg-ui-pins-"));
+  t.after(() => { for (const dir of [f.repo, root]) rmSync(dir, { recursive: true, force: true }); });
+  const { buildActivityLayout } = await import("../src/web/activity-layout.ts");
+  const { adminVersion } = await import("../src/web/admin-assets.ts");
+  const write = (file: string, value: string) => writeFileSync(path.join(f.repo, file), value);
+  const read = (file: string) => readFileSync(path.join(f.repo, file), "utf8");
+  const shell = '<!--ASSET_IMPORTMAP--><link href="/styles.css?v={{ASSET_V}}">';
+  write("public/index.html", shell); write("public/styles.css", ".old{}");
+  write("public/activity/dashboard.css", ".checkout{}");
+  const interruptedHead = f.commit();
+  write("public/styles.css", ".new{}");
+  const next = f.commit(); // The new diff touches only admin CSS.
+  f.git("reset", "--hard", interruptedHead);
+  const session = "boot";
+  const branch = f.git("symbolic-ref", "--short", "HEAD");
+  const pinned = { calls: f.initial, activityLayout: ".verified{}" };
+  selectDashboardRelease(root, session, pinned);
+  const health = () => {
+    const active = readDashboardRelease(root, session);
+    const calls = active?.calls ?? { html: read(callsFiles.html), ts: read(callsFiles.ts), css: read(callsFiles.css) };
+    const admin = active?.admin ?? { "index.html": shell, "styles.css": read("public/styles.css") };
+    return { ...f.baselineHealth,
+      callsView: { session, revision: buildCallsView(calls).revision },
+      activityLayout: { session, revision: buildActivityLayout(active?.activityLayout ?? read("public/activity/dashboard.css")).revision },
+      adminView: { session, revision: adminVersion(admin) },
+    };
+  };
+  const baselineHealth = health();
+  const prepare = () => prepareDashboardUpdate(f.repo, interruptedHead, next, baselineHealth, root)!;
+  selectDashboardRelease(root, session, { ...pinned, calls: { ...pinned.calls, html: "unexplained drift" } });
+  assert.throws(prepare, /do not match/);
+  selectDashboardRelease(root, session, pinned);
+  assert.throws(() => prepareDashboardUpdate(f.repo, interruptedHead, next,
+    { ...baselineHealth, activityLayout: { ...baselineHealth.activityLayout, session: "other" } }, root), /do not match/);
+  // A stale selector from a different process cannot explain a mismatch on the changed surface.
+  selectDashboardRelease(root, "other", { admin: { "index.html": shell, "styles.css": ".not-serving{}" } });
+  assert.throws(() => prepareDashboardUpdate(f.repo, interruptedHead, next,
+    { ...baselineHealth, adminView: { session, revision: "unexpected" } }, root), /do not match/);
+  selectDashboardRelease(root, session, pinned);
+
+  for (const fail of [true, false]) {
+    const uiRelease = prepare();
+    assert.deepEqual(uiRelease.previous.revisions, {
+      callsView: baselineHealth.callsView.revision, adminView: baselineHealth.adminView.revision,
+      activityLayout: baselineHealth.activityLayout.revision,
+    });
+    const outcome = await applyDashboardUpdate(root, { oldRevision: interruptedHead, targetRevision: next, baselineHealth, uiRelease }, {
+      checkout: () => moveDashboardCheckout(f.repo, interruptedHead, next, branch),
+      restore: () => moveDashboardCheckout(f.repo, next, interruptedHead, branch, true),
+      publishAt: (rev, publish) => withDashboardCheckout(f.repo, rev, branch, publish),
+      phase: () => {},
+      test: async () => {
+        assert.deepEqual(health(), baselineHealth);
+        if (fail) throw new Error("candidate tests failed");
+      },
+      health: async () => health(),
+    });
+    assert.equal(outcome.result, fail ? "rolled_back" : "updated");
+    assert.equal(f.git("rev-parse", "HEAD"), fail ? interruptedHead : next);
+    assert.deepEqual(readDashboardRelease(root, session), fail ? pinned : null);
+    if (fail) assert.deepEqual(health(), baselineHealth);
+    else for (const key of ["callsView", "adminView", "activityLayout"] as const) {
+      assert.equal(health()[key].revision, uiRelease.candidate.revisions[key]);
+      assert.notEqual(health()[key].revision, baselineHealth[key].revision);
+    }
+  }
 });

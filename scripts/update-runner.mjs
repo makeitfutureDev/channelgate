@@ -314,7 +314,7 @@ async function defaultPreflight({ root, repoRoot }) {
     previousInstanceId: baselineHealth.instanceId || "",
     requireSlack: baselineHealth.slack?.connected === true,
     baselineHealth,
-    uiRelease: prepareDashboardUpdate(repoRoot, oldRevision, targetRevision, baselineHealth),
+    uiRelease: prepareDashboardUpdate(repoRoot, oldRevision, targetRevision, baselineHealth, root),
     service,
     needBytes,
     availableBytes,

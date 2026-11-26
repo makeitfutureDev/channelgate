@@ -148,7 +148,7 @@ test("a running Slack turn survives active dashboard publication, verification r
       let inspected = false;
       const baselineHealth = await health();
       assert.equal(baselineHealth.instanceId, baseline.instanceId);
-      const uiRelease = prepareDashboardUpdate(repo, previous, candidate, baselineHealth);
+      const uiRelease = prepareDashboardUpdate(repo, previous, candidate, baselineHealth, root);
       assert.ok(uiRelease?.candidate.revisions.adminView && uiRelease.candidate.revisions.callsView);
       const { owner } = reserveUpdate({ root, source: "browser acceptance" });
       return executeUpdateTransaction({ root, repoRoot: repo, owner, ops: {
