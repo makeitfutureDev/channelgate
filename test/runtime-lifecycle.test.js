@@ -224,7 +224,7 @@ test("restart recovery shares the live Slack thread queue and keeps the live fin
     mode: "stream",
     channel: "C123",
     threadTs: "111.222",
-    ctx: { authorId: "U123", teamId: "", isDM: false, dir: { map: new Map(), maxWords: 5 } },
+    ctx: { authorId: "U123", teamId: "", isDM: false, dir: { map: new Map(), maxWords: 5 }, reactionThreadTs: null },
   });
   assert.deepEqual(progressEvents.map(([kind]) => kind), ["event", "runtime", "event", "delta"]);
   assert.equal(runQueue.count(key), 0, "recovery must release its queue ownership");
