@@ -6,7 +6,7 @@
 - Fork a Teams channel discussion into separate threads with `/fork` or an approved batch.
   Each child starts from a copy of the source agent session and is owned by the requester.
   Slack, Google Chat and Teams share fork settings and batch execution.
-- Eligible admin dashboard and Activity Calls updates can be verified and rolled back while the
+- Eligible admin dashboard, Activity layout and Calls updates can be verified and rolled back while the
   same gateway instance continues running agent turns. Open tabs retain their prior assets.
 
 ## 0.7.0 — candidate, pending approval

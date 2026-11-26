@@ -5,6 +5,8 @@ description: Follow stages, tools, thinking activity, and agent work while an an
 
 ChannelGate makes active work visible in Slack. Depending on the engine's events, you can see a live progress card, tool activity, agent activity, and a separate streamed answer.
 
+On Slack, look for ▶️ on the thread’s root message to see which conversations are running. ChannelGate removes its reaction when the last active turn finishes or stops.
+
 ## Read the progress surface
 
 When a turn emits task, tool, or thinking events before its answer, the gateway creates the progress card first and streams the answer into a later message. Expanding completed thinking or tool activity does not split an answer sentence. A simple text-only turn can retain a single-message shape.
