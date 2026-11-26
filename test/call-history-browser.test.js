@@ -7,7 +7,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { gatewayRoot } = await import("../src/config/paths.js");
-const { callsFiles, callsReleaseSession, selectCallsRelease, useCheckoutCallsRelease } = await import("../src/web/dashboard-release.ts");
+const { callsFiles, callsReleaseSession, selectDashboardRelease, useCheckoutCallsRelease } = await import("../src/web/dashboard-release.ts");
 const { setUser } = await import("../src/config/store.js");
 const { saveCallHistory } = await import("../src/gateway/voice/history.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests } = await import("../src/web/activity.js");
@@ -44,17 +44,25 @@ test("Calls page renders, expands, retries and paginates safely in Chromium", { 
   // A second navigation picks up an atomically activated view. Keep the first tab
   // and its signed-in session for the pagination and retry checks that follow.
   const readSource = (name) => readFileSync(new URL("../" + callsFiles[name], import.meta.url), "utf8");
-  selectCallsRelease(gatewayRoot(), callsReleaseSession, {
+  const main = await context.newPage();
+  await main.goto(base + url);
+  const design = tab => tab.locator("html").evaluate(el => globalThis.getComputedStyle(el).getPropertyValue("--layout-test").trim());
+  const layout = readFileSync(new URL("../public/activity/dashboard.css", import.meta.url), "utf8");
+  selectDashboardRelease(gatewayRoot(), callsReleaseSession, { activityLayout: layout + "\n:root{--layout-test:second}", calls: {
     html: readSource("html").replace("<h1>Calls</h1>", "<h1>Updated calls</h1>"),
     css: readSource("css") + "\n#calls-status { color: rgb(30, 70, 110); }",
     ts: readSource("ts") + '\ndocument.documentElement.dataset.release = "second";',
-  });
+  } });
   t.after(() => useCheckoutCallsRelease(gatewayRoot()));
   const updated = await context.newPage();
   await updated.goto(base + url + "/calls");
   await updated.getByRole("heading", { name: "Updated calls" }).waitFor();
   assert.equal(await updated.locator("html").getAttribute("data-release"), "second");
   assert.equal(await updated.locator("#calls-status").evaluate(el => globalThis.getComputedStyle(el).color), "rgb(30, 70, 110)");
+  assert.equal(await design(updated), "second");
+  assert.equal(await design(main), "");
+  await main.reload();
+  assert.equal(await design(main), "second");
   const secondPath = await updated.locator('script[src^="/activity/assets/calls/"]').getAttribute("src");
   assert.notEqual(bundlePath, secondPath);
   assert.equal((await context.request.get(base + bundlePath)).status(), 200);
@@ -65,6 +73,10 @@ test("Calls page renders, expands, retries and paginates safely in Chromium", { 
   await updated.getByRole("heading", { name: "Calls", exact: true }).waitFor();
   assert.equal(await updated.locator('script[src^="/activity/assets/calls/"]').getAttribute("src"), bundlePath);
   assert.equal((await context.request.get(base + secondPath)).status(), 200);
+  assert.equal(await design(updated), "");
+  await main.reload();
+  assert.equal(await design(main), "");
+  await main.close();
   await updated.close();
   const startedMs = Date.now();
   for (let i = 0; i < 31; i++) saveCallHistory({ id: "browser-" + i, ownerId: "U_HISTORY", teamId: "T_HISTORY",

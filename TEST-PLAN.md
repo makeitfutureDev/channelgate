@@ -5,7 +5,8 @@
 Run `test/dashboard-update.test.ts` with the updater and Calls view suites. Check a UI-only
 fast-forward, an incompatible diff, a candidate validation failure and a failed rollback.
 In a disposable deployment start one long-running turn on each supported engine. With the admin
-dashboard and Calls open, deploy new UI assets for both surfaces, then roll back. Verify that original tabs load their
+dashboard, Activity and Calls open, deploy new UI assets and a changed common Activity stylesheet,
+then roll back. Check the computed layout in both Activity views and verify that original tabs load their
 old scripts and CSS. Each admin import map must match the hash in its CSP. A refreshed tab must
 display the selected version, the gateway instance and login must persist, and each agent must
 deliver exactly one final answer. Include the instance ID and view revision in the evidence.

@@ -1093,7 +1093,8 @@ automated: legal and operational owners must define it before enabling destructi
 ## Upgrade and rollback canary
 
 Once the dashboard release support is running, eligible changes to the admin browser modules,
-styles, shell, or Activity Calls view can ship during an agent turn. Use the normal update entry
+styles and shell, the common Activity layout (`public/activity/dashboard.css`), and the Calls
+view can ship during an agent turn. Use the normal update entry
 point. It holds the previous UI active during checks, activates the complete view, and verifies
 the new content revision against the original gateway instance. A failed candidate restores the
 previous view. Open tabs can still request the preceding release's versioned assets. The
