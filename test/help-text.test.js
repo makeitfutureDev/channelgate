@@ -24,7 +24,8 @@ test("Teams /help includes practical workflows and its supported commands", () =
   ]) assert.ok(TEAMS_HELP_TEXT.includes(expected), `Teams guide missing: ${expected}`);
 
   // These are Slack-specific controls; Teams has session queues and its own native console.
-  assert.doesNotMatch(TEAMS_HELP_TEXT, /\/(?:menu|sudo|fork|delete|pending|context|compact|mode|next|update|resume)\b/);
+  assert.match(TEAMS_HELP_TEXT, /\/fork <request>/);
+  assert.doesNotMatch(TEAMS_HELP_TEXT, /\/(?:menu|sudo|delete|pending|context|compact|mode|next|update|resume)\b/);
   assert.doesNotMatch(TEAMS_HELP_TEXT, /Slack|Steer Conversation|Generate transcript|📂 button|:robot_face:|:octagonal_sign:|:white_check_mark:|🤖/);
 });
 
