@@ -8,6 +8,10 @@ the original daemon instance, and restores the previous view on a failed check. 
 health exposes the served Calls revision separately from the daemon's boot revision. Backend and
 mixed updates use the full service update.
 
+## Running Slack threads
+
+Slack shows the agent’s ▶️ reaction on the thread root while it processes a turn. It removes its reaction when the last active turn finishes, fails or stops. The marker also follows visible API turns and agent-mail hops in real Slack threads. A lost connection or daemon restart queues unfinished reaction cleanup for retry.
+
 ## Claude native compaction preserves the thread session (2026-11-26)
 
 Claude's `/compact` and optional focus instructions reach the engine as the entire user prompt,

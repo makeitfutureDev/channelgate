@@ -1660,6 +1660,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       workspaceId: teamId,
       authorId: event.user,
       slackThreadTs: replyTs || "",
+      reactionThreadTs: replyTs || event.ts,
       threadKey,
       isDM: Boolean(meta.isDM),
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
@@ -1785,6 +1786,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         dir,
         // A code channel's session status is the channel's (no thread), whatever thread the reply uses.
         channelSession: codeChannel,
+        reactionThreadTs: acceptedRun.reactionThreadTs,
       });
       // Close the producer at cancellation, not after the runner finally settles. Its stop()
       // seals callbacks/timers synchronously before awaiting Slack cleanup, so late engine output
@@ -1868,6 +1870,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         authorId: event.user,
         threadKey,
         slackThreadTs: replyTs || "",
+        reactionThreadTs: acceptedRun.reactionThreadTs,
         isDM: Boolean(meta.isDM),
         ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId } : {}),
         text: textForRun,

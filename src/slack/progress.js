@@ -4,6 +4,7 @@
 // the final message (ownsFinal:true) — the caller must call finalize(result) instead of posting.
 import { mdToMrkdwn, chunkMrkdwn, resolveMentions, createMentionStream } from "./format.js";
 import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CHARS } from "./util.js";
+import { startRunningReaction } from "./thread-running-reaction.ts";
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { setAgentSessionStatus, nativeSessionStatus, SESSION_STATUS } from "./agent-sessions.js";
@@ -673,7 +674,7 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile, channelSession = false, replyMentions = false }) {
+function startStreamingProgress(client, { channel, threadTs, reactionThreadTs = threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile, channelSession = false, replyMentions = false }) {
   // In a code channel the session status is the channel's: keyed without a thread, whatever
   // thread the reply itself goes into (top-level when the person wrote top-level).
   const statusThreadTs = channelSession ? "" : threadTs;
@@ -1153,6 +1154,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     timeline.heartbeatDone(label || "✅ Done");
   };
 
+  const stopRunningReaction = startRunningReaction(client, channel, reactionThreadTs);
   return {
     ownsFinal: true,
     onRuntimeResolved: (runtime) => {
@@ -1272,6 +1274,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         return;
       }
       terminal = "finalize";
+      stopRunningReaction();
       stopped = true;
       disarmIdleFlush(); // stop() below flushes the helper's buffer itself
       stopHeartbeat();
@@ -1488,6 +1491,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         return bounded(chain);
       }
       terminal = "stop";
+      stopRunningReaction();
       stopped = true;
       disarmIdleFlush();
       stopHeartbeat("⏹️ Stopped");

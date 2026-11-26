@@ -1,5 +1,9 @@
 # Changelog — ChannelGate
 
+## Unreleased
+
+- Slack marks running threads with ▶️ on the root message and clears its reaction at the end of the turn.
+
 ## 0.7.0 — candidate, pending approval
 
 - Pass Claude `/compact` and its optional focus instructions as a bare native command through cold,

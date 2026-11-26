@@ -14,6 +14,7 @@ import { logEvent } from "../util/logger.js";
 import { engineLabel, isEngineId } from "../engines/registry.js";
 import { runMessage, isEmptyResult } from "./run.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
+import { startRunningReaction } from "../slack/thread-running-reaction.ts";
 import { startProgress } from "../slack/progress.js";
 import { getDirectory } from "../slack/directory.js";
 import { recordUsage, createUsageBank } from "./usage.js";
@@ -529,6 +530,7 @@ export async function recoverRuns(stale, {
     // shared with the formatter, so later name resolution applies to subsequent streamed deltas.
     const liveDirectory = { map: new Map(), maxWords: 5 };
     let status = null;
+    let stopRunningReaction;
     let statusClosed = false;
     const stopStatus = async () => {
       if (!status || statusClosed) return;
@@ -590,6 +592,7 @@ export async function recoverRuns(stale, {
             teamId: rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
             isDM: rec.isDM ?? String(rec.channelId).startsWith("D"),
             dir: liveDirectory,
+            reactionThreadTs: null, // Queue ownership below starts the running marker.
           }) || null;
         } catch (error) {
           await logEvent("run_recover_progress_unavailable", { slug: rec.slug, error: error.message }).catch(() => {});
@@ -621,6 +624,7 @@ export async function recoverRuns(stale, {
       if (forceStopping()) return;
       recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
       await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
+      stopRunningReaction = startRunningReaction(client, rec.channelId, rec.reactionThreadTs || rec.slackThreadTs || rec.threadKey);
       const result = await runner({
         channelId: rec.channelId,
         authorId: rec.authorId,
@@ -720,6 +724,7 @@ export async function recoverRuns(stale, {
       if (told) markTerminal();
       else keepRow = true; // already attempted: reconnect must not replay uncertain side effects
     } finally {
+      stopRunningReaction?.();
       await stopStatus();
       const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
       if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
