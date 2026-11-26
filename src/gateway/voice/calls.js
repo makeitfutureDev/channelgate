@@ -15,6 +15,7 @@
 // thread as they are dispatched, each thread receives the transcript of the segment spent there
 // when the call moves on or ends, and a one-line record of the call is saved to the caller's own
 // DM memory.
+import { turnReplyCallbacks } from "../turn-replies.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -532,7 +533,8 @@ export function createCallManager({
       try {
         result = await runner({
           channelId, authorId: ownerId, workspaceId: call.teamId || "", text: task.request, threadKey: threadTs,
-          origin: VOICE_CALL_ORIGIN, signal: controller.signal, progressReport: Boolean(status), onDelta: status?.onDelta, onEvent: status?.onEvent,
+          origin: VOICE_CALL_ORIGIN, signal: controller.signal, progressReport: Boolean(status),
+          ...turnReplyCallbacks(controller.signal, status),
         });
       } catch (error) {
         failure = handle.aborted || controller.signal.aborted ? "stopped" : (error?.message || String(error));

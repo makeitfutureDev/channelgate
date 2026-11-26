@@ -1,3 +1,4 @@
+import { turnReplyCallbacks } from "../gateway/turn-replies.ts";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { recordPlatformThreadMessage, recordPlatformThreadOutcome } from "../gateway/platform-threads.js";
 import { autoApproveUser } from "../gateway/user-auto-approval.js";
@@ -308,9 +309,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         } : {}),
         attachments: prepared.paths,
         signal,
-        onDelta: progress.activity,
-        onEvent: progress.event,
-        onRuntimeResolved: progress.runtime,
+        ...turnReplyCallbacks(signal, { onDelta: progress.activity, onEvent: progress.event, onRuntimeResolved: progress.runtime }),
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,
         // and it means "a watched, Slack-authenticated turn". These turns are watched and
