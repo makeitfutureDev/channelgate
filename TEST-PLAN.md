@@ -18145,6 +18145,11 @@ Regression: `thread-fork-approvals.test.js`, `thread-fork-batch.test.js`, `slack
 Live acceptance (pending, run separately with Claude and Codex in an authorized Slack Auto fixture): complete a source turn containing a unique context marker; ask “Propose forks for pricing, onboarding and support, each asking about our marker.” Verify one card shows all titles/prompts and Create 3 forks/Cancel. Before approval, no child roots exist. Cancel once, then propose again and approve as requester: exactly three roots, independent Activity rows owned by requester, matching parent backlinks and a parent index. Every child recalls the marker and continues independently. Repeat the pending request and double-click: one execution. While a long source turn is active, approve a proposal; no children start until it settles, and all use the same source. Verify another member cannot approve; revoked requester, sudo, session clear or lane change refuse. Use an isolated fake Slack transport to fail one create after another succeeds: preserve successful links, identify failure, and never blindly retry an uncertain POST. Restart a pending proposal and approve it; separately interrupt execution and verify no automatic duplicate roots. Live results must be recorded for each engine; regression fakes do not establish live acceptance.
 
 
+Shared fork components (`test/fork-components.test.ts`) verify that a stop during the per-child
+access check prevents new roots and a failed child settings write rolls back the engine, pool,
+model, effort and Lean flag together. The live Slack and Google Chat fork cases exercise the same
+components through each platform.
+
 ## Google Chat thread forks (`propose_thread_forks`, `/fork`)
 
 Automated: `node --test test/googlechat-thread-forks.test.js` (11) runs the real Google Chat
