@@ -2,6 +2,7 @@ import { acquireLandingLock, releaseLandingLock } from "../../scripts/with-landi
 import { execFileSync } from "node:child_process";
 import { adminAssetName, adminVersion } from "../web/admin-assets.ts";
 import { callsFiles, selectDashboardRelease, useCheckoutCallsRelease, type DashboardSources } from "../web/dashboard-release.ts";
+import { adminModuleName } from "../web/admin-module-names.ts";
 import { buildCallsView } from "../web/calls-view-assets.ts";
 
 const records = ["CHANGELOG.md", "FEATURES.md", "TEST-PLAN.md"];
@@ -19,26 +20,38 @@ const adminAssets = [
   "public/index.html", "public/plugin-summary.js", "public/skill-assignment-picker.js",
   "public/skills-catalog-filters.js", "public/styles.css",
 ];
-const allowed = [...callsAssets, ...adminAssets, ...records];
+
 
 function git(repo: string, ...args: string[]) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 2 * 1024 * 1024 });
 }
 
-// Only regular-file edits to this exact set qualify. A rename, symlink, newly added server
-// import, changed contract or unknown path belongs to the regular update transaction.
+// A new typed module is eligible only when both regular files exist at the target. The
+// type-check gate verifies its committed browser output with the pinned compiler.
+function isTypedAsset(repo: string, to: string, file: string) {
+  const match = /^(?:ui\/admin\/([a-z0-9-]+)\.ts|public\/([a-z0-9-]+)\.js)$/.exec(file);
+  const name = match?.[1] ?? match?.[2];
+  if (!name || !adminModuleName.test(name)) return false;
+  const pair = git(repo, "ls-tree", "-r", "-z", to, "--", `ui/admin/${name}.ts`, `public/${name}.js`).split("\0").filter(Boolean);
+  return pair.length === 2 && pair.every(entry => entry.startsWith("100644 blob "));
+}
+
 function dashboardChanges(repo: string, from: string, to: string): { calls: boolean; admin: boolean } | null {
   if (![from, to].every(value => /^[0-9a-f]{40}$/.test(value)) || from === to) return null;
   try {
     git(repo, "merge-base", "--is-ancestor", from, to);
-    git(repo, "diff", "--quiet", from, to, "--", ".", ...allowed.map(name => ":(exclude)" + name));
-    const entries = git(repo, "diff", "--no-ext-diff", "--raw", "--no-renames", "-z", from, to, "--", ...allowed).split("\0");
+    const entries = git(repo, "diff", "--no-ext-diff", "--raw", "--no-renames", "-z", from, to).split("\0");
     entries.pop();
     const changes = { calls: false, admin: false };
     for (let i = 0; i < entries.length; i += 2) {
-      if (!/^:100644 100644 [0-9a-f]+ [0-9a-f]+ M$/.test(entries[i]) || !allowed.includes(entries[i + 1])) return null;
-      changes.calls ||= callsAssets.includes(entries[i + 1]);
-      changes.admin ||= adminAssets.includes(entries[i + 1]);
+      const mode = entries[i], file = entries[i + 1];
+      const edit = /^:100644 100644 [0-9a-f]+ [0-9a-f]+ M$/.test(mode);
+      const add = /^:000000 100644 [0-9a-f]+ [0-9a-f]+ A$/.test(mode);
+      if (edit && records.includes(file)) continue;
+      if (edit && callsAssets.includes(file)) changes.calls = true;
+      else if (edit && adminAssets.includes(file)) changes.admin = true;
+      else if ((edit || add) && isTypedAsset(repo, to, file)) changes.admin = true;
+      else return null;
     }
     return changes;
   } catch {
