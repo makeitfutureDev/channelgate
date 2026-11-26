@@ -17,6 +17,7 @@ import { createGoogleChatThreadForks } from "./googlechat/thread-forks.js";
 import { createTeamsAuth } from "./msteams/auth.js";
 import { createTeamsApi } from "./msteams/api.js";
 import { createTeamsConnector } from "./msteams/connector.js";
+import { createTeamsThreadForks } from "./msteams/thread-forks.ts";
 import { createTeamsControls } from "./msteams/controls.js";
 import { startTeams, botIdFor } from "./msteams/transport.js";
 
@@ -40,6 +41,7 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   const forks = createGoogleChatThreadForks({ connector, conversation: controls.conversation, log });
   connector.threadForkRefusal = forks.refusal;
   connector.runThreadForks = forks.runApproved;
+  connector.settleFork = forks.settle;
   const onCommand = async (args) => await forks.guard(args) || await forks.command(args) || controls.onCommand(args);
   // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
   const ingest = createIngest({ connector, log, onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
@@ -67,8 +69,14 @@ async function startTeamsTransport(config, log) {
   const controls = createTeamsControls({ connector });
   connector.shareFile = controls.shareFile;
   // One set of live session lanes: the queue card's Steer interrupts the run this ingest owns.
-  const ingest = createIngest({ connector, log, onCommand: controls.onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
-  return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
+  const forks = createTeamsThreadForks({ connector, conversation: controls.conversation, log });
+  connector.threadForkRefusal = forks.refusal;
+  connector.runThreadForks = forks.runApproved;
+  connector.settleFork = forks.settle;
+  const onCommand = async args => await forks.guard(args) || await forks.command(args) || controls.onCommand(args);
+  const ingest = createIngest({ connector, log, onCommand, controls: controls.conversation, queueNotice: controls.queueNotice });
+  const onMessage = (message, options) => options?.fork ? forks.runChild(ingest, message, options) : ingest(message, options);
+  return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 
 export function createPlatformTransports({ slack, log = console } = {}) {

@@ -2,11 +2,12 @@
 
 ## 0.7.1 — in development
 
-- Slack marks running threads with ▶️ on the root message and clears its reaction at the end of the turn.
-
-- Slack and Google Chat run approved thread forks through shared settings and child execution.
-- Activity Calls ships a typed browser view with versioned assets. A Calls-only update can be
-  verified or rolled back while the same gateway instance continues running agent turns.
+- Slack marks running threads with ▶️ on the root message and clears its reaction when the last turn ends.
+- Fork a Teams channel discussion into separate threads with `/fork` or an approved batch.
+  Each child starts from a copy of the source agent session and is owned by the requester.
+  Slack, Google Chat and Teams share fork settings and batch execution.
+- Eligible admin dashboard and Activity Calls updates can be verified and rolled back while the
+  same gateway instance continues running agent turns. Open tabs retain their prior assets.
 
 ## 0.7.0 — candidate, pending approval
 

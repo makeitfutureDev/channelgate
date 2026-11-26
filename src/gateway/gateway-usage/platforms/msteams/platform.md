@@ -22,7 +22,8 @@ but writing for the surface produces a much better reply.
   streaming exists on Teams but only in 1:1 chats with a two-minute cap, so the gateway does not use
   it. Do not post extra messages to compensate.
 - **Threads exist in channels only.** A 1:1 or group chat is flat — every reply is a new message
-  there, so don't say "in this thread" unless you are in a channel.
+  there, so don't say "in this thread" unless you are in a channel. In a channel, a person can
+  type `/fork <request>` or ask for a batch. See `references/thread-forks.md`.
 - A background job or agent you start announces itself with a **Check status** button (live
   elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
   running background work. Point people there instead of polling the job yourself.

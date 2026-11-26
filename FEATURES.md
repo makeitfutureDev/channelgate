@@ -9325,6 +9325,14 @@ the selected license pool, model, effort and Lean posture in one transaction. Ea
 the requester's current access before creating each thread and holds the source until all
 started children copy it or finish their first turn.
 
+## Thread forks in Microsoft Teams channels
+
+A typed `/fork <request>` or an approved `propose_thread_forks` batch opens separate channel
+threads on Teams. Each child inherits the source runtime, copies its Claude or Codex session,
+and processes its exact opening request as the requester through the Teams durable inbox. A
+link in each child leads back to the source, which receives the index. Flat personal and group
+chats explain the channel requirement. A remote write with an uncertain outcome is attempted once.
+
 ## Thread forks in Google Chat (2026-11-22)
 
 Google Chat (Beta) declares the `threadForks` capability. In a **named space that uses threads**

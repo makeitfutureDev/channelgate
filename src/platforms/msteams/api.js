@@ -49,9 +49,10 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
   const base = validateServiceUrl(serviceUrl);
   if (!base) throw new Error(`Teams serviceUrl is not a known Bot Framework host: ${serviceUrl}`);
 
-  async function call(path, { method = "POST", body = null, signal } = {}) {
+  async function call(path, { method = "POST", body = null, signal, retry = true } = {}) {
     let lastErr = null;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    const limit = retry ? attempts : 1;
+    for (let attempt = 1; attempt <= limit; attempt++) {
       const response = await teamsRequest(async requestSignal => {
         const token = await auth.token();
         requestSignal.throwIfAborted();
@@ -70,7 +71,7 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       if (status === 401) auth.reset?.();
       if (!RETRYABLE.has(status) && status !== 401) throw err;
       lastErr = err;
-      if (attempt < attempts) await sleep(baseDelayMs * 2 ** (attempt - 1), undefined, { signal });
+      if (attempt < limit) await sleep(baseDelayMs * 2 ** (attempt - 1), undefined, { signal });
     }
     throw lastErr;
   }
@@ -91,7 +92,7 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
   return {
     serviceUrl: base,
 
-    async sendActivity(conversationId, { text, entities = [], threadKey = "", attachments = null, signal } = {}) {
+    async sendActivity(conversationId, { text, entities = [], threadKey = "", attachments = null, signal, retry = true } = {}) {
       const activity = {
         type: "message",
         // Teams renders the narrow Markdown subset only when textFormat says so; without it the
@@ -101,7 +102,7 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
         ...(entities?.length ? { entities } : {}),
         ...(attachments?.length ? { attachments } : {}),
       };
-      const res = await call(`v3/conversations/${target(conversationId, threadKey)}/activities`, { body: activity, signal });
+      const res = await call(`v3/conversations/${target(conversationId, threadKey)}/activities`, { body: activity, signal, retry });
       return { messageId: res?.id || "" };
     },
 

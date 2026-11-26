@@ -159,7 +159,7 @@ test("the fork tool registers for a trusted Google Chat foreground turn only, an
     { ...base, channelId: "gchat:spaces/AAA", threadKey: "spaces/AAA/threads/T", origin: "schedule" },
     { ...base, channelId: "gchat:spaces/AAA", threadKey: "spaces/AAA/threads/T", origin: "googlechat_foreground", principalTrusted: false },
     { ...base, channelId: "gchat:spaces/AAA", threadKey: "spaces/AAA/threads/T", origin: "googlechat_foreground", toolset: "agent-message" },
-    { ...base, channelId: "teams:19:abc@thread.tacv2", threadKey: "1", origin: "msteams_foreground" },
+    { ...base, channelId: "teams:19:abc@thread.tacv2", threadKey: "1", origin: "googlechat_foreground" },
     { ...base, channelId: "C123", threadKey: "gchat:spaces/AAA", origin: "slack_foreground" },
   ]) assert.deepEqual(tools(ctx), [], JSON.stringify(ctx));
   assert.deepEqual(tools({ ...base, channelId: "C123", threadKey: "1800000000.000100", origin: "slack_foreground" }), ["propose_thread_forks"]);
@@ -305,7 +305,7 @@ test("DMs, group chats and unthreaded spaces are refused with the reason; a revo
   live.unregisterTransport("googlechat");
   await assert.rejects(prepareThreadForkApproval(ctxFor(h, ready), { forks: forkItems }), /Google Chat is not connected/);
   await assert.rejects(runApprovedThreadForks({ action: { channelId: h.channelId } }, { runSlack: () => assert.fail("not Slack") }), /Google Chat is not connected/);
-  await assert.rejects(runApprovedThreadForks({ action: { channelId: "teams:19:x@thread.tacv2" } }, { runSlack: () => assert.fail("not Slack") }), /not available on Microsoft Teams/);
+  await assert.rejects(runApprovedThreadForks({ action: { channelId: "teams:19:x@thread.tacv2" } }, { runSlack: () => assert.fail("not Slack") }), /Microsoft Teams is not connected/);
 });
 
 test("only the requester or an admin can create the forks", async t => {

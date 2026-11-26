@@ -1,5 +1,6 @@
 // Wiring: credentials → Chat API + Pub/Sub puller + connector, started and stopped as one unit.
 import { createHash } from "node:crypto";
+import { forkSessionHolds } from "../fork-session-holds.ts";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth, CHAT_REACTION_EVENT_SCOPES } from "./auth.js";
 import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
@@ -131,24 +132,13 @@ export async function startGoogleChat({
   // Sessions a thread fork is copying (src/platforms/googlechat/thread-forks.js): their queued
   // messages wait in SQLite, holding no run slot, until the copy is taken. Control commands
   // (/stop, /status, card clicks) have their own lane and are never held.
-  const sessionHolds = new Map();
+  const sessionHolds = forkSessionHolds(() => inbox.wake?.());
   const inbox = deps.inbox || (deps.createInbox || createDurableInbox)({
     ...inboxOptions, namespace,
     queuedNamespace: payload => isControl(payload.event) ? controlNamespace : null,
-    isReady: key => !sessionHolds.has(key),
+    isReady: sessionHolds.isReady,
   });
-  connector.holdSession = ({ conversationId, sessionKey }) => {
-    const key = JSON.stringify([conversationId, sessionKey]);
-    sessionHolds.set(key, (sessionHolds.get(key) || 0) + 1);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const left = (sessionHolds.get(key) || 1) - 1;
-      if (left > 0) sessionHolds.set(key, left); else sessionHolds.delete(key);
-      inbox.wake?.();
-    };
-  };
+  connector.holdSession = sessionHolds.acquire;
   // A fork's opening request, authored by its requester in the fork's new thread, enters the same
   // durable intake as a typed message: the same session queue, run slots and restart handling (an
   // interrupted one is announced, never replayed). Only daemon code reaches this; a Chat event can
@@ -206,6 +196,10 @@ export async function startGoogleChat({
       let cancelled = 0;
       for (const row of rows) cancelled += Number(cancel.run(namespace, row.event_id).changes);
       db.exec('COMMIT');
+      for (const row of rows) {
+        const fork = fromJson(row.data, {}).event?.fork;
+        if (fork) connector.settleFork?.(fork.id);
+      }
       return { allowed: true, cancelled };
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   };

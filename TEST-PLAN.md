@@ -18178,6 +18178,23 @@ access check prevents new roots and a failed child settings write rolls back the
 model, effort and Lean flag together. The live Slack and Google Chat fork cases exercise the same
 components through each platform.
 
+## Microsoft Teams channel forks
+
+Automated coverage in `test/teams-thread-forks.test.ts` exercises a typed command and an
+approved batch with the Teams connector, local Bot Framework responses, and the durable
+SQLite inbox. Check independent channel roots and reply destinations, the originating
+requester, exact prompt, Activity owner, source session, journal, and links. Flat chats refuse;
+a 503 on a fork write yields one attempt.
+
+Live acceptance is pending on Claude and Codex. On each harness, use a private test channel with
+the Teams bot installed and an approved requester. Start a turn with a synthetic marker. Send
+`/fork Tell me the marker`, then ask the source to propose two forks named Red and Blue that each
+report the marker. Before approval verify that only the single fork exists. Approve once as
+the requester. Pass if the source links to three distinct roots in the same channel, each new
+thread links back, each child answers with the marker, and Activity shows the requester. As the
+same person repeat the command in a test personal and group chat. Require a channel-only refusal
+and zero new roots. A duplicate approval click must leave the root count unchanged.
+
 ## Google Chat thread forks (`propose_thread_forks`, `/fork`)
 
 Automated: `node --test test/googlechat-thread-forks.test.js` (11) runs the real Google Chat

@@ -229,6 +229,13 @@ short-circuit that.
 
 ## Microsoft Teams (Beta)
 
+In a Teams channel, `/fork <opening request>` starts a new reply chain from the current agent
+session. An agent can also propose up to ten titled forks in one approval card. After approval,
+each child opens under a separate top-level channel message with a link back to the source and
+runs as the original requester. The source receives the links. Personal and group chats are flat
+in this integration. The child uses native session copying on Claude and Codex; reading source
+messages for history fallback requires the existing Teams history setup.
+
 **Transport: Bot Framework (public HTTPS endpoint).** Every supported Teams bot path delivers
 messages as inbound POSTs from Azure Bot Service — there is no outbound-only receive path. The
 daemon already terminates public HTTPS for the admin UI and the run API, so the endpoint rides that

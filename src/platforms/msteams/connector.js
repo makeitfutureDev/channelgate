@@ -22,6 +22,10 @@ function footerAttachments(footer, menu) {
   return footer || menu?.conversationId ? [adaptiveCardAttachment(replyMenuCard({ footer, menu }))] : [];
 }
 
+/**
+ * @param {{auth?: object, capabilities?: object, api?: ReturnType<typeof createTeamsApi>|null,
+ * apiForServiceUrl?: Function|null, botId?: string, tenantId?: string, serviceUrl?: string, log?: Console}} options
+ */
 export function createTeamsConnector({ auth, capabilities, api = null, apiForServiceUrl = null, botId = "", tenantId = "", serviceUrl, log = console } = {}) {
   const defaultApi = api || createTeamsApi({ auth, ...(serviceUrl ? { serviceUrl } : {}) });
   const regionalApis = new Map();
@@ -86,7 +90,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
     // and entities MUST travel together: an `<at>` tag whose entity was dropped renders as literal
     // markup and pings nobody, which looks like the bot forgot how to address people.
     rememberServiceUrl: (conversationId, url) => rememberTeamsServiceUrl(botId, toConversationId(conversationId), url),
-    async post({ conversationId, threadKey, text, mentions = [], footer = "", menu = null, ephemeralTo = "", buttons = null, signal } = {}) {
+    async post({ conversationId, threadKey, text, mentions = [], footer = "", menu = null, ephemeralTo = "", buttons = null, signal, retry = true } = {}) {
       const id = toConversationId(conversationId);
       let body = String(text ?? "");
       const attachments = footerAttachments(footer, menu);
@@ -104,7 +108,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
         }
       }
       const thread = threadFor(threadKey) || "";
-      const res = await teams.sendActivity(id, { text: body, entities: mentions, attachments, threadKey: thread, signal });
+      const res = await teams.sendActivity(id, { text: body, entities: mentions, attachments, threadKey: thread, signal, ...(retry ? {} : { retry: false }) });
       return { messageId: res.messageId, conversationId: id, threadKey: thread };
     },
 

@@ -40,6 +40,7 @@ export const teamsAdapter = validatePlatformAdapter({
     threading: "native",
     // Channel reply-threads map onto our thread model; 1:1 and group chats are flat.
     mixedThreading: true,
+    threadForks: true,
     ephemeral: false,
     deleteMessage: true,
     reactions: true,
