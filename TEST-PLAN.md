@@ -1,13 +1,14 @@
 # ChannelGate — Test Plan
 
-## Activity Calls updates during an active turn
+## Dashboard updates during an active turn
 
 Run `test/dashboard-update.test.ts` with the updater and Calls view suites. Check a UI-only
 fast-forward, an incompatible diff, a candidate validation failure and a failed rollback.
-In a disposable deployment start one long-running turn on each supported engine. With Calls open,
-deploy a changed Calls view, then roll back. Verify that the original tab can load its script,
-a refreshed tab displays the selected version, the gateway instance and login persist, and each
-agent delivers exactly one final answer. Include the instance ID and view revision in the evidence.
+In a disposable deployment start one long-running turn on each supported engine. With the admin
+dashboard and Calls open, deploy new UI assets for both surfaces, then roll back. Verify that original tabs load their
+old scripts and CSS. Each admin import map must match the hash in its CSP. A refreshed tab must
+display the selected version, the gateway instance and login must persist, and each agent must
+deliver exactly one final answer. Include the instance ID and view revision in the evidence.
 
 ## Running Slack thread reaction
 

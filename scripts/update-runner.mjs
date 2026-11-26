@@ -29,7 +29,7 @@ import {
 } from "../src/gateway/update-state.js";
 import { gatewayRoot, whisperModelPath } from "../src/config/paths.js";
 import { CONTAINER_DEFAULT_IMAGE, needsImageBuild, expectedImageBuild, IMAGE_INSPECT_FORMAT, parseImageBuild } from "../src/runtimes/container/image.js";
-import { applyCallsUpdate, isCallsOnlyUpdate, moveCallsCheckout, prepareCallsUpdate } from "../src/gateway/dashboard-update.ts";
+import { applyDashboardUpdate, isDashboardOnlyUpdate, moveDashboardCheckout, withDashboardCheckout, prepareDashboardUpdate } from "../src/gateway/dashboard-update.ts";
 import { processFailureMessage } from "../src/util/process-outcome.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -293,7 +293,7 @@ async function defaultPreflight({ root, repoRoot }) {
   });
   // The daemon keeps its boot revision after an asset-only update. Only this proven,
   // backwards-compatible diff may account for a different checkout.
-  const compatibleUi = baselineHealth.callsView?.session && isCallsOnlyUpdate(repoRoot, baselineHealth.revision, oldRevision, true);
+  const compatibleUi = baselineHealth.callsView?.session && isDashboardOnlyUpdate(repoRoot, baselineHealth.revision, oldRevision, true);
   const baselineProblem = baselineFailure(baselineHealth, { expectedRevision: compatibleUi ? baselineHealth.revision : oldRevision });
   if (baselineProblem) throw refusal(baselineProblem);
   const whisperDownloadRequired = settings.whisperEnabled !== false && !existsSync(whisperModelPath());
@@ -314,7 +314,7 @@ async function defaultPreflight({ root, repoRoot }) {
     previousInstanceId: baselineHealth.instanceId || "",
     requireSlack: baselineHealth.slack?.connected === true,
     baselineHealth,
-    uiRelease: prepareCallsUpdate(repoRoot, oldRevision, targetRevision, baselineHealth),
+    uiRelease: prepareDashboardUpdate(repoRoot, oldRevision, targetRevision, baselineHealth),
     service,
     needBytes,
     availableBytes,
@@ -558,8 +558,9 @@ function defaultOps({ root, repoRoot }) {
       if (!claimUpdate({ root, owner, pid: process.pid })) throw new Error("could not claim reserved update transaction");
     },
     preflight: () => defaultPreflight({ root, repoRoot }),
-    checkoutUi: ({ context }) => moveCallsCheckout(repoRoot, context.oldRevision, context.targetRevision, context.branch),
-    restoreUi: ({ context }) => moveCallsCheckout(repoRoot, context.targetRevision, context.oldRevision, context.branch, true),
+    checkoutUi: ({ context }) => moveDashboardCheckout(repoRoot, context.oldRevision, context.targetRevision, context.branch),
+    publishUiAt: ({ context }, revision, publish) => withDashboardCheckout(repoRoot, revision, context.branch, publish),
+    restoreUi: ({ context }) => moveDashboardCheckout(repoRoot, context.targetRevision, context.oldRevision, context.branch, true),
     health: () => healthAt(internalAuth(root)),
     typecheck: () => runCommand("npm", ["run", "check:types"], { cwd: repoRoot }),
     snapshot: ({ context, owner }) => defaultSnapshot({ root, repoRoot, context, owner }),
@@ -635,10 +636,11 @@ export async function executeUpdateTransaction({
     });
     if (context.uiRelease) {
       const args = { context, owner };
-      const outcome = await applyCallsUpdate(root, context, {
+      const outcome = await applyDashboardUpdate(root, context, {
         checkout: () => ops.checkoutUi(args),
         test: async () => { await ops.typecheck(args); await ops.test(args); },
         restore: () => ops.restoreUi(args),
+        publishAt: (revision, publish) => ops.publishUiAt(args, revision, publish),
         health: () => ops.health(args),
         phase: name => phase(root, owner, name),
       });
