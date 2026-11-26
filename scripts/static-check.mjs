@@ -15,7 +15,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { findSecretArtifactWrites } from "./static-secret-writes.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const roots = ["src", "scripts", "test", "public"];
+const roots = ["src", "scripts", "test", "public", "ui"];
 const files = [];
 
 function walk(rel) {
@@ -44,7 +44,7 @@ function undeclaredIdentifiers(file, source) {
   const out = [];
   for (const found of detectGlobals(ast)) {
     if (RUNTIME_GLOBALS.has(found.name)) continue;
-    if (file.startsWith("public/") && BROWSER_GLOBALS.has(found.name)) continue;
+    if ((file.startsWith("public/") || file.startsWith("ui/admin/")) && BROWSER_GLOBALS.has(found.name)) continue;
     for (const node of found.nodes) {
       // typeof probes are a legitimate feature-detection idiom, never a crash.
       if (node.parents?.some?.((p) => p.type === "UnaryExpression" && p.operator === "typeof")) continue;

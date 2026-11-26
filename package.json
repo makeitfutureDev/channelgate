@@ -51,7 +51,8 @@
     "build:image": "node scripts/build-image.mjs",
     "vscode": "node scripts/open-vscode.mjs",
     "vpn": "node scripts/channel-vpn.mjs",
-    "check:types": "tsc --noEmit"
+    "build:admin": "node scripts/build-admin.ts",
+    "check:types": "tsc --noEmit && node scripts/build-admin.ts --check"
   },
   "engines": {
     "node": ">=24.0.0"
