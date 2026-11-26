@@ -1,8 +1,12 @@
 # Changelog — ChannelGate
 
-## Unreleased
+## 0.7.1 — in development
 
 - Slack marks running threads with ▶️ on the root message and clears its reaction at the end of the turn.
+
+- Slack and Google Chat run approved thread forks through shared settings and child execution.
+- Activity Calls ships a typed browser view with versioned assets. A Calls-only update can be
+  verified or rolled back while the same gateway instance continues running agent turns.
 
 ## 0.7.0 — candidate, pending approval
 

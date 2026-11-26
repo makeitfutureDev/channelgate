@@ -53,4 +53,3 @@ export function dashboardHealth(readView: () => { revision: string }, session: s
     return null;
   }
 }
-
