@@ -1,5 +1,14 @@
 # ChannelGate — Test Plan
 
+## Activity Calls updates during an active turn
+
+Run `test/dashboard-update.test.ts` with the updater and Calls view suites. Check a UI-only
+fast-forward, an incompatible diff, a candidate validation failure and a failed rollback.
+In a disposable deployment start one long-running turn on each supported engine. With Calls open,
+deploy a changed Calls view, then roll back. Verify that the original tab can load its script,
+a refreshed tab displays the selected version, the gateway instance and login persist, and each
+agent delivers exactly one final answer. Include the instance ID and view revision in the evidence.
+
 ## Native Claude compaction transport and session guard (2026-11-26)
 
 - Automated: `node --test test/native-compact.test.js test/claude-args.test.js test/claude-completion.test.js test/claude-fallback-e2e.test.js test/inherited-file-commands.test.js test/claude-message-boundaries.test.js`.

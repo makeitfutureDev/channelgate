@@ -1,5 +1,13 @@
 # ChannelGate — Features
 
+## Dashboard-only updates
+
+The updater can publish changes to the Activity Calls HTML, CSS and TypeScript while agent turns
+continue. It validates the candidate, switches the complete view, checks its content revision and
+the original daemon instance, and restores the previous view on a failed check. Authenticated
+health exposes the served Calls revision separately from the daemon's boot revision. Backend and
+mixed updates use the full service update.
+
 ## Claude native compaction preserves the thread session (2026-11-26)
 
 Claude's `/compact` and optional focus instructions reach the engine as the entire user prompt,

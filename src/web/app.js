@@ -38,6 +38,8 @@ import { fileExplorerContext, requestApproval } from "../slack/app.js";
 import { canEditChannelFiles } from "../slack/file-explorer.js";
 import { ADMIN_CONVERSATION_PATH_RE, ADMIN_VIEW_PATHS } from "../../public/admin-routes.js";
 import { runUpdateSmoke } from "../gateway/update-smoke.js";
+import { callsReleaseSession, dashboardHealth } from "./dashboard-release.ts";
+import { callsViewAssets } from "./calls-view-assets.ts";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
 import { renderShell, shellContentSecurityPolicy } from "./assets.js";
@@ -459,6 +461,7 @@ export function createWebApp({
       ok: true,
       instanceId,
       revision: runningRevision,
+      callsView: dashboardHealth(() => callsViewAssets.current(), callsReleaseSession),
       update: publicUpdateState(readUpdateStatus()),
       claude: engines.claude,
       engines,
