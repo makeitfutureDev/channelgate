@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Native Claude compaction transport and session guard (2026-11-26)
+
+- Automated: `node --test test/native-compact.test.js test/claude-args.test.js test/claude-completion.test.js test/claude-fallback-e2e.test.js test/inherited-file-commands.test.js test/claude-message-boundaries.test.js`.
+  Assert the exact `/compact` plus optional instructions at the cold argv and warm stream-json
+  input boundaries, existing session id with resume only, ordinary-turn preambles, bare queued
+  durable text and actual boot recovery dispatch. Preserve native command output and require a
+  manual boundary before synthesizing a confirmation; automatic/child boundaries and an empty
+  terminal success never prove compaction. Missing session, disabled license, explicit
+  incompatible harness, missing native history, provider failure and empty output must never mint,
+  heal or fail over. Codex's Slack refusal remains daemon-side.
+- Live Claude acceptance pending: in an owned private Claude Auto fixture, start a thread with a
+  synthetic decision and enough conversation history to summarize. Record the native session id,
+  actual license, model and context usage. Send addressed `/compact`, then `/compact keep the
+  synthetic decision`, and ask for that decision. Repeat with the warm pool enabled and cold
+  dispatch forced by the test operator. Pass only with a CLI `compact_boundary` or equivalent
+  native compaction evidence, same native session, retained decision, and exact bare command at
+  dispatch; an ordinary model response or smaller footer alone is insufficient. In a new thread,
+  require the plain daemon remedy and no CLI dispatch/session mint. Simulate missing history and
+  provider failure only in a disposable isolated gateway: require one attempt and preserved row,
+  no healing, alternative license, cross-harness dispatch or automatic `continue` turn.
+- Live Codex acceptance pending: in an owned private Codex Auto fixture, record a seeded native
+  session and engine-dispatch count, send addressed `/compact` with optional instructions, and
+  require the existing Codex refusal, unchanged session and no additional dispatch. Also repeat
+  under opposite channel defaults with each thread explicitly pinned to its original harness.
+- The campaign coordinator owns the private registry writeback and exact post-deploy retests.
+  This patch makes no live-pass claim and does not close the original compaction failure.
+
 ## Network control description matches approved private routes (2026-11-25)
 
 - Automated: `node --test test/channel-policy-audit.test.js test/egress-private-hosts.test.js test/network-policy.test.js`.

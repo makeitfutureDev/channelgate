@@ -20,7 +20,7 @@ import { memorySnapshotPrefix } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
 import { withTemplateSkills } from "./skills/templates.js";
-import { resolveSession, resetSession, getSession, getSessionEngine, saveSession, promoteFallbackSession, discardFallbackSessions, sessionGeneration, dropMintedSession } from "./sessions.js";
+import { resolveSession, resetSession, getSession, getSessionEngine, getSessionRuntime, saveSession, promoteFallbackSession, discardFallbackSessions, sessionGeneration, dropMintedSession } from "./sessions.js";
 import { carrySession } from "./session-carry.js";
 import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
@@ -752,6 +752,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // joins subagents before a turn completes. Work meant to OUTLIVE the turn goes through the
   // daemon's run_in_background / run_agent_in_background tools, which re-invoke the thread.
   const turnText = String(text ?? "");
+  // Native commands must remain the entire prompt, including after durable boot recovery.
+  const nativeCompact = /^\/compact(?:\s|$)/.test(turnText);
 
   // The channel tier is the assigned skill template's CURRENT skills plus the conversation's own
   // additions (skills/templates.js) — resolved live, so a template edit reaches every follower.
@@ -866,6 +868,28 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       costUSD: 0,
       durationMs: 0,
     };
+  }
+
+  // /compact operates only on the existing native history and exact login. Do this before
+  // disabled-engine substitution, provisioning or resolveSession (which can mint a new row).
+  let compactSession = null;
+  if (nativeCompact) {
+    const id = await getSession(entry.slug, threadKey);
+    const owner = await getSessionEngine(entry.slug, threadKey);
+    const effectiveEngine = engineExplicit ? engine : owner || engine;
+    const refusal = !engineSupports(effectiveEngine, "compact")
+      ? "Codex doesn't support `/compact` — use `/clear` to start fresh, or open a new thread."
+      : !id || presetSessionId || forkSourceSessionId || (owner && owner !== effectiveEngine)
+        ? "There is no existing session to compact for this thread. Send a normal message first, then use `/compact`."
+        : !isEngineEnabled(effectiveEngine)
+          ? `${engineLabel(effectiveEngine)} is disabled. Enable this session's license before using /compact.` : "";
+    if (refusal) return {
+      slug: entry.slug, cwd: "", model: "", engine: effectiveEngine, content: refusal,
+      engineRefused: true, sessionId: id || null, isNew: false, usage: {}, costUSD: 0, durationMs: 0,
+    };
+    compactSession = { sessionId: id, isNew: false, engine: owner || effectiveEngine,
+      runtime: JSON.stringify(await getSessionRuntime(entry.slug, threadKey)) };
+    engine = effectiveEngine;
   }
 
   // An admin turned this harness OFF in Settings. Every stored pointer to it — the global default,
@@ -1067,7 +1091,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Adopt successful fallback sessions written by older gateway versions. Those versions kept
   // the answer under a suffixed key and retried the limited engine on the next message. A user's
   // explicit thread/runtime choice still wins, including a thread-scoped model selection.
-  if (!presetSessionId && !engineExplicit) {
+  if (!nativeCompact && !presetSessionId && !engineExplicit) {
     const previousEngine = await getSessionEngine(entry.slug, threadKey);
     const legacyFallback = fallbackTargets(previousEngine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id));
     const pinnedModel = await getThreadModel(entry.slug, threadKey);
@@ -1080,7 +1104,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     sessionId = presetSessionId;
     isNew = true;
   } else {
-    ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStampFor(engine)));
+    ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = compactSession || await resolveSession(entry.slug, threadKey, engine, runtimeStampFor(engine)));
     if (!isNew && target.backend === "container" && target.runtimeScope) {
       let prior = null;
       try { prior = JSON.parse(sessionRuntime); } catch { /* legacy unclassified state */ }
@@ -1097,6 +1121,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         abortPooled(`${entry.slug}::${threadKey}`);
       }
       if ((previousScope !== target.runtimeScope || historyChanged) && !sharedSource) {
+        if (nativeCompact) throw new Error("This thread has no session in the current runtime. Send a normal message first, then use /compact.");
         if (!engineExplicit && sessionEngine && isEngineEnabled(sessionEngine)) engine = sessionEngine;
         sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
         isNew = true;
@@ -1116,6 +1141,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // a match and left to the resume-not-found safety net below (then back-filled on success).
     const picked = decideThreadEngine({ requested: engine, sessionEngine, isNew, explicit: engineExplicit });
     if (picked.switch) {
+      if (nativeCompact) throw new Error("Compaction cannot switch this thread to a different session. Send a normal message first, then use /compact.");
       // Evict any warm process still bound to the old session id first, so the new --session-id
       // actually takes effect (the pool fingerprints on config, not the session id).
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness switched ${sessionEngine}→${engine} — starting a fresh ${engine} session`);
@@ -1163,7 +1189,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       if (enginePinnedByUser || pinnedModel) {
         error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel };
       }
-      const poolWaiting = licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pinnedModel });
+      const poolWaiting = nativeCompact ? [] : licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pinnedModel });
       if (poolWaiting.length) heldCredentialError = error;
     }
     if (!heldCredentialError) {
@@ -1300,7 +1326,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     runId: randomUUID(),
     origin,
   });
+  let nativeCompacted = false;
   const scopedOnEvent = createScopedRunEventHandler((event) => {
+    if (nativeCompact && event?.kind === "compaction" && event.trigger === "manual") nativeCompacted = true;
     if (event?.kind === "loop_wakeup") {
       loopWakeup = redactSecretFields(event, outputSecrets);
       return undefined;
@@ -1670,18 +1698,22 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
+    const prompt = nativeCompact ? turnText : (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + (clean ? "" : await composioScriptPrefix()) + channelCredentialsPrefix + linkedGuidePrefix
       + threadLoopPreamble(channelId, threadKey)
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
       + codeChannelPreamble(meta)
       + (promptOverride ?? turnText);
+    if (nativeCompact && (fresh || await getSession(entry.slug, threadKey) !== sid || !isEngineEnabled(engine))) {
+      throw new Error("The existing session is no longer available to compact. Send a normal message first, then use /compact.");
+    }
     await assertChannelBudget(channelId, entry.slug);
     engineStarted = true;
     // A death the container's process limit caused says so (process-limit.js): from outside, a
     // thread that could not be started is only "crashed after aborting itself".
-    const attemptResult = await adapter.run(validateRunContext({
+    nativeCompacted = false;
+    let attemptResult = await adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
       // WHERE the runner spawns: it calls target.runtime.spawn/probe/signal instead of
@@ -1713,6 +1745,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         attachments,
       },
     })).catch(async (error) => { throw await annotateProcessLimit(error, target); });
+    if (nativeCompact && nativeCompacted && !attemptResult.engineError && attemptResult.completed !== false && !attemptResult.content?.trim()) {
+      // Only the native boundary proves compaction; a blank successful result alone does not.
+      const content = "Conversation compacted.";
+      scopedOnDelta?.(content);
+      attemptResult = { ...attemptResult, content };
+    }
     return { ...attemptResult, effort };
   };
 
@@ -1762,7 +1800,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         const out = await attempt();
         return retries && out && typeof out === "object" ? { ...out, transientRetries: retries } : out;
       } catch (err) {
-        if (err.code === "channel_spending_limit") throw err;
+        if (nativeCompact || err.code === "channel_spending_limit") throw err;
         const kind = transientProviderFailure(err, engineName);
         if (!kind || retries >= maxAttempts || signal?.aborted) {
           if (retries) {
@@ -1850,7 +1888,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Only a model that actually applies to this engine counts — a stale override left behind for
   // the other harness never reaches the CLI, so it must not silently disable failover either.
   const modelPinnedByUser = [threadModel, overrides?.model].some((m) => m && modelBelongsToEngine(m, engine));
-  const runtimePinned = enginePinnedByUser || modelPinnedByUser;
+  const runtimePinned = nativeCompact || enginePinnedByUser || modelPinnedByUser;
   // Two kinds of "somewhere else to answer", tried in this order:
   //   1. the OTHER LICENSES of this selection (license-pool.js) — same harness, chosen by the same
   //      person who chose this license, so moving between them is automatic and applies to a
@@ -1858,7 +1896,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   //   2. the other HARNESS (cross-engine failover) — only for an unpinned turn, and only when the
   //      gateway setting allows it.
   const pickedModel = [threadModel, overrides?.model, meta.model].find((m) => m && modelBelongsToEngine(m, engine)) || "";
-  const poolEngines = licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pickedModel });
+  const poolEngines = nativeCompact ? [] : licensePoolCandidates({ engine, pool: harnessOf(engine) === selectionHarness ? licensePool : "", meta: channelMeta, model: pickedModel });
   // The other harness, license by license: its own default sign-in first, then every other license
   // of it this conversation may use, in registry order (the runner tries limited ones last).
   const crossEngines = getEngineFallback() && !runtimePinned
@@ -2345,9 +2383,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // An explicit engine switch starts a fresh session that can't carry the old conversation —
       // replay the thread transcript into it (same treatment as a session heal) so the new engine
       // continues the conversation instead of starting amnesiac.
-      result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
+      result = nativeCompact
+        ? await runOnce(sid, false)
+        : await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
     } catch (err) {
-      if (err.code === "channel_spending_limit") throw err;
+      if (nativeCompact || err.code === "channel_spending_limit") throw err;
       if (codexCapacityContinuation(err) && !signal?.aborted) {
         // This is a new turn in the SAME Codex session, not a replay of the user message. Its
         // transcript contains the completed tools, so the model can continue from their results.
@@ -2577,6 +2617,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // the session is healthy, and a newer message is already queued to resume it with this turn's
     // context. Healing it would needlessly evict the warm session and re-run the abandoned message.
     if (!fresh && !result.interrupted && isEmptyResult(result)) {
+      if (nativeCompact) throw new Error("Compaction returned no output; the existing session was preserved. Try /compact again or send a normal message.");
       if (skillSwapNote) {
         // Same posture as the capacity continuation: the first attempt's work is in the session,
         // and a fresh-session heal would replay the request from scratch on top of it.

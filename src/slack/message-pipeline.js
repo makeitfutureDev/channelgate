@@ -774,7 +774,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
-        // Engine-native /compact still receives its normal thread context. Other recognized
+        // Engine-native /compact keeps prior-file recovery; its command text stays bare. Other recognized
         // controls must not become agent prompts merely because an earlier message shared a file.
         if (command?.cmd === "compact" && engineSupports(await resolveThreadEngine(entry.slug, event.thread_ts ?? event.ts, meta), "compact")) return true;
         if (command?.cmd === "sudo") {
@@ -880,7 +880,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     }
 
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
-    const sc = !syntheticFork && !sudo && files.length === 0 ? parseSlashCommand(prompt) : null;
+    const parsedCommand = !syntheticFork && !sudo ? parseSlashCommand(prompt) : null;
+    // Compaction is a native history operation even when hydration recovered an earlier file.
+    const sc = files.length === 0 || parsedCommand?.cmd === "compact" ? parsedCommand : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
     // the THREAD's effective engine (override → session-born → channel → gateway default), never
     // the gateway default alone: a Codex thread under a Claude-default gateway must not receive
@@ -1248,7 +1250,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A colon immediately after the bot mention selects a configured model shortcut. The
     // setting is read for each message, so admins can repoint names without restarting Slack.
     // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
-    const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    const shortcut = !syntheticFork && !compactPassthrough ? parseModelShortcut(prompt) : null;
     // Anyone who may talk here may pick the license and model for a thread; the channel's allow
     // list is what bounds the pick. A pick outside it is ANSWERED with what is approved here and
     // changes nothing — the thread keeps its selection and the message does not run elsewhere.
@@ -1321,7 +1323,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // thread there (the same per-thread choice the `claude` / `codex` directive makes); "try
     // again" leaves the thread as it is. Any engine directive in the text was already applied
     // when the message first ran, so it is stripped below but not re-applied over this choice.
-    if (engineChoice && ENGINE_IDS.includes(engineChoice) && engineChoiceSwitch) {
+    if (!compactPassthrough && engineChoice && ENGINE_IDS.includes(engineChoice) && engineChoiceSwitch) {
       await assertEngineSelectable(engineChoice, { meta });
       if (await answeredRefusedPick(engineChoice)) return;
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
@@ -1335,7 +1337,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
     // immediately before the engine name, so an incidental mention ("the codex CLI") won't flip it.
     // It sticks until changed; the rest of the message is the task.
-    if (!syntheticFork && !shortcut && files.length === 0) {
+    if (!syntheticFork && !compactPassthrough && !shortcut && files.length === 0) {
       const trimmed = prompt.trim();
       const engineWords = engineIdAlternation(ENGINE_IDS, { spoken: spokenEngineId });
       const anchored = new RegExp(`^(${engineWords})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
@@ -1656,7 +1658,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       threadKey,
       isDM: Boolean(meta.isDM),
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
-      text: provenance + (syntheticFork?.threadContext || "") + promptForClaude,
+      text: compactPassthrough ? prompt : provenance + (syntheticFork?.threadContext || "") + promptForClaude,
       ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
       ...(syntheticFork?.fallbackHistory ? { forkFallback: syntheticFork.fallbackHistory } : {}),
       ...(shortcutRuntimeOverrides ? { runtimeOverrides: shortcutRuntimeOverrides } : {}),
@@ -1844,13 +1846,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await status.stop();
         return;
       }
-      const stoppedContext = formatStoppedTurnContext(takeStoppedTurn(entry.slug, threadKey));
+      const stoppedContext = compactPassthrough ? "" : formatStoppedTurnContext(takeStoppedTurn(entry.slug, threadKey));
       if (pendingQuestionReplies.length) {
         const snapshot = pendingQuestionReplies.map(({ title, questions, answers }) => ({ title, questions, draftAnswers: answers }));
         promptForClaude = "The user replied in the thread while these questions were pending. The following JSON is question context; draft answers are not submitted answers. Interpret the user's message below and do not assume unanswered questions are resolved.\n" +
           JSON.stringify(snapshot) + "\n\nUser's reply:\n" + promptForClaude;
       }
-      const textForRun = provenance + stoppedContext + threadContext + promptForClaude;
+      const textForRun = compactPassthrough ? prompt : provenance + stoppedContext + threadContext + promptForClaude;
       // Durable in-flight marker: if the daemon restarts mid-run, boot recovery re-runs this exact
       // turn (same threadKey → resumes the session). Deleted in the finally on normal completion.
       const promotedRun = {
@@ -1924,7 +1926,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       try {
         result = await runMessage(runArgs);
       } catch (err) {
-        const recovery = handle.aborted ? null : runDeathRecovery(err);
+        const recovery = handle.aborted || compactPassthrough ? null : runDeathRecovery(err);
         if (!recovery) throw err;
         console.warn(`[slack] run died in ${entry.slug} (${err.message}) — auto-${recovery === "continue" ? "resuming" : "retrying"}`);
         await logEvent("run_auto_resume", { channel: event.channel, author: event.user, slug: entry.slug, error: err.message, ...runFailureDiagnostics(err), mode: recovery });

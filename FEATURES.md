@@ -1,5 +1,19 @@
 # ChannelGate — Features
 
+## Claude native compaction preserves the thread session (2026-11-26)
+
+Claude's `/compact` and optional focus instructions reach the engine as the entire user prompt,
+without provenance, thread replay or per-attempt preambles, on both cold `-p` and warm stream-json
+input paths. Queued turns and boot recovery retain the same bare command. Compaction requires
+an existing session on the selected license; a missing session gets a daemon-side remedy to send
+a normal message first. Compaction never switches licenses/harnesses or heals into a fresh session
+when resumption fails. Native local-command text is preserved, and only a manual compaction boundary can produce a
+compaction confirmation when the CLI returns no text. Ordinary turns retain their context and
+preambles. Codex's daemon-side
+`/compact` refusal and `/clear` remedy remain unchanged. Native CLI execution and live acceptance
+must be verified on the deployed candidate; adapter transport regressions alone do not prove
+that the CLI performed compaction.
+
 ## Admin Lean memory tools match the effective run context (2026-11-25)
 
 Channel-memory search, source reads and saves apply the same effective author-mode decision as

@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Pass Claude `/compact` and its optional focus instructions unchanged through cold, warm,
+  queued and recovered turns. Require an existing session, preserve it on failure and prevent
+  fallback or fresh-session healing. Codex keeps its daemon-side refusal.
+
 - App Home → Activity → My threads: Next now moves past page 1. Previous and Next on a middle
   page shared one action id, so Slack rejected that page and the view stayed on page 1.
 
