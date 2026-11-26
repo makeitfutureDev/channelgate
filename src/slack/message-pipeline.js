@@ -1,3 +1,4 @@
+import { turnReplyCallbacks } from "../gateway/turn-replies.ts";
 import { sessionRuntimeStamp } from "../gateway/session-runtime.js";
 import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { resolveStreamRecipientTeam } from "./stream-recipient.js";
@@ -1908,19 +1909,17 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         attachments: attachmentPaths,
         signal: handle.controller.signal,
         progressReport: true,
-        onDelta: (delta) => {
-          if (!handle.controller.signal.aborted) return status.onDelta(delta);
-        },
-        onEvent: (ev) => {
-          if (handle.controller.signal.aborted) return;
-          if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySavesInTurn += 1;
-          return status.onEvent(ev);
-        },
-        onRuntimeResolved: (runtime) => {
-          if (handle.controller.signal.aborted) return;
-          updateActiveRunRuntime(runId, runtime);
-          status.onRuntimeResolved?.(runtime);
-        },
+        ...turnReplyCallbacks(handle.controller.signal, {
+          onDelta: status.onDelta,
+          onEvent: (ev) => {
+            if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySavesInTurn += 1;
+            return status.onEvent(ev);
+          },
+          onRuntimeResolved: (runtime) => {
+            updateActiveRunRuntime(runId, runtime);
+            status.onRuntimeResolved?.(runtime);
+          },
+        }),
         getFallbackContext: fallbackContextFetcher({ threadContext, threadClean }, () =>
           fetchThreadContext(client, { channelId: event.channel, threadTs: replyTs || threadKey, currentTs: contextCurrentTs, botUserId })),
       };
