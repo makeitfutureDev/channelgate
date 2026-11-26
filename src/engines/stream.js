@@ -315,6 +315,16 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     if (emitClaudeTask(p)) return;
     if (p?.type === "assistant") {
       const content = Array.isArray(p?.message?.content) ? p.message.content : (Array.isArray(p?.content) ? p.content : []);
+      // Native commands report local output as completed messages, without text deltas.
+      // Ordinary completed assistant messages still must not duplicate the streamed answer.
+      if (primary && p.local_command_run?.command === "compact") {
+        const localText = content.filter(block => block?.type === "text").map(block => block.text || "").join("\n");
+        if (localText) {
+          const chunk = (text && !/\s$/.test(text) ? "\n\n" : "") + localText;
+          text += chunk;
+          onDelta?.(chunk);
+        }
+      }
       for (const block of content) {
         if (block?.type !== "tool_use") continue;
         markToolUse(block.id);
@@ -350,6 +360,9 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     // every non-task system event made that release completely invisible, so a lost subagent
     // looked exactly like a clean finish. Route it into the progress surface as a notice.
     if (p?.type === "system") {
+      if (primary && p.subtype === "compact_boundary") {
+        onEvent?.({ kind: "compaction", trigger: p.compact_metadata?.trigger || "" });
+      }
       const message = String(p.systemMessage ?? p.system_message ?? "").replace(/\s+/g, " ").trim();
       if (message) onEvent?.({ kind: "notice", text: message.slice(0, SYSTEM_NOTICE_MAX) });
       return;
