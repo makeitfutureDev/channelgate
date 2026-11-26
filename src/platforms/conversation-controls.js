@@ -8,7 +8,7 @@ import { harnessLabel, isHarnessId } from '../engines/license-state.js';
 import { getDefaultModel, getEngine, getEnginePool } from '../config/settings.js';
 import { describeLicenseSelection, describeSelectionText, harnessSelection, licensePicker, resolveLicensePick, selectableHarnesses, selectableLicenses } from '../gateway/license-pool.js';
 import { licenseListText, readLicenseChoice } from './license-choice.js';
-import { runApprovedHarnessesCommand } from '../gateway/approved-harnesses.js';
+import { dispatchChatFeature } from '../gateway/chat-feature.ts';
 
 // How a saved /model reply starts. The native pickers that drive /model and then /effort read it
 // to tell a saved selection from a refusal, so the wording lives in one place.
@@ -55,20 +55,16 @@ export function createConversationControls() {
       const [, name, raw = ''] = match;
       const command = name.toLowerCase();
       const arg = raw.trim();
+      if (command === 'harnesses') {
+        return dispatchChatFeature({ kind: 'harnesses', arg, meta, slug, channelId: meta.channelId || message.conversationId,
+          actor: message.userId, source: 'chat-command', isAdmin: Boolean(authorIsAdmin) }, reply);
+      }
       const key = keyFor(message, sessionKey);
       const lane = laneFor(key);
       const pending = await pendingForSession?.({ conversationId: message.conversationId, sessionKey }) || { count: 0, authors: [] };
       const respond = async (text) => { await reply(text); return true; };
       try {
         if (command === 'help') return await respond('Commands: /help, /status, /stop (or /cancel), /clear, /model [harness] [model|default], /license [any|name[, name…]|default], /effort [level|default], /harnesses [all|entry[, entry…]] (what this conversation may run on; admins change it). In a group chat, quote the message or bot reply to control its session and include the bot mention. A new unquoted group message starts a new session.');
-        if (command === 'harnesses') {
-          // The conversation's Approved harnesses list: shown to anyone allowed here, set only by
-          // an organization admin (authorIsAdmin is this message's author, checked now).
-          return await respond(await runApprovedHarnessesCommand({
-            arg, meta, slug, channelId: meta.channelId || message.conversationId,
-            actor: message.userId, source: 'chat-command', isAdmin: Boolean(authorIsAdmin),
-          }));
-        }
         if (['stop', 'cancel', 'clear'].includes(command)) {
           if (!authorIsAdmin && ([...lane.jobs].some(job => job.author !== message.userId)
             || pending.authors.some(author => author !== message.userId))) return await respond('Only the run author or an administrator may stop or clear another person’s active or queued work.');

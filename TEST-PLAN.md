@@ -1,5 +1,13 @@
 # ChannelGate — Test Plan
 
+## 0.7.1 shared chat feature dispatch
+
+Run `test/approved-harness-command.test.js` for Slack, Teams and Google Chat entry points. A
+member can read the current policy, only an administrator can change it, and an accepted change
+has one audit record for the requesting actor. Replies stay in the addressed conversation and
+thread. `test/googlechat-agent-mail.test.js` covers exact question text and destination, source
+thread, usage hints and refusals on the shared agent-mail directive.
+
 ## Native Claude compaction transport and session guard (2026-11-26)
 
 - Automated: `node --test test/native-compact.test.js test/claude-args.test.js test/claude-completion.test.js test/claude-fallback-e2e.test.js test/inherited-file-commands.test.js test/claude-message-boundaries.test.js`.

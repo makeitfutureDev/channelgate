@@ -31,6 +31,11 @@ per-platform, and none of it is relaxed to make a surface work.
 
 ---
 
+The TypeScript dispatcher in `src/gateway/chat-feature.ts` handles `/harnesses` across all three
+surfaces and `ask #name` on surfaces with agent-directory support. The transport passes the
+admitted author and conversation and supplies its own reply function. Agent mail checks current
+membership at send time; the harness command checks the administrator role and license policy.
+
 ## Google Chat (Beta)
 
 **Transport: Pub/Sub pull, plus an optional HTTPS endpoint.** Google publishes your Chat app's

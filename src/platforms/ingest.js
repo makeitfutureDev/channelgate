@@ -24,7 +24,7 @@ import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 import { acknowledgeReaction } from "./reaction-controls.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 import { hydrateFreshThread, threadContextFetcher } from "./thread-hydration.js";
-import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
+import { dispatchChatFeature } from "../gateway/chat-feature.ts";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
@@ -192,26 +192,11 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
     if (!fork && onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
     if (!fork && await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
-    // Ask directive: "@app ask #space <message>" hands the exact text to THAT conversation's agent
-    // (gateway/agent-mail.js), as Slack's typed form does — on a surface that can prove membership
-    // of both conversations. The person typed it, so there is no approval card; the daemon re-checks
-    // their live access, and the reply comes back into this session as a new turn.
     if (!fork && !message.attachments.length && message.trigger !== "reaction" && platformSupports(adapter.id, "agentDirectory")) {
-      const ask = parseAskDirective(message.text);
-      if (ask) {
-        const mail = activeAgentMail();
-        if (!mail) { await reply("Agent messaging is not available on this gateway right now."); return { command: true }; }
-        if (!ask.message) { await reply("Use `ask #space <your question or request>` (quote a name with spaces: `ask #\"Sales Team\" …`)."); return { command: true }; }
-        try {
-          const sent = await mail.send({ channelId: message.conversationId, slug: entry.slug, createdBy: message.userId, threadKey: sessionKey, to: ask.to, message: ask.message, origin: `${adapter.id}_foreground` });
-          await reply(`💬 Asked the ${sent.to?.name || sent.to?.slug || ask.to} agent — its replies land here.`);
-        } catch (error) {
-          if (!(error instanceof AgentMailError)) throw error;
-          await logEvent("agent_message_refused", { channel: message.conversationId, author: message.userId, slug: entry.slug, to: ask.to, reason: error.message, directive: true, platform: adapter.id }).catch(() => {});
-          await reply(`🚫 Not sent: ${error.message}`);
-        }
-        return { command: true };
-      }
+      if (await dispatchChatFeature({ kind: "ask", text: message.text, channelId: message.conversationId, slug: entry.slug,
+        actor: message.userId, threadKey: sessionKey, platform: adapter.id,
+        usage: 'Use `ask #space <your question or request>` (quote a name with spaces: `ask #"Sales Team" …`).',
+      }, reply)) return { command: true };
     }
     // The surface's durable intake remembers the visible working message, so a restart can replace
     // it with the interruption notice instead of leaving it spinning.

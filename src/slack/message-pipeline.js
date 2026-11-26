@@ -10,7 +10,7 @@ import { assertEngineSelectable } from "../engines/selection.js";
 // processMessageEvent takes an explicit { botUserId, teamId } context instead of closing over
 // connectAndWire scope, so the whole turn path is reachable by tests. app.js owns the Bolt app
 // and event registrations and delegates here; this module must never import ./app.js.
-import { runApprovedHarnessesCommand } from "../gateway/approved-harnesses.js";
+import { dispatchChatFeature } from "../gateway/chat-feature.ts";
 import { getChannelEntry, upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, getUsers, setUser, isAdmin, isApproved } from "../config/store.js";
 import { adapterFor, engineSupports, engineLabel, harnessOf, ENGINE_IDS } from "../engines/registry.js";
 import { HARNESS_IDS, isLicenseShapedId } from "../engines/license-state.js";
@@ -21,7 +21,6 @@ import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult, effectiveMeta } from "../gateway/run.js";
 import { modeLabel, modeNetworkGuidance, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
-import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
 
 import { postModelWizard } from "./model-wizard.js";
 import { getSession, getSessionMap, clearSession, hasThreadSession, getSessionEngine, getSessionRuntime, saveSession } from "../gateway/sessions.js";
@@ -1148,12 +1147,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       } else if (sc.cmd === "model") {
         await postModelWizard(client, { channel: event.channel, threadTs: threadKey, meta });
       } else if (sc.cmd === "harnesses") {
-        // The channel's Approved harnesses list: anyone may read it, only an organization admin
-        // (checked for THIS message) may set it — the same function as set_channel_approved_harnesses.
-        await reply(await runApprovedHarnessesCommand({
-          arg: sc.arg, meta, slug: entry.slug, channelId: event.channel,
-          actor: event.user, source: "slack-command", isAdmin: authorIsAdmin,
-        }));
+        await dispatchChatFeature({ kind: "harnesses", arg: sc.arg, meta, slug: entry.slug, channelId: event.channel,
+          actor: event.user, source: "slack-command", isAdmin: authorIsAdmin }, reply);
       } else if (sc.cmd === "effort" || sc.cmd === "engine") {
         // Retired — kept in SLASH_COMMANDS so the text answers with a pointer instead of being
         // sent to the model as a prompt.
@@ -1391,30 +1386,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       }
     }
 
-    // Ask directive: "@bot ask #channel <message>" hands the message straight to THAT channel's
-    // agent (gateway/agent-mail.js) — the dedicated way to address another agent without a model
-    // turn in between. The person typed the exact text, so there is no approval card: the gate is
-    // their own live access to both channels, re-checked by the daemon. The reply comes back into
-    // this thread as a new turn, exactly as for a tool-initiated message.
-    if (!syntheticFork && files.length === 0) {
-      const ask = parseAskDirective(prompt);
-      if (ask) {
-        const mail = activeAgentMail();
-        const reply = (t) => client.chat.postMessage({ channel: event.channel, ...threadOpts, text: t });
-        if (!mail) { await reply("Agent messaging is not available on this gateway right now."); return; }
-        if (!ask.message) { await reply("Use `ask #channel <your question or request>`."); return; }
-        try {
-          const sent = await mail.send({ channelId: event.channel, slug: entry.slug, createdBy: event.user, threadKey, to: ask.to, message: ask.message, origin: "slack_foreground" });
-          const target = sent.to?.name ? `#${String(sent.to.name).replace(/^#+/, "")}` : sent.to?.slug || ask.to;
-          await reply(`💬 Asked the ${target} agent — its replies land here.`);
-        } catch (error) {
-          if (!(error instanceof AgentMailError)) throw error;
-          await logEvent("agent_message_refused", { channel: event.channel, author: event.user, slug: entry.slug, to: ask.to, reason: error.message, directive: true }).catch(() => {});
-          await reply(`🚫 Not sent: ${error.message}`);
-        }
-        return;
-      }
-    }
+    if (!syntheticFork && files.length === 0 && await dispatchChatFeature({
+      kind: "ask", text: prompt, channelId: event.channel, slug: entry.slug, actor: event.user, threadKey, platform: "slack",
+      usage: "Use `ask #channel <your question or request>`.", formatName: name => "#" + String(name).replace(/^#+/, ""),
+    }, text => client.chat.postMessage({ channel: event.channel, ...threadOpts, text }))) return;
 
     // Clean directive: "@bot /clean <message>" runs THIS thread super clean — bare folder, empty
     // strict MCP config (no gateway/Composio/Skills schemas), no skills, no provenance line, no
