@@ -1936,6 +1936,10 @@ a stable cursor; refresh picks up new calls. Voice cost excludes separately bill
 agent tasks and follows the existing licensed cost-history window. History starts with calls
 completed after this feature is installed; earlier memory notes cannot reconstruct full receipts.
 
+The Calls view reads its markup, styles and browser TypeScript from one UI revision. A fresh
+page load picks up an activated revision. An open tab can finish loading its previous script and
+continue requesting the caller’s receipts under its existing Activity session.
+
 ## Additional folders mounted beside the working folder (2026-11-16)
 
 A channel can mount additional host folders into its container at their identical absolute paths,

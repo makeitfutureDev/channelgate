@@ -20,6 +20,7 @@ import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
+import { callsViewAssets } from "./calls-view-assets.ts";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme, ACTIVITY_GROUPINGS, activityGrouping,
   activityColumns, validActivityColumnOrder, validActivityColumnWidths, validActivityColumnHidden, activityColumnDevice, activityComments, normalizeActivityComment, ACTIVITY_COMMENT_LIMIT } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
@@ -578,6 +579,12 @@ export function createActivityRouter({
     if (!color) return res.status(400).end();
     res.set("Cache-Control", req.query.color === undefined ? "no-cache" : "public, max-age=31536000, immutable");
     res.type("svg").send(channelGateLogo(color));
+  });
+  router.get("/assets/calls/:revision.js", (req, res) => {
+    const script = callsViewAssets.script(req.params.revision);
+    if (script === undefined) return res.status(404).end();
+    res.set("Cache-Control", "public, max-age=31536000, immutable");
+    res.type("application/javascript").send(script);
   });
   router.get(CALL_WORKLET_PATH.replace(/^\/activity/, ""), (_req, res) => {
     res.set("Cache-Control", "public, max-age=3600");

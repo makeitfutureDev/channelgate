@@ -75,7 +75,7 @@ test("dashboard layout: wide pages, Skills under Settings, automations health bo
   const skills = activityPage({ sessionId: "s", csrf: "c", view: "skills" }).html;
   assert.match(skills, /class="settings-tab" href="\/activity\/s\/skills" aria-current="page">Skills/);
   assert.doesNotMatch(skills, /<a href="\/activity\/s\/skills"/);
-  assert.match(skills, /\.calls-page\{max-width:1800px/);
+  assert.match(activityPage({ sessionId: "s", csrf: "c", view: "calls" }).html, /\.calls-page\{max-width:1800px/);
   assert.match(skills, /\.settings-page\{width:100%;max-width:1800px/);
   const automations = activityPage({ sessionId: "s", csrf: "c", view: "automations" }).html;
   assert.match(automations, /\.ab-page\{width:100%;min-width:0;max-width:1480px/);
