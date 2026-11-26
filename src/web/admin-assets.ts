@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { readAdminRelease, type AdminSource } from "./dashboard-release.ts";
+import { readDashboardView, type AdminSource, type DashboardSources } from "./dashboard-release.ts";
 
 export const adminAssetName = /^[a-z][a-z0-9-]*\.(?:js|css|html)$/;
 export function adminVersion(source: AdminSource) {
@@ -37,27 +37,30 @@ function buildAdminView(source: AdminSource) {
 
 type AdminView = ReturnType<typeof buildAdminView>;
 
-export function createAdminAssets(dir: string, select = readAdminRelease) {
+export function createAdminAssets(dir: string, select?: () => AdminSource | null) {
   const views = new Map<string, AdminView>();
-  let disk: { key: string; view: AdminView } | null = null;
+  let disk: { key: string; release?: DashboardSources | null; view: AdminView } | null = null;
   let selected: { source: AdminSource; view: AdminView } | null = null;
 
-  function diskView() {
+  function diskView(release?: DashboardSources | null) {
     const names = readdirSync(dir).filter(name => adminAssetName.test(name)).sort();
     const key = JSON.stringify(names.map(name => {
       const info = statSync(path.join(dir, name));
       return [name, info.ino, info.ctimeMs, info.size];
     }));
-    if (disk?.key !== key) {
+    if (disk?.key !== key || disk.release !== release) {
       const source = Object.fromEntries(names.map(name => [name, readFileSync(path.join(dir, name), "utf8")]));
-      disk = { key, view: buildAdminView(source) };
+      disk = { key, release, view: buildAdminView(source) };
     }
     return disk.view;
   }
+  function viewFor(source?: AdminSource | null, release?: DashboardSources | null) {
+    if (!source) return diskView(release);
+    if (selected?.source !== source) selected = { source, view: buildAdminView(source) };
+    return selected.view;
+  }
   function current() {
-    const source = select();
-    if (source && selected?.source !== source) selected = { source, view: buildAdminView(source) };
-    const view = source ? selected!.view : diskView();
+    const view = select ? viewFor(select()) : readDashboardView(release => viewFor(release?.admin, release));
     views.delete(view.version);
     views.set(view.version, view);
     if (views.size > 2) views.delete(views.keys().next().value!);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gatewayRoot } from "../config/paths.js";
 
@@ -21,27 +21,65 @@ let cached: { key: string; session: string; sources: DashboardSources } | undefi
 
 // During validation many browser requests may share the same immutable snapshot file.
 // Use the atomic rename identity so switching to/from an older release is visible immediately.
-export function readDashboardRelease(root = gatewayRoot(), session: string = callsReleaseSession): DashboardSources | null {
+function readDashboardGeneration(root = gatewayRoot(), session: string = callsReleaseSession): DashboardSources | null {
   const file = selector(root);
-  const stat = statSync(file, { throwIfNoEntry: false, bigint: true });
-  if (!stat) { cached = undefined; return null; }
-  const key = JSON.stringify([file, String(stat.ino), String(stat.ctimeNs)]);
-  if (cached?.key !== key) {
-    const data = JSON.parse(readFileSync(file, "utf8"));
-    if (data.session !== session) return null;
-    const sources = data.sources ?? { calls: data.source };
-    const { calls, admin } = sources;
-    if (sources.activityLayout !== undefined && typeof sources.activityLayout !== "string") throw new Error("Invalid Activity layout snapshot");
-    if (calls && ![calls.html, calls.css, calls.ts].every(value => typeof value === "string")) {
-      throw new Error("Invalid Calls release snapshot");
-    }
-    if (admin && (typeof admin !== "object" || Array.isArray(admin) ||
-        !Object.values(admin).every(value => typeof value === "string"))) {
-      throw new Error("Invalid admin release snapshot");
-    }
-    cached = { key, session, sources };
+  let fd: number;
+  try { fd = openSync(file, "r"); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    cached = undefined;
+    return null;
   }
-  return cached.session === session ? cached.sources : null;
+  try {
+    // The updater can rename or unlink the path between any two syscalls. Both identity
+    // and bytes come from the same open file description.
+    const stat = fstatSync(fd, { bigint: true });
+    const key = JSON.stringify([file, String(stat.ino), String(stat.ctimeNs)]);
+    if (cached?.key !== key) {
+      const data = JSON.parse(readFileSync(fd, "utf8"));
+      if (data.session !== session) return null;
+      const sources = data.sources ?? { calls: data.source };
+      const { calls, admin } = sources;
+      if (sources.activityLayout !== undefined && typeof sources.activityLayout !== "string") throw new Error("Invalid Activity layout snapshot");
+      if (calls && ![calls.html, calls.css, calls.ts].every(value => typeof value === "string")) {
+        throw new Error("Invalid Calls release snapshot");
+      }
+      if (admin && (typeof admin !== "object" || Array.isArray(admin) ||
+          !Object.values(admin).every(value => typeof value === "string"))) {
+        throw new Error("Invalid admin release snapshot");
+      }
+      cached = { key, session: data.session, sources };
+    }
+    return cached.session === session ? cached.sources : null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// All disk-backed parts of a view must come from the same checkout generation. A pin can
+// appear during a multi-file read, including just as git temporarily removes a file.
+export function readDashboardView<T>(load: (release: DashboardSources | null) => T,
+  root = gatewayRoot(), session: string = callsReleaseSession): T {
+  let before = readDashboardGeneration(root, session);
+  for (;;) {
+    let view: T;
+    try {
+      view = load(before);
+    } catch (error) {
+      const after = readDashboardGeneration(root, session);
+      if (before === after) throw error;
+      before = after;
+      continue;
+    }
+    const after = readDashboardGeneration(root, session);
+    if (before === after) return view;
+    before = after;
+  }
+}
+
+// Recovery only needs actual pins. The empty checkout marker is internal to generation tracking.
+export function readDashboardRelease(root = gatewayRoot(), session: string = callsReleaseSession) {
+  const sources = readDashboardGeneration(root, session);
+  return sources && Object.keys(sources).length ? sources : null;
 }
 
 export function readCallsRelease(root = gatewayRoot(), session: string = callsReleaseSession): CallsSource | null {
@@ -67,8 +105,10 @@ export function selectCallsRelease(root: string, session: string, calls: CallsSo
   selectDashboardRelease(root, session, { calls });
 }
 
-export function useCheckoutCallsRelease(root: string) {
-  rmSync(selector(root), { force: true });
+export function useCheckoutCallsRelease(root: string, session: string = callsReleaseSession) {
+  // Keep an empty generation marker so a reader can detect even a *complete* checkout and
+  // publication between the first and last files it read. Normal disk edits still apply live.
+  selectDashboardRelease(root, session, {});
 }
 
 export function dashboardHealth(readView: () => { revision: string }, session: string) {

@@ -201,7 +201,7 @@ export async function applyDashboardUpdate(root: string, ctx: UiContext, ops: Ui
     await ops.publishAt(ctx.targetRevision, async () => {
       selectDashboardRelease(root, session, candidate.source);
       await verify(candidate);
-      useCheckoutCallsRelease(root);
+      useCheckoutCallsRelease(root, session);
       await verify(candidate);
     });
     return { result: "updated", patch: { phase: "complete", changed: true, runningRevision: baseline.revision,
@@ -221,7 +221,7 @@ export async function applyDashboardUpdate(root: string, ctx: UiContext, ops: Ui
         // The old checkout can contain a release whose validation was interrupted. Restore
         // the exact serving mode that we verified before checkout, including any old pins.
         if (priorPin) selectDashboardRelease(root, session, priorPin);
-        else useCheckoutCallsRelease(root);
+        else useCheckoutCallsRelease(root, session);
         await verify(previous);
       });
       return { result: "rolled_back", patch: { phase: "complete", changed: true, candidateError, runningRevision: baseline.revision,

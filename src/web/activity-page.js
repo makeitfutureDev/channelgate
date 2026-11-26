@@ -1,9 +1,9 @@
 // Cookie-authenticated browser dashboard with self-hosted brand assets and no browser storage.
 import crypto from "node:crypto";
 import { activityConnectionsBrowser } from "./activity-connections-page.js";
-import { readDashboardRelease } from "./dashboard-release.ts";
+import { readDashboardView } from "./dashboard-release.ts";
 import { activityLayout } from "./activity-layout.ts";
-import { callsViewAssets } from "./calls-view-assets.ts";
+import { callsViewAssets, readCheckoutCalls } from "./calls-view-assets.ts";
 import { automationBoardBrowser, AUTOMATION_BOARD_CSS, AUTOMATION_BOARD_HTML, AUTOMATION_ROI_HTML } from "./automation-board.js";
 import { skillsBrowser, SKILLS_CSS, SKILLS_HTML } from "./skills-page.js";
 import { getEmailAccountsEnabled, getLogoColor } from "../config/settings.js";
@@ -1684,14 +1684,11 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 
 export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, connectionsPage = false, connectionsNew = false, emailPage = false, callTarget = null, logoColor = getLogoColor(), emailAccounts = getEmailAccountsEnabled() }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings", callsView = view === "calls", roiView = view === "roi", automationsView = view === "automations" || roiView, skillsView = view === "skills";
-  // Capture all view components from one selected release even if publication races a
-  // checkout read. The selector is atomically replaced and cached by file identity.
-  let release, layout, calls;
-  do {
-    release = readDashboardRelease();
-    layout = activityLayout(release);
-    calls = callsView ? callsViewAssets.current(release?.calls ?? null) : null;
-  } while (release !== readDashboardRelease());
+  const { layout, callsSource } = readDashboardView(release => ({
+    layout: activityLayout(release),
+    callsSource: callsView ? release?.calls ?? readCheckoutCalls() : null,
+  }));
+  const calls = callsSource ? callsViewAssets.current(callsSource) : null;
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))

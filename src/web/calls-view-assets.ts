@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { Script } from "node:vm";
-import { callsFiles, readCallsRelease, type CallsSource } from "./dashboard-release.ts";
+import { callsFiles, readDashboardView, type CallsSource } from "./dashboard-release.ts";
 
 interface CallsView {
   html: string;
@@ -28,14 +28,18 @@ export function buildCallsView(source: CallsSource): CallsView {
   };
 }
 
-function readCallsSource(active = readCallsRelease()): CallsSource {
-  if (active) return active;
+export function readCheckoutCalls(): CallsSource {
   const root = new URL("../../", import.meta.url);
   return {
     html: readFileSync(new URL(callsFiles.html, root), "utf8"),
     css: readFileSync(new URL(callsFiles.css, root), "utf8"),
     ts: readFileSync(new URL(callsFiles.ts, root), "utf8"),
   };
+}
+
+function readCallsSource(active?: CallsSource | null) {
+  if (active !== undefined) return active ?? readCheckoutCalls();
+  return readDashboardView(release => release?.calls ?? readCheckoutCalls());
 }
 
 // The shell and its browser code share one revision. Keep the previous bundle for a

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { applyDashboardUpdate, isDashboardOnlyUpdate, moveDashboardCheckout, prepareDashboardUpdate, withDashboardCheckout } from "../src/gateway/dashboard-update.ts";
-import { callsFiles, readCallsRelease, readDashboardRelease, selectDashboardRelease } from "../src/web/dashboard-release.ts";
+import { callsFiles, readCallsRelease, readDashboardRelease, readDashboardView, selectDashboardRelease, useCheckoutCallsRelease } from "../src/web/dashboard-release.ts";
 import { buildCallsView } from "../src/web/calls-view-assets.ts";
 
 function fixture() {
@@ -236,4 +236,37 @@ test("an interrupted checkout keeps all old pins until a later update verifies o
       assert.notEqual(health()[key].revision, baselineHealth[key].revision);
     }
   }
+});
+
+test("a selection published during a dashboard disk read replaces partial bytes and transient missing files", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "cg-dashboard-selection-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const calls = { html: "pinned", css: "v1", ts: "v1" };
+  for (const missing of [false, true]) {
+    useCheckoutCallsRelease(root, "boot");
+    const actual = readDashboardView(release => {
+      if (release?.calls) return [release.activityLayout, release.calls.html];
+      selectDashboardRelease(root, "boot", { calls, activityLayout: "A" });
+      if (missing) throw Object.assign(new Error("checkout replaced a file"), { code: "ENOENT" });
+      return ["B", "mixed"];
+    }, root, "boot");
+    assert.deepEqual(actual, ["A", "pinned"]);
+  }
+});
+
+test("an entire UI deployment during one disk read causes a fresh read of the released bundle", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "cg-dashboard-generation-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let reads = 0;
+  const actual = readDashboardView(() => {
+    if (++reads === 1) {
+      selectDashboardRelease(root, "boot", { admin: { "index.html": "A" } });
+      useCheckoutCallsRelease(root, "boot");
+      return "part A, part B";
+    }
+    return "B";
+  }, root, "boot");
+  assert.equal(actual, "B");
+  assert.equal(reads, 2);
+  assert.throws(() => readDashboardView(() => { throw new Error("invalid checkout file"); }, root, "boot"), /invalid checkout/);
 });
