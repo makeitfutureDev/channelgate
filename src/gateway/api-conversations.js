@@ -1,10 +1,11 @@
-// Durable external-conversation → Slack-root binding. The daemon is singleton; this lock covers
+// Durable external-conversation → chat-thread binding (a Slack root ts; a Google Chat/Teams thread name). The daemon is singleton; this lock covers
 // the network awaits before a binding exists, while SQLite owns the restart-durable mapping.
 // Bindings deliberately outlive api_jobs retention and contain no engine session authority.
 import { getDb } from "../db/index.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { postNotice } from "../platforms/notify.js";
 import { isSlackTs } from "../slack/thread-keys.js";
+import { DEFAULT_PLATFORM } from "../platforms/registry.js";
 
 export function validateConversationKey(key) {
   if (key === undefined) return "";
@@ -43,10 +44,34 @@ export async function threadPermalink(client, channelId, threadTs) {
   }
 }
 
-export async function resolveApiConversation({ client, channelId, conversationKey, kickoffText }) {
+// Google Chat / Teams: the binding holds the THREAD NAME the first kickoff opened (same column).
+// There is no bot-token read of one message, so reuse is proven by the post itself: an event posted
+// into the saved thread must come back in that thread. Chat falls back to a new thread when the
+// saved one is gone (REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD); that new thread replaces the binding and
+// begins a fresh agent session, exactly as a deleted Slack root does. A failed post throws (503).
+async function resolveChatConversation(db, { client, channelId, conversationKey, kickoffText }) {
+  const saved = db.prepare("SELECT thread_ts FROM api_conversations WHERE channel_id = ? AND conversation_key = ?").get(channelId, conversationKey);
+  const posted = await postNotice(client, { conversationId: channelId, threadKey: saved?.thread_ts || "", text: kickoffText });
+  const thread = String(posted?.threadKey || "");
+  if (!thread) throw new Error("The chat platform did not return a thread for the conversation event.");
+  const reused = Boolean(saved && thread === saved.thread_ts);
+  if (!reused) {
+    const now = Date.now();
+    db.prepare(`INSERT INTO api_conversations(channel_id, conversation_key, thread_ts, thread_permalink, created_ms, updated_ms)
+      VALUES(?, ?, ?, NULL, ?, ?) ON CONFLICT(channel_id, conversation_key)
+      DO UPDATE SET thread_ts = excluded.thread_ts, thread_permalink = NULL, updated_ms = excluded.updated_ms`)
+      .run(channelId, conversationKey, thread, now, now);
+  } else {
+    db.prepare("UPDATE api_conversations SET updated_ms = ? WHERE channel_id = ? AND conversation_key = ?").run(Date.now(), channelId, conversationKey);
+  }
+  return { threadTs: thread, threadReused: reused, threadPermalink: null };
+}
+
+export async function resolveApiConversation({ client, channelId, conversationKey, kickoffText, platform = DEFAULT_PLATFORM }) {
   const release = await acquireKeyedLock("api-conversation", JSON.stringify([channelId, conversationKey]));
   try {
     const db = getDb();
+    if (platform && platform !== DEFAULT_PLATFORM) return await resolveChatConversation(db, { client, channelId, conversationKey, kickoffText });
     const saved = db.prepare("SELECT thread_ts, thread_permalink FROM api_conversations WHERE channel_id = ? AND conversation_key = ?").get(channelId, conversationKey);
     const reused = Boolean(saved && await rootExists(client, channelId, saved.thread_ts));
     let threadTs = reused ? saved.thread_ts : null;

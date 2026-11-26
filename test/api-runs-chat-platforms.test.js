@@ -119,12 +119,61 @@ test("with Google Chat disconnected the run stays headless instead of failing", 
   assert.equal(driven[0].opts.client, null);
 });
 
-test("conversationKey stays Slack-only and is refused for a Chat space", async () => {
-  fakeChat();
-  await chatSpace("gchat:spaces/AAQAapiRun03", "api-gchat-key");
-  const res = await startApiRun({ message: "x", channel: "gchat:spaces/AAQAapiRun03", conversationKey: "mail:1", driver: () => {} });
+test("keyed events continue the SAME Chat thread and the SAME agent session", async () => {
+  saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
+  const { posts } = fakeChat();
+  const space = "gchat:spaces/AAQAapiRun03";
+  await chatSpace(space, "api-gchat-key");
+  const backend = createFakeRuntimeBackend();
+  setRuntimeResolver((slug, meta, options) => fakeTarget(backend, slug, meta, options));
+
+  const first = await startApiRun({ message: "first event", channel: space, conversationKey: "make:order-42" });
+  assert.equal(first.ok, true, first.error || "");
+  assert.equal(first.threadReused, false);
+  assert.equal(first.chatThread, true);
+  assert.equal(first.sessionId, null, "a keyed run resolves its session on its turn");
+  const one = await settled(first.jobId);
+  assert.equal(one.status, "completed", one.error || "");
+
+  const second = await startApiRun({ message: "second event", channel: space, conversationKey: "make:order-42" });
+  assert.equal(second.ok, true, second.error || "");
+  assert.equal(second.threadReused, true);
+  assert.equal(second.threadKey, first.threadKey, "the second event lands in the first event's thread");
+  const two = await settled(second.jobId);
+  assert.equal(two.status, "completed", two.error || "");
+  assert.equal(two.sessionId, one.sessionId, "the second event resumes the first event's session");
+  assert.ok(backend.calls.spawn[1].args.includes("-r"), "the engine is resumed, not started fresh");
+  assert.match(two.result.content, /resume=yes/);
+
+  const roots = posts.filter((p) => p.conversationId === space && !p.threadKey);
+  assert.equal(roots.length, 1, "exactly one top-level kickoff for the whole conversation");
+  assert.ok(posts.filter((p) => p.threadKey === first.threadKey && /second event/.test(p.text)).length === 1, "the second request is posted as a reply in the thread");
+});
+
+test("a keyed Chat thread that vanished is replaced once and the binding follows it", async () => {
+  const chat = fakeChat();
+  const space = "gchat:spaces/AAQAapiRun04";
+  await chatSpace(space, "api-gchat-key-gone");
+  const driver = () => {};
+  const first = await startApiRun({ message: "a", channel: space, conversationKey: "k", driver });
+  // Chat answers a post into a deleted thread by opening a new one (FALLBACK_TO_NEW_THREAD).
+  const post = chat.connector.post.bind(chat.connector);
+  chat.connector.post = (args) => post({ ...args, threadKey: args.threadKey === first.threadKey ? "" : args.threadKey });
+  const second = await startApiRun({ message: "b", channel: space, conversationKey: "k", driver });
+  assert.equal(second.threadReused, false);
+  assert.notEqual(second.threadKey, first.threadKey);
+  chat.connector.post = post;
+  const third = await startApiRun({ message: "c", channel: space, conversationKey: "k", driver });
+  assert.equal(third.threadReused, true);
+  assert.equal(third.threadKey, second.threadKey);
+});
+
+test("keyed runs fail closed while Google Chat is disconnected", async () => {
+  await chatSpace("gchat:spaces/AAQAapiRun05", "api-gchat-key-off");
+  const res = await startApiRun({ message: "x", channel: "gchat:spaces/AAQAapiRun05", conversationKey: "k", driver: () => {} });
   assert.equal(res.ok, false);
-  assert.equal(res.code, 400);
+  assert.equal(res.code, 503);
+  assert.match(res.error, /Google Chat must be connected/);
 });
 
 test("apiRunTarget keeps Slack on its WebClient and never hands Slack a Chat conversation", () => {

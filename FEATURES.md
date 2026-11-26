@@ -238,8 +238,14 @@ background jobs already use — and keeps Slack on its WebClient exactly as befo
 - **Responses** (POST, GET, list, webhook) add `platform`, `chatThread` and `threadKey`.
   `slackThread` and `threadTs` keep their Slack-only meaning (false/null for a Chat space), so
   existing Slack clients read exactly what they did.
-- **Unchanged:** `conversationKey` stays Slack-only (400 for a Chat space). With the Chat
-  transport disconnected the run proceeds headless, as a Slack run does without Slack.
+- **`conversationKey`** works in a Chat space or Teams conversation too
+  (`resolveChatConversation`, `src/gateway/api-conversations.js`): the binding stores the thread
+  name the first kickoff opened; each later event posts its request into that thread and the turn
+  resumes the thread's session. Reuse is proven by the post itself — Chat answers a post into a
+  vanished thread with a new one, which replaces the binding (fresh session). Disconnected
+  transport or a failed post: 503, no run. No permalink.
+- **Unchanged:** an unkeyed run with the Chat transport disconnected proceeds headless, as a Slack
+  run does without Slack.
 
 ## Unattended work: visible, hidden, or only on failure (2026-11-24)
 

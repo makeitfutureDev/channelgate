@@ -8,8 +8,7 @@ import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 //  - no channel  → a dedicated auto-provisioned `api` folder; headless (result via status/webhook).
 //  - channel given + its chat surface connected → runs as a REAL thread in that conversation (a
 //    kickoff message starts the thread — a Slack ts, a Google Chat/Teams thread name — which is the
-//    session key), so the answer posts back and it's continuable there too. conversationKey (Slack
-//    only) binds related events to one durable channel-scoped root.
+//    session key), so the answer posts back and it's continuable there too. conversationKey binds related events to one durable channel-scoped root.
 //    Without a key, a failed kickoff falls back to a headless api-keyed thread.
 //
 // Either way the run is an ordinary admin's turn in that channel (its mode incl. Admin/Auto, memory,
@@ -62,7 +61,7 @@ import { PROFILE_FLAGS, API_PRINCIPAL, isAuthorized } from "./modes.js";
 import { isAdmin, isApproved } from "../config/store.js";
 import { postNotice, postDirectMessage, asConnector, automationTarget } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
-import { DEFAULT_PLATFORM, capabilitiesFor, formatOutboundFor } from "../platforms/registry.js";
+import { DEFAULT_PLATFORM, capabilitiesFor, formatOutboundFor, platformLabel } from "../platforms/registry.js";
 import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule } from "./schedule-outcome.js";
 import { API_MAX_INFLIGHT, apiSourceId, backfillApiRunLedger, normalizeApiRunName, noteApiDuplicate, noteApiRejection, openApiRun, syncApiRun } from "./api-run-history.js";
 import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
@@ -600,14 +599,14 @@ export async function startApiRun(input = {}) {
   } catch (error) {
     return { ok: false, code: 400, error: error.message };
   }
-  if (conversationKey && !input.channel) return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  if (conversationKey && !input.channel) return { ok: false, code: 400, error: "conversationKey requires a registered chat conversation (a Slack channel, Google Chat space or Teams conversation)." };
   let outcomeOptions;
   try {
     const successCriteria = normalizeSuccessCriteria(input.successCriteria);
     if (input.reportOutcome !== undefined && typeof input.reportOutcome !== "boolean") return { ok: false, code: 400, error: "reportOutcome must be true or false." };
     const visibility = input.visibility === undefined || input.visibility === null || input.visibility === "" ? "visible" : input.visibility;
     if (!API_VISIBILITIES.includes(visibility)) return { ok: false, code: 400, error: `visibility must be one of: ${API_VISIBILITIES.join(", ")}.` };
-    if (visibility !== "visible" && conversationKey) return { ok: false, code: 400, error: "conversationKey continues a visible Slack thread; it cannot be combined with visibility \"" + visibility + "\"." };
+    if (visibility !== "visible" && conversationKey) return { ok: false, code: 400, error: "conversationKey continues a visible chat thread; it cannot be combined with visibility \"" + visibility + "\"." };
     // "on-failure" must know whether the WORK failed, so it always asks the agent for its report.
     outcomeOptions = { successCriteria, visibility, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) || visibility === "on-failure", name: normalizeApiRunName(input.name) };
   } catch (error) {
@@ -616,8 +615,8 @@ export async function startApiRun(input = {}) {
   // Resolve keyed targets before deduplication, so a globally reused event key can never return
   // a different channel's conversation. Legacy unkeyed idempotency semantics remain unchanged.
   const conversationEntry = conversationKey ? await resolveChannel(input.channel) : null;
-  if (conversationKey && (!conversationEntry || conversationEntry.channelId === API_CHANNEL_ID || platformOfConversation(conversationEntry.channelId) !== DEFAULT_PLATFORM)) {
-    return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  if (conversationKey && (!conversationEntry || conversationEntry.channelId === API_CHANNEL_ID)) {
+    return { ok: false, code: 400, error: "conversationKey requires a registered chat conversation (a Slack channel, Google Chat space or Teams conversation)." };
   }
   const dedupedShape = (shape) => {
     if (conversationKey && shape.ok && (shape.channelId !== conversationEntry.channelId || shape.conversationKey !== conversationKey)) {
@@ -749,7 +748,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   const { client, platform: chatPlatform } = apiRunTarget(slack, entry.channelId);
   const registeredChat = Boolean(client);
   const registeredSlack = registeredChat && chatPlatform === DEFAULT_PLATFORM;
-  if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
+  if (conversationKey && !registeredChat) return { ok: false, code: 503, error: `${platformLabel(chatPlatform || DEFAULT_PLATFORM)} must be connected to use conversationKey. Retry when it is available.` };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
   const refused = await userPrincipalRefusal(principal, entry, meta);
@@ -797,7 +796,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     try {
       const kickoffText = apiKickoffText({ platform: chatPlatform, jobId, authorId, msg, hasFile });
       if (conversationKey) {
-        const binding = await resolveApiConversation({ client, channelId: entry.channelId, conversationKey, kickoffText });
+        const binding = await resolveApiConversation({ client, channelId: entry.channelId, conversationKey, kickoffText, platform: chatPlatform });
         threadKey = binding.threadTs;
         threadReused = binding.threadReused;
         permalink = binding.threadPermalink;
@@ -815,7 +814,7 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
       }
     } catch (e) {
       await logEvent("api_slack_kickoff_failed", { id: jobId, slug, error: e.message }).catch(() => {});
-      if (conversationKey) return { ok: false, code: 503, error: "Slack conversation could not be created or verified. Check Slack access and retry; no agent run was started." };
+      if (conversationKey) return { ok: false, code: 503, error: `${platformLabel(chatPlatform || DEFAULT_PLATFORM)} conversation could not be created or verified. Check the app's access to it and retry; no agent run was started.` };
     }
   }
 

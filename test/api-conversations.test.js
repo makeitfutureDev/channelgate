@@ -242,7 +242,9 @@ test("invalid conversation keys and destinations reject before a root or engine"
   }
   const foreign = await upsertChannelEntry("teams:conversation-123", { name: "api-foreign", type: "channel", platform: "msteams" });
   await saveChannelMeta(foreign.slug, { channelId: foreign.channelId, name: "api-foreign", platform: "msteams", type: "channel" });
-  assert.equal((await f.run({ channel: foreign.slug })).code, 400);
+  // A registered Teams conversation is a valid destination now; without its transport it fails
+  // closed (503) before any root or engine, exactly like a disconnected Slack.
+  assert.equal((await f.run({ channel: foreign.slug })).code, 503);
   assert.equal(f.calls.roots.length, 0);
   assert.equal(f.calls.driven.length, 0);
 });

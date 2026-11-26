@@ -6,6 +6,8 @@
   kickoff opens a thread in the space and the agent's answer follows in it, as in Slack. Before,
   such a run was silently headless and its answer only reachable through the API. Responses add
   `platform`, `chatThread` and `threadKey`; Slack's fields are unchanged.
+- `conversationKey` now works for Google Chat spaces and Teams conversations: later API events
+  with the same key post into the same thread and continue the same agent session.
 
 ## 0.7.0 — candidate, pending approval
 
