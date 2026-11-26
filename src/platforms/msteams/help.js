@@ -39,6 +39,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       ] },
       { title: 'Your current session', rows: [
         '`/status` — See the harness, model, effort and active/queued requests.',
+        '`/fork <request>` — Start a separate thread from the current session in a Teams channel.',
         '`/jobs` — List running background jobs.',
         '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
         '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',

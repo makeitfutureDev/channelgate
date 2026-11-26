@@ -48,7 +48,7 @@ export async function threadForkTarget(action) {
   const entry = await getChannelEntry(channelId), meta = await getChannelMeta(slug);
   if (!entry || entry.slug !== slug || !meta || (meta.channelId && meta.channelId !== channelId)) throw new Error("The source conversation no longer matches this proposal.");
   if (mixedThreading) {
-    if (entry.isDM || entry.type !== "channel") throw new Error(`${adapter.label} direct messages and group chats have no threads to fork into. Use a named space that has threads.`);
+    if (entry.isDM || entry.type !== "channel") throw new Error(`${adapter.label} direct messages and group chats have no threads to fork into. ${platform === "msteams" ? "Use a Teams channel with reply chains." : "Use a named space that has threads."}`);
     if (!ordinaryThread()) throw new Error(`Fork proposals need an ordinary ${adapter.label} thread.`);
     // Whether the space itself is threaded is a live fact of the space, asked of its transport.
     const connector = liveConnector(platform);

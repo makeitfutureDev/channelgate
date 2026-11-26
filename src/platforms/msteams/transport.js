@@ -6,6 +6,8 @@
 import { createTeamsFileResolver } from "./files.js";
 import { createTeamsHistory } from "./history.js";
 import { createHash, randomUUID } from "node:crypto";
+import { forkSessionHolds } from "../fork-session-holds.ts";
+import { teamsForkInbound } from "./thread-forks.ts";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createTeamsGraphEvents } from "./graph-events.js";
 import { createTeamsEventStore } from "./event-store.js";
@@ -68,6 +70,8 @@ export async function startTeams({
   let graphControlInbox = null;
   let noticeInbox = null;
   const graphEventsEnabled = allMessageEvents === true;
+  const sourceHolds = forkSessionHolds(() => { botInbox.wake?.(); dispatchInbox?.wake?.(); });
+  connector.holdSession = sourceHolds.acquire;
   const queueKey = inbound => JSON.stringify([inbound.conversationId, sessionKeyForMessage(inbound)]);
   const botNamespace = `msteams-bot:${appId}`;
   const graphNamespace = `msteams-graph-dispatch:${appId}`;
@@ -118,6 +122,10 @@ export async function startTeams({
       let cancelled = 0;
       for (const row of rows) cancelled += Number(cancel.run(row.namespace, row.event_id).changes);
       db.exec("COMMIT");
+      for (const row of rows) {
+        const fork = fromJson(row.data, {}).fork;
+        if (fork) connector.settleFork?.(fork.id);
+      }
       return { allowed: true, cancelled };
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   };
@@ -188,7 +196,7 @@ export async function startTeams({
     if (claimed.changes !== 1) return { ok: false, reason: "gone" };
     if (Date.now() - row.created_ms > RETRY_TTL_MS) return { ok: false, reason: "expired" };
     const target = held.lane === "graph" ? dispatchInbox : botInbox;
-    const inbound = held.lane === "graph" ? held.payload?.inbound : normalizeActivity(held.payload?.activity, { botId, activationReactions: getActivationReactions() });
+    const inbound = held.payload?.inbound || normalizeActivity(held.payload?.activity, { botId, activationReactions: getActivationReactions() });
     if (!target || !inbound) return { ok: false, reason: "gone" };
     const accepted = target.accept({ id: `retry:${id}`, conversationId: queueKey(inbound), payload: { ...held.payload, retryId: id } });
     return accepted?.accepted ? { ok: true } : { ok: false, reason: "gone" };
@@ -231,7 +239,7 @@ export async function startTeams({
       log,
     };
     dispatchInbox = deps.graphDispatchInbox || (deps.createInbox || createDurableInbox)({
-      ...graphDispatchOptions, namespace: graphNamespace,
+      ...graphDispatchOptions, namespace: graphNamespace, isReady: sourceHolds.isReady,
       queuedNamespace: ({ inbound }) => ["stop", "ack"].includes(inbound?.reactionAction) ? `msteams-graph-controls:${appId}` : null,
     });
     graphControlInbox = deps.graphControlInbox || (deps.createInbox || createDurableInbox)({
@@ -359,12 +367,18 @@ export async function startTeams({
     // The row's id is the activity's fingerprint, except a "Run again" replay's own id; either way
     // the dispatcher learns it from the row it is running (`eventId`, set below).
     handle: async payload => {
+      // Only the daemon's enqueue below can set fork beside inbound. Webhook payloads wrap
+      // the verified activity under a separate key, even when a wire activity has extra fields.
+      if (payload.fork) {
+        const eventId = payload.retryId ? `retry:${payload.retryId}` : `fork:${payload.fork.id}`;
+        return withWorking(namespace, eventId)(payload.inbound, { fork: payload.fork });
+      }
       const eventId = payload.retryId ? `retry:${payload.retryId}` : activityFingerprint(payload.activity);
       connector.queuedEventStarted?.({ kind: "bot", eventId });
       return createTeamsActivityDispatcher({ botId, onMessage: withWorking(namespace, eventId), resolveFile, onActivity, graphEventsEnabled, getActivationReactions })(payload);
     },
     interrupted: async payload => {
-      const message = normalizeActivity(payload.activity, { botId, activationReactions: getActivationReactions() });
+      const message = payload.inbound || normalizeActivity(payload.activity, { botId, activationReactions: getActivationReactions() });
       if (!message) return;
       // Both a failed handler and a restart may leave unknown external effects. Notify in the
       // original verified conversation instead of repeating the request automatically.
@@ -375,8 +389,13 @@ export async function startTeams({
     log,
   });
   const botInbox = deps.botInbox || (deps.createInbox || createDurableInbox)({
-    ...botInboxOptions(botNamespace), namespace: botNamespace,
+    ...botInboxOptions(botNamespace), namespace: botNamespace, isReady: sourceHolds.isReady,
   });
+  connector.startForkTurn = turn => {
+    const inbound = teamsForkInbound(turn);
+    const accepted = botInbox.accept({ id: `fork:${turn.fork.id}`, conversationId: queueKey(inbound), payload: { inbound, fork: turn.fork } });
+    if (!accepted?.accepted) throw new Error("The Teams fork opening request could not be queued.");
+  };
   const controlInbox = deps.botControlInbox || (deps.createInbox || createDurableInbox)({
     ...botInboxOptions(`msteams-bot-controls:${appId}`), namespace: `msteams-bot-controls:${appId}`, concurrencyGroup: "platform-controls",
   });

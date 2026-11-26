@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+## Unreleased
+
+- Fork a Teams channel discussion into separate threads with `/fork` or an approved batch.
+  Each child starts from a copy of the source agent session and is owned by the requester.
+
 ## 0.7.0 — candidate, pending approval
 
 - Pass Claude `/compact` and its optional focus instructions as a bare native command through cold,
