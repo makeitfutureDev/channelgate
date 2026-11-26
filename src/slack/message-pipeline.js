@@ -774,9 +774,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
-        // Engine-native /compact keeps prior-file recovery; its command text stays bare. Other recognized
-        // controls must not become agent prompts merely because an earlier message shared a file.
-        if (command?.cmd === "compact" && engineSupports(await resolveThreadEngine(entry.slug, event.thread_ts ?? event.ts, meta), "compact")) return true;
+        // Recognized controls, including native /compact, never recover earlier thread files.
+        // Compaction operates on the existing native history, not attachments.
         if (command?.cmd === "sudo") {
           const sudo = parseSudoCommand(text);
           if (sudo?.task && !sudo.invalid) return true;
@@ -881,7 +880,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
     const parsedCommand = !syntheticFork && !sudo ? parseSlashCommand(prompt) : null;
-    // Compaction is a native history operation even when hydration recovered an earlier file.
+    // Compaction remains a native history operation even with fresh attachments.
     const sc = files.length === 0 || parsedCommand?.cmd === "compact" ? parsedCommand : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
     // the THREAD's effective engine (override → session-born → channel → gateway default), never
@@ -891,6 +890,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     let compactPassthrough = false;
     if (sc && sc.cmd === "compact") {
       compactPassthrough = engineSupports(await resolveThreadEngine(entry.slug, threadKey, meta), "compact");
+      // The slash parser is case-insensitive; the CLI and native-command guard require lowercase.
+      // Normalize before both durable acceptance and dispatch so recovery sees the same command.
+      if (compactPassthrough) prompt = "/compact" + (sc.arg ? " " + sc.arg : "");
     }
     if (sc && !compactPassthrough) {
       const reply = (t) => client.chat.postMessage({ channel: event.channel, ...threadOpts, text: t });
@@ -1157,7 +1159,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // sent to the model as a prompt.
         await reply(`\`/${sc.cmd}\` was removed — \`/model\` now does it all: scope (channel or just this thread) → harness (Claude/Codex) → model → effort.`);
       } else if (sc.cmd === "compact") {
-        await reply("Codex doesn't support `/compact` — use `/clear` to start fresh, or open a new thread.");
+        await reply(`${engineLabel(await resolveThreadEngine(entry.slug, threadKey, meta))} doesn't support \`/compact\` — use \`/clear\` to start fresh, or open a new thread.`);
       } else if (sc.cmd === "update") {
         if (!authorIsAdmin) {
           await reply("Only admins can update the gateway.");
@@ -1472,7 +1474,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // the file id keeps same-named attachments from different messages apart. A file carried in
     // from the thread root is wanted only while its bytes are missing from that folder.
     const dest = { root: effectiveWorkDir(entry.slug, meta), sub: uploadsSubFor(threadKey) };
-    const wantedFiles = files.length ? await filterCarriedRootFiles(files, dest) : [];
+    if (compactPassthrough && files.length) {
+      await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "Attachments are ignored for `/compact`." });
+    }
+    const wantedFiles = !compactPassthrough && files.length ? await filterCarriedRootFiles(files, dest) : [];
     let promptForClaude = prompt || (
       wantedFiles.length && slackTables.length
         ? "Please review the attached file(s) and pasted Slack table(s), then respond."
@@ -1638,8 +1643,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       aborted: false,
       controller: new AbortController(),
       authorId: event.user,
-      replayStoppedTurn: sessionBeforeRun,
-      stoppedPrompt: promptForClaude,
+      replayStoppedTurn: !compactPassthrough && sessionBeforeRun,
+      stoppedPrompt: compactPassthrough ? "" : promptForClaude,
       attachments: attachmentPaths,
     };
     // Durable from the moment the message is ACCEPTED — Bolt already acked the envelope, so a

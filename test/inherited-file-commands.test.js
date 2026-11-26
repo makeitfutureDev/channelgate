@@ -68,7 +68,7 @@ test("canonical text controls routing even when the trigger text is incomplete",
   assert.match(result.text, /The \/files command has been removed/);
 });
 test("unknown commands and ordinary followups retain preceding attachment recovery", async () => {
-  for (const prompt of ["/unknown-command", "read that file", "/next read that file", "/compact"]) {
+  for (const prompt of ["/unknown-command", "read that file", "/next read that file"]) {
     const result = await execute(prompt, "previous");
     assert.equal(result.starts.length, 1);
     assert.equal(result.starts[0].files, 1);

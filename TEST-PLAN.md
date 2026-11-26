@@ -9,11 +9,19 @@
   manual boundary before synthesizing a confirmation; automatic/child boundaries and an empty
   terminal success never prove compaction. Missing session, disabled license, explicit
   incompatible harness, missing native history, provider failure and empty output must never mint,
-  heal or fail over. Codex's Slack refusal remains daemon-side.
+  heal or fail over. Codex's Slack refusal remains daemon-side. Cover `/Compact keep x` and
+  `/COMPACT` at acceptance, promotion, dispatch and boot recovery. Verify no historical file
+  hydration, no fresh file/audio download or transcription, a short ignored-attachment notice,
+  and no stopped-command replay into an ordinary follow-up. Missing/mismatched sessions must not
+  classify as `engine_disabled`; a disabled license must. Unsupported-engine notices use the
+  effective engine label in both direct and Slack paths.
 - Live Claude acceptance pending: in an owned private Claude Auto fixture, start a thread with a
   synthetic decision and enough conversation history to summarize. Record the native session id,
-  actual license, model and context usage. Send addressed `/compact`, then `/compact keep the
-  synthetic decision`, and ask for that decision. Repeat with the warm pool enabled and cold
+  actual license, model and context usage. Send addressed `/compact`, then `/Compact keep the
+  synthetic decision` and `/COMPACT`, and ask for that decision. Repeat after sharing a thread file
+  and with a fresh text/audio attachment: require the ignored-attachment notice only for fresh
+  uploads, zero attachment processing and the same bare command. Stop a compaction, then send an
+  ordinary follow-up and require no stopped-command replay. Repeat with the warm pool enabled and cold
   dispatch forced by the test operator. Pass only with a CLI `compact_boundary` or equivalent
   native compaction evidence, same native session, retained decision, and exact bare command at
   dispatch; an ordinary model response or smaller footer alone is insufficient. In a new thread,
@@ -9956,8 +9964,8 @@ The skipped/live cases below remain unverified; this branch is not a release can
   responses for stop, pending, `/help` and bare `/next`, with zero engine starts for all of them.
   Canonical text overrides incomplete trigger text;
   current canonical files omitted from the trigger and trigger files retained after a lookup
-  failure must keep attachment semantics. Ordinary/unknown commands, queued tasks and Claude's
-  native `/compact` keep prior-file recovery.
+  failure must keep attachment semantics. Ordinary/unknown commands and queued tasks keep prior-file recovery;
+  `/compact` never recovers historical files and ignores fresh attachments with a short notice.
 - [ ] Live, separately for Claude and Codex in authorized Worker/Auto QA channels: create a
   disposable two-line text file and share it into a thread. Immediately type a native bot mention
   followed by `/files`, attaching nothing to that message. Repeat with an older root attachment

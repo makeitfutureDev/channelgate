@@ -4,7 +4,11 @@
 
 Claude's `/compact` and optional focus instructions reach the engine as the entire user prompt,
 without provenance, thread replay or per-attempt preambles, on both cold `-p` and warm stream-json
-input paths. Queued turns and boot recovery retain the same bare command. Compaction requires
+input paths. Slack normalizes mixed-case command names such as `/Compact` to `/compact` before
+queueing and dispatch. Queued turns and boot recovery retain the same bare command. Compaction
+ignores attachments with a short notice for fresh uploads, never recovers earlier thread files,
+and never saves a stopped compaction as context for the next message. Missing or incompatible
+session notices are not classified as disabled engines; unsupported engines are named correctly. Compaction requires
 an existing session on the selected license; a missing session gets a daemon-side remedy to send
 a normal message first. Compaction never switches licenses/harnesses or heals into a fresh session
 when resumption fails. Native local-command text is preserved, and only a manual compaction boundary can produce a
@@ -4618,8 +4622,8 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 - **Text commands remain controls after file sharing:** canonical current-message attachments
   are recovered even when Slack omits them from a trigger. Historical thread files cannot turn
   text-only retired-command notices, stop/cancel, pending or other gateway controls into an agent request.
-  Ordinary followups, unknown commands, queued tasks and engine-native `/compact` retain their
-  normal attachment context; bare `/next` gives its usage hint. → TEST-PLAN: Commands after file sharing.
+  Ordinary followups, unknown commands and queued tasks retain their normal attachment context;
+  native `/compact` ignores attachments with a notice for fresh uploads, and bare `/next` gives its usage hint. → TEST-PLAN: Commands after file sharing.
 
 - **Accurate Composio ownership guidance:** logical personal/agent identities describe routing,
   not proof of a connected service owner's identity or universal sharing across channels. Managed

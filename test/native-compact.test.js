@@ -12,13 +12,18 @@ const { runMessage, resetEngineCooldowns } = await import("../src/gateway/run.js
 const { getSession, saveSession } = await import("../src/gateway/sessions.js");
 const { setThreadEngine, getThreadEngine } = await import("../src/gateway/thread-engine.js");
 const { shutdownPool } = await import("../src/engines/session-pool.js");
-const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
+const { processMessageEvent, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
 const { listActiveRuns, recoverRuns, recordActiveRun } = await import("../src/gateway/active-runs.js");
+const { runAdmissionRefusalKind } = await import("../src/gateway/run-admission-result.js");
+const { engineLabel } = await import("../src/engines/registry.js");
+const { takeStoppedTurn } = await import("../src/gateway/stopped-turns.js");
+const { readEvents } = await import("../src/util/logger.js");
 const { runQueue } = await import("../src/slack/message-lifecycle.js");
 const USER = "U_COMPACT", BOT = "BCOMPACT";
 const invocations = [];
 const backend = createFakeRuntimeBackend();
 let response = "echo";
+let heldChild;
 backend.spawn = (target, spec) => {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
@@ -28,9 +33,11 @@ backend.spawn = (target, spec) => {
   const warm = spec.args.includes("--input-format");
   const id = spec.args[spec.args.indexOf("-r") + 1];
   const answer = (prompt) => {
-    invocations.push({ prompt, args: spec.args, warm, id });
+    invocations.push({ prompt, args: spec.args, warm, id, durableText: listActiveRuns().find(row => row.slug === target.slug)?.text });
     queueMicrotask(() => {
-      if (response === "missing") {
+      if (response === "hold") {
+        heldChild = child;
+      } else if (response === "missing") {
         child.stderr.write("No conversation found with session ID");
         child.emit("close", 1, null);
       } else if (response === "limit") {
@@ -98,7 +105,9 @@ for (const warm of [false, true]) {
     assert.ok(!invocations.at(-1).args.includes("--session-id"));
     assert.equal(await getSession(f.entry.slug, f.root), id);
     if (warm) {
-      await f.send("/compact", "102.001");
+      await f.send("/Compact keep x", "102.001");
+      assert.equal(invocations.at(-1).prompt, "/compact keep x");
+      await f.send("/COMPACT", "102.002");
       assert.equal(invocations.at(-1).prompt, "/compact");
     }
     await f.send("ordinary follow-up", "103.001");
@@ -117,7 +126,8 @@ test("no session, disabled license, or different explicit harness refuses withou
     if (kind === "disabled") saveSettings({ engineEnabled: { claude: false, codex: true } });
     const before = invocations.length;
     const result = await runMessage(f.args);
-    assert.equal(result.engineRefused, true);
+    assert.equal(Boolean(result.engineRefused), kind === "disabled");
+    assert.equal(runAdmissionRefusalKind(result), kind === "disabled" ? "engine_disabled" : "");
     assert.equal(invocations.length, before);
     assert.equal(await getSession(f.entry.slug, f.root), id);
     assert.match(result.content, kind === "no-session" ? /normal message first/ : kind === "disabled" ? /disabled/ : /Codex doesn't support/);
@@ -150,34 +160,38 @@ for (const failure of ["missing", "limit", "empty"]) {
   });
 }
 
-test("queued compact persists bare text and boot recovery dispatches it unchanged", async () => {
-  process.env.SESSION_KEEPALIVE = "0";
-  response = "echo";
-  const f = await fixture();
-  const key = `${f.entry.slug}::${f.root}`;
-  const blocker = { aborted: false, controller: new AbortController(), authorId: USER, runId: `${key}::blocker` };
-  await runQueue.acquire(key, blocker);
-  const pending = f.send();
-  let stored;
-  try {
-    for (let tries = 0; tries < 100; tries++) {
-      stored = listActiveRuns().find(row => row.channelId === f.channel);
-      if (stored) break;
-      await new Promise(resolve => setTimeout(resolve, 10));
+for (const [input, expected] of [["/compact keep the deployment decisions", "/compact keep the deployment decisions"], ["/Compact keep x", "/compact keep x"], ["/COMPACT", "/compact"]]) {
+  test(`queued ${input} persists normalized bare text and boot recovery dispatches it unchanged`, async () => {
+    process.env.SESSION_KEEPALIVE = "0";
+    response = "echo";
+    const f = await fixture();
+    const key = `${f.entry.slug}::${f.root}`;
+    const blocker = { aborted: false, controller: new AbortController(), authorId: USER, runId: `${key}::blocker` };
+    await runQueue.acquire(key, blocker);
+    const pending = f.send(input);
+    let stored;
+    try {
+      for (let tries = 0; tries < 100; tries++) {
+        stored = listActiveRuns().find(row => row.channelId === f.channel);
+        if (stored) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(stored?.text, expected);
+    } finally {
+      runQueue.release(key, blocker);
+      await pending;
     }
-    assert.equal(stored?.text, f.args.text);
-  } finally {
-    runQueue.release(key, blocker);
-    await pending;
-  }
-  recordActiveRun(stored.id, stored);
-  await recoverRuns([stored], {
-    slack: { snapshot: () => ({ connected: true }), getClient: () => f.client },
-    deliver: async () => {}, usageRecorder: async () => {},
+    assert.equal(invocations.at(-1).prompt, expected);
+    assert.equal(invocations.at(-1).durableText, expected);
+    recordActiveRun(stored.id, stored);
+    await recoverRuns([stored], {
+      slack: { snapshot: () => ({ connected: true }), getClient: () => f.client },
+      deliver: async () => {}, usageRecorder: async () => {},
+    });
+    assert.equal(invocations.at(-1).prompt, expected);
+    assert.equal(listActiveRuns().length, 0);
   });
-  assert.equal(invocations.at(-1).prompt, f.args.text);
-  assert.equal(listActiveRuns().length, 0);
-});
+}
 
 
 test("compact focus instructions cannot change harness pins", async () => {
@@ -194,11 +208,84 @@ test("historical attachments cannot turn compact into a wrapped model prompt", a
   const f = await fixture();
   const previous = { ts: "100.900", user: USER, text: "Earlier upload",
     files: [{ id: "F_COMPACT", name: "history.txt", size: Number.MAX_SAFE_INTEGER, url_private_download: "https://files.slack.test/history" }] };
-  f.client.conversations.replies = async args => ({ messages: args.oldest
-    ? [{ ts: "101.001", user: USER, text: `<@${BOT}> ${f.args.text}` }]
-    : [{ ts: f.root, user: USER, text: "Prior context" }, previous] });
+  let threadFileReads = 0;
+  f.client.conversations.replies = async args => {
+    if (!args.oldest && args.latest) threadFileReads++;
+    return { messages: args.oldest
+      ? [{ ts: "101.001", user: USER, text: `<@${BOT}> ${f.args.text}` }]
+      : [{ ts: f.root, user: USER, text: "Prior context" }, previous] };
+  };
   await f.send();
   assert.equal(invocations.at(-1).prompt, f.args.text);
+  assert.equal(threadFileReads, 0);
+  assert.equal(readEvents({ limit: 1000 }).find(e => e.event === "run_start" && e.channel === f.channel)?.files, 0);
+});
+
+for (const name of ["current.txt", "voice.ogg"]) {
+  test(`compact ignores fresh ${name} without download or transcription and tells the user`, async (t) => {
+    response = "echo";
+    const f = await fixture();
+    let fetches = 0;
+    t.mock.method(globalThis, "fetch", async () => { fetches++; throw new Error("Unexpected attachment access"); });
+    const file = { id: "F_FRESH_COMPACT", name, size: 1,
+      mimetype: name.endsWith("ogg") ? "audio/ogg" : "text/plain",
+      url_private_download: "https://files.slack.test/current" };
+    f.client.conversations.replies = async () => ({ messages: [{ ts: "101.001", user: USER,
+      text: `<@${BOT}> /Compact keep x`, files: [file] }] });
+    await f.send("/Compact keep x");
+    assert.equal(invocations.at(-1).prompt, "/compact keep x");
+    assert.equal(fetches, 0);
+    assert.match(f.posted.map(m => m.text || "").join("\n"), /Attachments are ignored for `\/compact`/);
+    assert.equal(readEvents({ limit: 1000 }).find(e => e.event === "run_start" && e.channel === f.channel)?.files, 0);
+  });
+}
+
+test("stopped compact is never saved or replayed into the next ordinary message", async () => {
+  process.env.SESSION_KEEPALIVE = "0";
+  const f = await fixture();
+  response = "hold";
+  heldChild = null;
+  const pending = f.send();
+  try {
+    for (let tries = 0; tries < 100 && !heldChild; tries++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(heldChild, "compact must be running before stop");
+    const stopped = abortRunsInChannel(f.channel, f.entry.slug, USER, f.root);
+    assert.equal(stopped.stoppedTurns.length, 1);
+    assert.equal(takeStoppedTurn(f.entry.slug, f.root), null);
+  } finally {
+    heldChild?.emit("close", 0, null);
+    await pending;
+    response = "echo";
+  }
+  await f.send("ordinary follow-up", "104.001");
+  assert.doesNotMatch(invocations.at(-1).prompt, /previous_stopped_request|Stopped previous turn context/);
+  assert.match(invocations.at(-1).prompt, /Provenance:/);
+});
+
+test("compact session mismatch notices are not classified as engine disabled", async () => {
+  for (const kind of ["other-license", "preset", "fork"]) {
+    const f = await fixture({ pin: kind === "other-license" ? "claude-bedrock" : "" });
+    const before = invocations.length;
+    const result = await runMessage({ ...f.args,
+      ...(kind === "preset" ? { sessionId: "other-session" } : {}),
+      ...(kind === "fork" ? { forkSourceSessionId: "source-session" } : {}) });
+    assert.match(result.content, /no existing session/);
+    assert.equal(result.engineRefused, false);
+    assert.equal(runAdmissionRefusalKind(result), "");
+    assert.equal(invocations.length, before);
+  }
+});
+
+test("unsupported compact uses the effective engine label in direct and Slack refusals", async () => {
+  const f = await fixture({ engine: "codex-eu" });
+  const before = invocations.length;
+  const label = engineLabel("codex-eu");
+  const result = await runMessage(f.args);
+  assert.ok(result.content.startsWith(`${label} doesn't support`));
+  assert.equal(runAdmissionRefusalKind(result), "");
+  await f.send();
+  assert.ok(f.posted.some(m => m.text?.startsWith(`${label} doesn't support`)));
+  assert.equal(invocations.length, before);
 });
 
 

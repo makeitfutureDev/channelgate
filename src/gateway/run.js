@@ -877,15 +877,19 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const id = await getSession(entry.slug, threadKey);
     const owner = await getSessionEngine(entry.slug, threadKey);
     const effectiveEngine = engineExplicit ? engine : owner || engine;
-    const refusal = !engineSupports(effectiveEngine, "compact")
-      ? "Codex doesn't support `/compact` — use `/clear` to start fresh, or open a new thread."
-      : !id || presetSessionId || forkSourceSessionId || (owner && owner !== effectiveEngine)
+    const compactSupported = engineSupports(effectiveEngine, "compact");
+    const hasCompactSession = Boolean(id && !presetSessionId && !forkSourceSessionId && (!owner || owner === effectiveEngine));
+    const engineDisabled = compactSupported && hasCompactSession && !isEngineEnabled(effectiveEngine);
+    const refusal = !compactSupported
+      ? `${engineLabel(effectiveEngine)} doesn't support \`/compact\` — use \`/clear\` to start fresh, or open a new thread.`
+      : !hasCompactSession
         ? "There is no existing session to compact for this thread. Send a normal message first, then use `/compact`."
-        : !isEngineEnabled(effectiveEngine)
+        : engineDisabled
           ? `${engineLabel(effectiveEngine)} is disabled. Enable this session's license before using /compact.` : "";
     if (refusal) return {
       slug: entry.slug, cwd: "", model: "", engine: effectiveEngine, content: refusal,
-      engineRefused: true, sessionId: id || null, isNew: false, usage: {}, costUSD: 0, durationMs: 0,
+      engineRefused: engineDisabled,
+      sessionId: id || null, isNew: false, usage: {}, costUSD: 0, durationMs: 0,
     };
     compactSession = { sessionId: id, isNew: false, engine: owner || effectiveEngine,
       runtime: JSON.stringify(await getSessionRuntime(entry.slug, threadKey)) };
