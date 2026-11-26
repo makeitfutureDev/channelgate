@@ -322,7 +322,12 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the ONE path unattended posts take), `inbound.js` (the one message shape every transport
   produces), `ingest.js` (gate → authorize → run → answer for the non-Slack surfaces),
   `durable-inbox.js` (SQLite at-least-once intake, resumed after a restart), the platform-neutral
-  attachment, voice, text-command, reply-session and approval-delivery helpers, `live.js` (which
+  attachment, voice, text-command, reply-session and approval-delivery helpers,
+  the admitted command dispatcher (`src/gateway/chat-feature.ts`), and the shared engine reply
+  callbacks for Slack, Teams, Google Chat and voice (`src/gateway/turn-replies.ts`).
+  Fork settings and the per-child execution journal live in `src/gateway/fork-settings.ts`
+  and `fork-batch.ts`; Google Chat and Teams supply native thread operations to
+  `src/platforms/channel-forks.ts`. Platform connection state comes from `live.js` (which
   transports are CONNECTED), `manager.js`, `boot.js` (what `server.js` calls). `googlechat/` and
   `msteams/` are the two non-Slack TRANSPORTS (auth, REST client, inbound normalization,
   connector; the Pub/Sub pull loop, or the JWKS-verified webhook at `/api/teams/messages`).
@@ -348,8 +353,11 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   containment and the login limiter; `auth.js` (admin session + the run-API key, an admin
   credential scoped to `/api/runs`);
   `file-editor.js` / `file-download.js` / `file-upload.js` (one-time grant URLs → per-editor
-  cookies, re-authorized on every request); `assets.js` (content-hash cache busting for the
-  build-less UI); `skills-mcp.js`.
+  cookies, re-authorized on every request); `admin-assets.ts` and `calls-view-assets.ts`
+  (versioned browser assets with the previous release retained); `skills-mcp.js`. Admin browser
+  TypeScript modules live under `ui/admin/`; `npm run build:admin` emits their public JavaScript
+  and `npm run check:types` verifies it. The transactional updater delegates eligible frontend
+  releases to `src/gateway/dashboard-update.ts`.
 - `src/ee/` — the **proprietary, source-visible** licensing plane (`LICENSE-EE.md`): `license.js`
   (key storage, Ed25519-verified platform responses, the state machine), `tiers.js`, `limits.js`
   (`licenseAdmission()`: conversation admission + the monthly per-conversation message cap, the
