@@ -1097,7 +1097,9 @@ styles and shell, the common Activity layout (`public/activity/dashboard.css`), 
 view can ship during an agent turn. Use the normal update entry
 point. It holds the previous UI active during checks, activates the complete view, and verifies
 the new content revision against the original gateway instance. A failed candidate restores the
-previous view. Open tabs can still request the preceding release's versioned assets. The
+previous view. If an update is interrupted after checkout, the next eligible dashboard update
+reconciles the pinned views against that instance’s authenticated health before it activates
+the new release. A failed retry keeps the original verified views available. Open tabs can still request the preceding release's versioned assets. The
 authenticated health response reports the UI revisions separately from the daemon's boot revision.
 
 The first installation of this support, changes to server-consumed frontend files, login changes,

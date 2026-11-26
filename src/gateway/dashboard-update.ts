@@ -2,7 +2,7 @@ import { acquireLandingLock, releaseLandingLock } from "../../scripts/with-landi
 import { execFileSync } from "node:child_process";
 import { activityLayoutFile, buildActivityLayout } from "../web/activity-layout.ts";
 import { adminAssetName, adminVersion } from "../web/admin-assets.ts";
-import { callsFiles, selectDashboardRelease, useCheckoutCallsRelease, type DashboardSources } from "../web/dashboard-release.ts";
+import { callsFiles, readDashboardRelease, selectDashboardRelease, useCheckoutCallsRelease, type DashboardSources } from "../web/dashboard-release.ts";
 import { adminModuleName } from "../web/admin-module-names.ts";
 import { buildCallsView } from "../web/calls-view-assets.ts";
 
@@ -93,27 +93,31 @@ interface Snapshot {
   revisions: { callsView?: string; adminView?: string; activityLayout?: string };
 }
 
-function loadRelease(repo: string, revision: string, changes: ViewsChanged): Snapshot {
+function readAdminSource(repo: string, revision: string) {
+  const names = git(repo, "ls-tree", "-z", revision + ":public").split("\0").flatMap(entry => {
+    const [meta, name] = entry.split("\t");
+    if (!name || !adminAssetName.test(name)) return [];
+    if (!meta.startsWith("100644 blob ")) throw new Error("Admin bundle contains a non-regular asset");
+    return [name];
+  });
+  return Object.fromEntries(names.map(name => [name, git(repo, "show", revision + ":public/" + name)]));
+}
+
+function loadRelease(repo: string, revision: string, changes: ViewsChanged, pinned?: DashboardSources | null): Snapshot {
   const read = (file: string) => git(repo, "show", revision + ":" + file);
   const snapshot: Snapshot = { source: {}, revisions: {} };
   if (changes.calls) {
-    const calls = { html: read(callsFiles.html), css: read(callsFiles.css), ts: read(callsFiles.ts) };
+    const calls = pinned?.calls ?? { html: read(callsFiles.html), css: read(callsFiles.css), ts: read(callsFiles.ts) };
     snapshot.source.calls = calls;
     snapshot.revisions.callsView = buildCallsView(calls).revision;
   }
   if (changes.layout) {
-    const layout = buildActivityLayout(read(activityLayoutFile));
+    const layout = buildActivityLayout(pinned?.activityLayout ?? read(activityLayoutFile));
     snapshot.source.activityLayout = layout.css;
     snapshot.revisions.activityLayout = layout.revision;
   }
   if (changes.admin) {
-    const names = git(repo, "ls-tree", "-z", revision + ":public").split("\0").flatMap(entry => {
-      const [meta, name] = entry.split("\t");
-      if (!name || !adminAssetName.test(name)) return [];
-      if (!meta.startsWith("100644 blob ")) throw new Error("Admin bundle contains a non-regular asset");
-      return [name];
-    });
-    const admin = Object.fromEntries(names.map(name => [name, read("public/" + name)]));
+    const admin = pinned?.admin ?? readAdminSource(repo, revision);
     if (!admin["index.html"]?.includes("<!--ASSET_IMPORTMAP-->") || !admin["index.html"]?.includes("{{ASSET_V}}")) {
       throw new Error("Admin shell is missing its versioned asset entry points");
     }
@@ -134,16 +138,24 @@ interface Health {
   activityLayout?: { session: string; revision: string };
 }
 
-export function prepareDashboardUpdate(repo: string, oldRevision: string, targetRevision: string, health: Health) {
+export function prepareDashboardUpdate(repo: string, oldRevision: string, targetRevision: string, health: Health, root?: string) {
   const changes = dashboardChanges(repo, oldRevision, targetRevision);
   if (!changes || (!changes.calls && !changes.admin && !changes.layout)) return null;
   const sessions = [changes.calls && health.callsView?.session, changes.admin && health.adminView?.session,
     changes.layout && health.activityLayout?.session].filter(value => value !== false);
   const session = sessions[0];
   if (!session || !sessions.every(value => value === session)) return null;
-  const previous = loadRelease(repo, oldRevision, changes);
+  // A runner can die after advancing Git while its last verified serving assets stay pinned.
+  // Recover every surface in that selector, even if the incoming diff touches another one.
+  const priorPin = root ? readDashboardRelease(root, session) : null;
+  const affected = {
+    calls: changes.calls || Boolean(priorPin?.calls),
+    admin: changes.admin || Boolean(priorPin?.admin),
+    layout: changes.layout || priorPin?.activityLayout !== undefined,
+  };
+  const previous = loadRelease(repo, oldRevision, affected, priorPin);
   if (!servesSnapshot(health, previous, session)) throw new Error("Serving dashboard assets do not match the checkout; repair the checkout before updating.");
-  return { previous, candidate: loadRelease(repo, targetRevision, changes), session };
+  return { previous, candidate: loadRelease(repo, targetRevision, affected), session, priorPin };
 }
 
 function servesSnapshot(health: Health, snapshot: Snapshot, session: string) {
@@ -167,7 +179,7 @@ interface UiOps {
 // Pin a whole view before checking files out. A page sees all three assets from one release.
 // The ordinary disk reader resumes once the checkout and the served UI have both been verified.
 export async function applyDashboardUpdate(root: string, ctx: UiContext, ops: UiOps) {
-  const { previous, candidate, session } = ctx.uiRelease;
+  const { previous, candidate, session, priorPin } = ctx.uiRelease;
   const baseline = ctx.baselineHealth;
   const verify = async (snapshot: Snapshot) => {
     const health = await ops.health();
@@ -206,7 +218,10 @@ export async function applyDashboardUpdate(root: string, ctx: UiContext, ops: Ui
     try {
       await ops.restore();
       await ops.publishAt(ctx.oldRevision, async () => {
-        useCheckoutCallsRelease(root);
+        // The old checkout can contain a release whose validation was interrupted. Restore
+        // the exact serving mode that we verified before checkout, including any old pins.
+        if (priorPin) selectDashboardRelease(root, session, priorPin);
+        else useCheckoutCallsRelease(root);
         await verify(previous);
       });
       return { result: "rolled_back", patch: { phase: "complete", changed: true, candidateError, runningRevision: baseline.revision,
