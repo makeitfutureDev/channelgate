@@ -5,7 +5,7 @@
 // execution). Same posture as file-explorer.js (lstat/realpath-verified paths) and
 // run-grant-artifacts.js (exclusive temp + atomic rename): never read or write THROUGH a link the
 // gateway didn't create — operate on the link NODE, never its target.
-import { open, lstat, mkdir, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { open, lstat, mkdir, readdir, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -230,7 +230,10 @@ export async function ensureRealDir(base, ...segments) {
     }
     if (info && !info.isDirectory()) {
       // lstat never follows: a plain file, or a rejected symlink from the branch above, lands here.
-      await rm(dir, { force: true });
+      // A concurrent replacement can change the type after lstat. Unlink only the leaf;
+      // the kernel refuses a directory even when it appears between the check and this call.
+      try { await unlink(dir); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
       info = null;
     }
     if (!info) {
