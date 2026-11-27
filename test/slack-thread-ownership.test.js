@@ -212,3 +212,13 @@ test("first engagement replays the bot reminder root before earlier replies", as
   assert.ok(replyAt > reminderAt, "prior replies must follow the root chronologically");
   assert.doesNotMatch(context, /Please inspect this/, "the reacted request is the live prompt, not replay context");
 });
+
+// A 🤖 reaction on a thread's ROOT starts the conversation even once the root has replies (Slack
+// then reports `thread_ts === ts` on it); only a reaction on a reply needs the ownership check.
+test("a reaction on a thread root never needs thread ownership", () => {
+  const { reactionNeedsThreadOwnership } = slackApp;
+  assert.equal(reactionNeedsThreadOwnership("C1", { ts: "100.1" }), false, "top-level message, no replies");
+  assert.equal(reactionNeedsThreadOwnership("C1", { ts: "100.1", thread_ts: "100.1" }), false, "root with replies");
+  assert.equal(reactionNeedsThreadOwnership("C1", { ts: "100.2", thread_ts: "100.1" }), true, "reply in a thread");
+  assert.equal(reactionNeedsThreadOwnership("D1", { ts: "100.2", thread_ts: "100.1" }), false, "DM reply");
+});

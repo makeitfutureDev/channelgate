@@ -19,6 +19,11 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Slack: a 🤖 activation reaction on a thread's first message now starts the agent on the first try,
+  even when the message already has replies. Previously it was ignored until the agent had been
+  `@mentioned` once in that thread. Reactions on replies in threads the agent does not manage are
+  still ignored.
+
 - Slack to-do Lists now accept Assignee, Due Date and Completed values when adding or updating
   items, instead of failing with `invalid_input_type`. Assignees and due dates can be cleared,
   and completed items can be reopened.

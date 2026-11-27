@@ -5932,8 +5932,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   → TEST-PLAN: In-thread commands; `test/busy-thread-choice.test.js`, `test/util.test.js`,
   `test/recovery-queue.test.js`.
 - Mention-by-reaction: react with a configured emoji (default 🤖 `robot_face`) on a message to treat
-  it as an `@bot` mention. Scoped to the bot's own surface (a DM, a brand-new top-level message, a
-  thread with an existing gateway session, or a sessionless thread this gateway bot has posted in —
+  it as an `@bot` mention. Scoped to the bot's own surface (a DM, a top-level message — a thread's
+  root starts the conversation even after it has replies, so it never needs thread ownership — a
+  reply in a thread with an existing gateway session, or a sessionless thread this gateway bot has posted in —
   its own reminder/daemon root, or a reply such as a `/model` or `/help` answer, which never mint a
   session) so those threads can be engaged immediately without hijacking another agent's thread. On
   first engagement, the bounded Slack replay includes the bot-authored root reminder and preceding
