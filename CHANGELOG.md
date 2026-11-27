@@ -2,6 +2,14 @@
 
 ## 0.7.1 — in development
 
+- Voice calls can use ChatGPT voice (GPT-Live) on a ChatGPT sign-in the gateway already holds for
+  Codex, chosen per person in Activity → Settings → Voice calls. Audio goes over WebRTC between the
+  browser and OpenAI; the gateway keeps the transcript, tasks, Slack logging and accounting.
+- Tasks spoken on a call now reach the agent with a voice note (possible mishearings, answer first
+  in one spoken sentence) and the last spoken exchanges; an optional Quick task speed runs them at
+  low effort. The voice can tell what the agent is doing while a task runs.
+- Voice clips whose transcript is only Whisper's silence artefacts ("Thanks for watching",
+  "[BLANK_AUDIO]") no longer start a turn.
 - Activity shows which request is running and which requests are queued in each visible thread.
   Send `stop active` in the thread to stop the current turn and keep the queue. Slack keeps ▶️
   on the root through a handoff and removes it when the thread becomes idle.
