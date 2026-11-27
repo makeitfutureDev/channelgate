@@ -13503,7 +13503,14 @@ none` for its cases and live gates. Kept as history.
       run IDs, selected engine, process outcomes, and terminal replies for every live case.
 - [ ] Mention-by-reaction: 🤖 on a new top-level message, existing-session thread, or sessionless
       reminder thread rooted by this gateway engages the bot as the reactor; the first reminder
-      turn understands the root and preceding replies. 🤖 in another agent's thread remains ignored.
+      turn understands the root and preceding replies. 🤖 on a reply in another agent's thread
+      remains ignored.
+- [ ] Root with replies: in a private Slack test channel, post a top-level message as a human, add
+      one human reply under it (no bot in the thread), then react 🤖 on the ROOT → the bot answers
+      in that thread as the reactor on the first reaction, with no prior `@mention`. Reacting 🤖 on
+      the human reply instead stays ignored (log line `🤖 in a thread this agent doesn't manage`).
+      Run once with Claude and once with Codex as the channel engine. Automated:
+      `test/slack-thread-ownership.test.js` ("a reaction on a thread root never needs thread ownership").
 - [ ] Command-only thread: type `@bot /model` in a channel, complete the wizard, then post a plain
       message in that thread and react 🤖 → the bot picks it up (the thread has no session and a
       human root, but the bot's own wizard reply proves ownership).
