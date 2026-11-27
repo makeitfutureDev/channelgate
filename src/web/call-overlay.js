@@ -5,6 +5,11 @@
 // Transport is deliberately plain HTTP: an SSE stream down (`…/events`) and small octet-stream
 // POSTs up (`…/audio`, ~120 ms of audio each). Both ride the same reverse proxies and cookies the
 // dashboard already uses, so a deployment needs no WebSocket upgrade support.
+//
+// A ChatGPT (GPT-Live) call is different: the microphone and the voice travel over WebRTC straight
+// between this browser and OpenAI. The page sends its WebRTC offer to `…/offer` (the gateway
+// creates the call with its ChatGPT sign-in and returns OpenAI's answer), keeps the same SSE
+// stream for the transcript and tasks, and reports `…/alive` because no audio passes the gateway.
 export const CALL_WORKLET_PATH = "/activity/call-worklet.js";
 const INPUT_RATE = 16000, OUTPUT_RATE = 24000;
 
@@ -97,7 +102,7 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 // (the voice then lists the caller's conversations). During a call, open(target) switches it and
 // keeps the panel as it is; open(null) shows the panel. A call starts only when Start is pressed.
 export function callOverlayBrowser(config, env) {
-  const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob } = env;
+  const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob, RTCPeerConnection } = env;
   const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, inputRate, outputRate } = config;
   const root = document.getElementById("call-overlay");
   if (!root) return { open() {}, active: () => false };
@@ -106,6 +111,8 @@ export function callOverlayBrowser(config, env) {
   const topButton = document.getElementById("call-agent");
   let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
   let playhead = 0; const playing = new Set();
+  let peer = null, remoteAudio = null, alive = null, provider = "";
+  const webrtc = typeof RTCPeerConnection === "function";
   let bound = null, switchQueue = Promise.resolve();
   const headers = { "X-CG-CSRF": csrf, "X-CG-Request": "1" };
   // The header button: "📞 Call" when idle; while connected a green "● In call 01:23" (🔇 when
@@ -173,6 +180,7 @@ export function callOverlayBrowser(config, env) {
     const pill = document.createElement("span"); pill.className = "call-pill " + task.status; pill.textContent = task.status;
     const text = document.createElement("span"); text.className = "request"; text.textContent = (task.channelName ? task.channelName + ": " : "") + task.request;
     row.append(pill, text);
+    if (task.activity) { const activity = document.createElement("div"); activity.className = "call-summary"; activity.textContent = "Agent is " + task.activity; row.append(activity); }
     if (task.summary) { const summary = document.createElement("div"); summary.className = "call-summary"; summary.textContent = task.summary; row.append(summary); }
     tasksSection.hidden = false;
   }
@@ -195,8 +203,36 @@ export function callOverlayBrowser(config, env) {
       if (response.status === 401 || response.status === 403 || response.status === 404) endLocal("The call ended.");
     } catch (e) { /* a dropped chunk is fine; the next one follows in 120 ms */ }
   }
-  async function openCapture() {
+  async function openMicrophone() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    // The Gemini player is opened inside the Start click, before any network wait, so mobile
+    // browsers count it as user-started audio. A ChatGPT call simply never uses it.
+    if (!player) { player = new AudioContext({ sampleRate: outputRate }); try { await player.resume(); } catch (e) { /* resumed later */ } }
+  }
+  // ChatGPT: microphone up and voice down over WebRTC, negotiated through the gateway.
+  async function openPeer(id) {
+    peer = new RTCPeerConnection();
+    remoteAudio = document.createElement("audio"); remoteAudio.autoplay = true; remoteAudio.setAttribute("playsinline", ""); remoteAudio.hidden = true;
+    root.append(remoteAudio);
+    peer.ontrack = (event) => { if (remoteAudio) remoteAudio.srcObject = event.streams[0] || null; };
+    peer.onconnectionstatechange = () => {
+      if (!peer || callId !== id) return;
+      if (peer.connectionState === "failed") say("The audio connection to ChatGPT failed. Hang up and call again.", "error");
+      else if (peer.connectionState === "disconnected") say("Audio connection interrupted — reconnecting…", "warn");
+      else if (peer.connectionState === "connected" && status.dataset.tone !== "live") say("Connected — start talking", "live");
+    };
+    for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
+    peer.createDataChannel("oai-events");
+    await peer.setLocalDescription(await peer.createOffer());
+    const response = await fetch(base + "/call/" + id + "/offer", { method: "POST", credentials: "same-origin", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ sdp: peer.localDescription.sdp }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.sdp) throw new Error(data.error || "ChatGPT voice could not connect.");
+    await peer.setRemoteDescription({ type: "answer", sdp: data.sdp });
+    alive = setInterval(() => { if (callId === id) void fetch(base + "/call/" + id + "/alive", { method: "POST", credentials: "same-origin", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" }).then((r) => { if (r.status === 404) endLocal("The call ended."); }).catch(() => {}); }, 20000);
+  }
+  // Gemini: microphone captured here and relayed through the gateway in 120 ms batches.
+  async function openCapture() {
+    if (!stream) await openMicrophone();
     try { capture = new AudioContext({ sampleRate: inputRate }); } catch (e) { capture = new AudioContext(); }
     const source = capture.createMediaStreamSource(stream);
     try {
@@ -219,10 +255,16 @@ export function callOverlayBrowser(config, env) {
       };
       source.connect(processor); processor.connect(capture.destination);
     }
-    player = new AudioContext({ sampleRate: outputRate });
+    // Browsers may keep a context created after an await suspended; resume both explicitly.
+    try { await capture.resume(); } catch (e) { /* already running */ }
+    if (!player) player = new AudioContext({ sampleRate: outputRate });
     await player.resume();
   }
   function closeCapture() {
+    if (alive) { clearInterval(alive); alive = null; }
+    try { peer?.close(); } catch (e) { /* fine */ }
+    if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio.remove(); }
+    peer = null; remoteAudio = null;
     try { workletNode?.disconnect(); processor?.disconnect(); } catch (e) { /* fine */ }
     for (const track of stream?.getTracks?.() || []) track.stop();
     stopPlayback();
@@ -260,22 +302,29 @@ export function callOverlayBrowser(config, env) {
   async function begin() {
     start.disabled = true; say("Asking for the microphone…", "");
     try {
-      await openCapture();
+      await openMicrophone();
       say("Calling…", "");
-      const body = target && target.channelId ? { channelId: target.channelId, threadTs: target.threadTs || "" } : {};
+      const body = { ...(target && target.channelId ? { channelId: target.channelId, threadTs: target.threadTs || "" } : {}), webrtc };
       const response = await fetch(base + "/call/start", { method: "POST", credentials: "same-origin", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "The call could not start.");
-      callId = data.id; startedAt = Date.now();
+      callId = data.id; startedAt = Date.now(); provider = data.provider || "gemini";
       muted = false; mute.textContent = "Mute"; mute.setAttribute("aria-pressed", "false");
       transcript.replaceChildren(); tasks.replaceChildren(); tasksSection.hidden = true;
       bound = data.bound; showBinding(bound);
       connectEvents();
       start.hidden = true; hangup.hidden = false; mute.hidden = false;
       tick = setInterval(() => { timer.textContent = fmt(Date.now() - startedAt); updateTop(); }, 1000);
-      say("Connecting to the voice service…", "");
+      say(provider === "chatgpt" ? "Connecting to ChatGPT voice…" : "Connecting to the voice service…", "");
+      if (provider === "chatgpt") await openPeer(callId);
+      else await openCapture();
       void holdWakeLock();
     } catch (error) {
+      const failed = callId;
+      if (failed) { try { await fetch(base + "/call/" + failed + "/end", { method: "POST", credentials: "same-origin", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" }); } catch (e) { /* the server times it out */ } }
+      if (events) { events.close(); events = null; }
+      if (tick) { clearInterval(tick); tick = null; }
+      callId = ""; start.hidden = false; hangup.hidden = true; mute.hidden = true;
       closeCapture();
       say(error && error.message ? error.message : "The call could not start.", "error");
     } finally { start.disabled = false; }
@@ -292,7 +341,12 @@ export function callOverlayBrowser(config, env) {
   // Hiding the panel never ends the call; the header button brings it back.
   closeButton.addEventListener("click", () => setVisible(false));
   root.addEventListener("keydown", (event) => { if (event.key === "Escape") setVisible(false); });
-  mute.addEventListener("click", () => { muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted)); workletNode?.port.postMessage({ muted }); updateTop(); });
+  mute.addEventListener("click", () => {
+    muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted));
+    workletNode?.port.postMessage({ muted });
+    if (peer) for (const track of stream?.getAudioTracks?.() || []) track.enabled = !muted;
+    updateTop();
+  });
   // Leaving the page (a closing tab, but also a phone locking or switching apps) only SUSPENDS
   // the call on the server for a grace window; audio resuming or the event stream reconnecting
   // cancels it, otherwise it ends by itself.

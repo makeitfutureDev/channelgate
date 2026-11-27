@@ -5,7 +5,8 @@
 // values are write-only: the snapshot carries configured/last4 facts and never a value.
 import { getComposioMode, getEmailAccountsEnabled, userNudgesEnabled } from "../config/settings.js";
 import { getUser, setUser } from "../config/store.js";
-import { userReplyMentionsEnabled, userVoiceAutoStartEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
+import { userReplyMentionsEnabled, userVoiceAutoStartEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX, VOICE_PROVIDER_CHOICES, VOICE_TASK_SPEED_CHOICES } from "../config/user-preferences.js";
+import { voiceProviderState } from "../config/settings.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
 import { listUserEnv, patchUserEnv } from "../config/scoped-env.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
@@ -30,6 +31,11 @@ const masked = (value) => {
   const text = typeof value === "string" ? value : "";
   return { configured: Boolean(text), last4: text.length >= MIN_MASKABLE_LENGTH ? text.slice(-4) : "" };
 };
+// The providers a person may pick on their Activity settings: only the ones an admin turned on.
+function voiceProvidersView() {
+  const state = voiceProviderState();
+  return { gemini: state.gemini, chatgpt: state.chatgpt, defaultProvider: state.defaultProvider };
+}
 const str = (value, max = 4096) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const fail = (message, field = "") => { throw new UserSettingsError(message, { field }); };
 
@@ -88,7 +94,7 @@ export async function userSettingsSnapshot(userId) {
     general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user), voiceAutoStart: userVoiceAutoStartEnabled(user) },
     // How the voice talks to this person on a call (gateway/voice/calls.js). Plain preferences,
     // nothing secret; the closed sets travel with the values so the page offers exactly them.
-    voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
+    voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], task_speeds: [...VOICE_TASK_SPEED_CHOICES], providers: voiceProvidersView(), limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },
@@ -156,9 +162,15 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       if (!VOICE_PATIENCE.includes(patience)) fail(`Choose how long to wait: ${VOICE_PATIENCE.join(", ")}.`, "patience");
       const instructions = typeof input.instructions === "string" ? input.instructions.replace(/\r\n/g, "\n").trim() : "";
       if (instructions.length > VOICE_INSTRUCTIONS_MAX) fail(`Keep the instructions under ${VOICE_INSTRUCTIONS_MAX} characters.`, "instructions");
+      // Older clients send neither field: keep what is stored rather than resetting it.
+      const stored = userVoicePreferences(user);
+      const provider = input.provider === undefined ? stored.provider : str(input.provider, 20);
+      if (!VOICE_PROVIDER_CHOICES.includes(provider)) fail("Choose Gemini, ChatGPT or the gateway default.", "provider");
+      const taskSpeed = input.taskSpeed === undefined ? stored.taskSpeed : str(input.taskSpeed, 20);
+      if (!VOICE_TASK_SPEED_CHOICES.includes(taskSpeed)) fail(`Choose a task speed: ${VOICE_TASK_SPEED_CHOICES.join(", ")}.`, "taskSpeed");
       await authorize();
-      await setUser(userId, { voicePreferences: { language, style, patience, instructions } });
-      await logEvent("user_voice_preferences_changed", { author: userId, language: Boolean(language), style, patience, instructions: instructions.length, via: "activity_settings" });
+      await setUser(userId, { voicePreferences: { language, style, patience, instructions, provider, taskSpeed } });
+      await logEvent("user_voice_preferences_changed", { author: userId, language: Boolean(language), style, patience, instructions: instructions.length, provider: provider || "default", taskSpeed, via: "activity_settings" });
       return { notice: "Voice preferences saved. They apply to your next call." };
     }
     case "composio.save": {

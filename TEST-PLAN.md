@@ -3172,6 +3172,52 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   distinct Dock icons after Chrome refreshes them (reopen or reinstall if needed). Linux Chromium
   evidence proves supplied assets and settings; it does not establish macOS Dock refresh timing.
 
+## Voice calls on a ChatGPT sign-in, task context and activity (2026-11-27)
+
+- Automated (engine-independent fixtures): `test/voice-chatgpt-live.test.ts` (call creation URL,
+  `Authorization`/`ChatGPT-Account-ID`/`openai-alpha: quicksilver=v2`/`x-session-id` headers, the
+  v3 session body with client delegation and ack filler, call id from `Location`, refusals bounded
+  and JWT-free, the control channel's headers and event mapping, speakable vs commentary context,
+  delegation answers, ≤500-byte chunks on character boundaries, close once, login resolution:
+  default sign-in, ChatGPT-sign-in license, API-key and missing-license refusals, provider choice
+  with and without WebRTC), `test/voice-delegation-router.test.ts` (routing table incl. compound
+  requests going to the agent, the voice note, activity phrases never repeating a command line or
+  URL, Whisper phantoms), `test/voice-calls.test.js` (a ChatGPT call waits for the offer, owner-only
+  single offer, numbered list without ids, pick by number, redelivered delegation answered once,
+  voice note + quick effort on the task, activity in `check_tasks`, the overlay and one commentary
+  line, result relay, unknown channel refused, goodbye ends, `chatgpt-live` usage row at cost 0
+  with audio ms, "ChatGPT plan voice" summary; offer timeout records no usage; a failed offer ends
+  the call; ChatGPT-only refuses a non-WebRTC client; the `/offer` route takes a >8 KB SDP with
+  CSRF, `/alive`, `webrtc` passed through `/call/start`, overlay markup), `test/user-settings.test.js`
+  and `test/activity-settings-page.test.js` (provider and task speed saved, defaults kept for older
+  clients, only enabled providers offered).
+- Live acceptance — ChatGPT voice (engine-independent for the voice lane; the dispatched task runs
+  separately on Claude and on Codex): fixture: a gateway with a Public URL over HTTPS, Codex signed
+  in with a ChatGPT plan (or a "ChatGPT sign-in" license), a disposable Worker channel with one open
+  thread plus a second channel the tester is a member of. As an admin, Settings → Calls → enable
+  voice calls, tick "Also offer ChatGPT voice", pick the sign-in, save; `/api/settings` shows
+  `voiceCalls.chatgpt.enabled: true` and no token. As an approved non-admin, Activity → Settings →
+  Voice calls → Voice engine "ChatGPT", Task speed "Quick", save. In current Chrome open the
+  dashboard and press 📞 Call → Start. Pass when: the status goes "Connecting to ChatGPT voice…" →
+  "Connected"; DevTools shows a POST to `…/offer` returning only an SDP answer (no token) and audio
+  on an RTCPeerConnection, and no `…/audio` POSTs; saying "what am I working on?" gets a spoken,
+  numbered list; "open the second one" moves the overlay binding and posts "📞 Voice call moved on"
+  to the thread left; "create a file called voice.txt with the word hello and tell me when it is
+  done" posts "🎙️ *Name (voice call):* …" in the thread, the engine's run input contains the
+  "[Voice call note" block (check the session transcript) and runs at low effort, "how is it going?"
+  while it runs is answered from the activity, and the result is spoken when it finishes; "mark this
+  thread done" completes it; "goodbye" ends the call and the thread gets "📞 Voice call ended — N
+  min · 1 task · ChatGPT plan voice"; `usage` has a `chatgpt-live` row with cost 0 and the task's
+  engine row. Repeat the task step once with the channel on Claude and once on Codex. Then open the
+  same dashboard in the iPhone app (or a browser without WebRTC): the call uses Gemini. Fail if any
+  page, response or log shows an access token, or if a second person can read the call's events.
+- Live acceptance — voice note on Gemini calls (Claude and Codex): repeat the "create a file" step
+  on a Gemini call and confirm the run input carries the note with "The voice assistant wrote the
+  request text"; with a Quick task speed, confirm in the engine session log that the task ran at low effort.
+- Live acceptance — Whisper phantoms (engine-independent): send a 3-second silent voice clip in an
+  agent thread: the gateway reports that no speech was detected and starts no turn; a clip saying
+  only "okay" still reaches the agent as "okay".
+
 ## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14, relay and phone behaviour 2026-11-17)
 
 - Relay-only voice, top-level channel tasks and the suspend grace (2026-11-17, engine-independent

@@ -4078,6 +4078,10 @@ function readSettingsForm() {
     ...(document.getElementById("clear-gemini-api-key").classList.contains("armed") ? { clearGeminiApiKey: true } : {}),
     ...(document.getElementById("set-voice-call-model").value ? { voiceCallModel: document.getElementById("set-voice-call-model").value } : {}),
     ...(document.getElementById("set-voice-call-voice").value ? { voiceCallVoice: document.getElementById("set-voice-call-voice").value } : {}),
+    voiceChatgptEnabled: document.getElementById("set-voice-chatgpt-enabled").checked,
+    ...(document.getElementById("set-voice-chatgpt-login").value ? { voiceChatgptLogin: document.getElementById("set-voice-chatgpt-login").value } : {}),
+    ...(document.getElementById("set-voice-chatgpt-model").value ? { voiceChatgptModel: document.getElementById("set-voice-chatgpt-model").value } : {}),
+    voiceDefaultProvider: document.getElementById("set-voice-default-provider").value || "gemini",
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
@@ -4153,6 +4157,15 @@ function paintSettings(s) {
     select.replaceChildren(...(options || []).map((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; return option; }));
     select.value = current || "";
   }
+  const chatgptVoice = voice.chatgpt || {};
+  document.getElementById("set-voice-chatgpt-enabled").checked = chatgptVoice.enabled === true;
+  const chatgptLogin = document.getElementById("set-voice-chatgpt-login");
+  chatgptLogin.replaceChildren(...(chatgptVoice.logins || []).map((login) => { const option = document.createElement("option"); option.value = login.id; option.textContent = login.label || login.id; return option; }));
+  chatgptLogin.value = chatgptVoice.login || "codex";
+  const chatgptModel = document.getElementById("set-voice-chatgpt-model");
+  chatgptModel.replaceChildren(...(chatgptVoice.models || []).map((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; return option; }));
+  chatgptModel.value = chatgptVoice.model || "";
+  document.getElementById("set-voice-default-provider").value = voice.defaultProvider || "gemini";
   document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
   document.getElementById("set-perplexity-session-token").value = "";
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";

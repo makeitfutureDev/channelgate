@@ -798,7 +798,7 @@
                 <header class="setsec-head"><h3 id="set-calls-h">Calls</h3></header>
                 <article data-feature-toggle="set-voice-calls-enabled" class="setcard" id="voice-calls-card">
                   <header class="feature-head"><h4>Voice calls <small>Beta</small></h4><label class="feature-switch"><input type="checkbox" id="set-voice-calls-enabled" aria-label="Enable Voice calls" /><span class="setcard-state"></span></label></header>
-                  <p class="desc">Call an agent from Activity or a chat thread. Gemini bills voice minutes to your API key.</p>
+                  <p class="desc">Call an agent from Activity or a chat thread. Gemini bills voice minutes to your API key; ChatGPT voice uses a ChatGPT plan's voice allowance. Each person picks either in their Activity settings.</p>
                   <div class="feature-fields" hidden>
                   <label class="field">
                     <span>Gemini API key <em class="state" id="gemini-api-key-state"></em></span>
@@ -809,6 +809,13 @@
                   <div class="setfield-grid">
                     <label class="field"><span>Voice model</span><select id="set-voice-call-model"></select></label>
                     <label class="field"><span>Voice</span><select id="set-voice-call-voice"></select></label>
+                  </div>
+                  <label class="check"><input id="set-voice-chatgpt-enabled" type="checkbox" /> Also offer ChatGPT voice (GPT-Live) on a ChatGPT sign-in</label>
+                  <em class="state">Uses a ChatGPT sign-in the gateway already holds for Codex: minutes come from that plan's voice allowance, not an API bill. Audio goes straight between the caller's browser and OpenAI (WebRTC); the iPhone app and browsers without WebRTC use Gemini. This is the Codex CLI's own voice endpoint and can change without notice.</em>
+                  <div class="setfield-grid">
+                    <label class="field"><span>ChatGPT sign-in</span><select id="set-voice-chatgpt-login"></select></label>
+                    <label class="field"><span>ChatGPT voice model</span><select id="set-voice-chatgpt-model"></select></label>
+                    <label class="field"><span>Default for callers</span><select id="set-voice-default-provider"><option value="gemini">Gemini</option><option value="chatgpt">ChatGPT</option></select></label>
                   </div>
                   </div>
                 </article>
