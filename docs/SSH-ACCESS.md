@@ -432,6 +432,9 @@ ended); `show_channel_ssh` lists the live ones.
   listener. Restart the daemon to rebind it. Current releases never delete a socket another process
   is serving, and log `already served by another process` instead of taking it over; that line
   means a second gateway on this host is using the same attach directory.
+- *`UNPROTECTED PRIVATE KEY FILE` / `bad permissions` for `ssh/host_key` in the gateway log* —
+  the channel's host key became group- or world-readable (a copy or a restore). Current releases
+  reset it to `0600` before every session; on an older one, `chmod 600` it by hand.
 - *Host key changed* warnings — the channel's `ssh/host_key` was removed (a deleted channel
   artifact dir); remove the stale `known_hosts` line.
 - *`403 secret-refused … another-person-ssh-session`* — someone else has an SSH session open in the

@@ -2,6 +2,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- SSH access: a channel whose SSH host key had become group-readable (`0640`, for example after
+  a copy or a restore) refused every SSH and VS Code session before the handshake, because
+  OpenSSH rejects an unprotected private key. The gateway now resets the key to `0600` before
+  each session; restart the gateway once after updating.
 - Composio script relay (SDK mode): scripts in a channel container can now call Composio tools
   without any Composio API key. Each turn gets a short-lived grant; the gateway runs every call as
   the requester's or the channel's identity, with app policy, account checks and the Slack
