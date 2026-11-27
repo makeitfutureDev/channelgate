@@ -19,6 +19,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- SSH access: a channel whose SSH host key had become group-readable (`0640`, for example after
+  a copy or a restore) refused every SSH and VS Code session before the handshake, because
+  OpenSSH rejects an unprotected private key. The gateway now resets the key to `0600` before
+  each session; restart the gateway once after updating.
 - Pass Claude `/compact` and its optional focus instructions as a bare native command through cold,
   warm, queued and recovered turns; normalize mixed-case Slack command names. Require an existing
   session, preserve it on failure and prevent fallback or fresh-session healing. Ignore attachments
