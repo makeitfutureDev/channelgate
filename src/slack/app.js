@@ -184,6 +184,17 @@ const STOP_REACTIONS = new Set([
   "raised_hand", "hand", "raised_back_of_hand", "palm_up_hand", "no_good",
 ]);
 
+// A 🤖 reaction needs the thread-ownership check below only when it lands on a REPLY inside a
+// thread. A thread's root message carries `thread_ts === ts` once it has replies, but it is still
+// the message that starts the conversation, so a reaction on it always engages — exactly like a
+// top-level message with no replies yet. DMs are always this bot's own surface. Pure — exported for
+// tests.
+export function reactionNeedsThreadOwnership(channelId, message) {
+  if (String(channelId || "").startsWith("D")) return false;
+  const threadTs = message?.thread_ts;
+  return Boolean(threadTs) && threadTs !== message?.ts;
+}
+
 // Decide whether a 🤖 reaction may engage this gateway inside an existing thread. A live session
 // is the cheap ownership proof. Threads can also be ours WITHOUT ever minting a session — a
 // reminder/daemon root, or a thread whose only turns so far were daemon-side commands (`/model`,
@@ -3369,11 +3380,11 @@ async function connectAndWire(app) {
 
         // Multi-agent hygiene: with several Claude bots in a workspace, a 🤖 reaction must only
         // auto-engage THIS gateway for work it already owns. It acts on (a) DMs (1:1 with this bot),
-        // (b) a brand-new top-level message not in any thread (starting fresh), or (c) a thread this
-        // gateway already manages (a session exists or this bot authored the root). Inside a thread
-        // another agent manages, the bare reaction is ignored — an explicit @mention is required.
-        const isDM = String(channelId).startsWith("D");
-        if (!isDM && msg.thread_ts) {
+        // (b) a top-level message — a thread's root starts the conversation whether or not it has
+        // replies yet, or (c) a reply in a thread this gateway already manages (a session exists or
+        // this bot has posted there). On a reply in a thread another agent manages, the bare
+        // reaction is ignored — an explicit @mention is required.
+        if (reactionNeedsThreadOwnership(channelId, msg)) {
           const entry = await getChannelEntry(channelId);
           const sess = entry ? await getSessionMap(entry.slug) : {};
           const canEngage = await canEngageThreadByReaction(client, {
