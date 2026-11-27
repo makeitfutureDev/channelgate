@@ -27,6 +27,8 @@ export function safeFileName(name, index = 0) {
 
 // Returns { paths, skipped } — `paths` are absolute files to hand the model, `skipped` are names we
 // could not fetch, so the caller can SAY so instead of dropping the user's file silently.
+/** @param {ReturnType<typeof import("./inbound.js").makeInbound>} message
+ * @param {{ slug?: string, meta?: object, log?: Pick<Console, "warn">, maxBytes?: number }} options */
 export async function saveInboundAttachments(message, { slug, meta, log = console, maxBytes = ATTACHMENT_MAX_BYTES } = {}) {
   const paths = [];
   const skipped = [];

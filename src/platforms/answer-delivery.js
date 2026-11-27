@@ -8,6 +8,13 @@ import { postFormatted } from "./connector.js";
 // One answer, formatted for the surface, replacing the placeholder where the surface allows it.
 // A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
 // are posted after it, so the "Working on it…" line never survives next to the real answer.
+/** @param {object} connector
+ * @param {object} message
+ * @param {{messageId: string, conversationId?: string, threadKey?: string} | null} placeholder
+ * @param {string} text
+ * @param {(sent: {messageId: string, conversationId?: string, threadKey?: string}) => void} rememberReply
+ * @param {string} footer
+ * @param {object | null} menu */
 export async function deliverConversationAnswer(connector, message, placeholder, text, rememberReply = () => {}, footer = "", menu = null, { resolveNames = true } = {}) {
   const adapter = platformOr(connector.platform);
   const directory = resolveNames ? await connector.directory?.(message.rawConversationId).catch(() => null) : null;

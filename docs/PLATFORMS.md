@@ -23,17 +23,22 @@ ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsof
 **Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
 Google Chat has been exercised against a live tenant; Teams still needs live tenant acceptance.
 
-Every surface goes through the same seam: a capability descriptor in `src/platforms/<id>.js`, a
-`ChatConnector` that owns the wire format, and one platform-neutral ingest path
-(`src/platforms/ingest.js`) that gates, authorizes, runs the turn and posts the answer. The channel
-confinement, authorization model, and MCP allowlist are identical on all three — none of that is
-per-platform, and none of it is relaxed to make a surface work.
+Slack, Teams and Google Chat send foreground chat messages through the TypeScript dispatcher in
+`src/gateway/message-flow.ts`. The native entry points verify and register the incoming event.
+The dispatcher checks the author's channel access and the thread's admin-only restriction
+before handing the message to command handling or turn execution.
+
+For an engine turn, the dispatcher sequences attachment preparation, session queue ownership,
+execution and final delivery. Slack prepares files before queueing so its durable run record
+can recover the same inputs. Teams and Google Chat prepare files after acquiring the queue
+so Stop can cancel preparation. Each adapter supplies the provider's file operations,
+progress updates and reply formatting. Queue ownership lasts through the final reply.
 
 ---
 
 The TypeScript dispatcher in `src/gateway/chat-feature.ts` handles `/harnesses` across all three
-surfaces and `ask #name` on surfaces with agent-directory support. The transport passes the
-admitted author and conversation and supplies its own reply function. Agent mail checks current
+surfaces and `ask #name` on surfaces with agent-directory support. Add shared plain-text features to `dispatchMessageText` in this module, with each feature
+checking its required surface capabilities. The transport passes the admitted author and conversation and supplies its own reply function. Agent mail checks current
 membership at send time; the harness command checks the administrator role and license policy.
 
 ## Google Chat (Beta)

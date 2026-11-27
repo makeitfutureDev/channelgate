@@ -2,6 +2,7 @@
 
 ## 0.7.1 — in development
 
+- Teams and Google Chat now record interactive usage for consecutive turns on the same connector.
 - Slack marks running threads with ▶️ on the root message and clears its reaction when the last turn ends.
 - Fork a Teams channel discussion into separate threads with `/fork` or an approved batch.
   Each child starts from a copy of the source agent session and is owned by the requester.

@@ -34,8 +34,8 @@ this repository's own conventions to agents working on it.
 
 ```
 Chat surface: Slack (Socket Mode, @slack/bolt) · Google Chat (Pub/Sub pull) · Teams (JWKS-verified webhook)
-  │  one inbound shape (src/platforms/inbound.js); Slack pipeline src/slack/message-pipeline.js,
-  │  the other surfaces src/platforms/ingest.js
+  │  native intake: src/slack/message-pipeline.js and src/platforms/ingest.js
+  │  shared admission and foreground turn lifecycle: src/gateway/message-flow.ts
   ▼
 Gateway daemon
   │  gate: DM → no mention needed · elsewhere → explicit @bot mention
@@ -323,6 +323,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   produces), `ingest.js` (gate → authorize → run → answer for the non-Slack surfaces),
   `durable-inbox.js` (SQLite at-least-once intake, resumed after a restart), the platform-neutral
   attachment, voice, text-command, reply-session and approval-delivery helpers,
+  the shared admission and turn lifecycle (`src/gateway/message-flow.ts`),
   the admitted command dispatcher (`src/gateway/chat-feature.ts`), and the shared engine reply
   callbacks for Slack, Teams, Google Chat and voice (`src/gateway/turn-replies.ts`).
   Fork settings and the per-child execution journal live in `src/gateway/fork-settings.ts`
@@ -333,8 +334,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   connector; the Pub/Sub pull loop, or the JWKS-verified webhook at `/api/teams/messages`).
   Setup: `docs/PLATFORMS.md`.
 - `src/slack/` — Bolt Socket Mode. `app.js` (handlers, modals, slash commands, reactions) and
-  `message-pipeline.js` (the whole inbound turn: gating, authorization, attachments, in-thread
-  commands, run, delivery) with `message-normalize.js`, `download.js` (`uploads/<thread>/…`),
+  `message-pipeline.js` (Slack intake, in-thread commands, durable queue, attachment
+  preparation and native delivery for the shared turn lifecycle) with `message-normalize.js`, `download.js` (`uploads/<thread>/…`),
   `util.js` (dedupe, the per-thread run queue) and `members.js`; `progress.js` (assistant status,
   the timeline card, the heartbeat, the streamed answer), `deliver.js` (the one unattended
   delivery path), `footer.js` (stats + Resume / Files / Secrets / Settings / file buttons),
