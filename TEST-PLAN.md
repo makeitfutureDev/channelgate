@@ -14361,6 +14361,22 @@ none` for its cases and live gates. Kept as history.
 - [ ] Acks survive a daemon restart (persisted in `config/acks.json`).
 
 ### Slack Lists (control MCP)
+- [x] To-do column regressions in `test/slack-list-fields.test.js`: add/update send
+      `todo_assignee` as `user:[…]`, `todo_due_date` as `date:["YYYY-MM-DD"]`, and
+      `todo_completed` as `checkbox:boolean`; resolve fields by name/key/id, accept scalar/array
+      assignees and dates, clear with [], and reopen with false. Readback retains assignees,
+      dates and checked/unchecked state; schema descriptions retain the to-do column types.
+- [ ] Live Claude and Codex acceptance (each engine separately, not yet executed): use an
+      authorized Worker fixture channel and a shared List created with `todo_mode:true` (Name,
+      Assignee, Due Date, Completed). Note its F-id and one fixture member's U-id. Prompt:
+      "Add a task named Todo column acceptance to this List, assign it to <U-id>, set its due
+      date to 2026-12-01, and leave it incomplete. Read it back." Pass only if the native List
+      and `slack_list_items` agree on title, assignee, date and unchecked completion with no API
+      error. Then ask: "Mark that item complete, read it, then clear its assignee and due date
+      and reopen it; read it again." Require `user:[…]`, `date:[…]`, `checkbox:true` on the first
+      update and empty user/date arrays plus `checkbox:false` on the second; verify native List
+      and readback agree, preserving other rows. Coordinator records private fixture/evidence
+      and restores the temporary row after testing.
 - [x] Message, attachment and link fields use their native Slack payload keys on add/update;
       scalar and array inputs and empty-array clearing work. Reads preserve message response
       `value` URLs, camelCase/snake_case link URLs, and attachment IDs (mock API regression).

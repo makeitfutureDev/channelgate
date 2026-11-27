@@ -190,10 +190,12 @@ function coerceValue(col, v) {
     case "select":
     case "multi_select":
       return { select: (Array.isArray(v) ? v : [v]).map((x) => resolveSelectOption(col, x)).filter(Boolean) };
+    case "todo_assignee":
     case "user":
       return { user: Array.isArray(v) ? v : [v] };
     case "channel":
       return { channel: Array.isArray(v) ? v : [v] };
+    case "todo_due_date":
     case "date":
       return { date: Array.isArray(v) ? v : [v] };
     case "message":
@@ -205,6 +207,7 @@ function coerceValue(col, v) {
         const link = typeof value === "string" ? { original_url: value } : value;
         return { ...link, display_as_url: link.display_as_url ?? true, display_name: link.display_name ?? link.original_url };
       }) };
+    case "todo_completed":
     case "checkbox":
       return { checkbox: Boolean(v) };
     case "number":
