@@ -531,7 +531,8 @@ export function createCallManager({
       task.status = "failed"; task.summary = "Could not complete the voice request.";
       broadcast(call, { type: "task", ...taskView(task) });
       return log("voice_call_error", { id: call.id, stage: "dispatch", error: error?.name || "Error" }).catch(() => {});
-    }).finally(() => {
+    }).finally(async () => {
+      if (handle.progress?.ownsFinal) await handle.progress.stop().catch(() => {});
       if (!task.preserveOnShutdown && (!isForceStopping() || handle.aborted)) finishActiveRun(task.runId);
       queue.release(runKey, handle);
     });
@@ -557,7 +558,7 @@ export function createCallManager({
       task.status = "running"; broadcast(call, { type: "task", ...taskView(task) });
       try {
         const dir = await directory(client).catch(() => null);
-        status = progress(getProgressView(), client, channelId, threadTs, {
+        status = handle.progress = progress(getProgressView(), client, channelId, threadTs, {
           isDM: task.isDM, authorId: ownerId, teamId: call.teamId || null, dir, menuOwnerId: ownerId,
           replyMentions: userReplyMentionsEnabled(await loadUser(ownerId).catch(() => null)),
         });

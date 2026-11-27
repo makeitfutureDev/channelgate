@@ -1892,6 +1892,8 @@ const slackMessages = {
         }
       }
     } finally {
+      // A saved or deferred final may skip finalize(). Close its native stream and running marker.
+      if (lane.status?.ownsFinal) await lane.status.stop().catch(() => {});
       if (lane.stopProgressOnAbort) handle.controller.signal.removeEventListener("abort", lane.stopProgressOnAbort);
       // Per-turn terminal state wins over the global shutdown phase: a delivered answer, reported
       // error, steering completion, or explicit stop must never replay merely because force-stop
