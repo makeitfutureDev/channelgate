@@ -68,6 +68,50 @@ Activity → Settings → **Voice calls** is yours alone and applies to your nex
   waits through pauses and asks whether you are done rather than answering a half-sentence.
 - **Your instructions** — free text up to 2,000 characters, read at the start of every call after
   the gateway's own rules: how to address you, what to confirm before doing, what to keep short.
+- **Voice engine** — Gemini, ChatGPT or the gateway default; only the engines an administrator
+  turned on are offered (see "ChatGPT voice" below).
+- **Task speed** — *Normal*, or *Quick*: tasks you ask for on a call run with low reasoning effort
+  on the thread's own model, so short questions come back sooner. Typed messages are unaffected.
+
+## What the agent receives, and what you hear while it works
+
+A spoken request reaches the agent exactly as posted in the thread, followed by a short voice note
+the thread does not show: the request was spoken on a call (names and numbers may be misheard;
+later words correct earlier ones; ask before acting when a misheard value matters), the answer is
+read aloud so its first sentence must state the outcome, and the last few things said on the call.
+A follow-up like "Thursday, not Friday" therefore keeps its meaning.
+
+While a task runs, the call keeps its latest step as a short phrase ("reading a file: meta.json",
+"running a command", "searching the web" — never a command line or a URL). Ask "how is it going?"
+and the voice tells you; the panel's task list shows "Agent is …" too.
+
+## ChatGPT voice (GPT-Live)
+
+An administrator can also offer OpenAI's GPT-Live, running on a ChatGPT sign-in the gateway already
+holds for Codex. Minutes come from that ChatGPT plan's voice allowance (it renews on a rolling
+window; heavier plans have more), not from an API bill, so the end summary says "ChatGPT plan
+voice" instead of a dollar estimate. Everything else is the same call: the same thread binding,
+Slack logging, tasks, summary and DM memory line.
+
+What differs:
+
+- **Audio goes straight between your browser and OpenAI** over WebRTC. The gateway creates the call
+  with its ChatGPT sign-in and joins the call's control channel for the transcript, your requests
+  and the results; no credential reaches the browser. It needs a current browser with WebRTC; the
+  iPhone app and older browsers use Gemini instead.
+- **GPT-Live has no tools of its own.** Whatever it cannot answer, it hands to the gateway, which
+  decides: "what am I working on?" lists your conversations, numbered; "open the second one",
+  "switch to the sales channel" or "open the pipeline review" moves the call (several matches come
+  back as a numbered choice); "is it done?" / "how is it going?" reports the tasks; "what did the
+  agent say?" reads the thread; "mark this thread done" completes it; "goodbye" hangs up.
+  Everything else — and anything that mixes moving with work ("switch to sales and run the
+  report") — is a task for the agent in the current conversation. Say one navigation step at a
+  time. These phrasings are English; in other languages your request reaches the agent as a task,
+  and the dashboard still moves the call by click.
+- **The voice is the ChatGPT account's own voice setting**; the gateway does not change it.
+- This is the voice endpoint the Codex CLI uses, not a published API: OpenAI can change it without
+  notice. If a ChatGPT call fails to connect, the panel shows OpenAI's reason (for example a used-up
+  allowance).
 
 The voice is also briefed about you on every call: your name and role, your open conversations,
 the current thread's recent messages and your last five calls (from your own DM memory).
@@ -118,6 +162,8 @@ cards in the thread. Open the thread in Slack to answer them.
   result the voice hears is capped at 1,500 characters. Nothing is spoken that the agent did not
   produce.
 - A gateway restart ends active calls without posting a summary.
+- A ChatGPT call whose browser never completes the WebRTC setup is dropped after 30 seconds; the
+  browser reports it is still there every 20 seconds while connected.
 
 ## Administrator setup
 
@@ -131,6 +177,12 @@ Settings → **Voice calls**:
   container. `GEMINI_API_KEY` in the daemon environment is accepted as a bootstrap fallback.
 - **Voice model** — `gemini-3.8-live` (default) or `gemini-2.5-flash-native-audio-preview-12-2025`.
 - **Voice** — one of Gemini's prebuilt voices (Kore by default).
+- **Also offer ChatGPT voice (GPT-Live) on a ChatGPT sign-in** — off by default. Pick the
+  **ChatGPT sign-in** (the default Codex sign-in, or any "ChatGPT sign-in" license under Settings →
+  Engines; an API-key login does not work), the **ChatGPT voice model** (`gpt-live-1.1-codex` by
+  default) and the **Default for callers**. Every caller draws on that one plan's voice allowance;
+  pick a sign-in whose plan can carry your team's minutes. Voice calls work with only ChatGPT on
+  (no Gemini key), except from the iPhone app.
 
 The Activity dashboard must be reachable at the configured **Public URL** over HTTPS (browsers
 only grant microphone access on secure origins). No WebSocket support is needed on the edge: the
@@ -145,7 +197,8 @@ Voice minutes are billed to the Gemini API key. At the paid-tier rates of Novemb
 about $0.015–0.025. Each call writes one `usage` row with engine `gemini-live` and task kind
 `voice-call` (audio + text tokens in and out, the estimated cost from those rates, the duration),
 and every dispatched task is accounted like any other turn under the engine that ran it, task
-kind `voice-task`. `voice_call_started`, `voice_call_bound` and `voice_call_ended` events carry
+kind `voice-task`. A ChatGPT call writes its row with engine `chatgpt-live`, cost 0 (the plan's
+voice allowance pays) and the measured audio duration. `voice_call_started`, `voice_call_bound` and `voice_call_ended` events carry
 the call id, thread, caller, duration, cost, conversations visited and reason.
 
 ## How it is built
@@ -167,9 +220,22 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
   `?call=<channel>[&thread=<ts>]`, `POST /:id/call/start` (bound or not),
   `GET /:id/call/:callId/events` (SSE), `POST /:id/call/:callId/audio`,
   `POST /:id/call/:callId/switch` (owner-only, CSRF-protected destination change),
+  `POST /:id/call/:callId/offer` (ChatGPT: the browser's WebRTC offer in, OpenAI's answer out; up to
+  96 KB) and `POST /:id/call/:callId/alive` (ChatGPT heartbeat),
   `POST /:id/call/:callId/end`, the AudioWorklet module at `/activity/call-worklet.js`, and a
   redirect for the older standalone-page links. The Activity view's CSP additionally allows
   same-origin scripts for that worklet.
+- `src/gateway/voice/providers.ts` — the provider ids, the ChatGPT models and sign-in ids, and the
+  choice of provider per call (the caller's preference, the default, WebRTC capability).
+- `src/gateway/voice/chatgpt-live.ts` — ChatGPT voice: resolves the chosen sign-in's access token
+  through the Codex relay, creates the call (`POST https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas`,
+  `openai-alpha: quicksilver=v2`, the browser's SDP offer and a `delegation: client` session) and
+  joins its control channel (`wss://api.openai.com/v1/live/<call id>`): transcripts, delegations,
+  speakable and commentary context (≤500-byte chunks), usage and the allowance status.
+- `src/gateway/voice/delegation-router.ts` — turns a GPT-Live delegation into one of the call's
+  tools (conservative; anything unclear is a task).
+- `src/gateway/voice/voice-task.ts` — the voice note added to a spoken task and the short activity
+  phrases.
 - `src/web/call-overlay.js` — the overlay: microphone capture through an AudioWorklet
   (ScriptProcessor fallback), 120 ms batches resampled to 16 kHz, gapless playback of the 24 kHz
   replies with interruption support, the screen wake lock, the suspend beacon on `pagehide`,

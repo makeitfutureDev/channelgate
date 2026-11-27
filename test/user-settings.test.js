@@ -201,7 +201,7 @@ test("voice preferences are the owner's own, bounded and closed-set, and read ba
   const saved = await change({ action: "voice.save", language: "  Romanian ", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\r\nConfirm before production changes.", userId: "U_OTHER" });
   assert.match(saved.notice, /next call/);
   const me = await getUser("U_ME");
-  assert.deepEqual(me.voicePreferences, { language: "Romanian", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\nConfirm before production changes." });
+  assert.deepEqual(me.voicePreferences, { language: "Romanian", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\nConfirm before production changes.", provider: "", taskSpeed: "normal" });
   assert.equal((await getUser("U_OTHER")).voicePreferences, undefined, "another person is untouched");
   const after = (await userSettingsSnapshot("U_ME")).voice;
   assert.equal(after.language, "Romanian"); assert.equal(after.style, "thinking-partner"); assert.equal(after.patience, "patient");
@@ -210,8 +210,8 @@ test("voice preferences are the owner's own, bounded and closed-set, and read ba
   await refused({ action: "voice.save", language: "", style: "brief", patience: "forever", instructions: "" }, /how long to wait/, "patience");
   await refused({ action: "voice.save", language: "", style: "brief", patience: "normal", instructions: "y".repeat(2001) }, /under 2000/, "instructions");
   await change({ action: "voice.save", language: "", style: "brief", patience: "quick", instructions: "" });
-  assert.deepEqual((await getUser("U_ME")).voicePreferences, { language: "", style: "brief", patience: "quick", instructions: "" });
+  assert.deepEqual((await getUser("U_ME")).voicePreferences, { language: "", style: "brief", patience: "quick", instructions: "", provider: "", taskSpeed: "normal" });
   const { userVoicePreferences } = await import("../src/config/user-preferences.js");
-  assert.deepEqual(userVoicePreferences({ voicePreferences: { language: "Deutsch\u0007", style: "nope", patience: 3, instructions: 42 } }), { language: "Deutsch", style: "brief", patience: "normal", instructions: "" });
-  assert.deepEqual(userVoicePreferences(null), { language: "", style: "brief", patience: "normal", instructions: "" });
+  assert.deepEqual(userVoicePreferences({ voicePreferences: { language: "Deutsch\u0007", style: "nope", patience: 3, instructions: 42 } }), { language: "Deutsch", style: "brief", patience: "normal", instructions: "", provider: "", taskSpeed: "normal" });
+  assert.deepEqual(userVoicePreferences(null), { language: "", style: "brief", patience: "normal", instructions: "", provider: "", taskSpeed: "normal" });
 });
