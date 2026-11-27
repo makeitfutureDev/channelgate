@@ -12,7 +12,7 @@
 // construction, and a live session holds a container lease so the idle reaper never stops a box
 // someone is inside.
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants as fsConstants, existsSync, fchmodSync, fstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getDb } from "../db/index.js";
 import { sshAccessDir } from "../config/paths.js";
@@ -444,6 +444,30 @@ function writePrivate(file, body) {
   renameSync(temporary, file);
 }
 
+/**
+ * sshd refuses a private host key that group or others can read ("UNPROTECTED PRIVATE KEY FILE",
+ * then every session dies before the handshake). A key carried over by a copy, a restore or a
+ * permissive umask can arrive as 0640, so put it back to 0600 before each session. The directory is
+ * writable from inside the container: never follow a link planted there, and touch only a regular
+ * file. Returns whether a host key is present.
+ */
+function protectContainerHostKey(file) {
+  let fd;
+  try {
+    fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  } catch {
+    return false;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) return false;
+    if ((st.mode & 0o777) !== 0o600) fchmodSync(fd, 0o600);
+    return true;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Write sshd_config + authorized_keys into `<artifactDir>/ssh` (0700/0600); the host key is the container's job. */
 export function materializeContainerSshFiles(target, keys, { env = {} } = {}) {
   const dir = containerSshDir(target);
@@ -451,7 +475,7 @@ export function materializeContainerSshFiles(target, keys, { env = {} } = {}) {
   chmodSync(dir, 0o700);
   writePrivate(path.join(dir, "sshd_config"), renderContainerSshdConfig(dir, env));
   writePrivate(path.join(dir, "authorized_keys"), renderContainerAuthorizedKeys(keys));
-  return { dir, keyCount: keys.length, hostKeyPresent: existsSync(path.join(dir, "host_key")) };
+  return { dir, keyCount: keys.length, hostKeyPresent: protectContainerHostKey(path.join(dir, "host_key")) };
 }
 
 /** The channel's own host-key fingerprint, once a first session generated it (so a dev can verify it). */
