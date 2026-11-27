@@ -45,6 +45,8 @@ import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
 import { bindRunningChannelEgress, egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
 import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } from "./gateway/approval-requests.js";
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
+import { startTurnAnswerRecovery } from "./gateway/turn-answer-recovery.ts";
+import { reconcileTurnReceipts } from "./gateway/thread-turn-owner.ts";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
 import { recoverApiRuns } from "./gateway/api-runs.js";
 import { startThreadMarkerSync } from "./slack/thread-done-marker.js";
@@ -163,11 +165,13 @@ async function containerRuntimeHealth() {
 let claudeLoginWatch = null;
 let agentDirectoryRefresh = null;
 let membershipRecovery = null;
+let stopTurnAnswerRecovery = null;
 // Boot work that had to wait for the first Slack membership verification (see boot below).
 let afterMembershipVerified = () => {};
 let egressRestoreWaiting = false;
 
 async function stopRuntimeServices(reason) {
+  stopTurnAnswerRecovery?.();
   membershipRecovery?.stop();
   agentDirectoryRefresh?.stop();
   agentDirectoryRefresh = null;
@@ -210,6 +214,7 @@ async function main() {
 
   const root = await ensureRoot();
   const lock = acquireSingletonLock(root);
+  reconcileTurnReceipts();
   // A custom work folder stored before the boundary existed (the home itself, the gateway root,
   // another channel's folder, …) is refused at every spawn with the remedy; say so once here too,
   // so the operator sees the list without waiting for someone's turn to fail. Never fatal.
@@ -499,6 +504,8 @@ async function main() {
   // The other surfaces, on the same terms: connect what is configured, and never let a bad
   // credential stop the daemon from coming up.
   await connectConfiguredPlatforms(transports).catch((e) => console.error("[gateway] platform connect failed:", e?.message || e));
+
+  stopTurnAnswerRecovery = startTurnAnswerRecovery(slack);
 
   // Recover background jobs that were in-flight when the daemon last stopped: re-attach to ones
   // still running, or post an "interrupted by restart" continuation for ones that already exited.

@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { ensureTestEnv } from "./helpers.js";
+
+ensureTestEnv();
+const { runQueue } = await import("../src/gateway/thread-turn-owner.ts");
+const { activityTurnProjection } = await import("../src/gateway/thread-turn-view.ts");
+const { onThreadChanged } = await import("../src/gateway/thread-changes.js");
+
+test("Activity snapshots expose current ownership and queue order only for visible native threads", async t => {
+  const channel = "CROOM", thread = "44.001", key = "slug::44.001";
+  const changes: string[] = [];
+  const unsubscribe = onThreadChanged(({ channelId, threadTs }: { channelId: string; threadTs: string }) => changes.push(channelId + threadTs));
+  t.after(unsubscribe);
+  const voice = { authorId: "U_A", runId: "voice-id", origin: "voice_call", channelId: channel, threadKey: thread };
+  const api = { ...voice, authorId: "ADMIN", runId: "api-id", origin: "api_foreground" };
+  const text = { ...voice, authorId: "U_B", runId: "chat-id", origin: "slack_foreground" };
+  const hidden = { ...api, runId: "silent-id", visible: false };
+  const read = (status = "idle") => activityTurnProjection()(channel, thread, "U_B", status);
+  await runQueue.acquire(key, voice);
+  const waitApi = runQueue.acquire(key, api), waitHidden = runQueue.acquire(key, hidden), waitText = runQueue.acquire(key, text);
+  const view = read();
+  assert.equal(view.status, "working");
+  assert.ok(view.workingSinceMs);
+  assert.deepEqual(view.turnState?.active, { origin: "voice_call", mine: false });
+  assert.deepEqual(view.turnState?.queued, [{ origin: "api_foreground", mine: false }, { origin: "slack_foreground", mine: true }]);
+  assert.doesNotMatch(JSON.stringify(view), /U_A|U_B|ADMIN|voice-id|chat-id|api-id|silent-id/);
+  assert.equal(read("waiting").status, undefined, "a pending question keeps its native Waiting status");
+  runQueue.prioritizeQueued(key, text.runId);
+  assert.deepEqual(read().turnState?.queued.map(q => q.origin), ["slack_foreground", "api_foreground"]);
+  runQueue.release(key, voice);
+  await waitText;
+  assert.deepEqual(read().turnState?.active, { origin: "slack_foreground", mine: true });
+  runQueue.release(key, text);
+  await waitApi;
+  runQueue.release(key, api);
+  await waitHidden;
+  assert.deepEqual(read(), {});
+  const lastHint = changes.length;
+  runQueue.release(key, hidden);
+  assert.equal(changes.length, lastHint);
+  assert.equal(changes.at(-1), channel + thread, "releasing the last visible turn wakes this thread");
+});

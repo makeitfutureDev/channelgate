@@ -8,20 +8,24 @@
 // busy-thread cards and remain pending across boot; every other row still present at boot was
 // interrupted, so startup auto-re-runs it, resuming the same thread/session when possible and posting
 // the answer into the thread. The user asked for auto re-run, so that's the policy.
+import { beginVoiceExecution, canResumeVoice } from "./voice/turn-recovery.ts";
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { EventEmitter } from "node:events";
 import { logEvent } from "../util/logger.js";
 import { engineLabel, isEngineId } from "../engines/registry.js";
 import { runMessage, isEmptyResult } from "./run.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
+import { deliverTurnAnswer, slackAnswer, slackDeliveryIdentity, hasSavedTurnAnswer } from "./turn-answer.ts";
+import { footerText } from "./reply-stats.js";
 import { startRunningReaction } from "../slack/thread-running-reaction.ts";
 import { startProgress } from "../slack/progress.js";
+import { slackThreadFor } from "../slack/thread-keys.js";
 import { getDirectory } from "../slack/directory.js";
 import { recordUsage, createUsageBank } from "./usage.js";
 import { maybeDiagnoseRunError } from "./diagnosis.js";
 import { modelLabel } from "./model-info.js";
 import { recordCompletedSlackMessage } from "../slack/message-receipts.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue, turnReceipt } from "./thread-turn-owner.ts";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
 import { assertQuestionAccess } from "./question-access.js";
@@ -325,6 +329,7 @@ export function takeStaleRuns() {
     const stale = [];
     let dropped = 0;
     for (const { id, rec } of rows) {
+      if (rec?.replySaved || hasSavedTurnAnswer(id)) { finishActiveRun(id); continue; }
       if (rec?.awaitingChoice) continue;
       if (!rec?.channelId || !rec?.threadKey) {
         del.run(id); // unreplayable — keeping it would only leak rows
@@ -360,12 +365,22 @@ const MAX_RECOVER_ATTEMPTS = 2;
 // steer/queue contract instead of overtaking an older recovery that has not entered the queue yet.
 export function reserveRecoveryRuns(stale = []) {
   const reservations = [];
-  for (const rec of [...stale].sort((a, b) => (b.queuePriorityAt || 0) - (a.queuePriorityAt || 0))) {
-    if (rec?.awaitingChoice || !rec?.channelId || !rec?.threadKey) continue;
+  const survivors = stale.filter(rec => !rec?.awaitingChoice && rec?.channelId && rec?.threadKey).map(rec => {
     const id = rec.id || `${rec.slug}::${rec.threadKey}`;
     const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
+    return { rec, id, runKey, receipt: turnReceipt(runKey, id) };
+  });
+  // A promoted turn retains its place. A steered waiting turn follows it, then FIFO by
+  // durable admission sequence. Older installations retain their active_runs insertion order.
+  survivors.sort((a, b) => Number(b.receipt?.state === "active") - Number(a.receipt?.state === "active")
+    || (b.rec.queuePriorityAt || 0) - (a.rec.queuePriorityAt || 0)
+    || (a.receipt?.sequence || 0) - (b.receipt?.sequence || 0));
+  for (const { rec, id, runKey, receipt } of survivors) {
     if (runQueue.hasRun(runKey, id)) continue;
-    const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId, recovery: true, runId: id };
+    if (receipt?.state === "cancelled" || rec.replySaved || hasSavedTurnAnswer(id)) { finishActiveRun(id); continue; }
+    const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId,
+      origin: rec.origin || "slack_foreground", channelId: rec.channelId, threadKey: rec.reactionThreadTs || rec.slackThreadTs || rec.threadKey,
+      durable: true, recovery: true, runId: id };
     recordActiveRun(id, { ...rec, id, recoveryPending: true });
     // Attach rejection handling immediately: a full queue must not produce an unhandled rejection
     // while Slack is still connecting. The replay reports it through its normal failure path.
@@ -487,7 +502,13 @@ export async function recoverRuns(stale, {
   const batch = reservations || reserveRecoveryRuns(stale);
   await logEvent("run_recover_begin", { count: batch.length });
   await Promise.all(batch.map(async ({ rec, id, runKey, handle, acquired }) => {
-    if (handle.aborted || handle.controller.signal.aborted) {
+    if (rec.origin === "voice_call" && ((rec.workspaceId && rec.workspaceId !== slack.snapshot().teamId)
+      || (rec.botUserId && rec.botUserId !== slack.snapshot().botUserId))) {
+      runQueue.release(runKey, handle);
+      await logEvent("run_recover_skip", { slug: rec.slug, threadKey: rec.threadKey, reason: "voice workspace unavailable" });
+      return;
+    }
+    if (rec.replySaved || hasSavedTurnAnswer(id) || handle.aborted || handle.controller.signal.aborted) {
       finishActiveRun(id);
       runQueue.release(runKey, handle);
       return;
@@ -514,7 +535,7 @@ export async function recoverRuns(stale, {
     // Heads-up so the dangling "Working…" placeholder above it is explained and the thread shows
     // the turn is being picked up again before the (possibly slow) re-run finishes.
     try {
-      await postNotice(client, {
+      if (rec.origin !== "voice_call") await postNotice(client, {
         conversationId: rec.channelId,
         threadKey: rec.threadKey,
         text: "🔁 I was interrupted by a gateway restart while working on your last message — picking it back up now…",
@@ -625,6 +646,19 @@ export async function recoverRuns(stale, {
       recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
       await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
       stopRunningReaction = startRunningReaction(client, rec.channelId, rec.reactionThreadTs || rec.slackThreadTs || rec.threadKey);
+      if (rec.origin === "voice_call") {
+        const canRun = !rec.voiceExecutionStarted && await canResumeVoice(client, rec);
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        if (!canRun || !beginVoiceExecution(id)) {
+          const text = rec.voiceExecutionStarted
+            ? "The gateway restarted after this voice task began. Its outcome is unknown. Check the thread before requesting it again."
+            : "The queued voice task could not resume under the caller's current access.";
+          await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text });
+          markTerminal();
+          return;
+        }
+      }
       const result = await runner({
         channelId: rec.channelId,
         authorId: rec.authorId,
@@ -639,7 +673,7 @@ export async function recoverRuns(stale, {
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
           verifyQuestionAccess: () => assertQuestionAccess(rec, client) } : {}),
-        origin: "recovery", // replayed after a restart with nobody watching — never escalates
+        origin: rec.origin === "voice_call" ? "voice_call" : "recovery",
         signal: handle.controller.signal,
         onDelta: status?.onDelta,
         onEvent: status?.onEvent,
@@ -651,40 +685,31 @@ export async function recoverRuns(stale, {
           status?.onRuntimeResolved?.(runtime);
         },
       });
-      // The engine already spent these tokens whether or not Slack ever accepts the answer, and
-      // every branch below (steered handoff, empty-result failure, delivery) is downstream of that
-      // spend — so bank the accounting here, once, before any of them.
-      await bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId, engine: result.engine, taskKind: "interactive", result });
-      if (handle.aborted || (handle.controller.signal.aborted && !handle.steered)) {
+      const bank = () => bankUsage({ channelId: rec.channelId, slug: rec.slug, authorId: rec.authorId,
+        engine: result.engine, taskKind: rec.origin === "voice_call" ? "voice-task" : "interactive", result });
+      const stopped = () => handle.aborted || (handle.controller.signal.aborted && !handle.steered && !forceStopping());
+      if (stopped() || (handle.steered && (result.interrupted || isEmptyResult(result)))) {
+        await bank();
         markTerminal();
         await stopStatus();
         return;
       }
-      if (handle.steered && (result.interrupted || isEmptyResult(result))) {
-        // Warm Claude recovery was intentionally interrupted by an explicit steer choice. Keep
-        // partial/empty output hidden; its usage is already banked above.
-        markTerminal();
-        await stopStatus();
-        return;
+      if (isEmptyResult(result)) {
+        await bank();
+        throw new Error("resumed run returned an empty result (0 tokens — the session may be in a bad state)");
       }
-      // Zero work (empty text, 0 tokens) = failure in disguise (usually a broken session state
-      // after the kill) — route it through the failure path below, not a "(no output)" success.
-      if (isEmptyResult(result)) throw new Error("resumed run returned an empty result (0 tokens — the session may be in a bad state)");
-      // Native recovery progress owns the streamed answer and persistent toolbox. A client without
-      // that capability keeps the old safe, chunked final-only delivery path.
-      if (forceStopping()) return;
-      if (status?.ownsFinal) {
-        await status.finalize(result);
-        statusClosed = true;
-      } else {
-        await stopStatus();
-        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
-        if (forceStopping()) return;
-        // Compatibility fallback for an injected/legacy non-owning progress surface.
-        await deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result });
-      }
-      // Delivery is the user-visible terminal boundary. Clear the durable row even if shutdown
-      // enters its forced phase while bookkeeping finishes, or boot would duplicate it.
+      const answer = slackAnswer({ ...rec, access: rec.origin === "voice_call" ? "voice" : rec.questionSubmissionId ? "question" : undefined, threadKey: rec.slackThreadTs ?? slackThreadFor(rec.threadKey) ?? "",
+        sessionKey: rec.threadKey, identity: slackDeliveryIdentity(rec.workspaceId || slack.snapshot().teamId, slack.snapshot().botUserId), preview: status?.answerPreviewStarted, text: result.content || "", footer: footerText(result) });
+      const outcome = await deliverTurnAnswer(answer, id, async () => {
+        await bank();
+        if (!status?.ownsFinal) await stopStatus();
+        return stopped() ? "cancel" : forceStopping() ? "defer" : "send";
+      }, async () => {
+        if (stopped()) return false;
+        if (status?.ownsFinal) { await status.finalize(result); statusClosed = true; }
+        else await deliver(client, { channel: rec.channelId, threadKey: rec.threadKey, result });
+      }, { signal: handle.controller.signal, cancelled: stopped });
+      if (outcome !== "delivered") { markTerminal(); return; }
       recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: Boolean(runAdmissionRefusalKind(result) || result.engineError) });
       markTerminal();
     } catch (err) {

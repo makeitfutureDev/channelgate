@@ -17,7 +17,7 @@ import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automat
 import { redactLogValue } from "../util/redact.js";
 import { normalizeUsage, createUsageBank } from "./usage.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { postNotice, postDirectMessage, automationTarget } from "../platforms/notify.js";
 import { platformSupports } from "../platforms/registry.js";
 import { platformOfConversation } from "../platforms/ids.js";
@@ -366,7 +366,8 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     // by joining the foreground per-thread FIFO — a tick joins the same queue, for the same reason.
     // Every other schedule keeps its synthetic key, which by construction collides with nothing.
     const loopRunKey = loopTick ? `${sched.slug}::${sched.threadTs}` : "";
-    const loopHandle = loopTick ? { aborted: false, controller: new AbortController(), authorId: sched.createdBy, loop: true } : null;
+    const loopHandle = loopTick ? { aborted: false, controller: new AbortController(), authorId: sched.createdBy, runId: `loop:${sched.activeRunId}`,
+      origin: "loop_tick", channelId: sched.channelId, threadKey: sched.threadTs, loop: true } : null;
     if (loopTick) await runQueue.acquire(loopRunKey, loopHandle);
     let result;
     let stopDetails;

@@ -3209,6 +3209,11 @@ async function connectAndWire(app) {
   // command.thread_ts is still forwarded defensively should Slack ever start sending it.
   app.command("/stop", async ({ command, ack, respond, client }) => {
     await ack();
+    // Native slash payloads omit the thread. Never widen an active-only request to the channel.
+    if (/^active$/i.test((command.text || "").trim())) {
+      await respond({ response_type: "ephemeral", text: "Send `stop active` as a message in the thread. Mention me unless this is a DM." });
+      return;
+    }
     try {
       const entry = await authorizedControlEntry(command.channel_id, command.user_id);
       const stopped = entry ? await stopRunsInChannel(client, command.channel_id, entry.slug, command.user_id, command.thread_ts ?? null) : 0;
@@ -3393,7 +3398,8 @@ async function connectAndWire(app) {
           blocks: msg.blocks,
           attachments: msg.attachments,
         };
-        await processMessageEvent(synthetic, client, { botUserId, teamId, bypassMention: true });
+        await processMessageEvent(synthetic, client, { botUserId, teamId, bypassMention: true,
+          reactionId: event.event_ts || `${event.user}:${event.reaction}:${event.item.ts}` });
       }
     } catch (e) {
       console.error("[slack] reaction_added error:", e.message);

@@ -5,6 +5,7 @@
 // `namespaces` maps each closed lane word to THIS transport's own intake namespace, so card data
 // can never point at another bot's or another transport's rows; `authorOf(row)` reads the sender a
 // stored row names, in the identity form the surface's inbound messages use.
+import { notifyInboxThread } from "./inbox-thread-change.ts";
 import { randomUUID } from "node:crypto";
 import { getDb } from "../db/index.js";
 
@@ -26,8 +27,10 @@ export function attachQueuedEventControls(connector, { namespaces, authorOf }) {
   connector.cancelQueuedEvent = ({ kind, eventId }) => {
     const namespace = queueNamespace(kind);
     if (!namespace) return false;
-    return getDb().prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued'")
-      .run(namespace, eventId).changes === 1;
+    const changed = getDb().prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued' RETURNING conversation_id")
+      .get(namespace, eventId);
+    if (changed) notifyInboxThread(changed.conversation_id);
+    return Boolean(changed);
   };
   // The session's queued messages AHEAD of this one, oldest first.
   connector.queuedAhead = ({ kind, eventId }) => {
@@ -60,6 +63,7 @@ export function attachQueuedEventControls(connector, { namespaces, authorOf }) {
         rows.forEach((row, index) => write.run(moved[index].event_id, moved[index].created_ms, moved[index].data, row.id));
       }
       db.exec("COMMIT");
+      notifyInboxThread(target.conversation_id);
       return true;
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   };

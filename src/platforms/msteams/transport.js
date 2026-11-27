@@ -3,6 +3,9 @@
 // Note the asymmetry with Google Chat: there is nothing to "start" on the inbound side. Teams pushes
 // to us, so the transport's job is to hold a verified handler that the Express app can route to and
 // to prove the outbound credentials work before reporting itself connected.
+import { pendingActivityReader } from "../pending-activity.ts";
+import { notifyThreadChanged } from "../../gateway/thread-changes.js";
+import { isStopActiveCommand } from "../stop-active-command.ts";
 import { createTeamsFileResolver } from "./files.js";
 import { createTeamsHistory } from "./history.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -61,6 +64,7 @@ export async function startTeams({
     allowedDriveIds: fileDriveIds,
   }) : null;
   const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, apiForServiceUrl: deps.apiForServiceUrl, botId, tenantId, serviceUrl, log });
+  connector.deliveryIdentity = appId ? JSON.stringify([appId, tenantId || ""]) : "";
   const jwks = deps.jwks || createJwksCache();
   let graph = null;
   let eventStore = null;
@@ -93,6 +97,7 @@ export async function startTeams({
     const payload = fromJson(row.data, {});
     return payload.inbound || normalizeActivity(payload.activity, { botId, activationReactions: getActivationReactions() });
   };
+  connector.pendingForActivity = pendingActivityReader([botNamespace, graphNamespace], pendingInbound);
   connector.pendingForSession = async ({ conversationId, sessionKey, isEligible = async () => true }) => {
     const rows = pendingRows(conversationId, sessionKey);
     const eligible = [];
@@ -126,6 +131,7 @@ export async function startTeams({
         const fork = fromJson(row.data, {}).fork;
         if (fork) connector.settleFork?.(fork.id);
       }
+      if (cancelled) notifyThreadChanged({ channelId: conversationId, threadTs: sessionKey });
       return { allowed: true, cancelled };
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   };
@@ -422,7 +428,7 @@ export async function startTeams({
     acceptActivity: ({ activity, serviceUrl: sourceUrl }) => {
       const inbound = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
       const isControl = inbound && (inbound.trigger === "reaction" ? ["stop", "ack"].includes(inbound.reactionAction)
-        : /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i.test(inbound.text));
+        : isStopActiveCommand(inbound.text) || /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i.test(inbound.text));
       const selectedInbox = isControl ? controlInbox : botInbox;
       const conversationId = inbound ? queueKey(inbound)
         : splitConversationId(activity.conversation.id).conversationId;

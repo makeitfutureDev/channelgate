@@ -1,5 +1,7 @@
 // Durable transport intake. Acceptance means the event is in SQLite, not that an engine finished.
 // Queued events can resume after restart; running events cannot safely repeat unknown tool effects.
+import { notifyInboxThread } from "./inbox-thread-change.ts";
+import { withInboundAnswerScope } from "../gateway/turn-answer.ts";
 import { randomUUID } from "node:crypto";
 import { getDb, toJson, fromJson } from "../db/index.js";
 
@@ -16,7 +18,7 @@ export const INBOUND_RETENTION_MS = RETENTION_MS;
 const CLEANUP_INTERVAL_MS = 60_000;
 const CLEANUP_BATCH = 500;
 
-export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now, concurrencyGroup = "default", conversationKey = null, queuedNamespace = null, isReady = null } = {}) {
+export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now, concurrencyGroup = "default", conversationKey = null, queuedNamespace = null, isReady = /** @type {((conversationId: string) => boolean) | null} */ (null) } = {}) {
   if (!namespace || typeof handle !== "function") throw new TypeError("Inbox requires a namespace and handler");
   const owner = randomUUID();
   // Ordinary work shares four slots. Explicit control intake can use a separate bounded group
@@ -64,10 +66,12 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
       const claimed = db.prepare("UPDATE inbound_events SET status = 'running', owner = ? WHERE namespace = ? AND event_id = ? AND status = ?")
         .run(owner, namespace, row.event_id, row.status);
       if (!claimed.changes) continue;
+      notifyInboxThread(row.conversation_id);
       const saved = db.prepare("SELECT data FROM inbound_events WHERE namespace = ? AND event_id = ?").get(namespace, row.event_id);
       active.add(key);
       activeConversations.add(conversation);
-      Promise.resolve().then(() => wasInterrupted ? interrupted(fromJson(saved.data, {})) : handle(fromJson(saved.data, {})))
+      Promise.resolve().then(() => wasInterrupted ? interrupted(fromJson(saved.data, {}))
+        : withInboundAnswerScope({ namespace, eventId: row.event_id, owner }, () => handle(fromJson(saved.data, {}))))
         .then(() => db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND owner = ? AND status = 'running'").run(namespace, row.event_id, owner))
         .catch((error) => {
           // A handler may fail AFTER side effects. Keep an explicit interruption record, never
@@ -95,6 +99,7 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
       if (pending >= MAX_PENDING) throw new Error("Inbound queue is full; the provider must redeliver later");
       db.prepare("INSERT OR IGNORE INTO inbound_events(namespace, event_id, conversation_id, status, created_ms, owner, data) VALUES (?, ?, ?, 'queued', ?, '', ?)")
         .run(namespace, id, conversationId, now(), toJson(payload));
+      notifyInboxThread(conversationId);
       queueMicrotask(pump);
       return { accepted: true };
     },

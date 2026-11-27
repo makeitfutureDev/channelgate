@@ -2,7 +2,7 @@
 import { getDb } from "../db/index.js";
 import { getSlackThread, slackThreadIsDone, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
-import { queueRunningReactionsForRecovery, retryRunningReactions } from "./thread-running-reaction.ts";
+import { observeRunningTurns, queueRunningReactionsForRecovery, retryRunningReactions } from "./thread-running-reaction.ts";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 
 const identities = new WeakMap();
@@ -94,6 +94,7 @@ export async function retryThreadDoneMarkers(client, { now = Date.now(), limit =
 
 export function startThreadMarkerSync({ slack, intervalMs = 60_000 } = {}) {
   queueRunningReactionsForRecovery();
+  const stopObserving = observeRunningTurns(() => slack.getClient());
   let running = false;
   const sweep = async () => {
     const client = slack.getClient();
@@ -106,5 +107,5 @@ export function startThreadMarkerSync({ slack, intervalMs = 60_000 } = {}) {
   timer.unref?.();
   const unsubscribe = slack.onConnected(() => { void sweep(); });
   void sweep();
-  return () => { clearInterval(timer); unsubscribe(); };
+  return () => { clearInterval(timer); unsubscribe(); stopObserving(); };
 }

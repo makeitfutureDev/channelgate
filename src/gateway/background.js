@@ -25,7 +25,7 @@ import { runMessage, effectiveMeta } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { isSlackTs, slackThreadFor } from "../slack/thread-keys.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { logEvent } from "../util/logger.js";
 import { recordSlackThreadOutcome } from "./slack-threads.js";
 import { recordUsage, createUsageBank } from "./usage.js";
@@ -918,7 +918,8 @@ export class BackgroundJobs {
         // queue as a live message. Calling runMessage directly let it resume the thread's session
         // concurrently with whatever a human had just sent — two engines in one session/cwd.
         const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
-        const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId, background: true };
+        const handle = { aborted: false, controller: new AbortController(), authorId: rec.authorId, runId: `background:${rec.id}`, origin: "continuation",
+          channelId: rec.channelId, threadKey: deliveryThread, background: true };
         const bankUsage = createUsageBank();
         await runQueue.acquire(runKey, handle);
         try {

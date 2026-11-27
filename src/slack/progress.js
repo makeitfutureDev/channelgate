@@ -1157,6 +1157,7 @@ function startStreamingProgress(client, { channel, threadTs, reactionThreadTs = 
   const stopRunningReaction = startRunningReaction(client, channel, reactionThreadTs);
   return {
     ownsFinal: true,
+    get answerPreviewStarted() { return rawLen > 0 || prefaceParts.length > 0; },
     onRuntimeResolved: (runtime) => {
       if (runtime?.isolated) runtimeSuffix = " · container";
       shimmer.onRuntimeResolved?.(runtime);

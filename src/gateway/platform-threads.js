@@ -1,5 +1,6 @@
 // Activity metadata for admitted Google Chat and Teams turns. The starter is the first
 // observed root human; an unseen native root never confers completion authority.
+import { activeNativeTurns, inactiveActivityRecord } from './thread-turn-view.ts';
 import { getDb } from '../db/index.js';
 import { parseConversationId } from '../platforms/ids.js';
 import { notifyThreadChanged } from './thread-changes.js';
@@ -16,11 +17,13 @@ function runtimeSnapshot({ pendingApprovals = [] } = {}) {
     if (status === 'working' && Number.isSafeInteger(at) && at > 0 && (!since.has(key) || at < since.get(key))) since.set(key, at);
   };
   const read = (sql, handle) => {
-    for (const { data } of db.prepare(sql).all()) {
-      try { handle(JSON.parse(data)); } catch { /* malformed old row */ }
+    for (const { id, data } of db.prepare(sql).all()) {
+      try { handle(JSON.parse(data), id); } catch { /* malformed old row */ }
     }
   };
-  read('SELECT data FROM active_runs', run => {
+  for (const turn of activeNativeTurns()) add(turn, 'working');
+  read('SELECT id, data FROM active_runs', (run, id) => {
+    if (inactiveActivityRecord(id, run)) return;
     if (run.awaitingChoice && run.queuedRunId) return;
     add(run, run.awaitingChoice ? 'waiting' : 'working');
   });
