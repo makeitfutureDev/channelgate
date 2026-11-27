@@ -15,6 +15,11 @@
 // thread as they are dispatched, each thread receives the transcript of the segment spent there
 // when the call moves on or ends, and a one-line record of the call is saved to the caller's own
 // DM memory.
+import { reserveVoiceTurn, beginVoiceExecution } from "./turn-recovery.ts";
+import { isForceStopping } from "../shutdown.js";
+import { finishActiveRun } from "../active-runs.js";
+import { deliverTurnAnswer, slackAnswer, slackDeliveryIdentity } from "../turn-answer.ts";
+import { footerText } from "../reply-stats.js";
 import { turnReplyCallbacks } from "../turn-replies.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -25,7 +30,7 @@ import { userReplyMentionsEnabled, userVoicePreferences } from "../../config/use
 import { accessContext, activityThreadSnapshot } from "../../slack/home-threads.js";
 import { postNotice } from "../../platforms/notify.js";
 import { runMessage } from "../run.js";
-import { runQueue } from "../../slack/message-lifecycle.js";
+import { runQueue } from "../thread-turn-owner.ts";
 import { startProgress } from "../../slack/progress.js";
 import { deliverResult } from "../../slack/deliver.js";
 import { getDirectory } from "../../slack/directory.js";
@@ -365,10 +370,9 @@ export function createCallManager({
   // (what a typed @mention at the channel's top level would be), and the call follows its thread so
   // the caller sees the request, the progress card and the answer where any member would.
   // Serialized behind the binding queue so two quick requests cannot both open a root.
-  function openTaskThread(call, request) {
+  function openTaskThread(call, request, bound) {
     const pending = (call.bindingQueue || Promise.resolve()).then(async () => {
-      if (call.ending || !call.bound) throw httpError(404, "That call is not active.");
-      const bound = call.bound;
+      if (call.ending || call.bound !== bound) throw httpError(404, "The call moved or ended before the task could start.");
       if (bound.threadTs) return { threadTs: bound.threadTs, opened: false };
       const posted = await post(call.client, { conversationId: bound.channelId, text: `🎙️ *${call.callerName} (voice call):* ${mdToMrkdwn(request)}` });
       if (!posted?.messageId) throw httpError(502, "Could not post the request in the channel.");
@@ -416,7 +420,7 @@ export function createCallManager({
       delegations: new Map(), lastListed: [], chatgptLogin: c.chatgpt.login, audioMs: 0,
       openingReason: clean(openingReason, 160),
       bound: null, visited: [], segmentStart: 0, listeners: new Set(), transcript: [], transcriptTruncated: false,
-      doneActions: new Map(), tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
+      doneActions: new Map(), taskAdmissions: new Map(), tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
     };
     calls.set(id, call);
     let context = { text: "" };
@@ -542,21 +546,14 @@ export function createCallManager({
     const respond = (response, scheduling = "") => { try { call.session.sendToolResponse({ id, name, response, scheduling }); } catch { /* session gone */ } };
     try {
       if (name === "run_task") {
-        if (!call.bound) return respond({ error: "The call is not in a conversation yet. Switch to one first (list_conversations, then switch_conversation)." }, "WHEN_IDLE");
-        const request = clean(args?.request, MAX_REQUEST_CHARS);
-        if (!request) return respond({ error: "The request was empty." }, "SILENT");
-        if (call.tasks.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit; end the call and start a new one for more." }, "WHEN_IDLE");
-        const thread = await openTaskThread(call, request);
-        const inFlightHere = [...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status) && t.channelId === call.bound.channelId && t.threadTs === thread.threadTs).length;
-        if (inFlightHere >= MAX_RUNNING_TASKS_PER_THREAD) return respond({ error: "Three tasks are already in progress in this conversation; wait for one to finish, or switch to another conversation — tasks there run in parallel." }, "WHEN_IDLE");
-        const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, title: call.bound.title || "", requestPosted: thread.opened };
-        call.tasks.set(task.id, task);
-        broadcast(call, { type: "task", ...taskView(task) });
-        respond(thread.opened
-          ? { status: "started", task: task.id, conversation: call.bound.channelName, id: `${call.bound.channelId}:${thread.threadTs}`, note: "Posted as a new message in the channel; the call now follows that thread." }
-          : { status: "started", task: task.id, conversation: call.bound.channelName }, "SILENT");
-        void dispatch(call, task);
-        return;
+        if (typeof id !== "string" || !id) return respond({ error: "A task needs its tool call id." });
+        if (!call.taskAdmissions.has(id)) {
+          if (call.taskAdmissions.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit." }, "WHEN_IDLE");
+          const admission = admitTask(call, id, args).catch(error => ({ response: { error: clean(error?.message || "tool failed", 300) }, scheduling: "WHEN_IDLE" }));
+          call.taskAdmissions.set(id, admission);
+        }
+        const { response, scheduling } = await call.taskAdmissions.get(id);
+        return respond(response, scheduling);
       }
       if (name === "check_tasks") return respond({ tasks: [...call.tasks.values()].map((t) => ({ task: t.id, status: t.status, conversation: t.channelName, request: t.request.slice(0, 200),
         seconds: Math.round(((t.endedMs || now()) - t.startedMs) / 1000), ...(t.status === "running" && t.activity ? { activity: t.activity, activitySecondsAgo: Math.round((now() - (t.activityMs || now())) / 1000) } : {}),
@@ -702,13 +699,47 @@ export function createCallManager({
     catch { return { error: `No conversation or channel matches "${clean(target, 80)}".` }; }
   }
 
-  async function dispatch(call, task) {
+  async function admitTask(call, id, args) {
+    const respond = (response, scheduling) => ({ response, scheduling });
+    if (!call.bound) return respond({ error: "The call is not in a conversation yet. Switch to one first (list_conversations, then switch_conversation)." }, "WHEN_IDLE");
+    const request = clean(args?.request, MAX_REQUEST_CHARS);
+    if (!request) return respond({ error: "The request was empty." }, "SILENT");
+    if (call.tasks.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit; end the call and start a new one for more." }, "WHEN_IDLE");
+    const bound = call.bound;
+    const thread = await openTaskThread(call, request, bound);
+    if (call.ending || call.bound !== bound) throw new Error("The call moved before the task could start.");
+    const inFlightHere = [...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status) && t.channelId === call.bound.channelId && t.threadTs === thread.threadTs).length;
+    if (inFlightHere >= MAX_RUNNING_TASKS_PER_THREAD) return respond({ error: "Three tasks are already in progress in this conversation; wait for one to finish, or switch to another conversation — tasks there run in parallel." }, "WHEN_IDLE");
+    const task = { id: call.nextTask++, runId: `voice:${call.id}:${id}`, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, title: call.bound.title || "", requestPosted: thread.opened };
+    const reservation = reserveVoiceTurn(queue, { id: task.runId, slug: task.slug, channelId: task.channelId,
+      threadKey: task.threadTs, authorId: call.ownerId, isDM: task.isDM, workspaceId: call.teamId || "", botUserId: call.botUserId, text: task.request });
+    if (!reservation.accepted) {
+      await reservation.acquired;
+      throw new Error("The voice request could not reserve this thread.");
+    }
+    const { handle, key: runKey, acquired } = reservation;
+    task.handle = handle;
+    call.tasks.set(task.id, task);
+    broadcast(call, { type: "task", ...taskView(task) });
+    const response = thread.opened
+      ? { status: "started", task: task.id, conversation: call.bound.channelName, id: `${call.bound.channelId}:${thread.threadTs}`, note: "Posted as a new message in the channel; the call now follows that thread." }
+      : { status: "started", task: task.id, conversation: call.bound.channelName };
+    void executeTask(call, task, acquired, handle).catch(error => {
+      task.status = "failed"; task.summary = "Could not complete the voice request.";
+      broadcast(call, { type: "task", ...taskView(task) });
+      return log("voice_call_error", { id: call.id, stage: "dispatch", error: error?.name || "Error" }).catch(() => {});
+    }).finally(async () => {
+      if (handle.progress?.ownsFinal) await handle.progress.stop().catch(() => {});
+      if (!task.preserveOnShutdown && (!isForceStopping() || handle.aborted)) finishActiveRun(task.runId);
+      queue.release(runKey, handle);
+    });
+    return respond(response, "SILENT");
+  }
+
+  async function executeTask(call, task, acquired, handle) {
     const { client, ownerId } = call;
     const { channelId, threadTs } = task;
-    const runKey = `${task.slug || channelId}::${threadTs}`;
-    const controller = new AbortController();
-    const handle = { aborted: false, controller, authorId: ownerId, voice: true };
-    task.handle = handle;
+    const { controller } = handle;
     let status = null, result = null, failure = "";
     try {
       const posted = !task.requestPosted
@@ -717,17 +748,26 @@ export function createCallManager({
       if (!posted?.messageId) throw new Error("Could not post the spoken request in the thread.");
       await recordVoiceThreadRequest(client, { channelId, threadTs, messageTs: posted.messageId, userId: ownerId,
         assertCurrent: () => { if (call.ending || calls.get(call.id) !== call) throw new Error("The call ended before the task started."); } });
-      await queue.acquire(runKey, handle, () => { task.status = "queued"; broadcast(call, { type: "task", ...taskView(task) }); });
+      controller.signal.throwIfAborted();
+      await acquired;
+      if (task.preserveOnShutdown || isForceStopping()) return;
       if (handle.aborted || call.ending) throw Object.assign(new Error("call ended before the task started"), { name: "AbortError" });
       task.status = "running"; broadcast(call, { type: "task", ...taskView(task) });
       try {
         const dir = await directory(client).catch(() => null);
-        status = progress(getProgressView(), client, channelId, threadTs, {
+        status = handle.progress = progress(getProgressView(), client, channelId, threadTs, {
           isDM: task.isDM, authorId: ownerId, teamId: call.teamId || null, dir, menuOwnerId: ownerId,
           replyMentions: userReplyMentionsEnabled(await loadUser(ownerId).catch(() => null)),
         });
       } catch { status = null; }
       try {
+        const ctx = await access(client, ownerId);
+        const currentEntry = await loadEntry(channelId);
+        if ((!ctx.user.approved && !ctx.user.isAdmin) || !currentEntry || !await ctx.allows({ ...currentEntry, channelId }, threadTs))
+          throw new Error("The caller no longer has access to this thread.");
+        controller.signal.throwIfAborted();
+        if (task.preserveOnShutdown || isForceStopping()) return;
+        if (!beginVoiceExecution(task.runId)) throw new Error("The voice request is no longer queued.");
         const replies = turnReplyCallbacks(controller.signal, status);
         result = await runner({
           channelId, authorId: ownerId, workspaceId: call.teamId || "", threadKey: threadTs,
@@ -744,22 +784,31 @@ export function createCallManager({
       }
     } catch (error) {
       failure = error?.message || String(error);
-    } finally {
-      queue.release(runKey, handle);
     }
+    if ((isForceStopping() || task.preserveOnShutdown) && (!result || result.interrupted) && !handle.aborted) return;
+    if (handle.aborted) { result = null; failure = "stopped"; }
     task.endedMs = now();
     if (!result) {
       task.status = "failed"; task.summary = clean(failure, 600);
       await status?.stop?.().catch(() => {});
       if (!handle.aborted) await post(client, { conversationId: channelId, threadKey: threadTs, text: `⚠️ The voice-call task could not run: ${mdToMrkdwn(clean(failure, 500))}` }).catch(() => {});
     } else {
-      task.status = "done"; task.summary = clean(result.content, 1_200);
-      try { await record({ channelId, slug: task.slug, authorId: ownerId, engine: result.engine, taskKind: "voice-task", result }); } catch { /* best-effort accounting */ }
-      try {
+      const stopped = () => handle.aborted || (!(task.preserveOnShutdown || isForceStopping()) && (controller.signal.aborted || call.ending));
+      const answer = slackAnswer({ access: "voice", channelId, threadKey: threadTs, sessionKey: threadTs, authorId: ownerId,
+        slug: task.slug, isDM: task.isDM, identity: slackDeliveryIdentity(call.teamId, call.botUserId), preview: status?.answerPreviewStarted, text: result.content || "", footer: footerText(result) });
+      const outcome = await deliverTurnAnswer(answer, task.runId, async () => {
+        try { await record({ channelId, slug: task.slug, authorId: ownerId, engine: result.engine, taskKind: "voice-task", result }); } catch { /* best-effort accounting */ }
+        if (stopped() || !status?.ownsFinal) await status?.stop?.().catch(() => {});
+        return stopped() ? "cancel" : (isForceStopping() || task.preserveOnShutdown) ? "defer" : "send";
+      }, async () => {
+        if (stopped()) return false;
         if (status?.ownsFinal) await status.finalize(result);
-        else { await status?.stop?.().catch(() => {}); await deliver(client, { channel: channelId, threadKey: threadTs, result, footer: true }); }
-      } catch (error) {
-        await log("voice_call_error", { id: call.id, stage: "deliver", error: error?.message || String(error) }).catch(() => {});
+        else await deliver(client, { channel: channelId, threadKey: threadTs, result, footer: true });
+      }, { signal: controller.signal, cancelled: stopped });
+      if (outcome === "cancelled") {
+        result = null; failure = "stopped"; task.status = "failed"; task.summary = failure;
+      } else {
+        task.status = "done"; task.summary = clean(result.content, 1_200);
       }
     }
     broadcast(call, { type: "task", ...taskView(task) });
@@ -881,7 +930,7 @@ export function createCallManager({
     return clean(`Voice call on ${date} (${minutes(durationMs)} min): worked in ${places}${work}`, 600);
   }
 
-  async function end(id, ownerId, reason = "ended") {
+  async function end(id, ownerId, reason = "ended", shutdown = false) {
     const call = calls.get(id);
     if (!call || (ownerId && call.ownerId !== ownerId)) return false;
     if (call.ending) return true;
@@ -889,7 +938,20 @@ export function createCallManager({
     calls.delete(id);
     for (const timer of call.timers) { clearTimeout(timer); clearInterval(timer); }
     try { call.session?.close(); } catch { /* fine */ }
-    for (const task of call.tasks.values()) if (task.handle && ["queued", "running"].includes(task.status)) { task.handle.aborted = true; task.handle.controller?.abort(); }
+    for (const task of call.tasks.values()) {
+      const key = `${task.slug || task.channelId}::${task.threadTs}`;
+      if (!task.handle || !queue.hasRun(key, task.runId)) continue;
+      if (shutdown || isForceStopping()) {
+        task.preserveOnShutdown = true;
+        task.handle.controller.abort();
+        continue;
+      }
+      if (!queue.stopActive(key, task.runId)) {
+        queue.cancelQueued(key, task.runId);
+        task.handle.controller.abort();
+      }
+      finishActiveRun(task.runId);
+    }
     const durationMs = Math.max(0, now() - call.startedMs);
     // A ChatGPT-sign-in call is paid by the plan's voice allowance: no API cost to estimate.
     const costUSD = call.provider === "chatgpt" ? 0 : estimateVoiceCost(call.model, call.usage);
@@ -926,7 +988,7 @@ export function createCallManager({
   }
 
   async function endAll(reason = "gateway shutting down") {
-    await Promise.all([...calls.keys()].map((id) => end(id, "", reason)));
+    await Promise.all([...calls.keys()].map((id) => end(id, "", reason, true)));
   }
 
   return { available, start, offer, heartbeat, subscribe, audio, switchConversation, suspend, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };

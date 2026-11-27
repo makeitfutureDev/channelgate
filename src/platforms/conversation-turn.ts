@@ -1,3 +1,4 @@
+import { currentInboundRequestId, deliverTurnAnswer } from "../gateway/turn-answer.ts";
 import { turnReplyCallbacks } from "../gateway/turn-replies.ts";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { recordPlatformThreadMessage, recordPlatformThreadOutcome } from "../gateway/platform-threads.js";
@@ -29,6 +30,7 @@ type Turn = MessageTurn<undefined, Lane, Prepared, Answer, Outcome>;
 type Connector = {
   post: (payload: { conversationId: string; threadKey: string; text: string; signal: AbortSignal }) => Promise<Posted>;
   workingText?: string;
+  deliveryIdentity?: string;
 };
 type TurnOptions = {
   connector: Connector;
@@ -62,7 +64,7 @@ export function conversationTurn({
   }
   return {
     withQueue(_before, start) {
-      return controls.execute({ message, sessionKey, queued: reply, work: async (signal: AbortSignal) => {
+      return controls.execute({ message, sessionKey, requestId: currentInboundRequestId(), origin: `${adapter.id}_foreground`, queued: reply, work: async (signal: AbortSignal) => {
         // Remember the editable working message so the final answer or restart recovery can replace it.
         let placeholder = null;
         try {
@@ -175,20 +177,30 @@ export function conversationTurn({
 
     async deliver(result, { voicePrompt, skipped }, { signal, progress, placeholder }) {
       try { recordPlatformThreadOutcome(message.conversationId, sessionKey, { status: runAdmissionRefusalKind(result) || result?.engineError || result?.isError || result?.error ? "error" : "idle" }); } catch { /* best effort */ }
-      await progress.stop();
-      if (signal.aborted) {
-        const steered = wasSteered(signal);
-        await deliver(connector, message, placeholder, steered ? STEERED_TEXT : "Stopped.", rememberReply, "", replyMenu());
-        return { skipped: steered ? "steered" : "cancelled" };
-      }
-      await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
-
       let text = String(result.content || "").trim() || "_(no output)_";
       if (voicePrompt.failureNotice) text += `\n\n${voicePrompt.failureNotice}`;
       if (skipped.length) {
         text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
       }
-      await deliver(connector, message, placeholder, text, rememberReply, footerText(result), replyMenu(result));
+      const footer = footerText(result);
+      const menu = replyMenu(result);
+      const outcome = await deliverTurnAnswer({
+        platform: adapter.id, channelId: message.conversationId, rawChannelId: message.rawConversationId,
+        threadKey: message.threadKey, sessionKey, authorId: message.userId, slug: entry.slug, isDM: message.isDM,
+        text, footer, menu, placeholder, identity: connector.deliveryIdentity,
+      }, currentInboundRequestId(), async () => {
+        await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
+        await progress.stop();
+        return signal.aborted ? "cancel" : "send";
+      }, async () => {
+        if (signal.aborted) return false;
+        await deliver(connector, message, placeholder, text, rememberReply, footer, menu);
+      }, { signal, propagateError: true });
+      if (outcome === "cancelled") {
+        const steered = wasSteered(signal);
+        await deliver(connector, message, placeholder, steered ? STEERED_TEXT : "Stopped.", rememberReply, "", replyMenu());
+        return { skipped: steered ? "steered" : "cancelled" };
+      }
       return { result };
     },
   };

@@ -7,6 +7,28 @@ dispatcher. A thread keeps its queue slot while the agent's final reply is being
 Each completed Teams or Google Chat turn records its own interactive usage, including consecutive
 turns served by the same connector.
 
+### Thread ownership, stopping and recovery
+
+Chat, voice and foreground API work share one owner per thread. Activity shows the source
+of the active request and the queued requests in order. A viewer can identify their own
+requests. Refreshing or reconnecting the dashboard reads the current state.
+
+Send `stop active` as a message in the thread, mentioning the bot where required. The
+request author or an organization admin can use it. The next queued request then runs.
+Redelivery of the same stop message keeps its original target. An ordinary thread stop
+still cancels the queue. Slack's running reaction stays on the root through a handoff.
+
+A queued voice request resumes under its original caller after a restart and a fresh
+access check. If its engine had already started and there is no saved answer, the thread
+receives an unknown-outcome notice. A repeat voice tool call in the same call uses the
+original request.
+
+Slack, Teams, Google Chat and voice save completed answer text before final delivery.
+A disconnected destination can receive its saved answer when it reconnects. If the
+platform may already have accepted an earlier send, the recovered reply identifies the
+possible duplicate. Delivery gets up to three attempts. Pending answers expire after
+seven days.
+
 ## Dashboard-only updates
 
 The updater can release the admin dashboard shell, styles and independent browser modules

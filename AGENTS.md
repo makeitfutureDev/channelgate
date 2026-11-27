@@ -83,7 +83,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 66 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 67 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -323,6 +323,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   produces), `ingest.js` (gate → authorize → run → answer for the non-Slack surfaces),
   `durable-inbox.js` (SQLite at-least-once intake, resumed after a restart), the platform-neutral
   attachment, voice, text-command, reply-session and approval-delivery helpers,
+  the shared thread owner and Activity projection (`src/gateway/thread-turn-owner.ts` and
+  `thread-turn-view.ts`), saved final replies (`src/gateway/turn-answer.ts`),
   the shared admission and turn lifecycle (`src/gateway/message-flow.ts`),
   the admitted command dispatcher (`src/gateway/chat-feature.ts`), and the shared engine reply
   callbacks for Slack, Teams, Google Chat and voice (`src/gateway/turn-replies.ts`).

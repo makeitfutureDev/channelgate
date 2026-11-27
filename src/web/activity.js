@@ -10,6 +10,8 @@ import { getPublicUrl, getLogoColor } from "../config/settings.js";
 import { getChannelEntry, getUser, setUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, isSlackThreadParticipant, setSlackThreadHidden, setSlackThreadLater, setSlackThreadDone } from "../gateway/slack-threads.js";
+import { pendingActivityTurns } from "../platforms/pending-activity.ts";
+import { activityTurnProjection } from "../gateway/thread-turn-view.ts";
 import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
@@ -344,6 +346,7 @@ export function createActivityRouter({
     linkedIds.set(session.ownerId, await activityIdentityIds(session.ownerId));
     const external = await platformActivitySnapshot(session.ownerId);
     data.rows.push(...external.rows);
+    const turnProjection = activityTurnProjection(await pendingActivityTurns(external.rows));
     const all = data.rows.map((row) => ({ platform: row.platform || 'slack', channelId: row.channel_id, threadTs: row.thread_ts,
         hidden: row.hidden_ms > 0, dismissed: row.dismissed_ms > 0, canComplete: row.canComplete ?? row.starter_id === session.ownerId,
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
@@ -351,6 +354,7 @@ export function createActivityRouter({
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         completedMs: row.status === "done" ? Math.max(0, row.done_ms || 0, row.root_done ? row.root_reaction_ms || 0 : 0) : 0,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
+        ...turnProjection(row.channel_id, row.thread_ts, row.activityUserId || session.ownerId, row.status),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` }));
     const page = activityFeedWindow(all, session.feedLimits);
     return {

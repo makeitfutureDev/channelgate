@@ -14,6 +14,26 @@ request if prompted. Verify exactly one answer per request in the source thread,
 the expected file contents. Keep the connector running across both messages and check the
 usage ledger for two interactive rows attributed to the correct author and conversation.
 
+### Thread handoff and reply recovery
+
+Run `test/thread-voice-handoff.test.ts`, the thread owner, saved answer, Activity stream
+and running reaction tests. On each supported engine, exercise these cases in an isolated deployment.
+
+1. Start a Slack turn as one member. From a second member's voice call, ask for a uniquely
+   identifiable reply in the same thread. Refresh Activity and check the running Slack turn
+   and one queued voice request. As the first member send `stop active`. Verify the
+   original voice caller, one engine start for that request, one reply in the original thread
+   and one uninterrupted running reaction through the handoff. Re-deliver the stop event
+   after promotion and verify the voice turn continues. Reconnect Activity and confirm idle.
+2. Restart with a queued voice request, then repeat after execution has started. The queued
+   request may run once under current caller permissions. The started request with unknown
+   outcome yields a notice. Revoke the caller's access before recovering a queued request
+   and verify zero engine starts.
+3. On Slack, Teams and Google Chat, disconnect after the answer is saved. Repeat after
+   the platform accepts a send and before its acknowledgement is recorded. Verify the
+   destination and author checks, the same answer, uncertainty label for a possible
+   duplicate, bounded attempts and zero extra engine launches.
+
 ## Dashboard updates during an active turn
 
 Run `test/dashboard-update.test.ts` with the updater and Calls view suites. Check a UI-only

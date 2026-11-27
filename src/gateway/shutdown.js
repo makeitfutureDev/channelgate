@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { shutdownPool, poolStats } from "../engines/session-pool.js";
 import { shutdownEngineChildren, forceKillEngineChildren, engineProcessStats } from "../engines/process-registry.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { stopSystemHealth } from "./system-health.js";
 
 // Deferred import: src/ee/ is the proprietary licensing layer and shutdown.js is on the boot path

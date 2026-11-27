@@ -15,7 +15,7 @@ const SHORTCUTS = [
   '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open your settings in a private Teams popup.',
   '`/files` — Open this workspace from the current conversation.',
-  '`/stop` — Stop this session’s active and queued work.',
+  '`/stop` — Stop this session’s active and queued work. Send `stop active` to keep queued requests.',
 ];
 const COMMAND_HINT = 'In channels and groups, mention me before a command: `@agent /help`.';
 
@@ -46,7 +46,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
         '`/harnesses [all|entry, …]` — Show what this conversation may run on; an admin changes it.',
         '`/effort [level|default]` — Show or change reasoning effort.',
-        '`/stop` or `/cancel` — Stop this session’s active and queued work.',
+        '`/stop` or `/cancel` — Stop this session’s active and queued work. Send `stop active` to keep queued requests.',
         '`/clear` — Stop and clear this session. Your next request starts fresh.',
         'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
       ] },

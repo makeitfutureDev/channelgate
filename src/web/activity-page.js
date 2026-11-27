@@ -598,7 +598,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   function clock(entry, now = Date.now()) {
     entry.elapsed.textContent = entry.since ? duration(now - entry.since) : "";
     entry.elapsed.hidden = !entry.since;
-    if (entry.since) entry.pill.title = "Running for " + duration(now - entry.since);
+    const detail = [entry.since && "Running for " + duration(now - entry.since), entry.turnDetail].filter(Boolean).join("\n");
+    if (detail) entry.pill.title = detail;
     else entry.pill.removeAttribute("title");
     entry.time.textContent = entry.stamp ? ago(entry.stamp, now) : "—";
     if (entry.stamp) {
@@ -724,7 +725,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
         else delete entry.tr.dataset.groupEnd;
       } else { delete entry.tr.dataset.hue; delete entry.tr.dataset.groupEnd; }
       entry.pill.className = "pill " + row.status;
-      entry.statusText.textContent = states[row.status];
+      entry.statusText.textContent = [states[row.status], row.turnState?.label].filter(Boolean).join(" · ");
+      entry.turnDetail = row.turnState?.detail;
       const since = Number(row.workingSinceMs);
       entry.since = row.status === "working" && Number.isSafeInteger(since) && since > 0 ? since : 0;
       const stamp = Number(row.lastMessageMs), date = new Date(stamp);

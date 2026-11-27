@@ -1,3 +1,4 @@
+import { deliverTurnAnswer, slackAnswer, slackDeliveryIdentity } from "../gateway/turn-answer.ts";
 import { dispatchIncomingMessage, handledMessage } from "../gateway/message-flow.ts";
 import { turnReplyCallbacks } from "../gateway/turn-replies.ts";
 import { sessionRuntimeStamp } from "../gateway/session-runtime.js";
@@ -40,6 +41,8 @@ import { contextUsageFor } from "../gateway/model-info.js";
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, finishActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
 import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
+import { isStopActiveCommand } from "../platforms/stop-active-command.ts";
+import { stopActiveTurn } from "../gateway/stop-active-turn.ts";
 import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
 import { refreshQuestionCard } from "./questions.js";
@@ -71,6 +74,7 @@ import { HELP_TEXT } from "./help.js";
 import { formatAppContextProvenance } from "./app-context.js";
 import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseNextCommand, parseSlashCommand, parseSudoCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
 export { isIgnorable, isStopCommand, mentionsBot, parseSlashCommand, stripMentions } from "./message-normalize.js";
+import { slackTurnRequestId, turnReceipt } from "../gateway/thread-turn-owner.ts";
 import { claimMessageTrigger, runQueue } from "./message-lifecycle.js";
 export { runQueue } from "./message-lifecycle.js";
 
@@ -796,7 +800,7 @@ const slackMessages = {
       return;
     }
     const earlyControl = stripMentions(event.text || "", botUserId);
-    const cancelsFork = isStopCommand(earlyControl) || parseSlashCommand(earlyControl)?.cmd === "clear";
+    const cancelsFork = isStopCommand(earlyControl) || isStopActiveCommand(earlyControl) || parseSlashCommand(earlyControl)?.cmd === "clear";
     if (pendingForkSources.has(`${entry.slug}::${threadKey}`) && !cancelsFork) {
       await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "A fork of this thread is starting. Please send your next message after the new thread appears." });
       return;
@@ -823,7 +827,7 @@ const slackMessages = {
           const sudo = parseSudoCommand(text);
           if (sudo?.task && !sudo.invalid) return true;
         }
-        if (command || isStopCommand(text) || isPendingCommand(text)) return false;
+        if (command || isStopCommand(text) || isStopActiveCommand(text) || isPendingCommand(text)) return false;
         // A queued task keeps its attachment context; bare /next needs the usage hint, not an
         // inferred old file masquerading as the missing task. Explicit current files still win.
         const next = parseNextCommand(text);
@@ -901,6 +905,12 @@ const slackMessages = {
 
     // "stop"/"cancel" interrupts the in-flight run for this thread. Handled here (not via the
     // run path) so it isn't queued behind the very run it's trying to cancel.
+    if (!syntheticFork && !sudo && !files.length && isStopActiveCommand(prompt)) {
+      const text = stopActiveTurn({ slug: entry.slug, channelId: event.channel, threadKey,
+        actor: event.user, admin: authorIsAdmin, eventId: event.ts });
+      await client.chat.postMessage({ channel: event.channel, ...threadOpts, text });
+      return;
+    }
     if (!sudo && isStopCommand(prompt) && files.length === 0) {
       const stopped = await stopRunsInChannel(client, event.channel, entry.slug, event.user, threadKey);
       if (!stopped) {
@@ -945,11 +955,11 @@ const slackMessages = {
         const forkShortcut = parseModelShortcut(sc.arg);
         const task = forkShortcut ? forkShortcut.task : sc.arg.trim();
         if (!task) { await reply("Use `/fork [:model-shortcut] <new message>` inside a thread with a Claude or Codex session."); return; }
-        if (!queuedForkHandle && runQueue.hasRun(runKey, `${runKey}::${event.ts}`)) return;
+        if (!queuedForkHandle && (runQueue.hasRun(runKey, `${runKey}::${event.ts}`) || turnReceipt(runKey, `${runKey}::${event.ts}`))) return;
         if (!queuedForkHandle && runQueue.isActive(runKey)) {
           if (runQueue.count(runKey) >= 21) { await reply("The thread queue is full. The fork was not queued; try again after some work finishes."); return; }
           const handle = { aborted: false, controller: new AbortController(), authorId: event.user,
-            runId: `${runKey}::${event.ts}` };
+            runId: `${runKey}::${event.ts}`, origin: "slack_foreground", channelId: event.channel, threadKey: replyTs || event.ts, durable: true };
           recordActiveRun(handle.runId, {
             channelId: event.channel, slug: entry.slug, threadKey, authorId: event.user,
             workspaceId: teamId, isDM, startedAt: Date.now(),
@@ -1686,6 +1696,7 @@ const slackMessages = {
       aborted: false,
       controller: new AbortController(),
       authorId: event.user,
+      origin: "slack_foreground", channelId: event.channel, threadKey: replyTs || event.ts, durable: true,
       replayStoppedTurn: !compactPassthrough && sessionBeforeRun,
       stoppedPrompt: compactPassthrough ? "" : promptForClaude,
       attachments: attachmentPaths,
@@ -1694,7 +1705,9 @@ const slackMessages = {
     // turn parked in the queue must survive a daemon restart too (boot recovery replays every
     // persisted row). Unique per message: the plain runKey would clobber the in-flight turn's
     // row. Updated below with the full prompt (incl. thread context) once the turn is promoted.
-    const runId = `${runKey}::${event.ts}`;
+    const runId = slackTurnRequestId(runKey, event.ts, {
+      choiceId: engineChoiceId, retry: dedupeTrigger === false, reactionId: turn.options.reactionId,
+    });
     handle.runId = runId;
     const acceptedRun = {
       ...(dedupeTrigger ? { slackMessageTs: event.ts || event.event_ts } : {}),
@@ -1725,7 +1738,7 @@ const slackMessages = {
       if (!accepted) throw new Error("This harness choice is no longer available. Send the message again if it still needs attention.");
     } else {
       // Hydration can yield long enough for a duplicate event to overtake this one.
-      if (runQueue.hasRun(runKey, runId) || (dedupeTrigger && hasCompletedSlackMessage(event.channel, event.ts || event.event_ts))) return;
+      if (runQueue.hasRun(runKey, runId) || turnReceipt(runKey, runId) || (dedupeTrigger && hasCompletedSlackMessage(event.channel, event.ts || event.event_ts))) return;
       recordActiveRun(runId, acceptedRun);
     }
 
@@ -1879,6 +1892,8 @@ const slackMessages = {
         }
       }
     } finally {
+      // A saved or deferred final may skip finalize(). Close its native stream and running marker.
+      if (lane.status?.ownsFinal) await lane.status.stop().catch(() => {});
       if (lane.stopProgressOnAbort) handle.controller.signal.removeEventListener("abort", lane.stopProgressOnAbort);
       // Per-turn terminal state wins over the global shutdown phase: a delivered answer, reported
       // error, steering completion, or explicit stop must never replay merely because force-stop
@@ -2084,74 +2099,40 @@ const slackMessages = {
     const { client, event, entry, meta, threadKey, replyTs, runKey, threadClean, codeChannel } = turn;
     const { botUserId = "" } = turn.options;
     const { handle, dir, markTerminal, status } = lane;
-    // Idempotent, pre-delivery accounting for this turn (see createUsageBank): the tokens are
-    // spent the moment the run resolves, on every branch below, and exactly once.
     const bankUsage = createUsageBank();
-    // The run is over and its tokens are spent — bank the accounting before ANY of the branches
-    // below, delivery included. A Slack failure (or a boot-recovery redelivery) must never be
-    // able to erase spend that already happened.
-    await bankUsage({ channelId: event.channel, slug: entry.slug, authorId: event.user, engine: result.engine, taskKind: "interactive", result });
-    // Steered away: a newer message from this author interrupted this turn (handle.steered) and
-    // is queued right behind us to answer with our context. Don't post this turn's half-finished
-    // (usually empty) output — just close the indicator; the interrupted turn's cost is banked.
-    // Guarded on interrupted/empty so a turn that actually finished in the interrupt's shadow
-    // (a rare race where the answer was already complete) still gets posted rather than swallowed.
+    const bank = () => bankUsage({ channelId: event.channel, slug: entry.slug, authorId: event.user,
+      engine: result.engine, taskKind: "interactive", result });
     if (handle.steered && (result.interrupted || isEmptyResult(result))) {
+      await bank();
       markTerminal();
       await status.stop();
       return;
     }
-    // A "successful" run that did zero work (empty text, 0 tokens) is a failure in disguise —
-    // most often a resume into a broken session state. Surface it through the error path
-    // (message + self-diagnosis) instead of posting "(no output)" as if all were well.
     if (isEmptyResult(result)) {
+      await bank();
       throw new Error("Claude returned an empty result — 0 tokens, no output; the thread's session may be in a bad state. Try again, or `/clear` to start fresh.");
     }
-    // Stopped mid-run but the subprocess still completed — the stop handler already posted
-    // "🛑 Stopped.", so don't post the answer on top of it. Its cost is already banked.
-    // Sampled again immediately before EVERY delivery call rather than once for all of them: a
-    // stop lands asynchronously, and each await in between (usage bookkeeping, the indicator's
-    // own Slack round-trips) is a window in which one early sample goes stale — which is how a
-    // stopped run still posted its whole answer underneath the stop card.
-    const stopSuppressedDelivery = async () => {
-      if (!handle.aborted) return false;
-      markTerminal();
-      await status.stop();
-      return true;
-    };
-    if (status.ownsFinal) {
-      // Native streaming mode already wrote the answer live; close the stream with the footer.
-      if (await stopSuppressedDelivery()) return;
-      await status.finalize(result);
-    } else {
-      if (await stopSuppressedDelivery()) return;
-      await status.stop();
-      // Post the reply as plain mrkdwn messages (NOT Block Kit sections — those get folded
-      // behind Slack's "Show more" much more eagerly). We still convert the agent's Markdown to
-      // Slack mrkdwn (tables → code blocks, ## → bold, links, bullets) and append the stats
-      // footer; a long answer is split into multiple threaded messages instead of truncated.
-      const md = resolveMentions(mdToMrkdwn(result.content || ""), dir).trim() || "_(no output)_";
-      if (await stopSuppressedDelivery()) return;
-      await postChunkedReply(
-        client,
-        event.channel,
-        replyTs,
-        md,
-        footerText(result),
-        footerButtons(result, {
-          channel: event.channel,
-          threadTs: replyTs,
-          authorId: event.user,
-        }),
-        { answerBlocks: answerImageBlocks(result.content || "") },
-      );
-      await shareAnswerImageFiles({
-        markdown: result.content || "",
-        cwd: result.cwd,
-        channel: event.channel,
-        threadTs: replyTs,
-      });
-    }
+    const footer = footerText(result);
+    const answer = slackAnswer({ access: turn.options.questionSubmissionId ? "question" : undefined, channelId: event.channel, threadKey: replyTs || "", sessionKey: threadKey,
+      authorId: event.user, slug: entry.slug, isDM: meta.isDM, identity: slackDeliveryIdentity(turn.options.teamId || event.team, botUserId), preview: status.answerPreviewStarted, text: result.content || "", footer });
+    const outcome = await deliverTurnAnswer(answer, lane.runId, async () => {
+      await bank();
+      if (handle.aborted || !status.ownsFinal) await status.stop();
+      return handle.aborted ? "cancel" : "send";
+    }, async () => {
+      if (handle.aborted) return false;
+      if (status.ownsFinal) await status.finalize(result);
+      else {
+        const md = resolveMentions(mdToMrkdwn(result.content || ""), dir).trim() || "_(no output)_";
+        await postChunkedReply(client, event.channel, replyTs, md, footer,
+          footerButtons(result, { channel: event.channel, threadTs: replyTs, authorId: event.user }),
+          { answerBlocks: answerImageBlocks(result.content || "") });
+      }
+    }, { signal: handle.controller.signal, cancelled: () => handle.aborted });
+    if (outcome !== "delivered") { markTerminal(); return; }
+    if (!status.ownsFinal) await shareAnswerImageFiles({
+      markdown: result.content || "", cwd: result.cwd, channel: event.channel, threadTs: replyTs,
+    }).catch(() => {});
     // User-visible delivery is the durable terminal boundary. If force-stop begins while usage
     // bookkeeping finishes, boot must not replay an answer Slack already received.
     recordSlackThreadOutcome(event.channel, replyTs || threadKey, { error: Boolean(runAdmissionRefusalKind(result) || result.engineError) });

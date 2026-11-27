@@ -28,6 +28,7 @@ export async function deliverConversationAnswer(connector, message, placeholder,
   const chunks = formatted.chunks.length ? formatted.chunks : [{ text, mentions: [] }];
 
   if (placeholder?.messageId && adapter.capabilities.messageEdit) {
+    let edited = false;
     try {
       await connector.edit({
         conversationId: placeholder.conversationId || message.rawConversationId,
@@ -37,6 +38,11 @@ export async function deliverConversationAnswer(connector, message, placeholder,
         ...(chunks.length === 1 && footer ? { footer } : {}),
         ...(chunks.length === 1 && menu ? { menu } : {}),
       });
+      edited = true;
+    } catch {
+      // A missing placeholder can be replaced by a fresh post.
+    }
+    if (edited) {
       for (const [index, chunk] of chunks.slice(1).entries()) {
         rememberReply(await connector.post({
           conversationId: message.rawConversationId,
@@ -48,9 +54,6 @@ export async function deliverConversationAnswer(connector, message, placeholder,
         }));
       }
       return;
-    } catch (err) {
-      // The placeholder may have been deleted, or the edit budget exhausted. Falling through to a
-      // fresh post is the difference between a visible answer and a silent one.
     }
   }
   await postFormatted(connector, {
