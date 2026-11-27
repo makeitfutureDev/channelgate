@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
@@ -184,6 +184,23 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
   assert.deepEqual(keys, [`environment="CG_SSH_USER=U_FILES" ecdsa-sha2-nistp256 ${ECDSA.split(" ")[1]} cg:U_FILES`]);
   assert.equal(access.renderContainerAuthorizedKeys([{ type: "ssh-ed25519", base64: ED25519.split(" ")[1], userId: "bad id" }]).split("\n")[1], `ssh-ed25519 ${ED25519.split(" ")[1]} cg:bad id`, "an id sshd could not carry gets no environment option");
   assert.equal(access.containerHostKeyFingerprint(target), "");
+  // Live finding (0.7.0): a carried-over host key at 0640 made sshd refuse it, so every session died
+  // before the handshake. The next session's preparation puts it back to 0600.
+  const hostKey = path.join(result.dir, "host_key");
+  writeFileSync(hostKey, "private\n", { mode: 0o640 });
+  chmodSync(hostKey, 0o640);
+  const again = access.materializeContainerSshFiles(target, [key]);
+  assert.equal(again.hostKeyPresent, true);
+  assert.equal(statSync(hostKey).mode & 0o777, 0o600, "a group-readable host key is tightened before sshd starts");
+  // The folder is writable from inside the container: a link planted as host_key is not followed.
+  const outside = path.join(target.artifactDir, "outside");
+  writeFileSync(outside, "x", { mode: 0o644 });
+  chmodSync(outside, 0o644);
+  rmSync(hostKey);
+  symlinkSync(outside, hostKey);
+  assert.equal(access.materializeContainerSshFiles(target, [key]).hostKeyPresent, false, "a link is not a host key");
+  assert.equal(statSync(outside).mode & 0o777, 0o644, "the link's target is left untouched");
+  rmSync(hostKey);
   writeFileSync(path.join(result.dir, "host_key.pub"), `${ED25519}\n`);
   assert.equal(access.containerHostKeyFingerprint(target), ED25519_FP);
   await access.removeSshKey("U_FILES", ECDSA_FP);

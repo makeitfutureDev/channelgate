@@ -1,5 +1,26 @@
 # ChannelGate — Test Plan
 
+## SSH sessions repair a group-readable channel host key (2026-11-27)
+
+Automated:
+
+```sh
+node scripts/run-tests.mjs test/ssh-access.test.js
+```
+
+- [x] `container side: … files are private` (`test/ssh-access.test.js`): a `host_key` written at
+      `0640` is `0600` after the next `materializeContainerSshFiles`, which reports
+      `hostKeyPresent: true`. A symlink planted as `host_key` is reported as no host key and its
+      `0644` target keeps its mode. Reproduced red against the pre-fix code (the `0600` assertion
+      fails). Engine-independent: host file handling before sshd, no engine involved.
+- [ ] Live on the gateway host (engine-independent): with SSH access installed and a developer
+      key granted on a test channel, open one session so `cg-sshd` creates
+      `~/ChannelGate/.runtime/<platform>/<slug>/ssh/host_key`, exit, then
+      `chmod 0640` that file. Connect again with `ssh -v`. Pass: the session reaches a shell, no
+      `UNPROTECTED PRIVATE KEY FILE` appears in the gateway log or the client output, the file is
+      `0600` afterwards, and the host-key fingerprint the client records is unchanged. Repeat once
+      from a macOS client.
+
 ## A channel's own account is a license limited to it (2026-11-24)
 
 Automated:
