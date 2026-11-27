@@ -6,8 +6,11 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 import { Router } from "express";
 import { getUsers, getUser, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
+import { userReplyMentionsEnabled } from "../../config/user-preferences.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
+import { getSkill } from "../../gateway/skills/catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
@@ -19,6 +22,8 @@ import { listEmailAccounts } from "../../gateway/email-accounts.js";
 import { listUserEmailAccounts, removeUserEmailAccount, saveUserEmailAccount } from "../../gateway/email-account-store.js";
 import { emailAccountBody } from "./channels.js";
 import { loadComposioInventory } from "../../gateway/composio-inventory.js";
+import { adminSession } from "../auth.js";
+import { activityIdentityPlatform, setActivityIdentities } from "../../config/activity-identities.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -33,18 +38,17 @@ function maskUsers(users) {
   const out = {};
   for (const [id, u] of Object.entries(users)) {
     const token = u.composioToken || "";
-    const toolbox = u.toolboxToken || "";
     out[id] = {
       name: u.name || "",
+      activityPlatform: activityIdentityPlatform(id, u),
+      activityIdentities: Array.isArray(u.activityIdentities) ? u.activityIdentities : [],
       isAdmin: Boolean(u.isAdmin),
       approved: Boolean(u.approved),
       nudges: userNudgesEnabled(u),
+      replyMentions: userReplyMentionsEnabled(u),
       hasComposioToken: Boolean(token),
       composioTokenLast4: token ? token.slice(-4) : "",
       composioTokenLabel: u.composioTokenLabel || "",
-      hasToolboxToken: Boolean(toolbox),
-      toolboxTokenLast4: toolbox ? toolbox.slice(-4) : "",
-      toolboxTokenLabel: u.toolboxTokenLabel || "",
       // Names + last4 only, like every other secret surface. Listing them here is what makes the
       // scope administrable at all: nobody but the person can see them from chat.
       secrets: listEnvVars(u.env),
@@ -76,8 +80,7 @@ export function filterUsersForSearch(users, query) {
     const role = user.isAdmin ? "admin" : user.approved ? "approved" : "no access";
     const tokens = [
       user.hasComposioToken ? "composio c token configured set" : "",
-      user.hasToolboxToken ? "toolbox t token configured set" : "",
-      !user.hasComposioToken && !user.hasToolboxToken ? "no tokens" : "",
+      !user.hasComposioToken ? "no tokens" : "",
     ];
     const reminders = user.nudges ? "reminders on enabled" : "reminders off disabled";
     const haystack = foldSearch([user.name, id, role, reminders, ...tokens].join(" "));
@@ -85,7 +88,7 @@ export function filterUsersForSearch(users, query) {
   }));
 }
 
-export function createUsersRouter({ slack, composioInventory = loadComposioInventory } = {}) {
+export function createUsersRouter({ slack, composioInventory = loadComposioInventory, validateMcpSelections = assertNewMcpSelections } = {}) {
   const router = Router();
   router.use(createUserAutoApprovalRouter({ slack }));
 
@@ -198,6 +201,9 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
           name: req.params.name,
           url: typeof req.body?.url === "string" ? req.body.url : "",
           token: typeof req.body?.token === "string" ? req.body.token : "",
+          authType: req.body?.authType,
+          headers: req.body?.headers,
+          queryParams: req.body?.queryParams,
         }, { actor: USER_SECRET_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });
@@ -261,10 +267,26 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
     }
   });
 
+  // Mounted behind the admin API auth stack; links affect Activity visibility only.
+  router.put("/users/:userId/activity-identities", async (req, res, next) => {
+    try {
+      const activityIdentities = await setActivityIdentities(req.params.userId, req.body?.activityIdentities);
+      await logEvent("user_activity_identities_changed", { user: req.params.userId, actor: USER_SECRET_ACTOR });
+      res.json({ ok: true, activityIdentities });
+    } catch (error) {
+      if (error?.code === "invalid_activity_identities") return res.status(error.status || 400).json({ error: error.message });
+      next(error);
+    }
+  });
+
   router.put("/users/:userId", async (req, res, next) => {
     try {
+      const actor = adminSession(req);
       const { userId } = req.params;
       const body = req.body ?? {};
+      if (Object.hasOwn(body, "replyMentions") && typeof body.replyMentions !== "boolean") {
+        return res.status(400).json({ error: "replyMentions must be a boolean" });
+      }
       const patch = {};
       if (typeof body.name === "string") patch.name = body.name;
       if (typeof body.isAdmin === "boolean") patch.isAdmin = body.isAdmin;
@@ -275,29 +297,40 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
         patch.approvalDomain = "";
       }
       if (typeof body.nudges === "boolean") patch.nudges = body.nudges;
+      if (typeof body.replyMentions === "boolean") patch.replyMentions = body.replyMentions;
       // Only overwrite tokens when a non-empty value is sent (write-only fields).
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)
         patch.composioToken = body.composioToken;
       if (body.clearComposioToken === true) patch.composioToken = "";
-      if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0)
-        patch.toolboxToken = body.toolboxToken;
-      if (body.clearToolboxToken === true) patch.toolboxToken = "";
       // Owner labels (a note for the admin — whose account the token authenticates as). Not secret;
       // a plain string that always round-trips, with an empty string clearing it.
       if (typeof body.composioTokenLabel === "string") patch.composioTokenLabel = body.composioTokenLabel.trim();
-      if (typeof body.toolboxTokenLabel === "string") patch.toolboxTokenLabel = body.toolboxTokenLabel.trim();
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
+      // A person may hold only their OWN personal skills. Refuse adding someone else's; a stored
+      // one (from before this check) is left for the admin to untick and is skipped at run time.
+      if (patch.skills) {
+        const foreign = newForeignPersonalSkillGrants(patch.skills, (await getUser(userId))?.skills, { ownerId: userId, lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign) });
+      }
       if (patch.allowedMcps) {
         const current = await getUser(userId);
-        try { await assertNewMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }
+        try { await validateMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
+      // MCP validation may yield while another administrator revokes this actor. Never let
+      // an already-admitted request restore its author's role after that revocation. Routers
+      // mounted independently in local fixtures have no ambient dashboard session to recheck.
+      if (actor) {
+        const currentActor = adminSession(req);
+        if (!currentActor || currentActor.token !== actor.token || currentActor.authVersion !== actor.authVersion) {
+          return res.status(401).json({ error: "Administrator access changed. Sign in again before saving this user." });
+        }
+      }
       const saved = await setUser(userId, patch);
-      // The admin UI's "clear token" is the same revocation as clear_my_composio_token /
-      // clear_my_toolbox_token: in-flight container relays for that person's runs stop now.
-      if (patch.composioToken === "" || patch.toolboxToken === "") revokeRemoteMcpsForAuthor(userId);
+      // Clearing a personal Composio token also revokes its in-flight container relays.
+      if (patch.composioToken === "") revokeRemoteMcpsForAuthor(userId);
       res.json({
         ok: true,
         user: {
@@ -305,8 +338,8 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
           isAdmin: saved.isAdmin,
           approved: saved.approved,
           nudges: userNudgesEnabled(saved),
+          replyMentions: userReplyMentionsEnabled(saved),
           hasComposioToken: Boolean(saved.composioToken),
-          hasToolboxToken: Boolean(saved.toolboxToken),
           ...cleanAccessGrants(saved),
         },
       });

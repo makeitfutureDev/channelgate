@@ -18,13 +18,13 @@ const BOT = "UFILECOMMANDBOT";
 // Oversize metadata deliberately avoids any network download if the pipeline wrongly runs.
 const file = { id: "FCOMMAND", name: "owned.txt", size: Number.MAX_SAFE_INTEGER, url_private_download: "https://files.slack.test/owned" };
 let sequence = 0;
-function fixture(text, variant, { canonicalText = text, lookupFails = false } = {}) {
+function fixture(text, variant, { canonicalText = text, lookupFails = false, fileDescriptor = file } = {}) {
   const channel = `D_FILE_COMMAND_${++sequence}`;
   const event = { type: "message", channel, channel_type: "im", user: USER, ts: "103.1", thread_ts: "100.1", text,
-    ...(variant === "trigger-current" ? { files: [file] } : {}) };
-  const exact = { ...event, text: canonicalText, ...(variant === "canonical-current" ? { files: [file] } : {}) };
-  const root = { ts: "100.1", user: USER, text: "subject", ...(variant === "root" ? { files: [file] } : {}) };
-  const previous = { ts: "102.1", user: BOT, text: "prior reply", ...(variant === "previous" ? { files: [file] } : {}) };
+    ...(variant === "trigger-current" ? { files: [fileDescriptor] } : {}) };
+  const exact = { ...event, text: canonicalText, ...(variant === "canonical-current" ? { files: [fileDescriptor] } : {}) };
+  const root = { ts: "100.1", user: USER, text: "subject", ...(variant === "root" ? { files: [fileDescriptor] } : {}) };
+  const previous = { ts: "102.1", user: BOT, text: "prior reply", ...(variant === "previous" ? { files: [fileDescriptor] } : {}) };
   const posted = [];
   const ok = async () => ({ ok: true });
   const client = {
@@ -37,7 +37,7 @@ function fixture(text, variant, { canonicalText = text, lookupFails = false } = 
   return { client, event, channel };
 }
 async function execute(text, variant, opts) {
-  await setUser(USER, { name: "File command tester", approved: true });
+  await setUser(USER, { name: "File command tester", approved: true, isAdmin: opts?.admin === true });
   const f = fixture(text, variant, opts);
   await processMessageEvent(f.event, f.client, { botUserId: BOT });
   return { ...f, starts: readEvents({ limit: 1000 }).filter(e => e.event === "run_start" && e.channel === f.channel), text: f.client.posted.map(m => m.text || "").join("\n") };
@@ -72,5 +72,22 @@ test("unknown commands and ordinary followups retain preceding attachment recove
     const result = await execute(prompt, "previous");
     assert.equal(result.starts.length, 1);
     assert.equal(result.starts[0].files, 1);
+  }
+});
+
+
+test("inline sudo keeps current and inherited file semantics while enabling the thread", async (t) => {
+  const { setRuntimeResolver } = await import("../src/gateway/run.js");
+  setRuntimeResolver(null); // sudo uses its actual host backend, not the container fixture
+  t.after(() => useFakeRuntime());
+  const { getChannelEntry } = await import("../src/config/store.js");
+  const { getThreadSudo } = await import("../src/gateway/thread-engine.js");
+  for (const variant of ["root", "previous", "canonical-current", "trigger-current"]) {
+    const result = await execute(`<@${BOT}> /sudo read the attached example`, variant, { admin: true, fileDescriptor: { id: "FCOMMAND", name: "example.txt", size: 1 } });
+    assert.equal(result.starts.length, 1, variant);
+    assert.equal(result.starts[0].files, 1, variant);
+    const entry = await getChannelEntry(result.channel);
+    assert.equal(await getThreadSudo(entry.slug, "100.1"), true);
+    assert.match(result.text, /This request and later admin messages run/);
   }
 });

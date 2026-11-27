@@ -1,4 +1,6 @@
 Copyright 2020 The Poppins Project Authors (https://github.com/itfoundry/Poppins)
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+  (geist-latin.woff2, geistmono-latin.woff2: Geist and Geist Mono, latin subset)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

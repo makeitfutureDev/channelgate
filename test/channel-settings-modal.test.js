@@ -41,8 +41,6 @@ import {
   CONNECTION_MAKE_KEY_BLOCK_ID,
   CONNECTION_MAKE_URL_ACTION_ID,
   CONNECTION_MAKE_URL_BLOCK_ID,
-  CONNECTION_TOOLBOX_ACTION_ID,
-  CONNECTION_TOOLBOX_BLOCK_ID,
   RUNTIME_EFFORT_ACTION_ID,
   runtimeSelectTarget,
   SETTINGS_DEFAULT_VALUE,
@@ -102,12 +100,8 @@ const snapshot = {
   connections: {
     composioMode: "personal",
     composioChannel: { configured: true, last4: "c123" },
-    composioOrg: { configured: true, last4: "o123" },
-    toolboxChannel: { configured: false, last4: "" },
-    toolboxOrg: { configured: true, last4: "t123" },
     makeToolboxUrl: "https://example.test/mcp",
     makeToolboxKey: { configured: true, last4: "m123" },
-    noDefaultTokens: false,
   },
   cloudMcp: {
     claude: { channel: [{ name: "github" }], organization: [{ name: "drive" }] },
@@ -131,7 +125,10 @@ const snapshot = {
     sessionId: "994f6108-b405-4bbe-b96d-1641051df2fa",
     engine: "claude",
     workDir: "/home/agent/ChannelGate/slack/settings-channel",
-    command: 'cd "/home/agent/ChannelGate/slack/settings-channel" && claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    command: 'podman exec -it -w \'/home/agent/ChannelGate/slack/settings-channel\' cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    shellCommand: 'cd "/home/agent/ChannelGate/slack/settings-channel" && claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    hostCommand: 'podman exec -it -w \'/home/agent/ChannelGate/slack/settings-channel\' cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    runtimeScope: "admin",
   },
 };
 
@@ -162,7 +159,7 @@ test("every reply footer carries the same fixed menu: Files, Variables, Settings
       { channel: "C1", threadTs: "1.1", authorId },
     );
     // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
-    assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+    assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
     assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
   }
 });
@@ -177,7 +174,7 @@ test("Settings pages are one dropdown on the first line, with the open page sele
   assert.equal(nav.accessory.action_id, CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID);
   assert.match(nav.text.text, /<#C_SETTINGS>/);
   assert.deepEqual(nav.accessory.options.map((entry) => parseActionValue(entry.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "You"]);
+  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "API tokens", "Diagnostics", "You"]);
   assert.equal(parseActionValue(nav.accessory.initial_option.value).p, "mcp");
   assert.equal(view.close.text, "Done");
   assert.equal(view.submit, undefined, "no form open, no submit");
@@ -211,13 +208,13 @@ test("Agent holds this thread's and the channel's runtime rows, the mode and the
   assert.ok(threadRow > 0 && threadRow < channelRow);
   assert.equal(byActionId(view, "cg_channel_settings_access_field_mode").type, "static_select", "mode is a dropdown in the same style");
   assert.equal(byActionId(view, "cg_channel_settings_access_field_flags").type, "checkboxes");
-  assert.deepEqual(byActionId(view, "cg_channel_settings_access_field_flags").options.map((entry) => entry.text.text), ["Auto-approve", "Lean", "Internet"]);
+  assert.deepEqual(byActionId(view, "cg_channel_settings_access_field_flags").options.map((entry) => entry.text.text), ["Auto-approve", "Lean", "Internet", "Skill model swap"]);
   // `vpn` absent = a provisioned service still being read; an unprovisioned one is one plain line.
   assert.match(text, /VPN\* — Checking status/);
   assert.match(rendered(buildChannelSettingsView({ ...snapshot, vpn: { configured: false, state: "unconfigured" } }, state, { tab: "agent" })), /VPN · Not configured/);
   assert.doesNotMatch(text, /cg_channel_settings_access_field_allowedUsers/, "people live on Access now");
   // Every legacy page id lands on the page that owns its controls now.
-  for (const [legacy, page] of [["general", "agent"], ["runtime", "agent"], ["network", "agent"], ["resume", "agent"], ["secrets", "variables"], ["automations", "schedules"], ["nonsense", "agent"]]) {
+  for (const [legacy, page] of [["general", "agent"], ["runtime", "agent"], ["network", "agent"], ["resume", "diagnostics"], ["secrets", "variables"], ["automations", "schedules"], ["nonsense", "agent"]]) {
     assert.equal(parseSettingsMetadata(buildChannelSettingsView(snapshot, state, { tab: legacy }).private_metadata).tab, page, legacy);
   }
 });
@@ -249,19 +246,43 @@ test("each Settings page renders its part of the channel setup", () => {
 
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
   const forms = elements(mcp).filter((element) => element.action_id === "cg_channel_settings_form_open").map((element) => parseActionValue(element.value).f);
-  assert.deepEqual(forms, ["composio:c", "make:c", "toolbox:c"], "Composio, Make toolbox and Toolbox each edit in place");
-  for (const heading of ["Composio", "Make toolbox", "Toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
+  assert.deepEqual(forms, ["composio:c", "make:c"], "Composio and Make toolbox edit in place");
+  for (const heading of ["Composio", "Make toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
 });
 
-test("Agent shows this thread's resume command, escaped, and nothing outside a thread or session", () => {
-  const view = buildChannelSettingsView(snapshot, state, { tab: "agent" });
+test("Diagnostics shows this thread's resume commands for the gateway host and for a shell inside the container, escaped", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "diagnostics" });
   const text = rendered(view);
-  // The command is escaped like every other value in this modal, so a channel-configurable work
-  // folder can never smuggle Slack control markup into the card.
-  assert.match(text, /Resume in a terminal/);
-  assert.match(text, /```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
-  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
-  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
+  assert.match(text, /Resume this thread/);
+  assert.match(text, /994f6108-b405-4bbe-b96d-1641051df2fa/);
+  // Both forms, each labelled with WHERE it runs. The command is escaped like every other value
+  // in this modal, so a channel-configurable work folder can never smuggle Slack control markup.
+  assert.match(text, /On the gateway machine\*\\n```podman exec -it -w .*settings-channel.* cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
+  assert.match(text, /Inside the container\*\\n```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
+  assert.match(text, /SSH session into the channel, or VS Code attached to it/);
+  assert.match(text, /include-non-interactive/, "explains why the native pickers show nothing");
+  assert.match(text, /admin runtime/);
+  // The Agent page no longer carries the command; Diagnostics owns it.
+  assert.doesNotMatch(rendered(buildChannelSettingsView(snapshot, state, { tab: "agent" })), /Resume in a terminal|podman exec/);
+
+  // A host runtime has one form only: the plain shell line, labelled for the gateway machine.
+  const hostOnly = { ...snapshot.resume, command: snapshot.resume.shellCommand, hostCommand: "" };
+  const host = rendered(buildChannelSettingsView({ ...snapshot, resume: hostOnly }, state, { tab: "diagnostics" }));
+  assert.doesNotMatch(host, /On the gateway machine|Inside the container|podman exec/);
+  assert.match(host, /In a terminal\*\\n```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108/);
+
+  // An admin-lane session viewed by a non-admin: facts, no command, and the reason.
+  const locked = rendered(buildChannelSettingsView({ ...snapshot, resume: { ...snapshot.resume, command: "", shellCommand: "", hostCommand: "" } }, state, { tab: "diagnostics" }));
+  assert.match(locked, /994f6108-b405-4bbe-b96d-1641051df2fa/);
+  assert.match(locked, /administrator runtime/);
+  assert.doesNotMatch(locked, /claude --resume/);
+
+  // No session yet, and outside a thread: the page says so and shows no command.
+  assert.match(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, sessionId: "", command: "" } }, state, { tab: "diagnostics" })), /no session yet/);
+  assert.match(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "diagnostics" })), /from a reply inside a thread/);
+  for (const resume of [{ inThread: true, sessionId: "", command: "" }, { inThread: false, command: "" }]) {
+    assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "diagnostics" })), /--resume/);
+  }
 });
 
 test("Agent edits the channel default and the thread pin in place, one row of dropdowns per scope", () => {
@@ -285,10 +306,10 @@ test("Agent edits the channel default and the thread pin in place, one row of dr
     [CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID, { scope: "thread", field: "model" }],
   ]) assert.deepEqual(runtimeSelectTarget(actionId), expected);
   assert.equal(runtimeSelectTarget(CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID), null);
-  // A member under a runtime-change policy reads the values instead.
-  const locked = buildChannelSettingsView(snapshot, state, { tab: "agent", canEditRuntime: false });
-  assert.equal(locked.blocks.some((block) => String(block.block_id || "").startsWith("cg_runtime_")), false);
-  assert.match(rendered(locked), /limits engine changes to admins/);
+  // No option turns the pickers off: every participant who may open Settings gets them.
+  const member = buildChannelSettingsView(snapshot, state, { tab: "agent" });
+  assert.equal(member.blocks.some((block) => String(block.block_id || "").startsWith("cg_runtime_")), true);
+  assert.doesNotMatch(rendered(member), /limits engine changes to admins/);
 });
 
 test("Agent shows only the channel row until Settings is opened from a thread", () => {
@@ -338,14 +359,12 @@ test("connection editor never prefills saved credentials and parses only newly s
   const submitted = {
     state: { values: {
       [CONNECTION_COMPOSIO_BLOCK_ID]: { [CONNECTION_COMPOSIO_ACTION_ID]: { value: "new-composio" } },
-      [CONNECTION_TOOLBOX_BLOCK_ID]: { [CONNECTION_TOOLBOX_ACTION_ID]: { value: "new-toolbox" } },
       [CONNECTION_MAKE_URL_BLOCK_ID]: { [CONNECTION_MAKE_URL_ACTION_ID]: { value: "https://eu1.make.celonis.com/mcp/server/abc" } },
       [CONNECTION_MAKE_KEY_BLOCK_ID]: { [CONNECTION_MAKE_KEY_ACTION_ID]: { value: "new-make-key" } },
     } },
   };
   assert.deepEqual(readConnectionsForm(submitted), {
     composioToken: "new-composio",
-    toolboxToken: "new-toolbox",
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/abc",
     makeToolboxKey: "new-make-key",
   });
@@ -436,13 +455,11 @@ test("runtime mutation validation rejects cross-engine models and normalizes def
 test("blank connection inputs preserve stored tokens while explicit values rotate only their own fields", () => {
   const current = {
     composioToken: "old-composio",
-    toolboxToken: "old-toolbox",
     makeToolboxUrl: "https://eu1.make.celonis.com/mcp/server/current",
     makeToolboxKey: "old-make-key",
   };
   const unchanged = connectionSettingsPatch(current, {
     composioToken: "",
-    toolboxToken: "",
     makeToolboxUrl: current.makeToolboxUrl,
     makeToolboxKey: "",
   });
@@ -451,12 +468,10 @@ test("blank connection inputs preserve stored tokens while explicit values rotat
 
   const rotated = connectionSettingsPatch(current, {
     composioToken: "new-composio",
-    toolboxToken: "",
     makeToolboxUrl: current.makeToolboxUrl,
     makeToolboxKey: "",
   });
   assert.equal(rotated.patch.composioToken, "new-composio");
-  assert.equal(rotated.patch.toolboxToken, undefined);
   assert.deepEqual(rotated.changed, ["Composio"]);
 });
 
@@ -470,7 +485,7 @@ test("Cloud MCP toggles replace one matching selection without duplicating other
   assert.deepEqual(cloudSelectionsAfterToggle([current[1]], "codex", "tool-group:github", { activate: true, selection: github }), [current[1], github]);
 });
 
-test("the Resume Session tab renders the live session resolved from the store", async () => {
+test("the Diagnostics page renders the live session resolved from the store, in both command forms", async () => {
   const { resolveResumeSession } = await import("../src/slack/resume-session.js");
   const { saveSession, clearSession } = await import("../src/gateway/sessions.js");
   await store.ensureRoot();
@@ -485,14 +500,22 @@ test("the Resume Session tab renders the live session resolved from the store", 
   assert.equal(resume.sessionId, "resume-session-id");
   assert.equal(resume.engine, "codex");
   assert.match(resume.command, /resume-session-id/);
-  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "agent" }));
+  assert.equal(resume.runtimeScope, "project");
+  // The shell form is the engine's own line in the channel folder — what a shell inside the
+  // container runs; the host form, when the runtime wraps it, is the recommended `command`.
+  assert.equal(resume.shellCommand, `cd ${JSON.stringify(resume.workDir)} && codex exec resume resume-session-id`);
+  assert.ok(resume.command === resume.shellCommand ? resume.hostCommand === "" : resume.hostCommand === resume.command, "hostCommand is the wrapped form or empty");
+  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "diagnostics" }));
   assert.match(view, /resume-session-id/);
-  assert.match(view, /Resume in a terminal/);
+  assert.match(view, /Resume this thread/);
+  assert.match(view, /codex exec resume resume-session-id/);
 
   // A cleared session leaves no command behind, and no thread means nothing to resume at all.
   await clearSession(entry.slug, "1700000000.000100");
-  assert.equal((await resolveResumeSession({ entry, meta }, "1700000000.000100")).command, "");
-  assert.deepEqual(await resolveResumeSession({ entry, meta }, ""), { inThread: false, sessionId: "", engine: "", workDir: "", command: "" });
+  const cleared = await resolveResumeSession({ entry, meta }, "1700000000.000100");
+  assert.equal(cleared.command, "");
+  assert.equal(cleared.shellCommand, "");
+  assert.deepEqual(await resolveResumeSession({ entry, meta }, ""), { inThread: false, sessionId: "", engine: "", workDir: "", command: "", shellCommand: "", hostCommand: "", runtimeScope: "" });
 });
 
 test("credential snapshots retain only a safe tail", () => {
@@ -502,6 +525,7 @@ test("credential snapshots retain only a safe tail", () => {
 });
 
 test("Settings and secrets admit authorized members and guests, but Cloud MCP requires a current admin", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
   await store.ensureRoot();
   const entry = await store.upsertChannelEntry("C_SETTINGS_AUTH", {
     name: "settings-auth",
@@ -544,10 +568,13 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
     // that scope reaches every conversation in the deployment.
+    // Nothing here gates the runtime pickers: any participant may pick the harness, license, model
+    // and effort. What a member cannot do is change which harnesses the channel approves.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
+      canEnableAdmin: false, canApproveHarnesses: false, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
       canManageCustomMcp: false, canEditAccess: false,
     });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canApproveHarnesses, true);
     assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);
   }
   await store.setUser(args.userId, { approved: false });
@@ -594,7 +621,7 @@ test("DM Settings has a mode dropdown (Admin only for admins) and independent Au
   assert.deepEqual(mode.options.map((entry) => entry.text.text), ["Read-only", "Worker", "Admin"]);
   assert.equal(mode.initial_option.value, "admin");
   const flags = byActionId(admin, "cg_channel_settings_dm_flags");
-  assert.deepEqual(flags.options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
+  assert.deepEqual(flags.options.map((entry) => entry.value), ["autoMode", "cleanMode", "skillRuntimeSwap"]);
   assert.deepEqual(flags.initial_options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
   const member = buildChannelSettingsView({ ...data, mode: { autoMode: true } }, state, { tab: "agent", canEnableAdmin: false });
   assert.equal(byActionId(member, "cg_channel_settings_dm_mode").options.some((entry) => entry.value === "admin"), false);
@@ -630,7 +657,7 @@ test("the runtime tab's thread scope reports the pins in force and the catalogs 
   const clean = await runtimeScopes(slug, meta, base, thread);
   assert.deepEqual(clean.thread.values, { engine: "", model: "", effort: "" });
   assert.equal(clean.thread.pinned, false);
-  assert.equal(clean.thread.inherited.engine, "Follow channel (Claude)");
+  assert.equal(clean.thread.inherited.engine, "Follow channel (Claude Code)");
   assert.equal(clean.thread.inherited.model, "Follow channel (claude-opus-4-8)");
 
   // An unpinned thread whose live session was minted by the other harness keeps running there —
@@ -649,18 +676,18 @@ test("the runtime tab's thread scope reports the pins in force and the catalogs 
   assert.equal(pinned.thread.pinned, true);
   assert.equal(pinned.thread.sessionEngineLabel, "", "an explicit pin needs no explanation");
   assert.notEqual(pinned.thread.inherited.model, "Follow channel (claude-opus-4-8)");
-  assert.equal(pinned.thread.inherited.engine, "Follow channel (Claude)", "the inherit option still names the CHANNEL's engine");
+  assert.equal(pinned.thread.inherited.engine, "Follow channel (Claude Code)", "the inherit option still names the CHANNEL's engine");
   // The channel scope is untouched by any of it.
   assert.deepEqual(pinned.channel.values, { engine: "claude", model: "claude-opus-4-8", effort: "high" });
 });
 
-test("dedicated Codex login shows channel status and only Codex model controls in Slack", async () => {
+test("dedicated Codex login shows status and retains harness selection in Slack", async () => {
   const meta = { channelId: "C_OWN_CODEX", codexAuthSource: "channel", engine: "codex", model: "gpt-5.6-sol", effort: "low" };
   const data = { ...snapshot, runtime: { ...snapshot.runtime, channelLogin: true, channelLoginStatus: "Signed in with ChatGPT", configuredEngineId: "codex", configuredModel: meta.model, configuredEffort: meta.effort, effectiveEngineId: "codex" } };
   const scopes = await runtimeScopes("own-codex-channel", meta, data, state.threadTs);
   const view = buildChannelSettingsView({ ...data, runtime: { ...data.runtime, scopes } }, state, { tab: "agent", canEditRuntime: true });
   assert.match(rendered(view), /this channel's own login · Signed in with ChatGPT/);
-  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || element.action_id === CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID), false);
+  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || element.action_id === CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID), true);
   assert.equal(scopes.channel.values.model, "gpt-5.6-sol");
   assert.equal(scopes.channel.options.models.some((item) => item.value === "gpt-5.6-sol"), true);
 });
@@ -829,14 +856,22 @@ test("native You and MCP pages show the scoped account list beneath Composio and
   const you = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you" });
   const at = (view, text) => view.blocks.findIndex((block) => block.text?.text?.includes(text));
   assert.ok(at(you, "gmail — Work") > at(you, "Composio"));
-  assert.ok(at(you, "gmail — Work") < at(you, "Toolbox"));
   assert.match(rendered(you), /Personal connections|viewer@example.test/);
   const refresh = elements(you).find((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID);
   assert.equal(parseActionValue(refresh.value).u, state.ownerId);
-  const mcp = buildChannelSettingsView({ ...snapshot, composioInventory: { ...inventory, source: "org" } }, { ...state, tab: "mcp" });
-  assert.match(rendered(mcp), /Organization connections/);
+  const mcp = buildChannelSettingsView({ ...snapshot, composioInventory: { ...inventory, source: "channel" } }, { ...state, tab: "mcp" });
+  assert.match(rendered(mcp), /Channel connections/);
+  assert.doesNotMatch(rendered(mcp), /organization account|Fall back to organization tokens/);
   const editing = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you", form: "composio:p" });
   assert.equal(editing.submit.text, "Save");
   assert.equal(elements(editing).some((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID), false);
   assert.doesNotMatch(rendered(editing), /viewer@example.test/);
+});
+
+
+test("Skills page names each channel skill's preferred model", () => {
+  const view = buildChannelSettingsView({ ...snapshot, skills: { ...(snapshot.skills || {}), additional: ["triage", "plain"], channel: ["triage", "plain"], organization: [], templates: [], models: { triage: "gpt-6.1-sol" } } }, state, { tab: "skills" });
+  const text = rendered(view);
+  assert.match(text, /Preferred models: `triage` _\(gpt-6\.1-sol\)_/);
+  assert.doesNotMatch(text, /`plain` _\(/);
 });

@@ -1,3 +1,4 @@
+import { getEmailAccountsEnabled } from '../../config/settings.js';
 import { DEFAULT_TEAMS_ACTIVATION_REACTIONS } from './reactions.js';
 
 // One source for the compact native card and the complete plain-text fallback.
@@ -11,7 +12,7 @@ const QUICK_START = [
   '**Group replies** — To continue, quote the original message or my reply and mention me. A new unquoted message starts a new session.',
 ];
 const SHORTCUTS = [
-  '`/model` — Choose the engine, model and effort.',
+  '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open your settings in a private Teams popup.',
   '`/files` — Open this workspace from the current conversation.',
   '`/stop` — Stop this session’s active and queued work.',
@@ -37,13 +38,16 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/sendfile <path>` — Open a workspace file for download from this conversation.',
       ] },
       { title: 'Your current session', rows: [
-        '`/status` — See the engine, model, effort and active/queued requests.',
-        '`/model` — Open the engine, model and effort picker. Choose a combination and Apply.',
-        '`/model [engine] [model|default]` — Change the runtime directly, subject to policy.',
+        '`/status` — See the harness, model, effort and active/queued requests.',
+        '`/jobs` — List running background jobs.',
+        '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
+        '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
+        '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
+        '`/harnesses [all|entry, …]` — Show what this conversation may run on; an admin changes it.',
         '`/effort [level|default]` — Show or change reasoning effort.',
         '`/stop` or `/cancel` — Stop this session’s active and queued work.',
         '`/clear` — Stop and clear this session. Your next request starts fresh.',
-        'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+        'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
       ] },
     ] },
     { id: 'files', title: 'Files & voice notes', sections: [
@@ -52,7 +56,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '**Personal chat:** uploads download directly. **Channels/groups:** files need allowed drives and Microsoft permissions.',
       ] },
       { title: 'Browse & download', rows: [
-        'Use `/files [folder]` here. Open files launches a Teams window for browsing, previewing text, downloading, editing and uploading, with no separate chat. Binary documents download to open in their application.',
+        'Use `/files [folder]` here. Open files launches a Teams window for browsing, previewing text, downloading, editing and uploading, with no separate chat. Use **Parent folder**, **Root** and **Refresh** to move around. To upload, open the destination folder and select **Upload files**. Binary documents download to open in their application.',
         '`/sendfile <path>` opens a download window from the current channel/group. In an existing bot personal chat, it offers native Accept/Decline for nonempty files up to **10 MB**.',
         'Browser downloads, editing and uploads require the gateway Public URL. Editing and uploading also require write access.',
       ] },
@@ -65,13 +69,13 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       { title: 'Make it yours', rows: [
         '`/settings` opens a private popup for this conversation. **General** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode.',
         '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-        'Use `/model` for enabled engines and providers, including opt-in Qwen. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Resume** shows the available terminal command.',
+        'Use `/model` to choose the harness: Claude Code or Codex. Where a harness has several licenses — ones an admin added, or a dedicated Codex login set in the admin UI → Channel Runtime — the same picker and `/license` choose which to run on; when a license cannot answer, the turn moves to the next one you selected. **Resume** shows the available terminal command.',
       ] },
       { title: 'Variables & connections', rows: [
         '`/secrets` opens Variables. Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
-        'Open **MCPs** in `/settings` to manage conversation connections and **My connections** for your personal Composio or Toolbox token. Enter tokens only in the window. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
+        'Open **MCPs** in `/settings` to manage conversation connections and **My connections** for your personal Composio token. Enter tokens only in the window. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
         'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
-        'Connect a mailbox under `/settings` → **MCPs** → **Email accounts**: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.',
+        ...(getEmailAccountsEnabled() ? ['Connect a mailbox under `/settings` → **MCPs** → **Email accounts**: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.'] : []),
       ] },
       { title: 'Approvals & SSH', rows: [
         'Use the approval card here to Approve, Deny or Request changes. Your current authority is checked. If the card cannot be delivered, retry the original request here; no decision links are sent to a separate chat.',

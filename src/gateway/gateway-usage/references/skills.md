@@ -1,9 +1,17 @@
 # Skills: what is active here, templates, authoring and proposals
 
 Skills are reusable procedures (a `SKILL.md` plus references/scripts) that the gateway keeps in
-its own local **catalog** and materializes into this conversation's folder as real files. You
+its own gateway **catalog** and materializes into this conversation's folder as real files. You
 discover them natively — the always-on list is each skill's name + description; the body loads
 when a skill fires. No token or network call is involved.
+
+**Gateway-owned** skills are managed directly in the catalog (internal owner value `local`). This ownership is independent of personal/channel/organization scope and does not mean unmanaged files installed in an engine skill folder.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## Ongoing changes to a task procedure
 
@@ -51,6 +59,10 @@ applies at once.
 - `add_my_skills` / `remove_my_skills` — carry catalog skills in YOUR runs, in every
   conversation (the personal tier; like starring in a skill library). No approval card.
 - `get_skill_info` — a skill's owner, version, revisions, files and dependencies.
+- `create_my_skill_token` / `list_my_skill_tokens` / `revoke_my_skill_token` — YOUR personal
+  bearer for the catalog's MCP endpoint (laptop Claude Code, Codex, any MCP client). It acts as
+  you — organization skills, the skills of channels that admit you, your personal skills, same
+  edit rules as here — never the library export. Shown once; up to 5 active per person.
 
 ## This channel's skills (any member)
 
@@ -73,8 +85,8 @@ applies at once.
   `update_skill_template` (`add` / `remove`).
 
 None of these show an approval card. Of the admin verbs, only `add_skill_source`, `add_org_skills`,
-`update_skill_template` when it ADDS and `decide_skill_proposal` when it APPROVES post a (durable,
-never-expiring) card; the rest are automatic for an admin (`references/administration.md`).
+`update_skill_template` when it ADDS and `decide_skill_proposal` when it APPROVES anything but a
+channel's own edit post a (durable, never-expiring) card; the rest are automatic for an admin (`references/administration.md`).
 
 ## Authoring
 
@@ -109,6 +121,15 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
   channel skill becomes an organization skill), `"delete"` (remove a shared skill from the
   catalog), `"template"` (add a skill to a template).
 
+## Deciding proposals
+
+- **A channel decides edits of its own skills.** A `change` or `feedback` proposal for a channel
+  skill this gateway can write — usually filed from another conversation — is decided by any
+  member of the channel that owns the skill, from that channel, with no card (the same power as
+  their own `update_skill`). There, `list_skill_proposals` shows them, and `decide_skill_proposal`
+  approves (the change lands as a new revision; announce it) or rejects. A member of any other
+  channel is refused. Everything else below stays an admin's.
+
 ## Admins
 
 - `list_skill_proposals` / `decide_skill_proposal` — review pending proposals in the thread
@@ -120,7 +141,8 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
   following it is affected on its next message.
 - Of the organization-wide admin tools, the four that push content into every conversation
   (`add_skill_source`, `add_org_skills`, `update_skill_template` when it ADDS,
-  `decide_skill_proposal` when it APPROVES — a proposal's text is written by someone else)
+  `decide_skill_proposal` when it APPROVES anything but a channel's own edit — a proposal's text is
+  written by someone else)
   **always** show a durable Approve/Deny card that never expires; end your turn and the gateway
   applies the call on the admin's click. Auto mode and admin mode do NOT skip it. The rest
   (removals, rejections, sources' settings and sync, governance, exclusion, `set_skill_scope`,
@@ -133,7 +155,7 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
 - `set_skill_governance` — enable/disable a catalog skill, approve it for organization-wide
   discovery, or make it mandatory. Mandatory implies enabled and discoverable.
 - `set_skill_excluded` — hide a synced/bundled skill from the catalog (it stays hidden across syncs) or bring it back.
-- `publish_skill` (managers too) — push a local skill to the configured Git repository now.
+- `publish_skill` (managers too) — push a gateway-owned or writable publishing-repository skill to the configured Git repository now.
 - `set_skill_scope` (admins) — move a skill between the shared library and a channel's section
   (`scope: "library"` promotes a customer skill for everyone; the channel it leaves keeps it as
   an explicit grant; `scope: "channel"` keeps it for one customer). The files move in the

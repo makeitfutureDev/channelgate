@@ -68,12 +68,12 @@ test("policyDiff reports only the policy keys that actually changed", () => {
 
 test("policyDiff can never carry a token, an env value, or any other non-policy field", () => {
   const changes = policyDiff(
-    { composioToken: "comp_old_1111", toolboxToken: "tb_old", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, memory: false, allowNetwork: false },
-    { composioToken: "comp_new_2222", toolboxToken: "tb_new", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, memory: true, allowNetwork: true },
+    { composioToken: "comp_old_1111", makeToolboxKey: "mk_old", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-old" } }, memory: false, allowNetwork: false },
+    { composioToken: "comp_new_2222", makeToolboxKey: "mk_new", env: { SUPABASE_ACCESS_TOKEN: { value: "sk-new" } }, memory: true, allowNetwork: true },
   );
   assert.deepEqual(Object.keys(changes), ["allowNetwork"], "only the allowlisted policy key is diffed");
   const blob = JSON.stringify(changes);
-  for (const secret of ["comp_old_1111", "comp_new_2222", "tb_old", "tb_new", "mk_old", "mk_new", "sk-old", "sk-new"]) {
+  for (const secret of ["comp_old_1111", "comp_new_2222", "mk_old", "mk_new", "sk-old", "sk-new"]) {
     assert.ok(!blob.includes(secret), `${secret} must never reach an audit row`);
   }
 });
@@ -146,6 +146,20 @@ test("an environment-secret change stays in its own name-only audit and never du
 });
 
 // ── The MCP twins ─────────────────────────────────────────────────────────────────────────────
+
+test("the network tool description distinguishes proxy enforcement from direct-host policy", () => {
+  const definitions = new Map();
+  const ctx = ctxFromClaims({ channelId: CHANNEL_ID, slug: entry.slug, authorId: ADMIN_ID, threadKey: "1700000000.000100", principalTrusted: true, engine: "claude" });
+  registerChannelAdmin({ registerTool: (name, definition) => definitions.set(name, definition) }, ctx);
+  const description = definitions.get("set_channel_network").description;
+  assert.match(description, /ordinary proxy-mode containers/i);
+  assert.match(description, /\/sudo direct-host.*advisory.*no OS-level egress cutoff/i);
+  assert.match(description, /legacy open-bridge.*raw sockets.*advisory/i);
+  assert.match(description, /any public host.*no domain allowlist/i);
+  assert.match(description, /off limits.*engine endpoints.*selected connectors/i);
+  assert.match(description, /Private, loopback and cloud-metadata.*never reachable through the proxy/);
+  assert.match(description, /no host credential files or mounts/);
+});
 
 test("the MCP set_channel_network handler logs the change with the Slack author", async () => {
   const tools = new Map();

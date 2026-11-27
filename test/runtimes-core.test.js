@@ -163,7 +163,7 @@ test("paths + settings: install id is stable, socket file sits under the runtime
   assert.equal(s.cli, "auto");
   assert.equal(s.idleMinutes, 10);
   assert.equal(s.maxRunning, 8);
-  assert.equal(s.pidsLimit, 1024);
+  assert.equal(s.pidsLimit, 4096);
   assert.equal(s.hasClaudeOauthToken, false);
   // No kill switch and no default-backend pick: the container is the only runtime there is.
   assert.equal("enabled" in s, false);

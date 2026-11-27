@@ -13,6 +13,24 @@ The overview shows token cost, run counts, tokens, models, conversations, users,
 
 Open **Activity** to examine individual run records and failures. Slack replies also include a compact usage summary for the completed task.
 
+## Subscription limits
+
+Open **Subscriptions** (`/subscriptions`) for provider-reported usage on the Claude and Codex
+subscription logins used by this gateway. Cards show available session, weekly, model-specific,
+review, and additional limits, remaining percentages, reset times, plan names, and reading dates.
+The quotas include activity across the provider account, including activity outside ChannelGate.
+
+The page uses the existing gateway logins. It checks providers at most every five minutes for
+an unchanged login and refreshes automatically while visible. Manual Refresh shares this cache;
+provider rate limiting can extend the cooldown. This read-only page never starts a model turn or
+refreshes login credentials. API-key billing, missing/expired logins and unavailable quota data
+have explicit explanations. A stale reading retains its original timestamp and warning.
+
+These provider usage endpoints may change, and some login scopes may not allow usage checks.
+Use the provider's own usage page to confirm account limits when a card is unavailable. Overview
+continues to report gateway token usage and estimated costs; these estimates are separate from
+subscription quota percentages.
+
 ## Interpret cost correctly
 
 A recorded provider amount and a token-priced estimate are different. Codex does not report its own monetary cost, so its figure uses the gateway's dated rate table and token evidence. An estimate is not an invoice or an amount necessarily charged to a subscription.

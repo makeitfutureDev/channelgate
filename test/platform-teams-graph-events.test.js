@@ -19,6 +19,7 @@ function fixture(options = {}) {
     onMessage: async (...args) => { if (options.failCallback) throw new Error("queue unavailable"); messages.push(args); },
     fetchImpl: async (url, init) => {
       requests.push({ url, ...init });
+      if (init.method === "POST" && url.endsWith("/subscriptions")) await options.duringCreate?.();
       if (fail) return { ok: false, status: fail };
       if (init.method === "DELETE") return { ok: true, status: 204 };
       if (url.includes("/subscriptions")) return { ok: true, status: 200, json: async () => ({ id: "sub-1", expirationDateTime: JSON.parse(init.body).expirationDateTime }) };
@@ -28,7 +29,7 @@ function fixture(options = {}) {
   const row = { conversationId: "teams:19:chat@thread.v2", resource: "/chats/19:chat@thread.v2/messages", context: { conversation: { id: "19:chat@thread.v2" } } };
   const notification = () => ({ subscriptionId: "sub-1", clientState: rows.get(row.conversationId)?.clientState, tenantId: "tenant", changeType: "updated", resource: "chats('19:chat@thread.v2')/messages('123')", resourceData: { id: "123" } });
   async function handle(body, query) {
-    const response = { code: null, mime: null, body: null, status(code) { this.code = code; return this; }, type(mime) { this.mime = mime; return this; }, send(body) { this.body = body; options.onResponseEnd?.(); return this; }, end() { options.onResponseEnd?.(); return this; } };
+    const response = { code: null, mime: null, body: null, headers: {}, status(code) { this.code = code; return this; }, set(name, value) { this.headers[name.toLowerCase()] = value; return this; }, type(mime) { this.mime = mime; return this; }, send(body) { this.body = body; options.onResponseEnd?.(); return this; }, end() { options.onResponseEnd?.(); return this; } };
     await service.handle({ body, query }, response);
     await new Promise(resolve => setImmediate(resolve));
     return response;
@@ -46,7 +47,8 @@ test("Graph creates scoped beta chat subscriptions, no encrypted data or lifecyc
   assert.equal(request.redirect, "error");
   assert.equal(body.includeResourceData, false);
   assert.equal(body.expirationDateTime, "2026-09-09T10:55:00.000Z");
-  assert.equal(body.resource, "/chats/19%3Achat%40thread.v2/messages");
+  assert.equal(body.resource, "/chats/19:chat@thread.v2/messages");
+  assert.equal(row.subscriptionResource, body.resource);
   await f.service.ensure(f.row);
   assert.equal(f.requests.length, 1);
   f.advance(21 * 60_000);
@@ -65,13 +67,93 @@ test("Graph uses stable channel API and permits only replies inside subscribed c
   assert.equal(f.messages.length, 1);
 });
 
+test('subscription JSON preserves literal Teams IDs while message GET paths encode them', async () => {
+  for (const resource of ['/chats/19:example_A@thread.v2/messages', '/teams/team-1/channels/19:example_A@thread.tacv2/messages']) {
+    const f = fixture();
+    const row = await f.service.ensure({ ...f.row, resource });
+    assert.equal(JSON.parse(f.requests[0].body).resource, resource);
+    assert.equal(row.subscriptionResource, resource);
+    assert.equal(row.resource, resource.split('/').map(encodeURIComponent).join('/'));
+    const event = { ...f.notification(), resource: `${resource}/123` };
+    assert.equal((await f.handle({ value: [event] })).code, 200);
+    assert.equal(f.requests[1].url, `https://graph.microsoft.com/${row.apiVersion}${row.resource}/123`);
+    assert.equal(f.messages.length, 1);
+  }
+});
+
+test('successful renewal retains the actual legacy selector metadata and activation cutoffs', async () => {
+  const f = fixture(), first = await f.service.ensure(f.row);
+  const legacy = { ...f.rows.get(f.row.conversationId), subscriptionResource: first.resource };
+  f.rows.set(f.row.conversationId, legacy);
+  f.advance(21 * 60_000);
+  await f.service.renew();
+  const renewed = f.rows.get(f.row.conversationId);
+  assert.equal(f.requests.at(-1).method, 'PATCH');
+  assert.deepEqual(Object.keys(JSON.parse(f.requests.at(-1).body)), ['expirationDateTime']);
+  assert.equal(renewed.subscriptionResource, legacy.subscriptionResource);
+  assert.equal(renewed.subscriptionId, first.subscriptionId);
+  assert.equal(renewed.clientState, first.clientState);
+  for (const key of ['startedAt', 'reactionSnapshotsStartedAt', 'activationReactionsStartedAt', 'activationReactionsVersion', 'alienReactionStartedAt']) assert.equal(renewed[key], first[key], key);
+});
+
+test('subscription recreation corrects a legacy encoded selector without resetting activation cutoffs', async () => {
+  const f = fixture(), first = await f.service.ensure(f.row);
+  const legacy = f.rows.get(f.row.conversationId);
+  legacy.subscriptionResource = legacy.resource;
+  f.rows.set(f.row.conversationId, legacy);
+  f.advance(56 * 60_000);
+  await f.service.renew();
+  const recreated = f.rows.get(f.row.conversationId);
+  assert.equal(JSON.parse(f.requests.at(-1).body).resource, '/chats/19:chat@thread.v2/messages');
+  assert.equal(recreated.subscriptionResource, '/chats/19:chat@thread.v2/messages');
+  for (const key of ['startedAt', 'reactionSnapshotsStartedAt', 'activationReactionsStartedAt', 'activationReactionsVersion', 'alienReactionStartedAt']) assert.equal(recreated[key], first[key], key);
+});
+
 test("Graph validation token is echoed plain text without authenticating or fetching", async () => {
   const f = fixture();
+  await f.service.ensure(f.row); // the subscription creation that makes Graph validate
+  const requests = f.requests.length;
   const response = await f.handle(null, { validationToken: "opaque decoded + token" });
   assert.equal(response.code, 200);
-  assert.equal(response.mime, "text/plain");
+  assert.equal(response.mime, "text/plain; charset=utf-8");
+  assert.equal(response.headers["x-content-type-options"], "nosniff");
+  assert.equal(response.headers["cache-control"], "no-store");
   assert.equal(response.body, "opaque decoded + token");
-  assert.equal(f.requests.length, 0);
+  assert.equal(f.requests.length, requests, "nothing is fetched to answer the challenge");
+});
+
+// Security audit batch 5: the echo is a reflection point, so it is answered only on a genuine
+// validation request — during (or just after) this daemon's own subscription creation, with no
+// notification body — and only for the characters Graph sends.
+test("Graph validation is echoed only during subscription creation, without a body, and never with markup", async () => {
+  const graphToken = "Validation: Testing client application reachability for subscription Request-Id: 2b3c4d5e-0000-4000-8000-1234567890ab";
+  const idle = fixture();
+  const unexpected = await idle.handle(null, { validationToken: graphToken });
+  assert.equal(unexpected.code, 400, "no subscription is being created: nothing is reflected");
+  assert.equal(unexpected.body, null);
+
+  let during = null;
+  const f = fixture({ duringCreate: async () => { during = await f.handle(null, { validationToken: graphToken }); } });
+  await f.service.ensure(f.row);
+  assert.equal(during.code, 200, "the real flow: Graph validates inside the creation request");
+  assert.equal(during.body, graphToken);
+  assert.equal(during.mime, "text/plain; charset=utf-8");
+
+  for (const [token, label] of [
+    ["<script>alert(1)</script>", "markup"], ['a"b', "quote"], ["a&b", "ampersand"], ["line\nbreak", "control character"],
+    ["x".repeat(4097), "over 4096"], [["a", "b"], "repeated parameter"], ["", "empty"],
+  ]) {
+    const res = await f.handle(null, { validationToken: token });
+    assert.equal(res.code, 400, label);
+    assert.equal(res.body, null, `${label} is never echoed`);
+  }
+  const withBody = await f.handle({ value: [f.notification()] }, { validationToken: graphToken });
+  assert.equal(withBody.code, 400, "a notification batch is not a validation request");
+  assert.equal(withBody.body, null);
+  assert.equal((await f.handle({}, { validationToken: graphToken })).code, 200, "an unparsed text/plain body reads as empty");
+
+  f.advance(3 * 60_000);
+  assert.equal((await f.handle(null, { validationToken: graphToken })).code, 400, "the window closes after the grace");
 });
 
 test('callback diagnostics distinguish receipt, authenticated acceptance and rejection without provider secrets', async () => {

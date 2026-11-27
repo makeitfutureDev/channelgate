@@ -32,7 +32,7 @@ A report we can reproduce gets fixed; one we cannot gets questions. Include:
    `version` from `package.json`.
 2. **Operating system** — the Linux distribution and version, and how the daemon runs
    (foreground, systemd system unit, systemd user unit).
-3. **Node version** — `node --version` (the floor is 22.13).
+3. **Node version** — `node --version` (the floor is 24.0.0).
 4. **Engine** — Claude Code or Codex, and the CLI version (`claude --version` / `codex --version`).
 5. **Chat platform** — Slack, Google Chat, or Microsoft Teams, and whether it happened in a DM, a
    channel, or a thread.

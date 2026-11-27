@@ -30,7 +30,7 @@ function fixture(extra = {}) {
   const sent = [], commands = [], replies = [];
   const connector = { api: { sendActivity: async () => ({ messageId: 'file-consent' }) }, updateCard: async value => sent.push(value), openDm: async () => assert.fail('Thread actions must not open a DM'), postCard: async value => { sent.push(value); return { messageId: 'card1' }; } };
   const controls = createTeamsControls({ connector, authorize: async () => ({ root, meta: { allowBash: true }, userIsAdmin: true }), publicUrl: () => 'https://gateway.example', ...extra });
-  const args = text => ({ message: message(text), sessionKey: 'group:root', entry: { slug: 'source' }, meta: { engine: 'claude' }, authorIsAdmin: true, reply: async text => replies.push(text), controls: { command: async input => { commands.push(input.message.text); await input.reply(input.message.text.startsWith('/model') ? 'Session engine: claude' : 'Session effort: default'); return true; } } });
+  const args = text => ({ message: message(text), sessionKey: 'group:root', entry: { slug: 'source' }, meta: { engine: 'claude' }, authorIsAdmin: true, reply: async text => replies.push(text), controls: { command: async input => { commands.push(input.message.text); await input.reply(input.message.text.startsWith('/model') ? 'Session harness: Claude Code' : 'Session effort: default'); return true; } } });
   return { controls, args, sent, commands, replies };
 }
 test('Teams /help returns the practical guide without opening controls or changing runtime', async () => {

@@ -4,15 +4,18 @@ import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth, CHAT_REACTION_EVENT_SCOPES } from "./auth.js";
 import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
 import { createPubSubPuller } from "./pubsub.js";
-import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND } from "./events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND, GOOGLE_CHAT_QUEUED_COMMAND } from "./events.js";
 import { createGoogleChatConnector } from "./connector.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { makeInbound } from "../inbound.js";
-import { getDb, fromJson } from "../../db/index.js";
+import { attachQueuedEventControls } from "../queued-events.js";
+import { GOOGLE_CHAT_QUEUE_LANE } from "./queue-controls.js";
+import { getDb, fromJson, metaGet, metaSet } from "../../db/index.js";
 import { getUsers } from "../../config/store.js";
 import { logEvent } from "../../util/logger.js";
 import { isReactionEventType, parseReactionEvent, googleChatReactionAction, reactionIsFresh, resolveReactor, SUBSCRIPTION_LIFECYCLE_PREFIX } from "./reactions.js";
 import { createWorkspaceEventsClient, createReactionSubscriptions } from "./workspace-events.js";
+import { isMessageUpdateEventType, parseMessageUpdateEvent, editIsFresh, mentionsApp, editedArgumentText, appUserNameFromInteraction } from "./edits.js";
 import { createGoogleJwks, verifyGoogleChatRequest, GOOGLE_OIDC_CERTS_URL, CHAT_SYSTEM_JWKS_URL } from "./verify.js";
 import { createGoogleChatWebhook } from "./webhook.js";
 
@@ -20,8 +23,9 @@ export async function startGoogleChat({
   serviceAccountJson,
   subscription,
   botUserId = "",
-  // A Pub/Sub topic enables reaction controls: Workspace Events subscriptions publish each space's
-  // reaction events there. It must be the topic the pulled `subscription` is attached to.
+  // A Pub/Sub topic enables reaction controls and the edit trigger: Workspace Events subscriptions
+  // publish each space's reaction and message-update events there. It must be the topic the pulled
+  // `subscription` is attached to.
   reactionTopic = "",
   // The HTTP endpoint (`<publicUrl>/api/googlechat/events`) is the connection setting that carries
   // card and button clicks. `appServiceAccount` is the add-on's per-project sender; `projectNumber`
@@ -47,20 +51,47 @@ export async function startGoogleChat({
   await auth.token();
 
   const api = deps.api || createChatApi({ auth });
-  let selfId = String(botUserId || "");
-  const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, log });
+  // The app's own users/NNN id: the configured value, else the one learned earlier (kept across
+  // restarts, because the edit trigger needs it exactly and membership events are rare).
+  const selfKey = `googlechat_bot_user_id:${subscription}`;
+  let selfId = String(botUserId || metaGet(selfKey) || "");
+  const learnSelf = (name, how) => {
+    if (!/^users\/[A-Za-z0-9_-]+$/.test(String(name || "")) || name === selfId) return;
+    selfId = String(name);
+    try { metaSet(selfKey, selfId); } catch (error) { log.warn?.(`[googlechat] bot user id not saved: ${error?.message || error}`); }
+    onBotUserId?.(selfId);
+    log.info?.(`[googlechat] learned bot user id ${selfId} (${how})`);
+  };
+  // The admin-approved app-scope token (chat.app.messages.readonly): reaction subscriptions, the
+  // reacted message, and conversation_history reads. Minted lazily on a SEPARATE auth, so an
+  // unapproved scope fails only those features, never messaging.
+  let eventsAuthCache = deps.eventsAuth || null;
+  const eventsAuth = () => (eventsAuthCache ||= createGoogleAuth({ serviceAccount: serviceAccountJson, scopes: CHAT_REACTION_EVENT_SCOPES }));
+  let historyApiCache = deps.historyApi || null;
+  const historyApi = () => (historyApiCache ||= createChatApi({ auth: eventsAuth() }));
+  const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, historyApi, log });
   const seenThreads = createSeenThreads();
   const namespace = `googlechat:${subscription}`;
   const controlNamespace = `googlechat-controls:${subscription}`;
-  const isControl = event => event.type === 'card'
+  const isControl = event => {
     // Stop and Tick bypass the session queue like /stop, so they reach a turn while it runs.
-    || (event.type === 'reaction' && event.action !== 'engage')
-    || GOOGLE_CHAT_CONTROL_COMMAND.test(messageCommandText(event.message, { appCommand: event.appCommand }));
+    if (event.type === 'card' || (event.type === 'reaction' && event.action !== 'engage')) return true;
+    // A fork's opening request is a request in its new thread, whatever its text says.
+    if (event.fork) return false;
+    const text = messageCommandText(event.message, { appCommand: event.appCommand });
+    return GOOGLE_CHAT_CONTROL_COMMAND.test(text) && !GOOGLE_CHAT_QUEUED_COMMAND.test(text);
+  };
   const inboundFor = ({ event, botId, threadKey }) => {
     if (event.type === 'reaction') return reactionInbound({ event, botId, threadKey });
-    const message = normalizeMessage(event, { botUserId: botId, api });
+    const normalized = normalizeMessage(event, { botUserId: botId, api });
+    // An edit that newly mentions the app runs like a mention, labelled as an edit. A fork's
+    // opening request is addressed to the app by construction (only the daemon writes one).
+    const message = event.edit ? { ...normalized, trigger: 'edit' } : event.fork ? { ...normalized, mentionsBot: true } : normalized;
     return threadKey === undefined ? message : { ...message, threadKey };
   };
+  // The durable id a message or reaction was accepted under (see onEvent / onReactionEvent). A
+  // steer rotates row contents together with their ids, so the payload always names its own row.
+  const queuedEventId = payload => String(payload.event.type === 'reaction' ? payload.event.reaction?.id || '' : payload.event.message?.name || '');
   const queueKey = payload => {
     if (payload.event.type === 'card') {
       const card = normalizeCardEvent(payload.event);
@@ -72,10 +103,13 @@ export async function startGoogleChat({
   const inboxOptions = {
     conversationKey: queueKey,
     handle: async payload => {
+      // A queued message's Steer / Cancel card retires once its message starts on its own.
+      if (payload.event.type !== 'card') connector.queuedEventStarted?.({ kind: GOOGLE_CHAT_QUEUE_LANE, eventId: queuedEventId(payload) });
       if (payload.event.type === 'card') {
         const card = normalizeCardEvent(payload.event);
         if (card) await onCard?.(card);
       } else if (payload.event.type === 'reaction') await handleReaction(payload);
+      else if (payload.event.fork) await onMessage(inboundFor(payload), { fork: payload.event.fork });
       else await onMessage(inboundFor(payload));
     },
     interrupted: async payload => {
@@ -94,10 +128,45 @@ export async function startGoogleChat({
     },
     log,
   };
+  // Sessions a thread fork is copying (src/platforms/googlechat/thread-forks.js): their queued
+  // messages wait in SQLite, holding no run slot, until the copy is taken. Control commands
+  // (/stop, /status, card clicks) have their own lane and are never held.
+  const sessionHolds = new Map();
   const inbox = deps.inbox || (deps.createInbox || createDurableInbox)({
     ...inboxOptions, namespace,
     queuedNamespace: payload => isControl(payload.event) ? controlNamespace : null,
+    isReady: key => !sessionHolds.has(key),
   });
+  connector.holdSession = ({ conversationId, sessionKey }) => {
+    const key = JSON.stringify([conversationId, sessionKey]);
+    sessionHolds.set(key, (sessionHolds.get(key) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (sessionHolds.get(key) || 1) - 1;
+      if (left > 0) sessionHolds.set(key, left); else sessionHolds.delete(key);
+      inbox.wake?.();
+    };
+  };
+  // A fork's opening request, authored by its requester in the fork's new thread, enters the same
+  // durable intake as a typed message: the same session queue, run slots and restart handling (an
+  // interrupted one is announced, never replayed). Only daemon code reaches this; a Chat event can
+  // never carry `fork`, because parseChatEvent builds every event from named fields.
+  connector.startForkTurn = ({ space, spaceName = '', threadKey, messageId, sender = {}, text, fork }) => {
+    if (!isSpaceName(space) || !isThreadName(threadKey) || !threadKey.startsWith(`${space}/threads/`)
+      || !isMessageName(messageId) || !messageId.startsWith(`${space}/messages/`) || !sender.email || !fork?.id) {
+      throw new Error('A fork turn needs its space, new thread, request message and requester.');
+    }
+    const event = { type: 'message', fork,
+      space: { name: space, displayName: spaceName || space, spaceType: 'SPACE' },
+      message: { name: messageId, text: String(text || ''), argumentText: String(text || ''), thread: { name: threadKey }, threadReply: false,
+        createTime: new Date().toISOString(), annotations: [],
+        sender: { name: /^users\/[A-Za-z0-9_-]+$/.test(String(sender.name || '')) ? sender.name : '', email: sender.email, displayName: sender.displayName || sender.email, type: 'HUMAN' } } };
+    const accepted = acceptMessage({ event, id: messageId, threadKey });
+    if (!accepted?.accepted) throw new Error('The fork\'s opening request could not be queued.');
+    return accepted;
+  };
   const controlInbox = deps.controlInbox || (deps.createInbox || createDurableInbox)({
     ...inboxOptions, namespace: controlNamespace, concurrencyGroup: "platform-controls",
   });
@@ -106,7 +175,7 @@ export async function startGoogleChat({
     handle: async ({ payload, eventId, position }) => {
       const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(namespace, eventId);
       const message = payload.event.type === 'reaction' ? await resolvedReaction(payload, { quiet: true }) : inboundFor(payload);
-      if (message && isQueued()) await onMessage(message, { queuedNoticeOnly: true, position, isQueued });
+      if (message && isQueued()) await onMessage(message, { queuedNoticeOnly: true, position, isQueued, queuedEvent: { kind: GOOGLE_CHAT_QUEUE_LANE, eventId } });
     },
     // Queue notices have no engine effects; an interrupted, obsolete position can be omitted.
     log,
@@ -141,10 +210,12 @@ export async function startGoogleChat({
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   };
 
+  // The busy-thread Steer / Cancel card names one waiting row of THIS subscription's message lane.
+  attachQueuedEventControls(connector, { namespaces: { [GOOGLE_CHAT_QUEUE_LANE]: namespace },
+    authorOf: row => inboundFor(fromJson(row.data, {})).userId || '' });
+
   // ── Reactions (Google Workspace Events) ───────────────────────────────────────────────────
   const reactionsEnabled = Boolean(reactionTopic);
-  let eventsAuthCache = deps.eventsAuth || null;
-  const eventsAuth = () => (eventsAuthCache ||= createGoogleAuth({ serviceAccount: serviceAccountJson, scopes: CHAT_REACTION_EVENT_SCOPES }));
   const eventsApi = reactionsEnabled ? deps.eventsApi || createChatApi({ auth: eventsAuth() }) : null;
   const subscriptions = reactionsEnabled ? deps.reactionSubscriptions || createReactionSubscriptions({
     client: deps.eventsClient || createWorkspaceEventsClient({ auth: eventsAuth() }),
@@ -266,9 +337,72 @@ export async function startGoogleChat({
     }
   }
 
+  // ── Edit trigger (Workspace Events message updates, same subscriptions as reactions) ────────
+  // "Newly mentioned" is judged against the durable inbox: a message already accepted under its
+  // own name — its original mention, or an earlier edit — never runs again, whatever the edit.
+  const handledMessage = name => Boolean(getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace IN (?, ?) AND event_id = ?")
+    .get(namespace, controlNamespace, name));
+  function withdrawEdit(item) {
+    // The mention was edited away before its queued run started: that run is withdrawn. The row is
+    // deleted rather than tombstoned so adding the mention back later still counts as new. An
+    // update older than the queued edit (out-of-order delivery) withdraws nothing.
+    const at = Date.parse(item.lastUpdateTime);
+    for (const ns of [namespace, controlNamespace]) {
+      const row = getDb().prepare("SELECT data FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(ns, item.messageName);
+      const queued = row ? fromJson(row.data, {}).event : null;
+      if (!queued?.edit || !(Date.parse(queued.message?.lastUpdateTime) < at)) continue;
+      getDb().prepare("DELETE FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").run(ns, item.messageName);
+      log.info?.(`[googlechat] mention removed from ${item.messageName} before its edit trigger ran; withdrawn`);
+    }
+  }
+  let warnedNoSelf = false;
+  async function onMessageUpdateEvent(envelope, attributes) {
+    if (!reactionsEnabled) return;
+    for (const item of parseMessageUpdateEvent(envelope, attributes)) {
+      // The app's own progress edits arrive here too (about once a second while a turn runs) and
+      // are dropped before any lookup; so is every other app's, and any update no person made.
+      if (item.senderType === 'BOT' || !item.senderName || !item.lastUpdateTime) continue;
+      if (!selfId) {
+        // Without the app's own id a mention of THIS app cannot be told from another app's.
+        if (!warnedNoSelf) { warnedNoSelf = true; log.warn?.('[googlechat] edit trigger inactive until the app\'s users/… id is known (mention the app once, or set Bot user ID)'); }
+        continue;
+      }
+      if (!mentionsApp(item.message, selfId)) { withdrawEdit(item); continue; }
+      if (!editIsFresh(item)) {
+        log.info?.(`[googlechat] stale edit of ${item.messageName} ignored`);
+        continue;
+      }
+      if (handledMessage(item.messageName)) continue;
+      // The payload names the sender as users/NNN only; the person is resolved through the same
+      // recorded mapping reactions use. Unknown or ambiguous resolves to nobody.
+      const users = await getUsers();
+      const userId = resolveReactor(item.senderName, users);
+      if (!userId) {
+        log.info?.(`[googlechat] edit by unmapped user ${item.senderName} ignored`);
+        await logEvent('googlechat_edit_unmapped', { platform: 'googlechat', channel: `gchat:${item.space}`, sender: item.senderName });
+        continue;
+      }
+      const space = await spaceFor(item.space).catch(error => { if ([403, 404].includes(error?.status)) return null; throw error; });
+      if (!space || space.name !== item.space) continue;
+      // A DM already answered the message itself; an edit there is not a new request.
+      if (/^(DIRECT_MESSAGE|DM)$/i.test(space.spaceType || space.type || '')) continue;
+      const threadName = String(item.message.thread?.name || '');
+      if (threadName && (!isThreadName(threadName) || !threadName.startsWith(`${item.space}/threads/`))) continue;
+      const message = { ...item.message, argumentText: editedArgumentText(item.message, selfId),
+        sender: { ...item.message.sender, email: userId, displayName: users[userId]?.name || userId } };
+      const event = { type: 'message', edit: true, message, space };
+      const normalized = normalizeMessage(event, { botUserId: selfId, seen: seenThreads, api });
+      log.info?.(`[googlechat] edit of ${item.messageName} newly mentions the app; accepted`);
+      acceptMessage({ event, id: item.messageName, threadKey: normalized.threadKey });
+    }
+  }
+
   async function onEvent(envelope, attributes, metadata = {}) {
     const ceType = String(attributes?.["ce-type"] || "");
     if (isReactionEventType(ceType)) return onReactionEvent(envelope, attributes);
+    // Only Workspace Events emit message updates (there is no interaction event for an edit).
+    // Routed before parseChatEvent, which would otherwise read `{ message }` as a NEW message.
+    if (isMessageUpdateEventType(ceType)) return onMessageUpdateEvent(envelope, attributes);
     if (ceType.startsWith(SUBSCRIPTION_LIFECYCLE_PREFIX)) {
       log.info?.(`[googlechat] reaction subscription lifecycle event ${ceType.slice(SUBSCRIPTION_LIFECYCLE_PREFIX.length)}`);
       subscriptions?.reconcile();
@@ -279,11 +413,7 @@ export async function startGoogleChat({
       // The app's own users/NNN id, learned the first time it is added to a space. It is what makes
       // mention detection exact rather than "any bot mention counts".
       const member = event.membership?.member || {};
-      if (member.type === "BOT" && member.name && member.name !== selfId) {
-        selfId = String(member.name);
-        onBotUserId?.(selfId);
-        log.info?.(`[googlechat] learned bot user id ${selfId}`);
-      }
+      if (member.type === "BOT") learnSelf(member.name, "added to a space");
       subscriptions?.reconcile();
       return;
     }
@@ -317,7 +447,14 @@ export async function startGoogleChat({
       || (threadName && (!isThreadName(threadName) || !threadName.startsWith(`${space}/threads/`)))) return;
     const id = String(event.message?.name || metadata.messageId || createHash("sha256").update(JSON.stringify(envelope)).digest("hex"));
     const message = normalizeMessage(event, { botUserId: selfId, seen: seenThreads, api });
-    const payload = { event, botId: selfId, threadKey: message.threadKey };
+    if (!selfId) learnSelf(appUserNameFromInteraction(event.message, { kind: message.kind }), "named in a message sent to the app");
+    return acceptMessage({ event, id, threadKey: message.threadKey });
+  }
+
+  // One intake for every message that may start work — delivered mentions and edit triggers —
+  // so both get the same control lane, session queue and queue-position notice.
+  function acceptMessage({ event, id, threadKey }) {
+    const payload = { event, botId: selfId, threadKey };
     const control = isControl(event);
     const conversationId = queueKey(payload);
     const position = control ? 0 : Number(getDb().prepare("SELECT count(*) AS n FROM inbound_events WHERE namespace = ? AND conversation_id = ? AND status IN ('queued', 'running')")

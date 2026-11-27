@@ -3,12 +3,10 @@
 //   - gateway: the gateway's own control MCP server (schedules + channel admin), scoped to this
 //     channel/author via env — runs on the daemon, outside the container, so it can read/write gateway config.
 //   - composio-user: injected only when the active author has a personal token.
-//   - composio-agent: the agent's OWN account — injected independently with the channel token, or
-//     the org token as fallback (the model never learns which; to it this is simply its account).
+//   - composio-agent: the agent's OWN account — injected independently with the channel's own
+//     token (no organization fallback; never in a DM). To the model this is simply its account.
 //     Both tokens ride x-consumer-api-key headers and are never written to channel storage.
-//   - makeitfuture-toolbox: injected only when a (per-user, channel, or org-default) token is
-//     available, carrying it in the Authorization: Bearer header. (Skills come from the gateway's
-//     own catalog as files — src/gateway/skills — never from an MCP server.)
+//   - make-toolbox: injected for a complete per-channel Make URL/key pair.
 // Selected optional definitions are added by run-engine-mcp.js through the engine adapter.
 // Claude receives explicit safe definitions; ambient user/project settings remain disabled.
 //
@@ -21,7 +19,7 @@
 //
 // RELAYED REMOTES: composio-user
 // and composio-agent in token/endpoint mode always use the daemon socket so membership changes
-// cannot skip human approval. Other header-bearing remotes (the toolboxes) are plain
+// cannot skip human approval. Other header-bearing remotes (Make) are plain
 // `{type:"http", url, headers}` entries on a host target (the engine dials them itself, credential
 // in the file). On an ISOLATED target that file lives in the artifact dir every process in the
 // container can read, so there they become the SAME socket-bridge entry the SDK mode uses, with
@@ -33,7 +31,7 @@
 // still retire a process when a token rotates (src/gateway/run-engine-mcp.js).
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
+import { composioUrl } from "./mcp-catalog.js";
 import { gatewayRoot, runtimeSocketFile } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
@@ -95,25 +93,37 @@ export function composioIdentitiesForRun({ clean = false, principalTrusted = tru
 // shared instruction file without two concurrent authors racing each other's sentence. The prompt
 // is built per run, per author, so there is no shared file to race. Deliberately engine-neutral and
 // content-free: server names and roles only, never a token, an address or an account label.
-export function composioIdentityPreamble({ user = false, agent = false } = {}) {
+export function composioIdentityPreamble({ user = false, agent = false, mode = "personal", sdkUserIds = {} } = {}) {
   const ownership = " These logical identities do not establish the connected service owner; discover account metadata through the selected identity before claiming ownership. The agent identity is not necessarily shared across channels. Matching service owners never authorize substituting identities.";
   // QA-0925 (FSHARE-02): the routing lived only in the gateway-usage guide, and a Codex turn that
   // skipped that page pushed a PDF through the workbench as base64 instead. Every run that has a
   // Composio identity needs the one handoff rule, whichever engine and whichever pages it reads.
   const files = " To hand a file from this folder to a Composio tool that takes a file object (Drive upload, email attachment, …), call `gateway` → `stage_file_for_composio` with `identity: \"user\"` for tools run through `composio-user`, or `identity: \"agent\"` for `composio-agent`; these are the only accepted identity values. Pass its result on unchanged; a tool that only ingests by URL takes a `create_public_file_link` upload link instead. Never push a file's bytes as base64 or chunks through the workbench or another Composio tool to get around staging, including when staging fails or the file is too large.";
+  // Which Composio mode backs the identities, and in SDK mode the user ids they act as — the facts a
+  // run needs to write code against the same connections (gateway-usage composio-scripts.md).
+  const ids = [user && sdkUserIds.user ? `\`composio-user\` = \`${sdkUserIds.user}\`` : "", agent && sdkUserIds.agent ? `\`composio-agent\` = \`${sdkUserIds.agent}\`` : ""].filter(Boolean);
+  const backing = mode === "sdk"
+    ? " Composio mode: SDK — both identities are user ids in the organization's Composio project" + (ids.length ? ` (${ids.join(", ")})` : "") + "; a script in this container reaches the same connections with NO key through the gateway's Composio script relay (this turn's grant line, gateway-usage references/composio-scripts.md)."
+    : " Composio mode: Personal — each identity is its owner's own Composio account behind a consumer key the gateway keeps; code runs in the Workbench, or locally only with a project API key from that same account (gateway-usage references/composio-scripts.md).";
   if (user && agent) {
     return "[Composio identities in THIS run: `composio-user` (the requester's own accounts) and `composio-agent` (the shared agent's own). " +
-      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + files + "]\n\n";
+      "Reads and searches may use either or both identities without asking which account unless the user restricts the account or scope. Writes, sends and other state changes require the intended identity and connected account: reuse an established choice, or ask \"which account?\" if unresolved before mutating; continue independent authorized reads." + ownership + backing + files + "]\n\n";
   }
   if (user) {
     return "[Composio identities in THIS run: `composio-user` only (the requester's own accounts). " +
-      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + files + "]\n\n";
+      "There is no shared agent identity here, so a request for the agent's own accounts (\"your inbox\") has nothing to read — say so and stop." + ownership + backing + files + "]\n\n";
   }
   if (agent) {
     return "[Composio identities in THIS run: `composio-agent` only (the shared agent's connections). " +
-      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + files + "]\n\n";
+      "A request phrased for the person asking (\"my inbox\", \"my calendar\") cannot be served here: say so and stop, do not read `composio-agent` to answer it." + ownership + backing + files + "]\n\n";
   }
   return "";
+}
+
+// One signed SDK-session grant: the session URL the bridge may dial and, when known, the Composio
+// user id that session acts as (the script relay executes as exactly that id).
+export function sdkGrant(kind, endpoint) {
+  return { kind, url: endpoint.url, ...(typeof endpoint.identityId === "string" && endpoint.identityId ? { id: endpoint.identityId } : {}) };
 }
 
 // The per-run MCP config as the JSON string every existing caller writes to a file.
@@ -129,7 +139,7 @@ export async function buildMcpConfig(options = {}) {
  * when there is one — the caller owns one hold on it, see registerRemoteMcps) and `rejectedRemotes` (a remote an
  * isolated run could not be given, `[{ name, reason }]`, for the caller's rejected-MCP note).
  */
-export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, channelId = "", slug = "", authorId = "", threadKey = "", questionThreadKey, sudoSchedule = false, origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
+export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, channelId = "", slug = "", authorId = "", threadKey = "", admissionThreadKey, settingsThreadKey, questionThreadKey, sudoSchedule = false, origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
@@ -141,36 +151,37 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // Same predicate the prompt's identity line is built from — one answer to "which identities does
   // this run have?", never two that can drift apart.
   const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
-  // Composio is always relayed. Other remotes are relayed on isolated targets only. Relayed
+  // Composio and custom MCPs are always relayed. Other remotes use the relay in containers. Relayed
   // names go into the signed claim and their URL + headers into the daemon registry.
   const httpRemotes = {};
   const userRemote = identities.user ? composioHttpTarget(composioUserEndpoint, composioUserToken) : null;
   if (userRemote) httpRemotes["composio-user"] = userRemote;
   const sharedRemote = identities.agent ? composioHttpTarget(composioEndpoint, composioToken) : null;
   if (sharedRemote) httpRemotes["composio-agent"] = sharedRemote;
-  if (toolboxToken) httpRemotes["makeitfuture-toolbox"] = { url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
   if (makeToolboxUrl && makeToolboxKey) httpRemotes["make-toolbox"] = { url: makeToolboxUrl, headers: { Authorization: `Bearer ${makeToolboxKey}` } };
-  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, Bearer
+  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, selected authentication
   // header, `publicOnly` so the relay re-checks the destination on every dial. The prefixes keep
   // them from ever replacing one of the built-in entries above.
-  for (const [name, remote] of Object.entries(customMcpRemotes(customMcps))) {
+  const customRemotes = customMcpRemotes(customMcps);
+  const alwaysRelayed = (name) => ["composio-user", "composio-agent"].includes(name) || Object.hasOwn(customRemotes, name);
+  for (const [name, remote] of Object.entries(customRemotes)) {
     if (!Object.hasOwn(httpRemotes, name)) httpRemotes[name] = remote;
   }
   // Each server is checked on its own before anything is registered. The relay dials https only
   // and carries bounded, single-line text headers; a remote that fails that (a plain-http
-  // COMPOSIO_MCP_URL / TOOLBOX_MCP_URL override, a malformed endpoint header) cannot be relayed,
+  // COMPOSIO_MCP_URL override, a malformed endpoint header) cannot be relayed,
   // and handing its credential to the container instead is exactly what this path exists to stop.
   // So THAT server alone is dropped from the relayed run and REPORTED through the same
   // rejected-MCP note an unadmittable catalog selection gets; the rest of the turn is unaffected.
   const rejectedRemotes = [];
   for (const name of Object.keys(httpRemotes)) {
-    if (!isolated && !["composio-user", "composio-agent"].includes(name)) continue;
+    if (!isolated && !alwaysRelayed(name)) continue;
     const problem = remoteMcpServerProblem(httpRemotes[name]);
     if (!problem) continue;
     delete httpRemotes[name];
     rejectedRemotes.push({ name, reason: problem });
   }
-  const relayedMcps = Object.keys(httpRemotes).filter((name) => isolated || ["composio-user", "composio-agent"].includes(name));
+  const relayedMcps = Object.keys(httpRemotes).filter((name) => isolated || alwaysRelayed(name));
   const jti = randomUUID();
   const gatewayCapability = mintGatewayCapability({
     secret: process.env.CG_APPROVAL_SECRET || "",
@@ -178,14 +189,16 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     slug,
     authorId,
     threadKey,
+    admissionThreadKey,
+    settingsThreadKey,
     questionThreadKey,
     sudoSchedule,
     origin,
     engine: normalizedEngine,
     principalTrusted,
     composioSessions: [
-      ...(principalTrusted && composioUserEndpoint?.mode === "sdk" ? [{ kind: "user", url: composioUserEndpoint.url }] : []),
-      ...(composioEndpoint?.mode === "sdk" ? [{ kind: "channel", url: composioEndpoint.url }] : []),
+      ...(principalTrusted && composioUserEndpoint?.mode === "sdk" ? [sdkGrant("user", composioUserEndpoint)] : []),
+      ...(composioEndpoint?.mode === "sdk" ? [sdkGrant("channel", composioEndpoint)] : []),
     ],
     // Signed, so the bearer alone fixes the tool surface: the socket server has no environment of
     // its own to read these from (src/mcp/socket-server.js).
@@ -264,11 +277,16 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     if (!present) continue;
     if (rejectedRemotes.some((rejected) => rejected.name === name)) continue;
     const entry = httpRemotes[name] ? relayServer(name) : composioServer(endpoint, composioOpts);
-    if (entry) servers[name] = entry;
+    if (entry) {
+      servers[name] = entry;
+      // SDK policy updates keep the session URL but can change its tool schemas. Retire a
+      // warm client when that policy changes, using the same digest channel as remote rotation.
+      if (endpoint?.mode === "sdk" && endpoint.policyDigest) relayDigest[name] = endpoint.policyDigest;
+    }
   }
-  for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customMcpRemotes(customMcps))]) {
+  for (const name of ["make-toolbox", ...Object.keys(customRemotes)]) {
     const remote = httpRemotes[name];
-    if (remote && !servers[name]) servers[name] = isolated ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
+    if (remote && !servers[name]) servers[name] = isolated || alwaysRelayed(name) ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
   }
   return { configJson: JSON.stringify({ mcpServers: servers }), relayDigest, gatewayCapability, relayedMcps, relayJti: relayedMcps.length ? jti : "", rejectedRemotes };
 }

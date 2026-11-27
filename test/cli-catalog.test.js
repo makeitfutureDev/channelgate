@@ -32,6 +32,20 @@ test("normalizeCliIntegrations drops unknown ids, dedupes, and never throws on j
 test("the /secrets suggestions cover every catalog env name", () => {
   const suggested = cliEnvKeys(cliIntegrationIds());
   for (const entry of Object.values(CLI_INTEGRATIONS)) for (const key of entry.envKeys) assert.ok(suggested.includes(key), key);
-  assert.ok(suggested.includes("SUPABASE_ACCESS_TOKEN") && suggested.includes("VERCEL_TOKEN") && suggested.includes("MAKE_API_TOKEN"));
+  assert.ok(suggested.includes("SUPABASE_ACCESS_TOKEN") && suggested.includes("VERCEL_TOKEN") && suggested.includes("MAKE_API_KEY") && suggested.includes("MAKE_ZONE"));
   assert.equal(new Set(suggested).size, suggested.length, "no duplicate suggestions");
+});
+
+test("Make CLI advertises only upstream env names and keeps its zone out of credential swaps", async () => {
+  const { catalogRuleFor, secretExposure } = await import("../src/gateway/egress/catalog-rules.js");
+  assert.deepEqual(CLI_INTEGRATIONS.make.bins, ["make-cli"]);
+  assert.deepEqual(cliEnvKeys(["make"]), ["MAKE_API_KEY", "MAKE_ZONE"]);
+  assert.deepEqual(CLI_INTEGRATIONS.make.credentialHomePaths, [".config/make-cli"]);
+  const rule = catalogRuleFor("MAKE_API_KEY");
+  assert.deepEqual(rule.hosts, ["*.make.com", "make.com"]);
+  assert.ok(rule.headers.includes("authorization"));
+  assert.ok(rule.format.includes("bearer"), "Authorization: Token <key> retains its scheme");
+  assert.equal(catalogRuleFor("MAKE_ZONE"), null, "the hostname must reach the CLI unchanged");
+  assert.equal(secretExposure("MAKE_ZONE").exposure, "readable", "the zone is configuration, not a hidden API secret");
+  assert.ok(catalogRuleFor("MAKE_API_TOKEN"), "existing API-only integrations keep their rule");
 });

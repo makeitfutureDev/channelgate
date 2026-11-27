@@ -40,21 +40,21 @@ function fixture({ meta = {}, isAdmin = true, isDM = false, now = Date.now } = {
       value: legacy ? { ...action.data, ...data } : { action: { type: 'Action.Execute', verb: action.verb, data: { ...action.data, ...data } } } };
     return native.onInvoke(activity);
   };
-  // Choose the engine and press Load models, then Apply the model/effort inputs with that engine.
+  // Choose the harness and press Load models, then Apply the model/effort inputs with that harness.
   const load = (engine, options = {}) => submit({ engine }, { ...options, verb: 'model.load' });
   const apply = async (engine, data, options = {}) => { await load(engine, options); return submit({ engine, ...data }, options); };
   return { native, connector, controls, args, context, sent, replies, submit, load, apply };
 }
-saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { opencode: false } });
+saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { qwen: false } });
 
-test('bare /model matches Settings: Engine, Load models, then only that engine\'s models and efforts', async () => {
+test('bare /model matches Settings: Harness, Load models, then only that harness\'s models and efforts', async () => {
   const f = fixture();
   await saveSession(f.args.entry.slug, f.args.sessionKey, 'retained-codex-session', 'codex');
   await setThreadRuntimeOverrides(f.args.entry.slug, f.args.sessionKey, { model: 'gpt-6-sol', effort: 'high' });
   f.args.message.text = '  /MODEL  ';
   assert.equal(await f.native.onCommand(f.args), true);
   const opened = f.sent[0].card;
-  assert.match(opened.body[1].text, /Current engine: codex; model: gpt-6-sol; effort: high/);
+  assert.match(opened.body[1].text, /Current harness: Codex; model: gpt-6-sol; effort: high/);
   assert.equal(opened.body.find(item => item.id === 'engine').value, 'codex');
   const loadButton = opened.body.find(item => item.type === 'ActionSet').actions[0];
   assert.equal(loadButton.title, 'Load models');
@@ -76,7 +76,7 @@ test('bare /model matches Settings: Engine, Load models, then only that engine\'
   assert.equal(claude.body.find(item => item.id === 'model').value, 'default', 'another engine\'s saved model is not preselected');
   adaptiveCardAttachment(claude);
 
-  // Changing Engine and pressing Apply without Load models loads that engine instead of saving.
+  // Changing Harness and pressing Apply without Load models loads that harness instead of saving.
   await f.submit({ engine: 'codex', model: 'claude-opus-5-5', effort: 'default' });
   const reloaded = f.sent.at(-1).card;
   assert.match(JSON.stringify(reloaded), /nothing was saved/);
@@ -97,7 +97,7 @@ for (const legacy of [false, true]) test(`Apply persists session runtime and rep
   assert.equal(f.context.meta.engine, 'claude');
   assert.equal(f.sent[2].messageId, 'card-1');
   assert.equal(f.sent[2].conversationId, f.args.message.rawConversationId);
-  assert.match(JSON.stringify(f.sent[2].card), /Session engine: codex/);
+  assert.match(JSON.stringify(f.sent[2].card), /Session harness: Codex/);
   const loaded = f.sent[1].card.actions.find(item => item.verb === 'model.save');
   await f.native.onInvoke({ type: 'invoke', name: 'adaptiveCard/action', serviceUrl: 'https://smba.trafficmanager.net/teams/',
     from: { id: f.args.message.userId }, conversation: { id: f.args.message.rawConversationId },
@@ -109,7 +109,7 @@ for (const legacy of [false, true]) test(`Apply persists session runtime and rep
 test('invalid, incomplete, disabled, tampered and foreign submissions never mutate runtime', async () => {
   const f = fixture(); await f.native.onCommand(f.args);
   const failed = result => assert.equal(result.body.value.body[0].text, 'Action could not be completed');
-  failed(await f.load('opencode'));
+  failed(await f.load('qwen'));
   failed(await f.load('codex', { actor: '29:other' }));
   await f.load('codex');
   for (const [data, envelope] of [
@@ -117,7 +117,7 @@ test('invalid, incomplete, disabled, tampered and foreign submissions never muta
     [{ engine: 'codex', model: 'claude-opus-5-5', effort: 'default' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'impossible' }],
     [{ engine: 'codex', model: 'gpt-6-sol' }],
-    [{ engine: 'opencode', model: 'default', effort: 'default' }],
+    [{ engine: 'qwen', model: 'default', effort: 'default' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { actor: '29:other' }],
     [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { conversation: 'a:other' }],
   ]) {
@@ -128,31 +128,26 @@ test('invalid, incomplete, disabled, tampered and foreign submissions never muta
   assert.equal(f.sent.length, 2);
 });
 
-test('runtime policy is checked on open and again on Apply; personal chats can switch', async () => {
-  const denied = fixture({ isAdmin: false }); await denied.native.onCommand(denied.args);
-  assert.match(JSON.stringify(denied.sent[0].card), /restricted to administrators/);
-  assert.equal(denied.sent[0].card.actions.length, 0);
-  const revoked = fixture(); await revoked.native.onCommand(revoked.args);
-  await revoked.load('codex');
-  revoked.context.userIsAdmin = false;
-  assert.match(JSON.stringify((await revoked.submit({ engine: 'codex', model: 'gpt-6-sol', effort: 'high' })).body), /Action could not be completed/);
-  assert.match(JSON.stringify((await revoked.load('claude')).body), /Action could not be completed/);
-  assert.equal(await getThreadEngine(revoked.args.entry.slug, revoked.args.sessionKey), '');
+test('a member who is not an administrator opens the card and applies a runtime; personal chats too', async () => {
+  const member = fixture({ isAdmin: false }); await member.native.onCommand(member.args);
+  assert.doesNotMatch(JSON.stringify(member.sent[0].card), /restricted to administrators/);
+  assert.ok(member.sent[0].card.body.find(row => row.id === 'engine'));
+  assert.deepEqual(member.sent[0].card.actions.map(item => item.verb), ['model.save']);
+  await member.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
+  assert.equal(await getThreadEngine(member.args.entry.slug, member.args.sessionKey), 'codex');
+  assert.equal(await getThreadModel(member.args.entry.slug, member.args.sessionKey), 'gpt-6-sol');
   const dm = fixture({ isAdmin: false, isDM: true }); await dm.native.onCommand(dm.args);
   await dm.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
   assert.equal(await getThreadModel(dm.args.entry.slug, dm.args.sessionKey), 'gpt-6-sol');
 });
 
-test('channel login locks engine and expired/revoked access cannot submit', async () => {
+test('channel login permits engine switching and expired/revoked access cannot submit', async () => {
   const locked = fixture({ meta: { codexAuthSource: 'channel' } }); await locked.native.onCommand(locked.args);
   const lockedCard = locked.sent[0].card;
-  assert.equal(lockedCard.body.find(row => row.id === 'engine'), undefined, 'a locked engine has no Engine input');
-  assert.equal(lockedCard.body.find(row => row.type === 'ActionSet'), undefined, 'and no Load models button');
-  assert.ok(lockedCard.body.find(row => row.id === 'model').choices.slice(1).every(row => !row.value.startsWith('claude-')));
-  assert.deepEqual(lockedCard.actions.map(row => row.verb), ['model.save']);
-  await locked.submit({ engine: 'claude', model: 'sonnet', effort: 'default' });
-  await locked.load('claude');
-  assert.equal(await getThreadEngine(locked.args.entry.slug, locked.args.sessionKey), '');
+  assert.ok(lockedCard.body.find(row => row.id === 'engine'));
+  assert.ok(lockedCard.body.find(row => row.type === 'ActionSet'));
+  await locked.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
+  assert.equal(await getThreadEngine(locked.args.entry.slug, locked.args.sessionKey), 'codex');
   let time = 0; const expired = fixture({ now: () => time }); await expired.native.onCommand(expired.args);
   time = 16 * 60_000;
   assert.match(JSON.stringify((await expired.load('codex')).body), /Action could not be completed/);
@@ -185,7 +180,7 @@ test('typed arguments and reactions keep their existing dispatch; card failures 
   assert.equal(await f.native.onCommand(f.args), false);
   f.args.message.trigger = 'message'; f.args.replyCard = async () => { throw new Error('Cards unavailable'); };
   assert.equal(await f.native.onCommand(f.args), true);
-  assert.match(f.replies[0], /\/model <engine> <model\|default>/);
+  assert.match(f.replies[0], /\/model <harness> <model\|default>/);
 });
 
 test('ingest posts model picker before engine execution and maps quoted card to source group session', async () => {

@@ -87,13 +87,20 @@ export async function refreshDaemonClaudeToken({ source = resolveClaudeLogin(), 
   // to touch anything beside the credential it is renewing.
   const cwd = path.join(gatewayRoot(), "tmp", "claude-relay");
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  const env = buildChildEnv({ HOME: home, CLAUDE_CONFIG_DIR: configDir });
+  if (source.isolatedProvider) {
+    for (const name of Object.keys(env)) {
+      if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_TOKEN$)/.test(name)) delete env[name];
+    }
+  }
   await new Promise((resolve) => {
     let child;
     try {
       child = spawnImpl(
         "claude",
-        ["-p", "Reply with exactly OK", "--max-turns", "1", "--model", RELAY_REFRESH_MODEL, "--output-format", "json", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"],
-        { cwd, env: buildChildEnv({ HOME: home, CLAUDE_CONFIG_DIR: configDir }), stdio: ["ignore", "ignore", "pipe"] },
+        ["-p", "Reply with exactly OK", "--max-turns", "1", "--model", RELAY_REFRESH_MODEL, "--output-format", "json", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config",
+          ...(source.isolatedProvider ? ["--setting-sources", "", "--tools", "", "--no-session-persistence"] : [])],
+        { cwd, env, stdio: ["ignore", "ignore", "pipe"] },
       );
     } catch (e) {
       log?.warn?.(`[claude-relay] host refresh turn could not start: ${e?.message || e}`);

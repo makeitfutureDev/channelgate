@@ -1,3 +1,4 @@
+import { getEmailAccountsEnabled } from '../../config/settings.js';
 // Compact native Cards v2 help and its complete text fallback share the same content.
 // Sections expand in the Chat client and do not submit an action or start an engine.
 const TITLE = 'How to use me';
@@ -8,27 +9,31 @@ const QUICK_START = [
   '**Thread replies** — Stay in the same thread and mention me. In a personal chat, new messages continue your main session; replies in a thread use that thread.',
 ];
 const SHORTCUTS = [
-  '`/model` — Choose the engine, model and effort.',
+  '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open private controls for this conversation.',
   '`/files` — Browse this workspace from the current conversation.',
   '`/stop` — Stop this session’s active and queued work.',
 ];
 const COMMAND_HINT = 'In spaces and groups, mention me before a typed command: `@agent /help`. Registered slash commands selected from the Chat menu address me directly.';
-const TOPICS = [
+const ALL_TOPICS = [
   { title: 'All commands', rows: [
     '`/help` — Show this guide.',
     '`/settings` — Open Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics and You.',
-    '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the engine/model/effort by typing it. `/settings help` lists the options.',
+    '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the harness/license/model/effort by typing it. `/settings help` lists the options.',
     '`/secrets` — Open Variables. Enter credential values only in the protected browser page; stored values are never shown or prefilled.',
     '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
     '`/sendfile <path>` — Open a workspace file for download.',
-    '`/status` — See the engine, model, effort and active/queued requests.',
-    '`/model` — Open the engine, model and effort picker. Choose a combination and Apply.',
-    '`/model [engine] [model|default]` — Change the runtime directly, subject to policy.',
+    '`/status` — See the harness, model, effort and active/queued requests.',
+    '`/jobs` — List running background jobs.',
+    '`/model` — Open the harness, model and effort picker. Choose a combination and Apply.',
+    '`/model [harness] [model|default]` — Change the runtime directly, subject to policy.',
+    '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
+    '`/harnesses [all|entry[, entry…]]` — Show which harnesses and licenses this conversation may run on. An organization admin sets the list (Enterprise); it must keep the license the conversation runs on.',
     '`/effort [level|default]` — Show or change reasoning effort.',
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
-    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+    '`/fork <new message>` — In a threaded space, start a new thread from a copy of this thread’s session and send it that message. It waits for this thread’s current work first. Ask me to “split these topics into forks” to get one approval card for several at once.',
+    'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',
     'In a threaded space, send `/stop`, `/status` or `/clear` in the request’s thread. In a group chat or a space without threads, quote my reply (or your request) when you send it.',
   ] },
   { title: 'Files & voice notes', rows: [
@@ -42,10 +47,10 @@ const TOPICS = [
   { title: 'Settings, connections & access', rows: [
     '`/settings` opens private controls in this conversation. **Agent** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode; **Access** sets who may use and manage the conversation.',
     '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-    'Use `/model` for enabled engines and providers. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Diagnostics** shows the terminal commands that resume this session.',
+    'Use `/model` to choose the harness: Claude Code or Codex. Where a harness has several licenses — ones an admin added, or a dedicated Codex login set in the admin UI → Channel Runtime — the same picker and `/license` choose which to run on; when a license cannot answer, the turn moves to the next one you selected. **Diagnostics** shows the terminal commands that resume this session.',
     '**Variables** uses a protected browser page for secret entry. Google Chat cannot mask text input, so never paste tokens or passwords into a card or message.',
     'Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
-    'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio or Toolbox tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
+    'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
     'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
     'Connect a mailbox from **MCPs** → **Email accounts** on the protected browser page: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.',
     'Use approval controls here to Approve, Deny or Request changes. Your current authority is checked.',
@@ -66,6 +71,7 @@ const TOPICS = [
     'Reminders send a nudge; scheduled tasks wake the agent to do work.',
     'Ask `list schedules` or `delete schedule <id>`. In **Schedules**, see next runs, pause or resume recurring schedules, cancel reminders, or stop loops.',
     'Ask me to `run it in the background`. When this conversation’s mode permits it, the job keeps running after the turn and reports back here when finished.',
+    'A started job shows a **Check status** button; its elapsed time and recent output are shown only to you. `/jobs` lists the running ones.',
   ] },
   { title: 'Reply controls', rows: [
     'The reply menu opens **Files**, **Variables** and **Settings** for this conversation.',
@@ -74,17 +80,29 @@ const TOPICS = [
   ] },
 ];
 
+export function googleChatHelpText() { return [
+  `**${TITLE}**`, INTRO, '**Get started**', ...QUICK_START,
+  '**Useful commands**', ...SHORTCUTS, COMMAND_HINT,
+  ...topics().flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
+].join('\n\n'); }
+// The full text with every optional row, for tests and docs; runtime replies call googleChatHelpText().
 export const GOOGLE_CHAT_HELP_TEXT = [
   `**${TITLE}**`, INTRO, '**Get started**', ...QUICK_START,
   '**Useful commands**', ...SHORTCUTS, COMMAND_HINT,
-  ...TOPICS.flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
+  ...ALL_TOPICS.flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
 ].join('\n\n');
 
 // Card rendering. Each row keeps the exact fallback wording; the card adds Material icons,
 // emoji section headers and a command/description split so the guide scans like a menu.
+// The email accounts row is shown only while the admin switch is on (Settings → Email accounts).
+function topics() {
+  if (getEmailAccountsEnabled()) return ALL_TOPICS;
+  return ALL_TOPICS.map(topic => ({ ...topic, rows: topic.rows.filter(text => !text.startsWith('Connect a mailbox')) }));
+}
+
 const ICONS = {
   '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
-  '/status': 'monitoring', '/model': 'tune', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+  '/status': 'monitoring', '/jobs': 'pending_actions', '/fork': 'call_split', '/model': 'tune', '/license': 'badge', '/harnesses': 'verified_user', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
 };
 const QUICK_ICONS = ['person', 'groups', 'forum'];
 const HEADERS = {
@@ -120,6 +138,6 @@ export function createGoogleChatHelpCard() {
     section('Get started', QUICK_START.map((text, index) => row(text, QUICK_ICONS[index]))),
     section('Useful commands', [...SHORTCUTS.map(text => row(text)),
       decorated(inline(COMMAND_HINT), 'info')]),
-    ...TOPICS.map(topic => section(topic.title, topic.rows.map(text => row(text)), true)),
+    ...topics().map(topic => section(topic.title, topic.rows.map(text => row(text)), true)),
   ] };
 }

@@ -11,9 +11,23 @@ const help = spawnSync(process.execPath, ["--help"], { encoding: "utf8" }).stdou
 const branchFlag = help.includes("--test-coverage-branches") ? "--test-coverage-branches" : "--test-coverage-branch";
 const areas = [
   {
+    name: "incoming-iphone-calls", floor: [90, 80, 70],
+    include: ["src/gateway/voice/apns.ts", "src/gateway/voice/incoming.ts", "src/mcp/tools/incoming-calls.ts"],
+    tests: ["test/incoming-calls.test.ts", "test/incoming-calls-routes.test.ts", "test/incoming-calls-tools.test.ts"],
+  },
+  {
     name: "agent-directory", floor: [98, 83, 95],
-    include: ["src/gateway/agent-directory.js", "src/gateway/agent-directory-refresh.js", "src/slack/agent-directory.js", "src/mcp/tools/agent-directory.js"],
-    tests: ["test/agent-directory.test.js", "test/agent-directory-refresh.test.js", "test/agent-directory-tools.test.js", "test/agent-directory-slack-boot.test.js"],
+    include: ["src/gateway/agent-directory.js", "src/gateway/agent-directory-refresh.js", "src/slack/agent-directory.js", "src/platforms/googlechat/agent-directory.js", "src/mcp/tools/agent-directory.js"],
+    tests: ["test/agent-directory.test.js", "test/agent-directory-refresh.test.js", "test/agent-directory-tools.test.js", "test/agent-directory-slack-boot.test.js", "test/googlechat-agent-mail.test.js"],
+  },
+  {
+    // Channel-to-channel agent mail: a cross-channel write on a person's access. The gate, the
+    // principal and the tool are one boundary, on Slack and on Google Chat.
+    // Function coverage counts the abort/cleanup arrow callbacks that only fire on a live Slack
+    // stream; lines and branches are the meaningful floors here.
+    name: "agent-mail", floor: [95, 70, 55],
+    include: ["src/gateway/agent-mail.js", "src/mcp/tools/agent-mail.js", "src/config/api-principal.js"],
+    tests: ["test/agent-mail.test.js", "test/agent-mail-tools.test.js", "test/googlechat-agent-mail.test.js"],
   },
   {
     name: "plugin-packages", floor: [95, 85, 90],
@@ -89,7 +103,7 @@ const areas = [
       "test/composio-files.test.js",
     ],
   },
-  { name: "web-boundary", floor: [80, 80, 75], include: ["src/web/security.js", "src/web/ip-policy.js"], tests: ["test/web-security.test.js", "test/ssrf.test.js", "test/host-guard.test.js"] },
+  { name: "web-boundary", floor: [80, 80, 75], include: ["src/web/security.js", "src/web/password-hash.js", "src/web/boot-posture.js", "src/web/ip-policy.js"], tests: ["test/web-security.test.js", "test/web-auth-posture.test.js", "test/ssrf.test.js", "test/host-guard.test.js"] },
   // The old include named src/gateway/update-runner.js, which no longer exists — this area had
   // been passing vacuously (exactly the failure the existence check below now refuses). Floors
   // re-based on measured reality for scripts/update-runner.mjs (58/74/57 on 2026-08-08); the

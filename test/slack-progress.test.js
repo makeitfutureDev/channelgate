@@ -186,19 +186,19 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
     "tool progress should use native assistant status"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Opus 4.8 1M"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Opus 4.8 1M (high)"),
     "the compact activity status should identify the resolved model"
   );
   assert.ok(
     calls.some((c) =>
       c[0] === "apiCall" &&
       c[1] === "assistant.threads.setStatus" &&
-      c[2].loading_messages?.[0] === "Opus 4.8 1M · Gathering information…"
+      c[2].loading_messages?.[0] === "Opus 4.8 1M (high) · Gathering information…"
     ),
     "the prominent loading indicator should identify the resolved model"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Opus 4.8 1M"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Opus 4.8 1M (high)"),
     "later activity phases should retain the model"
   );
   assert.equal(calls.some((c) => c[0] === "postMessage"), false, "stream mode should not post activity log");
@@ -257,7 +257,7 @@ test("live progress is posted in a separate first message and never splits the a
   assert.ok(calls.indexOf(cardWrites[0]) < calls.indexOf(answerWrites[0]), "the card is posted before answer text");
   assert.equal(answerWrites.some((call) => call[2]?.chunks), false, "task chunks never enter the answer message");
   assert.equal(cardWrites.some((call) => call[2]?.markdown_text), false, "answer Markdown never enters the card message");
-  assert.equal(answerWrites.map((call) => call[2].markdown_text).join(""), "The uninterrupted answer begins and ends here.\n\n<@U1>");
+  assert.equal(answerWrites.map((call) => call[2].markdown_text).join(""), "The uninterrupted answer begins and ends here.");
 });
 
 test("persistent toolbox appends immediately restore the temporary assistant status", async () => {
@@ -275,7 +275,7 @@ test("persistent toolbox appends immediately restore the temporary assistant sta
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -555,7 +555,7 @@ test("answer-stream appends restore the temporary status on a bounded cadence", 
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -622,10 +622,10 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   await stopPromise;
 
   assert.equal(maxInFlight, 1, "status requests must not race or apply out of order");
-  assert.equal(applied.at(-1).status, "", "no stale activity update may land after the terminal clear");
+  assert.equal(applied.at(-1).status, "active", "native idle must be the last status write");
   const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
   assert.deepEqual(native.map((p) => [p.status, p.username]), [
-    ["processing", "AI agent"], ["active", "GPT-6.1 Sol"],
+    ["processing", "AI agent"], ["active", "GPT-6.1 Sol (medium)"],
   ], "a coalesced terminal clear carries the latest model and cannot be followed by stale processing");
 });
 
@@ -645,11 +645,11 @@ test("an assistant-thread status line carries thinking summaries and the loading
 
   const statusCalls = calls.filter((c) => c[0] === "assistant.threads.setStatus");
   assert.ok(
-    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Opus 4.8"),
+    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Opus 4.8 (high)"),
     "the status should carry the reasoning gist"
   );
   assert.ok(
-    statusCalls.some((c) => (c[1].loading_messages || []).includes("Opus 4.8 · Thinking — weighing the two schema opt…")),
+    statusCalls.some((c) => (c[1].loading_messages || []).includes("Opus 4.8 (high) · Thinking — weighing the two sch…")),
     "the prominent loading line should mirror the live activity, model first"
   );
   assert.equal(statusCalls.at(-1)[1].status, "", "stopping the run clears the temporary status");
@@ -730,18 +730,18 @@ test("stream progress updates its model label when the runtime falls back to Cod
 
   const statuses = calls.filter((c) => c[0] === "assistant.threads.setStatus").map((c) => c[1].status);
   const loadingMessages = calls.filter((c) => c[0] === "assistant.threads.setStatus").flatMap((c) => c[1].loading_messages || []);
-  assert.ok(statuses.includes("is gathering information… · Sonnet 4.6"));
-  assert.ok(statuses.includes("is gathering information… · gpt-5.4"));
-  assert.ok(loadingMessages.includes("Sonnet 4.6 · Gathering information…"));
-  assert.ok(loadingMessages.includes("gpt-5.4 · Gathering information…"));
+  assert.ok(statuses.includes("is gathering information… · Sonnet 4.6 (high)"));
+  assert.ok(statuses.includes("is gathering information… · gpt-5.4 (medium)"));
+  assert.ok(loadingMessages.includes("Sonnet 4.6 (high) · Gathering information…"));
+  assert.ok(loadingMessages.includes("gpt-5.4 (medium) · Gathering information…"));
   const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6"));
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6 (high)"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4 (medium)"));
   assert.equal(native.at(-1).status, "active");
-  assert.equal(native.at(-1).username, "GPT-5.4");
+  assert.equal(native.at(-1).username, "GPT-5.4 (medium)");
 });
 
-test("a reused session starts with an honest generic name, then an engine default if no model is reported", async () => {
+test("a reused session starts with an honest generic name, then the real model and effort", async () => {
   const calls = [];
   const client = {
     apiCall: async (method, payload) => calls.push([method, payload]),
@@ -757,10 +757,12 @@ test("a reused session starts with an honest generic name, then an engine defaul
   await cardReady();
   second.onRuntimeResolved({ engine: "codex" });
   await cardReady();
+  second.onEvent({ kind: "runtime_model", model: "gpt-6.1-sol" });
+  await cardReady();
   await second.stop();
   const names = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, p]) => [p.status, p.username]);
-  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M"], ["active", "Opus 1M"],
-    ["processing", "AI agent"], ["processing", "Codex CLI default"], ["active", "Codex CLI default"]]);
+  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M (high)"], ["active", "Opus 1M (high)"],
+    ["processing", "AI agent"], ["processing", "GPT-6.2 Astra (medium)"], ["processing", "GPT-6.1 Sol (medium)"], ["active", "GPT-6.1 Sol (medium)"]]);
 });
 
 test("completed-run footer carries the fixed labelled menu: Files, Variables, Settings", async () => {
@@ -799,7 +801,7 @@ test("completed-run footer carries the fixed labelled menu: Files, Variables, Se
   assert.equal(stop[1].blocks[2].elements[0].action_id, "cg_reply_feedback");
   const buttons = stop[1].blocks[1].elements;
   // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
   assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const files = buttons.find((button) => button.text.text === "📂 Files");
@@ -832,8 +834,8 @@ test("completed-run footer adds one direct-preview button per referenced workspa
     usage: { input_tokens: 1, output_tokens: 1 },
   });
   const buttons = calls[0].blocks.find((block) => block.type === "actions").elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📄 review spec.md"]);
-  assert.deepEqual(JSON.parse(buttons[3].value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
+  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard", "📄 review spec.md"]);
+  assert.deepEqual(JSON.parse(buttons.at(-1).value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
 });
 
 test("invalid footer blocks finalize the existing stream without duplicating the answer", async () => {
@@ -1379,7 +1381,7 @@ test("progress-report toolbox writes restore the independent temporary assistant
   let visibleStatus = "";
   const streamWrites = [];
   const client = {
-    apiCall: async (_method, payload) => { visibleStatus = payload.status; },
+    apiCall: async (method, payload) => { if (method === "assistant.threads.setStatus") visibleStatus = payload.status; },
     chatStream: () => ({
       ts: "1720000000.000100",
       append: async (payload) => {
@@ -2766,7 +2768,7 @@ test("a jammed assistant status never holds back the answer, and still clears af
   releaseStatus();
   await new Promise((resolve) => setImmediate(resolve));
   const statuses = calls.filter((call) => call[0] === "apiCall").map((call) => call[2].status);
-  assert.equal(statuses.at(-1), "", "the terminal clear is still attempted once Slack answers");
+  assert.equal(statuses.at(-1), "active", "the terminal native clear is still attempted once Slack answers");
 });
 
 // The other half of the same guard: the status queue holds ONE in-flight write and ONE pending
@@ -2846,7 +2848,7 @@ test("an answer stream Slack ends mid-reply is reseeded into one complete, foote
 
   const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
     .map((call) => call[1].markdown_text || "").join("");
-  assert.equal(survivor, `${answer}\n\n<@U1>`, "the replacement message carries the WHOLE answer, deltas included");
+  assert.equal(survivor, answer, "the replacement message carries the WHOLE answer, deltas included");
   const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
   assert.ok(sealed?.[1]?.blocks?.length, "the footer lands on the surviving message");
   assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
@@ -2890,7 +2892,7 @@ test("a stop that finds the answer stream already ended still lands one footered
 
   const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
     .map((call) => call[1].markdown_text || "").join("");
-  assert.equal(survivor, "A complete answer.\n\n<@U1>", "the replacement carries the compiled answer");
+  assert.equal(survivor, "A complete answer.", "the replacement carries the compiled answer");
   const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
   assert.ok(sealed?.[1]?.blocks?.length, "and receives the footer the dead message could not take");
   assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
@@ -3083,7 +3085,7 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     const followups = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload.text || "").join("\n");
     const delivered = native + followups;
     assert.equal(delivered.split("The engine ended without a final message.").length - 1, 1, "authoritative notice is delivered once");
-    assert.equal(delivered.split("<@U_NOTICE>").length - 1, 1, "requester notification belongs to the last message only");
+    assert.equal(delivered.split("<@U_NOTICE>").length - 1, 0, "default replies do not add a requester notification");
     if (mode === "no stream") {
       assert.ok(calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.length), "usage footer still seals the native stream");
     } else {
@@ -3092,7 +3094,7 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
       assert.ok(!calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.some((block) => block.type === "actions")), "the streamed head no longer carries the menu");
       const posts = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload);
       const menu = posts.at(-1)?.blocks?.find((block) => block.type === "actions");
-      assert.deepEqual(menu?.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"], "the last message carries the menu");
+      assert.deepEqual(menu?.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"], "the last message carries the menu");
     }
     if (mode === "no stream") {
       assert.match(native, /ended without a final message/);
@@ -3104,3 +3106,282 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     }
   });
 }
+
+test("native Stop label carries resolved effort and live phases, then clears activity on stop", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_EFFORT_PHASE", "111.222", { authorId: "U1", teamId: "T1" });
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol", effort: "low" });
+  progress.onEvent({ kind: "thinking" });
+  await cardReady();
+  progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
+  await cardReady();
+  progress.onDelta("Answer");
+  await cardReady();
+  progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8", effort: "high" });
+  await cardReady();
+  await progress.stop();
+  const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+  for (const phase of ["Thinking", "Using tools", "Writing"]) {
+    assert.ok(native.some((p) => p.status === "processing" && p.username === `GPT-6.1 Sol (low) · ${phase}`));
+  }
+  assert.equal(native.at(-1).status, "active");
+  assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+});
+
+test("live runner drops an explicit effort on fallback and never says default", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_EFFORT_DEFAULT", "111.222", { authorId: "U1", teamId: "T1" });
+  try {
+    progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8", effort: "high" });
+    await cardReady();
+    progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol" });
+    progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
+    await cardReady();
+    const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+    assert.equal(native.at(-1).username, "GPT-6.1 Sol (medium) · Using tools");
+    const statuses = calls.filter(([method]) => method === "assistant.threads.setStatus").map(([, payload]) => payload);
+    assert.match(statuses.at(-1).status, /gpt-6\.1-sol \(medium\)/);
+    assert.doesNotMatch(JSON.stringify(statuses.at(-1)), /default/);
+    assert.doesNotMatch(JSON.stringify(statuses.at(-1)), /high/);
+  } finally { await progress.stop(); }
+});
+
+test("parsed shell tasks keep native tool status while real subagents coordinate", async () => {
+  const { createStreamConsumer } = await import("../src/engines/stream.js");
+  for (const engine of ["claude", "codex"]) {
+    const calls = [];
+    const client = {
+      apiCall: async (method, payload) => calls.push([method, payload]),
+      chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+      chat: { postMessage: async () => {} },
+    };
+    const progress = startProgress("stream", client, `C_TASK_TYPE_${engine}`, "111.223",
+      { authorId: "U1", teamId: "T1" });
+    progress.onRuntimeResolved({ engine, model: engine === "claude" ? "sonnet" : "gpt-6.1-sol" });
+    const consumer = createStreamConsumer({ onEvent: progress.onEvent });
+    try {
+      if (engine === "claude") {
+        consumer.consume({ type: "stream_event", event: { type: "content_block_start", index: 0,
+          content_block: { type: "tool_use", id: "shell", name: "Bash" } } });
+        consumer.consume({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "shell-task",
+          tool_use_id: "shell", task_type: "local_bash", is_backgrounded: false });
+        consumer.consume({ type: "system", subtype: "task_progress", task_id: "shell-task" });
+      } else {
+        progress.onEvent(progressFromCodexEvent({ type: "item.started",
+          item: { id: "shell", type: "command_execution", command: "sleep 1" } }).event);
+      }
+      await cardReady();
+      const native = () => calls.filter(([method]) => method === "agents.sessions.setStatus")
+        .map(([, payload]) => payload.username || "");
+      assert.ok(native().some((name) => name.includes("Using tools")));
+      assert.ok(native().every((name) => !name.includes("Coordinating agents")));
+      if (engine === "claude") {
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "research",
+          task_type: "local_agent", description: "Research files" });
+        await cardReady();
+        assert.ok(native().some((name) => name.includes("Coordinating agents")));
+      }
+    } finally {
+      await progress.stop();
+    }
+  }
+});
+
+test("failed stream fallback clears native processing after delivery", async () => {
+  let actual = "active";
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => {
+      calls.push(method);
+      actual = method === "agents.sessions.setStatus" ? payload.status : "processing";
+    },
+    chatStream: () => ({ stop: async () => {
+      actual = "processing";
+      throw Object.assign(new Error("user_not_found"), { data: { error: "user_not_found" } });
+    } }),
+    chat: { postMessage: async () => { calls.push("delivered"); return { ts: "2" }; } },
+  };
+  const progress = startProgress("stream", client, "C_CONNECT_FINAL", "1", { authorId: "U1", teamId: "T1" });
+  await progress.finalize({ content: "Done", durationMs: 1, usage: {} });
+  assert.equal(actual, "active");
+  assert.equal(calls.at(-1), "agents.sessions.setStatus");
+  assert.ok(calls.lastIndexOf("agents.sessions.setStatus") > calls.indexOf("delivered"));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Idle flush of the SDK's in-memory answer buffer (SLK-209). The real ChatStreamer holds
+// `markdown_text` until ~256 characters accumulate and answers `null` for every buffered append;
+// only then (or on any `chunks`) does it call Slack. A short sentence ending therefore stayed
+// invisible for as long as the model paused afterwards — the "reply stops mid-word" report. These
+// fakes reproduce exactly that contract: `null` while buffering, a "flush" record when Slack is
+// actually called, the same forced flush on `chunks`.
+function bufferingStreamFakes(calls, { bufferSize = 256 } = {}) {
+  let seq = 0;
+  const make = () => {
+    const id = `stream-${++seq}`;
+    const streamer = {
+      ts: undefined,
+      buffer: "",
+      append: async (payload) => {
+        if (payload?.markdown_text) streamer.buffer += payload.markdown_text;
+        if (streamer.buffer.length >= bufferSize || payload?.chunks) {
+          calls.push(["flush", id, { text: streamer.buffer, chunks: payload?.chunks ?? null }]);
+          streamer.buffer = "";
+          streamer.ts ||= `1720000000.0001${seq}`;
+          return { ok: true };
+        }
+        return null;
+      },
+      stop: async (payload) => {
+        if (payload?.markdown_text) streamer.buffer += payload.markdown_text;
+        calls.push(["stopStream", id, { text: streamer.buffer, blocks: payload?.blocks }]);
+        streamer.buffer = "";
+        streamer.ts ||= `1720000000.0001${seq}`;
+        return { ok: true };
+      },
+    };
+    return streamer;
+  };
+  return {
+    apiCall: refuseStatus(),
+    chatStream: () => make(),
+    chat: {
+      postMessage: async (payload) => calls.push(["postMessage", payload]),
+      update: async () => {},
+      delete: async () => {},
+    },
+  };
+}
+const flushes = (calls, id) => calls.filter((c) => c[0] === "flush" && (!id || c[1] === id));
+
+test("a short answer tail buffered by the SDK is flushed to Slack after a quiet moment", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  progress.onDelta("The migration fai");
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "a short delta is buffered, not sent — batching stays intact");
+
+  t.mock.timers.tick(1_499);
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "no flush before the idle window elapses");
+
+  t.mock.timers.tick(1);
+  await cardReady();
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "the idle window pushes the buffered tail to Slack");
+  assert.equal(flushes(calls)[0][2].text, "The migration fai", "exactly the buffered text, nothing invented");
+
+  // Nothing new arrived: the timer must not keep firing and must never send an EMPTY flush,
+  // which on a helper without a message would create an empty Slack message.
+  t.mock.timers.tick(10_000);
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "an idle stream with an empty buffer is left alone");
+
+  progress.onDelta("led because the schema drifted.");
+  await cardReady();
+  await progress.finalize({ content: "The migration failed because the schema drifted.", durationMs: 1, usage: {} });
+  const stops = calls.filter((c) => c[0] === "stopStream");
+  assert.equal(stops.length, 1, "one answer message is sealed");
+  assert.ok(stops[0][2].text.startsWith("led because the schema drifted."),
+    "the terminal stop carries only the still-buffered remainder");
+  assert.ok(!stops[0][2].text.includes("The migration fai"), "the flushed tail is not sent twice");
+  assert.ok(Array.isArray(stops[0][2].blocks) && stops[0][2].blocks.length, "the footer lands on the sealed answer");
+  assert.equal(calls.filter((c) => c[0] === "postMessage").length, 0, "no classic fallback duplicate");
+});
+
+test("buffered answer text is delivered before a tool call's card row", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  progress.onDelta("Let me check the logs first.");
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "the sentence is buffered");
+
+  progress.onEvent({ kind: "tool_use", name: "Bash", target: "tail logs", id: "t1" });
+  await cardReady();
+  await cardReady();
+  const answerFlush = calls.findIndex((c) => c[0] === "flush" && c[2].text === "Let me check the logs first.");
+  const cardWrite = calls.findIndex((c) => c[0] === "flush" && Array.isArray(c[2].chunks) && c[2].chunks.some((chunk) => chunk?.type === "task_update"));
+  assert.ok(answerFlush >= 0, "the tool call flushes the sentence written before it");
+  assert.ok(cardWrite >= 0, "the tool row still reaches the card");
+  assert.ok(answerFlush < cardWrite, "the reader sees the sentence before the tool row, not after the tool finishes");
+
+  // The flush emptied the buffer; the idle timer must not follow up with an empty flush.
+  t.mock.timers.tick(5_000);
+  await cardReady();
+  assert.equal(flushes(calls).filter((c) => c[2].text.length > 0).length, 1, "exactly one text flush");
+  await progress.stop();
+});
+
+test("an actively streaming answer keeps batching — the idle flush waits for a real pause", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  // Deltas every second for several seconds: each one re-arms the window, so nothing is flushed
+  // early and the SDK's own 256-character batching stays in charge.
+  for (let i = 0; i < 4; i += 1) {
+    progress.onDelta(`word${i} `);
+    await cardReady();
+    t.mock.timers.tick(1_000);
+    await cardReady();
+  }
+  assert.equal(flushes(calls).length, 0, "a live token stream is never flushed per delta");
+
+  t.mock.timers.tick(1_500);
+  await cardReady();
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "the first real pause delivers what was buffered");
+  assert.equal(flushes(calls)[0][2].text, "word0 word1 word2 word3 ");
+
+  // A delta long enough to trip the SDK's own threshold flushes on its own and disarms the timer.
+  progress.onDelta("x".repeat(300));
+  await cardReady();
+  assert.equal(flushes(calls).length, 2, "the SDK threshold still flushes immediately");
+  t.mock.timers.tick(5_000);
+  await cardReady();
+  assert.equal(flushes(calls).length, 2, "nothing left to flush, so the timer stays quiet");
+  await progress.stop();
+});
+
+test("a helper that answers nothing for an append never arms the idle flush", async (t) => {
+  // The SDK says `null` for "buffered". A client whose append returns undefined (every legacy
+  // fake, a nonstandard helper) carries no buffering signal, and a flush against it would be a
+  // spurious API call every window for the life of the turn.
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => { calls.push(["append", payload]); },
+    stop: async (payload) => { calls.push(["stopStream", payload]); },
+  };
+  const client = { apiCall: refuseStatus(), chatStream: () => streamer, chat: { postMessage: async () => {}, update: async () => {} } };
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+  progress.onDelta("short");
+  await cardReady();
+  t.mock.timers.tick(10_000);
+  await cardReady();
+  assert.equal(calls.filter((c) => c[0] === "append").length, 1, "no flush-only append is ever sent");
+  await progress.stop();
+});

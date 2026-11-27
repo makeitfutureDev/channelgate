@@ -376,3 +376,36 @@ test("plugin catalog and revision summaries expose only safe fields and review t
   for (const response of [listed, overview, revision]) assert.doesNotMatch(JSON.stringify(response.json), /secret-plugin-header|secret-plugin-env|"Authorization"/);
   assert.ok(active);
 });
+
+
+test("missing skill manifests appear as read-only library diagnostics with personal grant attribution", async (t) => {
+  const source = tempDir("cg-library-issues-");
+  const previous = process.env.GATEWAY_SKILL_SOURCES;
+  t.after(() => { if (previous == null) delete process.env.GATEWAY_SKILL_SOURCES; else process.env.GATEWAY_SKILL_SOURCES = previous; });
+  await mkdir(path.join(source, "synced", "nested"), { recursive: true });
+  await writeFile(path.join(source, "synced", "nested", "SKILL.md"), "# Child skill\n");
+  await mkdir(path.join(source, "healthy"), { recursive: true });
+  await writeFile(path.join(source, "healthy", "SKILL.md"), "# Healthy\n");
+  await mkdir(path.join(source, "native-plugin", ".claude-plugin"), { recursive: true });
+  await writeFile(path.join(source, "native-plugin", ".claude-plugin", "plugin.json"), '{"name":"native"}');
+  process.env.GATEWAY_SKILL_SOURCES = source;
+  const { setUser } = await import("../src/config/store.js");
+  await setUser("U_FOLDER_ISSUE", { name: "Folder User", skills: ["synced"], composioToken: "never-expose-this" });
+  const all = (await request("/skills/catalog")).json.skills;
+  const issue = all.find((skill) => skill.slug === "synced");
+  assert.equal(issue.missingSkillMd, true);
+  assert.equal(issue.diagnosticOnly, true);
+  assert.deepEqual(issue.folderPaths, [path.join(source, "synced")]);
+  assert.deepEqual(issue.grantedTo, [{ id: "U_FOLDER_ISSUE", name: "Folder User" }]);
+  assert.equal(issue.assigned, true);
+  assert.equal(catalog.getSkill("synced"), null, "diagnostic does not create a grantable catalog entry");
+  assert.ok(!JSON.stringify(all).includes("never-expose-this"));
+  const missing = (await request("/skills/catalog?missingSkillMd=1")).json.skills;
+  assert.deepEqual(missing.map((s) => s.slug), ["synced"]);
+  assert.ok(!(await request("/skills/catalog?missingSkillMd=0")).json.skills.some((s) => s.diagnosticOnly));
+  assert.equal((await request("/skills/catalog?missingSkillMd=1&q=Folder%20User")).json.skills.length, 1);
+  assert.equal((await request("/skills/catalog?missingSkillMd=1&owner=git")).json.skills.length, 0);
+  assert.equal((await request("/skills/catalog/synced/governance", { method: "POST", body: { enabled: true } })).status, 404);
+  await writeFile(path.join(source, "synced", "SKILL.md"), "# Repaired\n");
+  assert.equal((await request("/skills/catalog?missingSkillMd=1")).json.skills.length, 0, "repair is reflected on the next refresh");
+});

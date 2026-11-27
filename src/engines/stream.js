@@ -174,10 +174,15 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   const thinkingBlocks = new Map(); // content-block index → { buf, emittedAt, last }
   const taskAliases = new Map(); // Claude task_id → originating Agent/Task tool_use_id
   const agentIds = new Set(); // stable ids known to represent native subagents
+  const nonAgentTaskIds = new Set(); // explicit Bash/other task identities, including later aliases
   const seenToolUses = new Set();
   let text = "";
   let initialModel = "";
   let primaryModel = "";
+  // Context occupancy of the LATEST top-level provider request: everything the model read for
+  // that call (uncached + cache read + cache write). Not a run total — each call re-reads the
+  // history, so summing calls measures spend, never how full the window is.
+  let contextTokens = 0;
   let toolUseCount = 0; // any attempted tool means replaying the turn could repeat side effects
   const markToolUse = (id) => {
     const key = String(id || `anonymous-${toolUseCount + 1}`);
@@ -211,8 +216,20 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   };
   const emitClaudeTask = (p) => {
     const subtype = String(p?.subtype || "");
+    if (p?.type !== "tool_progress" && (p?.type !== "system" || !subtype.startsWith("task_"))) return false;
+    const id = taskIdFor(p) || (p?.type === "tool_progress"
+      ? String(p.parent_tool_use_id || p.parentToolUseId || "").trim() : "");
+    const identities = [id, p.task_id, p.taskId, p.tool_use_id, p.toolUseId].filter(Boolean).map(String);
+    const taskType = String(p.task_type || p.taskType || "").trim();
+    // SDK task lifecycles also describe foreground/background Bash (local_bash).
+    // Remember that classification: later progress/terminal frames omit task_type and may
+    // introduce a tool-use alias. Missing optional metadata still supports older agent streams.
+    if ((taskType && taskType !== "local_agent" && taskType !== "remote_agent")
+      || identities.some((identity) => nonAgentTaskIds.has(identity))) {
+      for (const identity of identities) nonAgentTaskIds.add(identity);
+      return true;
+    }
     if (p?.type === "tool_progress") {
-      const id = taskIdFor(p) || String(p.parent_tool_use_id || p.parentToolUseId || "").trim();
       if (!id || !agentIds.has(id)) return false;
       const seconds = p.elapsed_time_seconds ?? p.elapsedTimeSeconds;
       onEvent?.({
@@ -225,9 +242,6 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
       });
       return true;
     }
-    if (p?.type !== "system" || !subtype.startsWith("task_")) return false;
-
-    const id = taskIdFor(p);
     if (!id) return true;
     agentIds.add(id);
     const usage = usageFields(p.usage);
@@ -282,10 +296,20 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     // the actual top-level provider message separately: a tiny answer can use fewer tokens
     // than a Haiku title, and neither that title nor a child agent identifies the answering model.
     const primary = p && !p.parent_tool_use_id && !p.parentToolUseId;
-    if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") initialModel = p.model.trim();
+    if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") {
+      initialModel = p.model.trim();
+      // The model the CLI actually runs, so a status label never has to say "CLI default".
+      if (initialModel) onEvent?.({ kind: "runtime_model", model: initialModel });
+    }
     const message = p?.type === "assistant" ? p.message : p?.type === "stream_event" && p.event?.type === "message_start" ? p.event.message : null;
     const model = typeof message?.model === "string" ? message.model.trim() : "";
-    if (primary && !p.error && !message?.error && model && model !== "<synthetic>") primaryModel = model;
+    if (primary && !p.error && !message?.error && model && model !== "<synthetic>") {
+      primaryModel = model;
+      const u = message?.usage || {};
+      const read = [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens]
+        .reduce((sum, value) => sum + (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0), 0);
+      if (read > 0) contextTokens = read;
+    }
     if (emitClaudeTask(p)) return;
     if (p?.type === "assistant") {
       const content = Array.isArray(p?.message?.content) ? p.message.content : (Array.isArray(p?.content) ? p.content : []);
@@ -452,6 +476,14 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     consume,
     get model() {
       return primaryModel || initialModel;
+    },
+    // The model as the session was configured (`claude-opus-4-6[1m]`). Provider messages drop the
+    // variant suffix; the terminal modelUsage keeps it, so the window lookup needs this name.
+    get sessionModel() {
+      return initialModel;
+    },
+    get contextTokens() {
+      return contextTokens;
     },
     get text() {
       return text;

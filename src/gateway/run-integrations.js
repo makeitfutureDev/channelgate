@@ -1,34 +1,30 @@
-// The integrations a run receives — the author's and the channel's Composio identities, the
-// toolbox tokens, the Make toolbox — resolved in ONE place for every caller that prepares an
+// The integrations a run receives — the author's and the channel's Composio identities and
+// the Make toolbox — resolved in ONE place for every caller that prepares an
 // engine environment: a chat turn (run.js) and an interactive SSH session (ssh-session.js), which
 // must be the same environment or "it works in Slack but not over SSH" is the bug. Moved out of
 // run.js verbatim; run.js re-exports the Composio resolvers so their existing importers stay put.
-import { getComposioToken, getToolboxToken, getUser, isAdmin, isApproved } from "../config/store.js";
-import { getComposioMode, getDefaultComposioToken, getDefaultToolboxToken } from "../config/settings.js";
+import { getComposioToken, getUser, isAdmin, isApproved } from "../config/store.js";
+import { getComposioMode } from "../config/settings.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
+import { composioIdentity } from "../ee/composio-sessions.js";
 import { canManage } from "./modes.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { resolveCustomMcpsForRun } from "./custom-mcps.js";
 import { emailAccountSecrets } from "./email-accounts.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
-
-export function resolveTokenSource({ clean, channelToken, userToken, defaultToken, noOrg }) {
-  if (clean) return { token: "", source: "clean" };
-  if (channelToken) return { token: channelToken, source: "channel" };
-  if (userToken) return { token: userToken, source: "user" };
-  if (!noOrg && defaultToken) return { token: defaultToken, source: "org" };
-  return { token: "", source: noOrg ? "none-no-org-default" : "none" };
-}
+import { composioSubject, composioWorkspaceId } from "./composio-workspace.js";
 
 // Composio is intentionally different from the other token-backed integrations: expose the active
 // author's identity and the gateway's shared identity at the same time instead of choosing one.
-// `composio-user` is personal-only; shared `composio` is channel-first, then org-default.
+// `composio-user` is the author's personal token only; the shared `composio-agent` is the
+// channel's own token only. There is no organization-wide default: a channel without its own
+// token has no shared identity.
 // A DM is a private, one-person conversation: there is no shared audience to act on behalf of, so
-// the shared identity (channel token AND the org default) is suppressed there and only the
-// author's personal `composio-user` is injected. Everything else keeps both identities.
-export function resolveComposioConnections({ clean = false, userToken = "", channelToken = "", defaultToken = "", noOrg = false, isDM = false } = {}) {
+// the shared identity is suppressed there and only the author's personal `composio-user` is
+// injected. Everything else keeps both identities.
+export function resolveComposioConnections({ clean = false, userToken = "", channelToken = "", isDM = false } = {}) {
   if (clean) {
     return {
       user: { token: "", source: "clean" },
@@ -41,9 +37,7 @@ export function resolveComposioConnections({ clean = false, userToken = "", chan
     user,
     shared: channelToken
       ? { token: channelToken, source: "channel" }
-      : !noOrg && defaultToken
-        ? { token: defaultToken, source: "org" }
-        : { token: "", source: noOrg ? "none-no-org-default" : "none" },
+      : { token: "", source: "none" },
   };
 }
 
@@ -53,16 +47,21 @@ export async function resolveComposioRuntime({
   workspaceId = "",
   channelId = "",
   authorId = "",
+  // The author's Composio subject when it differs from the gateway id (a Google Chat author is
+  // e-mail in the gateway and `users/<id>` to Composio). Empty means no personal identity.
+  userSubjectId = authorId,
   threadKey = "",
   meta = {},
   authorIsAdmin = false,
   authorIsApproved = false,
   userToken = "",
   channelToken = "",
-  defaultToken = "",
-  noOrg = false,
   isDM = false,
   principalTrusted = true,
+  // A thread that replaced or disconnected the conversation's Composio account (thread-settings.js).
+  // SDK mode has no per-thread account, so the shared identity is withheld for that thread rather
+  // than silently acting as the conversation's.
+  threadComposioOverride = false,
   resolveSdk = resolveSdkSession,
 } = {}) {
   if (clean || mode !== "sdk") {
@@ -70,8 +69,6 @@ export async function resolveComposioRuntime({
       clean,
       userToken: principalTrusted ? userToken : "",
       channelToken,
-      defaultToken,
-      noOrg,
       isDM,
     });
     return {
@@ -91,13 +88,13 @@ export async function resolveComposioRuntime({
     principalTrusted ? resolveSdk({
       workspaceId,
       kind: "user",
-      id: authorId,
+      id: userSubjectId,
       threadKey,
       accessKind: "owner",
       manageConnections: true,
     }) : null,
     // Same rule as personal mode: a DM has no shared audience, so no channel session is minted.
-    isDM
+    isDM || threadComposioOverride
       ? null
       : resolveSdk({
         workspaceId,
@@ -116,12 +113,26 @@ export async function resolveComposioRuntime({
       : userResult.status === "fulfilled"
       ? { token: "", source: "sdk-user", endpoint: userResult.value }
       : { token: "", source: "sdk-unavailable", endpoint: null },
-    shared: isDM
-      ? { token: "", source: "none-dm", endpoint: null }
+    shared: isDM || threadComposioOverride
+      ? { token: "", source: isDM ? "none-dm" : "none-thread", endpoint: null }
       : sharedResult.status === "fulfilled"
         ? { token: "", source: "sdk-channel", endpoint: sharedResult.value }
         : { token: "", source: "sdk-unavailable", endpoint: null },
   };
+}
+
+// The Composio user ids an SDK-mode run's identities act as, for a local SDK script that has to
+// name the same user (gateway-usage references/composio-scripts.md). Non-secret: a workspace id
+// plus a person's or conversation's platform id. Only for identities this run actually received;
+// an id that cannot be formed is left out rather than guessed.
+export function sdkUserIdsFor({ composio, identities, workspaceId = "", userSubjectId = "", channelId = "" } = {}) {
+  if (composio?.mode !== "sdk") return {};
+  const safe = (kind, id) => { try { return composioIdentity({ workspaceId, kind, id }); } catch { return ""; } };
+  const out = {};
+  if (identities?.user && composio.user?.source === "sdk-user") out.user = safe("user", userSubjectId);
+  if (identities?.agent && composio.shared?.source === "sdk-channel") out.agent = safe("channel", channelId);
+  for (const key of Object.keys(out)) if (!out[key]) delete out[key];
+  return out;
 }
 
 /**
@@ -131,18 +142,24 @@ export async function resolveComposioRuntime({
  * its output — plus the one-line identity preamble the prompt carries.
  */
 export async function resolveRunIntegrations({ meta = {}, channelId = "", authorId = "", threadKey = "", workspaceId = "", clean = false, untrustedPrincipal = false } = {}) {
-  const noOrg = Boolean(meta.noDefaultTokens);
   const composioMode = getComposioMode();
-  const effectiveWorkspaceId = String(workspaceId || process.env.CG_SLACK_TEAM_ID || "").trim();
+  // Slack team for a Slack conversation, Entra tenant for a Microsoft Teams one, the Chat app's
+  // Cloud project for a Google Chat one; the author is on the conversation's surface, so one
+  // workspace serves both identities.
+  const effectiveWorkspaceId = composioWorkspaceId({ kind: "channel", id: channelId, slackTeamId: workspaceId });
+  // A Google Chat author is named to Composio by the recorded `users/<id>`, never the e-mail. When
+  // it is unknown the personal identity is simply absent — no fallback to the shared one.
+  const userSubjectId = composioMode === "sdk" && !clean && !untrustedPrincipal && authorId
+    ? (await composioSubject({ kind: "user", id: authorId, slackTeamId: workspaceId })).id
+    : authorId;
   // The HTTP API authenticates its API key, not the caller-supplied Slack author id. Never use
   // that untrusted id to read a personal connector token or infer admin/approval state. Shared
-  // channel/org identities remain available; the user identity is intentionally absent.
+  // channel identities remain available; the user identity is intentionally absent.
   const userIdentity = await resolveRunUserIdentity({
     authorId,
     untrustedPrincipal,
     needsApproval: composioMode === "sdk" && !clean,
     loadComposioToken: getComposioToken,
-    loadToolboxToken: getToolboxToken,
     loadIsAdmin: isAdmin,
     loadIsApproved: isApproved,
   });
@@ -152,6 +169,7 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     workspaceId: effectiveWorkspaceId,
     channelId,
     authorId,
+    userSubjectId,
     threadKey,
     meta,
     authorIsAdmin: userIdentity.isAdmin,
@@ -159,15 +177,13 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     principalTrusted: !untrustedPrincipal,
     channelToken: meta.composioToken,
     userToken: userIdentity.composioToken,
-    defaultToken: getDefaultComposioToken(),
-    noOrg,
     isDM: Boolean(meta.isDM || meta.type === "im"),
+    threadComposioOverride: meta.threadComposioOverride === true,
   });
-  const toolbox = resolveTokenSource({ clean, channelToken: meta.toolboxToken, userToken: userIdentity.toolboxToken, defaultToken: getDefaultToolboxToken(), noOrg });
   const composioUserToken = composio.user.token;
   const composioToken = composio.shared.token;
-  const composioUserEndpoint = composio.user.endpoint;
-  const composioEndpoint = composio.shared.endpoint;
+  let composioUserEndpoint = composio.user.endpoint;
+  let composioEndpoint = composio.shared.endpoint;
   // The per-run half of the identity rule (CO-04: "check the calendar" with both identities present
   // read the SHARED one and posted a colleague's week into the channel, where the other harness
   // asked first). The managed instructions block carries the rule; this one line carries the fact
@@ -182,6 +198,11 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     composioEndpoint,
     composioToken,
   });
+  // SDK mode: each session endpoint carries the Composio user id it acts as, so the capability can
+  // sign it for the script relay (src/mcp/composio-exec.js) and the identity line can name it.
+  const sdkUserIds = sdkUserIdsFor({ composio, identities, workspaceId: effectiveWorkspaceId, userSubjectId, channelId });
+  if (sdkUserIds.user) composioUserEndpoint = { ...composioUserEndpoint, identityId: sdkUserIds.user };
+  if (sdkUserIds.agent) composioEndpoint = { ...composioEndpoint, identityId: sdkUserIds.agent };
   const { makeToolboxUrl, makeToolboxKey } = resolveMakeToolboxRuntime({
     makeToolboxUrl: meta.makeToolboxUrl,
     makeToolboxKey: meta.makeToolboxKey,
@@ -200,9 +221,9 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
   // output redactor carries them anyway so no reply, stream or job log can ever echo one.
   const emailSecrets = [...emailAccountSecrets(meta.emailAccounts), ...emailAccountSecrets(authorRecord?.emailAccounts)];
   return {
-    userIdentity, composio, toolbox, identities,
-    composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken: toolbox.token,
+    userIdentity, composio, identities,
+    composioUserToken, composioToken, composioUserEndpoint, composioEndpoint,
     makeToolboxUrl, makeToolboxKey, customMcps, emailSecrets,
-    composioIdentityPrefix: composioIdentityPreamble(identities),
+    composioIdentityPrefix: composioIdentityPreamble({ ...identities, mode: composio.mode, sdkUserIds }),
   };
 }

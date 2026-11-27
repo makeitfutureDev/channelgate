@@ -13,7 +13,7 @@
 // before/after values.
 //
 // Two rules the allowlist below enforces by construction:
-//   • Only POLICY keys are diffed. Secrets (composioToken, toolboxToken, makeToolboxKey, the `env`
+//   • Only POLICY keys are diffed. Secrets (composioToken, makeToolboxKey, the `env`
 //     bag) are not on the list and can therefore never reach an audit row, whatever a caller passes.
 //     Environment secrets keep their own name-only audit (channel_env_set/_removed).
 //   • `skills` is reported as a COUNT, never as the list — the grant list is long, noisy, and the
@@ -36,15 +36,19 @@ export const POLICY_KEYS = Object.freeze([
   "allowNetwork", // network egress for the channel's runs
   "rawNetwork", // raw sockets on the open bridge beside the egress proxy (admin escape)
   "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy
+  "egressPrivateHosts", // admin-approved private/loopback host:port@pinned-address destinations
   "cleanMode", // run bare (no MCP servers, no skills)
-  "noDefaultTokens", // refuse the org-default token fallback here
+  "skillRuntimeSwap", // a skill's preferred model may switch the turn's engine/model
   "approvedEngines", // Enterprise channel harness approval policy
-  "engine", // per-channel engine override
+  "monthlySpendingLimitUSD", // Enterprise monthly recorded-cost admission limit
+  "engine", // per-channel license (a harness + the credential it runs on)
+  "licensePool", // the more licenses of that harness a failed turn may move to ("any" or a list)
   "codexAuthSource", // gateway-wide or channel-specific Codex login
   "model",
   "effort",
   "runtime", // where a turn runs, when a channel pins it
   "workDir", // the folder every run in this channel reads and writes
+  "extraFolders", // the additional host folders its container mounts beside that folder
   "syncDriveFolder", // the Drive folder two-way-synced into that folder
   "access", // who may USE the conversation
   "manageAccess", // who may MANAGE it
@@ -61,7 +65,7 @@ export const POLICY_KEYS = Object.freeze([
 
 // Keys whose value is a list. Reported as a sorted array of plain strings so a reordered list is
 // not a "change" and an MCP selection object never drags its transport/config fields into the row.
-const LIST_KEYS = new Set(["approvedEngines", "managers", "allowedUsers", "excludedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps", "egressRawHosts"]);
+const LIST_KEYS = new Set(["approvedEngines", "managers", "allowedUsers", "excludedUsers", "sshUsers", "allowedMcps", "allowedCodexMcps", "egressRawHosts", "egressPrivateHosts"]);
 
 // A whole row's `changes` blob stays bounded: a 400-member allowedUsers list must not turn one
 // audit event into a document. Over the cap, list values collapse to their counts.
@@ -81,6 +85,7 @@ function listValue(key, value) {
 function shape(key, value) {
   if (key === "skills") return Array.isArray(value) ? value.length : 0;
   if (LIST_KEYS.has(key)) return listValue(key, value);
+  if (key === "licensePool") return Array.isArray(value) ? listValue(key, value) : value === "any" ? "any" : null;
   if (value === undefined || value === null) return null;
   if (typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") return value;

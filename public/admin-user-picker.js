@@ -1,8 +1,11 @@
 // Compact, local-directory multi-select. Search is view state; only adding/removing calls onChange.
-export function mountUserPicker(container, { users = {}, selected = [], onChange = () => {} } = {}) {
+export function mountUserPicker(container, { users = {}, selected = [], onChange = () => {},
+  includeUser = id => /^[UW][A-Z0-9]+$/.test(id), labels = {} } = {}) {
+  const copy = { selected: "Selected testing users", placeholder: "Search users by name or Slack ID…",
+    search: "Search Slack testing users", available: "Available testing users", empty: "No testing users selected.", ...labels };
   const doc = container.ownerDocument;
   const chosen = new Set(selected);
-  const options = [...new Set([...Object.keys(users).filter((id) => /^[UW][A-Z0-9]+$/.test(id)), ...selected])]
+  const options = [...new Set([...Object.keys(users).filter(id => includeUser(id, users[id])), ...selected])]
     .map((id) => ({ id, name: users[id]?.name || id }))
     .sort((a, b) => a.name.localeCompare(b.name));
   let matches = [];
@@ -15,19 +18,19 @@ export function mountUserPicker(container, { users = {}, selected = [], onChange
   };
   container.replaceChildren();
   const chips = el("div", "user-picker-chips");
-  chips.setAttribute("aria-label", "Selected testing users");
+  chips.setAttribute("aria-label", copy.selected);
   const input = el("input", "user-picker-search checks-filter");
   input.type = "search";
-  input.placeholder = "Search users by name or Slack ID…";
+  input.placeholder = copy.placeholder;
   input.autocomplete = "off";
   input.setAttribute("role", "combobox");
-  input.setAttribute("aria-label", "Search Slack testing users");
+  input.setAttribute("aria-label", copy.search);
   input.setAttribute("aria-autocomplete", "list");
   input.setAttribute("aria-expanded", "false");
   const list = el("div", "user-picker-results");
   list.id = `${container.id}-results`;
   list.setAttribute("role", "listbox");
-  list.setAttribute("aria-label", "Available testing users");
+  list.setAttribute("aria-label", copy.available);
   input.setAttribute("aria-controls", list.id);
   list.hidden = true;
   const status = el("p", "user-picker-status");
@@ -39,7 +42,7 @@ export function mountUserPicker(container, { users = {}, selected = [], onChange
     input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
     active = -1;
-    status.textContent = chosen.size ? `${chosen.size} selected` : "No testing users selected.";
+    status.textContent = chosen.size ? `${chosen.size} selected` : copy.empty;
   };
   const highlight = () => {
     [...list.children].forEach((row, index) => {

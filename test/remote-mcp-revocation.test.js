@@ -1,6 +1,6 @@
 // When a relayed remote MCP grant (src/mcp/remote-mcp-registry.js) is dropped BEFORE its
 // capability expires: a cold turn's grant goes when the turn settles, and a person clearing their
-// own Composio/Toolbox token in the admin UI drops every grant minted for their runs at once.
+// own Composio token in the admin UI drops every grant minted for their runs at once.
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
@@ -28,10 +28,10 @@ const { createUsersRouter } = await import("../src/web/routes/users.js");
 const SERVER = { "composio-user": { url: "https://connect.composio.dev/mcp", headers: { "x-consumer-api-key": "ck_revocation" } } };
 
 test("a cold container turn's relay grant exists while it runs and is gone once it settles", async () => {
-  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", defaultComposioToken: "ak_org_relay" });
+  saveSettings({ engine: "claude", agentMemory: false, memoryReviewEvery: 0, composioMode: "personal" });
   await setUser("U_RELAY_COLD", { name: "Relay Cold", approved: true, isAdmin: false, composioToken: "ak_user_relay" });
   const entry = await upsertChannelEntry("C_RELAY_COLD", { name: "relay-cold", type: "channel" });
-  const meta = { channelId: "C_RELAY_COLD", name: "relay-cold", type: "channel", template: "custom", engine: "claude", cleanMode: false, allowNetwork: false, memory: false };
+  const meta = { channelId: "C_RELAY_COLD", name: "relay-cold", type: "channel", template: "custom", engine: "claude", cleanMode: false, allowNetwork: false, memory: false, composioToken: "ak_channel_relay" };
   await saveChannelMeta(entry.slug, meta);
   await mkdir(effectiveWorkDir(entry.slug, meta), { recursive: true });
   clearRemoteMcpsWhere(() => true);
@@ -57,7 +57,7 @@ test("clearing a person's token in the admin UI drops every relay grant minted f
   registerRemoteMcps({ jti: "revoke-mine-1", exp, servers: SERVER, meta: { authorId: "U_REVOKE", slug: "a", channelId: "C_A", origin: "slack_foreground" } });
   registerRemoteMcps({ jti: "revoke-mine-2", exp, servers: SERVER, meta: { authorId: "U_REVOKE", slug: "b", channelId: "C_B", origin: "ssh_session" } });
   registerRemoteMcps({ jti: "revoke-other", exp, servers: SERVER, meta: { authorId: "U_SOMEONE_ELSE", slug: "a", channelId: "C_A", origin: "slack_foreground" } });
-  await setUser("U_REVOKE", { name: "Revoke", composioToken: "ak_before", toolboxToken: "tb_before" });
+  await setUser("U_REVOKE", { name: "Revoke", composioToken: "ak_before" });
 
   const app = express();
   app.use(express.json());
@@ -69,7 +69,7 @@ test("clearing a person's token in the admin UI drops every relay grant minted f
 
   assert.equal((await put({ name: "Revoke renamed" })).status, 200);
   assert.ok(hasRemoteMcps("revoke-mine-1"), "an unrelated edit revokes nothing");
-  assert.equal((await put({ clearToolboxToken: true })).status, 200);
+  assert.equal((await put({ clearComposioToken: true })).status, 200);
   assert.ok(!hasRemoteMcps("revoke-mine-1") && !hasRemoteMcps("revoke-mine-2"), "every grant for that author, in every channel and origin");
   assert.ok(hasRemoteMcps("revoke-other"), "nobody else's grant");
   clearRemoteMcpsWhere(() => true);

@@ -4,13 +4,14 @@
 // for the daemon's /internal/approval endpoint.
 import path from "node:path";
 import http from "node:http";
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir, testLicenseEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
@@ -27,6 +28,8 @@ const stub = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    // The stdio server's per-call liveness question (security audit batch 5): this channel is live.
+    if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
     approvalRequests.push({ url: req.url, secret: req.headers["x-cg-secret"], body: JSON.parse(body || "{}") });
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(req.url === "/internal/restart" ? restartResponse : approvalResponse));
@@ -42,7 +45,9 @@ const ISOLATED_HOME = path.join(scratch, "isolated-engine-home");
 const DEFAULT_WORKSPACE_ROOT = path.join(scratch, "daemon-workspaces");
 // Default channel folders are namespaced by platform: <workspace root>/<platform>/<slug>.
 const DEFAULT_WORKDIR = path.join(DEFAULT_WORKSPACE_ROOT, "slack", SLUG);
-const CUSTOM_WORKDIR = path.join(scratch, "custom-workdir");
+// Beside the scratch gateway root, not under it: a work folder inside the gateway runtime root is
+// refused by the work-folder boundary (src/gateway/workdir-boundary.js), as in production.
+const CUSTOM_WORKDIR = tempDir("cg-ctrl-custom-workdir-");
 mkdirSync(ISOLATED_HOME, { recursive: true });
 mkdirSync(CUSTOM_WORKDIR, { recursive: true });
 
@@ -66,7 +71,7 @@ function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "cla
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId: CHANNEL, slug: SLUG, authorId: author, threadKey: "1.000", origin: "slack_foreground", engine }),
       CG_APPROVAL_SECRET: secret,
       CG_PORT: String(port),
-      CG_FS_ROOT: scratch,
+      CG_FS_ROOT: path.dirname(realpathSync(os.tmpdir())), // covers the scratch root and the custom work folder
       CG_WORKSPACE_DIR: DEFAULT_WORKSPACE_ROOT,
       HOME: ISOLATED_HOME,
     },
@@ -89,6 +94,108 @@ async function withGateway(options, fn) {
 const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
 const approvalReceipt = /Human approval was received before this tool executed/;
 const awaitingCard = /awaiting approval \(request .*\)\. The exact change is saved with no deadline/;
+
+test("organization skill removal audits actual changes with trusted admin identity and no approval card", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { grantSkillsToOrg } = await import("../src/gateway/skills/authoring.js");
+  const { getOrgAccessGrants } = await import("../src/config/settings.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const original = getOrgAccessGrants();
+  try {
+    for (const engine of ["claude", "codex"]) {
+      const author = `U_ORG_AUDIT_${engine.toUpperCase()}`;
+      const name = `audit-org-remove-${engine}`;
+      await setUser(author, { approved: true, isAdmin: true });
+      putSkillRevision({ slug: name, ownerKind: "local", visibility: "org", createdBy: author,
+        files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Audit fixture\n---\nPRIVATE_ORG_BODY_NOT_AUDIT_DATA\n` }] });
+      grantSkillsToOrg([name]);
+      const receipts = () => readEvents({ limit: 1000 }).filter((e) => e.event === "skill_revoked" && e.author === author);
+      approvalRequests.length = 0;
+      await withGateway({ author, engine }, async (client) => {
+        const remove = () => client.callTool({ name: "remove_org_skills", arguments: { slugs: [name, name, "absent-org-audit"] } });
+        await setUser(author, { isAdmin: false });
+        assert.match(resultText(await remove()), /Only admins/);
+        assert.ok(getOrgAccessGrants().skills.includes(name));
+        assert.equal(receipts().length, 0);
+        await setUser(author, { isAdmin: true });
+        await remove();
+        assert.ok(!getOrgAccessGrants().skills.includes(name));
+        const events = receipts();
+        assert.equal(events.length, 1, "persisted organization removal must have a durable audit receipt");
+        assert.deepEqual(events[0].skills, [name]);
+        assert.equal(events[0].scope, "organization");
+        assert.equal(events[0].author, author);
+        assert.equal(events[0].channel, CHANNEL);
+        assert.equal(events[0].slug, SLUG);
+        assert.equal(events[0].source, "gateway-mcp");
+        assert.ok(!JSON.stringify(events).includes("PRIVATE_ORG_BODY_NOT_AUDIT_DATA"));
+        await remove();
+        assert.equal(receipts().length, 1, "absent organization grants are not audited as a new removal");
+        assert.equal(approvalRequests.length, 0, "organization removal remains automatic for a verified admin");
+      });
+    }
+  } finally {
+    saveSettings({ accessGrants: original });
+  }
+});
+
+test("personal skill grant mutations leave one trusted audit receipt, excluding no-ops and denials", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const contentMarker = "PRIVATE_SKILL_BODY_NOT_AUDIT_DATA";
+  for (const engine of ["claude", "codex"]) {
+    const author = `U_PERSONAL_AUDIT_${engine.toUpperCase()}`;
+    const names = [`audit-personal-one-${engine}`, `audit-personal-two-${engine}`];
+    const foreign = `audit-foreign-${engine}`;
+    await setUser(author, { approved: true, isAdmin: false, skills: [] });
+    for (const name of [...names, foreign]) putSkillRevision({
+      slug: name, ownerKind: "local", visibility: name === foreign ? "personal" : "org",
+      createdBy: name === foreign ? "U_OTHER_OWNER" : "U_CTRL_ADMIN",
+      files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Audit fixture\n---\n${contentMarker}\n` }],
+    });
+    const receipts = () => readEvents({ limit: 1000 }).filter((e) => e.event === "user_skills_updated" && e.user === author);
+    approvalRequests.length = 0;
+    await withGateway({ author, engine }, async (client) => {
+      const call = (name, slugs) => client.callTool({ name, arguments: { slugs } });
+      await call("add_my_skills", [...names, names[0]]);
+      assert.deepEqual((await getUser(author)).skills, names);
+      let events = receipts();
+      assert.equal(events.length, 1, "persisted personal grant must have a durable audit receipt");
+      assert.deepEqual(events[0].added, names);
+      assert.deepEqual(events[0].removed, []);
+      await call("add_my_skills", [names[0]]);
+      await call("add_my_skills", [foreign]);
+      assert.equal(receipts().length, 1, "duplicate and foreign-scope requests do not claim a mutation");
+      assert.deepEqual((await getUser(author)).skills, names);
+      await call("remove_my_skills", [names[0], "unknown-audit-skill"]);
+      assert.deepEqual((await getUser(author)).skills, [names[1]]);
+      events = receipts();
+      assert.equal(events.length, 2);
+      assert.deepEqual(events[0].added, []);
+      assert.deepEqual(events[0].removed, [names[0]]);
+      await call("remove_my_skills", [names[0]]);
+      assert.equal(receipts().length, 2, "removing an absent grant is not audited as a change");
+      await setUser(author, { approved: false });
+      assert.match(resultText(await call("add_my_skills", [names[0]])), /Only approved members/);
+      assert.equal(receipts().length, 2);
+      await setUser(author, { approved: true });
+      await call("remove_my_skills", [names[1]]);
+      assert.deepEqual((await getUser(author)).skills, []);
+      events = receipts();
+      assert.equal(events.length, 3);
+      for (const event of events) {
+        assert.equal(event.author, author);
+        assert.equal(event.user, author);
+        assert.equal(event.channel, CHANNEL);
+        assert.equal(event.slug, SLUG);
+        assert.equal(event.source, "gateway-mcp");
+      }
+      assert.ok(!JSON.stringify(events).includes(contentMarker), "audit contains grant names, never skill contents");
+      assert.equal(approvalRequests.length, 0, "personal grants remain self-service");
+    });
+  }
+});
 
 test("both engines keep ordinary schedules automatic and persist sudo work only after an admin approval", async () => {
   const { listForChannel } = await import("../src/config/schedules.js");
@@ -360,9 +467,32 @@ test("an unreachable approval endpoint fails closed", async () => {
   approvalRequests.length = 0;
   await withGateway({ port: 1 }, async (client) => {
     const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
-    assert.match(resultText(result), /Couldn't save the approval/i);
+    // An unreachable daemon now refuses one step EARLIER: the stdio server cannot confirm the
+    // run's liveness (security audit batch 5), so the call never reaches the approval card.
+    assert.match(resultText(result), /could not confirm that this run is still live/i);
     assert.doesNotMatch(resultText(result), approvalReceipt);
   });
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  assert.equal(approvalRequests.length, 0);
+
+  // A daemon that confirms liveness but whose approval endpoint breaks still fails closed at the card.
+  const broken = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      if (req.url === "/internal/capability") { res.setHeader("Content-Type", "application/json"); return res.end('{"ok":true}'); }
+      res.socket.destroy();
+    });
+  });
+  await new Promise((resolve) => broken.listen(0, "127.0.0.1", resolve));
+  try {
+    await withGateway({ port: broken.address().port }, async (client) => {
+      const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
+      assert.match(resultText(result), /Couldn't save the approval/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
+    });
+  } finally {
+    await new Promise((resolve) => broken.close(resolve));
+  }
   assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
 });
 
@@ -552,13 +682,19 @@ test("every registered gateway tool is consciously classified as gated or open (
   // omission. This inventory forces the classification to be a reviewed decision: an
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
+    "propose_thread_forks",
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
-    "set_channel_vpn", "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "allow_channel_private_host", "revoke_channel_private_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_approved_harnesses", // which licenses the channel may run on: admins only, automatic, audited
+    "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
+    "add_channel_folder", "remove_channel_folder", // an extra mount keeps a card; removing one narrows and is automatic
+
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
+    "set_my_reply_mentions", // own verified preference; automatic, handler rejects untrusted principals
+    "set_my_voice_auto_start", // own verified preference; same contract as reply mentions
     "set_my_composio_token", "clear_my_composio_token",
-    "set_my_toolbox_token", "clear_my_toolbox_token",
     // environment secret scopes that are not the channel's: each changes which account future runs
     // authenticate as, and the organization one does it for every conversation at once
     "set_secret", "remove_secret",
@@ -568,6 +704,8 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // SSH grants for OTHER people retain the manager approval; own changes return null details.
     "grant_channel_ssh", "revoke_channel_ssh", "set_channel_agent_profile",
+    "call_user", // rings the requester's iPhone only after their or an admin's explicit approval
+    "send_agent_message", // lands in another channel on the requester's behalf: the requester confirms the exact text
     // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
     // moving a skill in or out of the shared library) and Git publishing keep their card
     "decide_skill_proposal", "sync_skill_sources",
@@ -577,21 +715,31 @@ test("every registered gateway tool is consciously classified as gated or open (
     // returns null for the short machine-facing "upload" purpose, the same conditional shape
     // update_gateway/restart_gateway use for their admin-mode exception.
     "create_public_file_link",
+    // Slack code channels: opening one creates a channel people are invited into and starts a
+    // turn there (the requester confirms); archiving is a card anyone working there can approve.
+    "open_code_channel", "archive_code_channel",
   ]);
   const OPEN = new Set([
     // read-only
     "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "list_folders",
-    "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
-    "workspace_list", "workspace_read", "workspace_search", "search_agents",
+    "get_channel_workdir", "list_channel_folders", "get_channel_drive_folder", "get_gateway_guide",
+    "get_channel_approved_harnesses", // read-only; the full list of approvable entries is shown to admins only
+    "workspace_list", "workspace_read", "workspace_search", "search_agents", "continue_agent_conversation", // continuing a human-started exchange: open, like answering in a thread
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
+    "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
+    // Channel-level user API tokens: a verified person's OWN credential for THIS conversation, acting
+    // as them with their live rank; listing/revoking others' needs manage (the handler enforces it).
+    "create_api_token", "list_api_tokens", "revoke_api_token",
     // writes that land visibly in the current thread, or run inside normal confinement
     "slack_post_chart", "slack_post_table", "slack_upload_snippet",
     "slack_compose_reply", // validates + acknowledges only; the daemon renders the observed call under THIS thread's answer
     "slack_share_file", // one confined channel file into THIS thread, like the explorer's Share button
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
-    "slack_channel_history", "slack_thread_replies",
+    "slack_channel_history", "slack_thread_replies", "conversation_history",
     "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
+    "conversation_download_file", // Teams twin: this conversation's message, allowed drives, this thread's uploads/
+    "update_code_channel", // artifact tabs, context bar and title of the code channel the run is IN; refuses elsewhere
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress", "ask_questions",
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated
@@ -607,6 +755,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
+    // personal skill catalog tokens are self-service: the owner mints, lists and revokes their own,
+    // and the token reaches only what its owner reaches (skills/token-scope.js)
+    "create_my_skill_token", "list_my_skill_tokens", "revoke_my_skill_token",
     // operator decision 2026-09-27: personal and CHANNEL skills are their author's / the channel
     // members' and never wait for anyone. The handlers enforce the tier (a non-admin's organization
     // request becomes a channel skill plus an admin proposal; a full catalog delete is an admin's)
@@ -768,6 +919,74 @@ test("both engines: a member owns channel and personal skills without approval; 
   }
 });
 
+test("both engines: a channel's members decide edits proposed for its own skills, with no card; nothing else", async () => {
+  const { getSkill, getProposal, putSkillRevision, setSkillChannelScope } = await import("../src/gateway/skills/catalog.js");
+  const { proposeSkillChange, currentFilesOf } = await import("../src/gateway/skills/authoring.js");
+  const fileOf = (slug, path) => (currentFilesOf(getSkill(slug)) || []).find((f) => f.path === path)?.content?.toString();
+  for (const engine of ["claude", "codex"]) {
+    const own = `owned-here-${engine}`;
+    const foreign = `owned-elsewhere-${engine}`;
+    const org = `owned-org-${engine}`;
+    await withGateway({ engine }, async client => {
+      await client.callTool({ name: "create_skill", arguments: { slug: own, files: creationFiles(own) } });
+      await client.callTool({ name: "create_skill", arguments: { slug: org, files: creationFiles(org), scope: "organization" } });
+    });
+    putSkillRevision({ slug: foreign, ownerKind: "local", files: creationFiles(foreign) });
+    setSkillChannelScope(foreign, "C_MCP_OTHER");
+    const file = (content) => [{ path: "references/fix.md", content }];
+    const ownChange = proposeSkillChange({ skill: own, files: file("own fix"), note: "own fix", proposedBy: "U_OUTSIDER", channelSlug: "elsewhere" }).proposal.id;
+    const ownFeedback = proposeSkillChange({ skill: own, kind: "feedback", note: "nice", proposedBy: "U_OUTSIDER", channelSlug: "elsewhere" }).proposal.id;
+    const foreignChange = proposeSkillChange({ skill: foreign, files: file("foreign fix"), note: "foreign fix", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    const orgChange = proposeSkillChange({ skill: org, files: file("org fix"), note: "org fix", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    const ownPromote = proposeSkillChange({ skill: own, kind: "promote", note: "share it", proposedBy: "U_OUTSIDER", channelSlug: SLUG }).proposal.id;
+    approvalRequests.length = 0;
+    approvalResponse = { allow: false, reason: "no card may be posted" };
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+      const call = async (name, args) => resultText(await client.callTool({ name, arguments: args }));
+      const listed = await call("list_skill_proposals", {});
+      for (const id of [ownChange, ownFeedback]) assert.match(listed, new RegExp(`#${id} `), "the owning channel sees edits of its skills");
+      for (const id of [foreignChange, orgChange, ownPromote]) assert.doesNotMatch(listed, new RegExp(`#${id} `), "but not proposals it does not decide");
+
+      let out = await call("decide_skill_proposal", { id: ownChange, decision: "approve" });
+      assert.match(out, new RegExp(`Proposal #${ownChange} approved — \`${own}\` is now revision 2`));
+      assert.doesNotMatch(out, /pinned/, "a member's approval lands like their own edit, never as a pinned override");
+      assert.equal(fileOf(own, "references/fix.md"), "own fix");
+      assert.equal(getSkill(own).pinnedRevisionId, null);
+      assert.equal(getProposal(ownChange).decidedBy, "U_CTRL_MEMBER");
+      assert.match(await call("decide_skill_proposal", { id: ownFeedback, decision: "reject" }), /rejected/);
+
+      out = await call("decide_skill_proposal", { id: foreignChange, decision: "approve" });
+      assert.match(out, /skill of another channel; its members \(or an admin\) decide it there/);
+      assert.equal(getProposal(foreignChange).status, "pending");
+      out = await call("decide_skill_proposal", { id: orgChange, decision: "approve" });
+      assert.match(out, /Only admins/);
+      assert.equal(getProposal(orgChange).status, "pending");
+      out = await call("decide_skill_proposal", { id: ownPromote, decision: "approve" });
+      assert.match(out, /Only admins/, "sharing a channel skill with the organization stays with admins");
+      assert.equal(getProposal(ownPromote).status, "pending");
+
+      out = await call("update_skill", { skill: foreign, files: file("direct") });
+      assert.match(out, /belongs to another channel/);
+      assert.match(out, /decide_skill_proposal/);
+      out = await call("propose_skill_change", { skill: foreign, files: file("asked"), note: "please" });
+      assert.match(out, /A member of the channel that owns it \(or an admin\) reviews it there/);
+      assert.doesNotMatch(out, /An admin reviews it/);
+    });
+    assert.equal(approvalRequests.length, 0, `${engine}: a member's decisions and refusals posted no card`);
+
+    // An admin still decides everything; the organization edit keeps its card.
+    approvalResponse = { allow: false, pending: true, approvalId: `org-edit-${engine}` };
+    await withGateway({ engine }, async client => {
+      const parked = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: orgChange, decision: "approve" } }));
+      assert.match(parked, awaitingCard);
+      const foreignOut = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: foreignChange, decision: "reject" } }));
+      assert.match(foreignOut, /rejected/);
+      await client.callTool({ name: "decide_skill_proposal", arguments: { id: ownPromote, decision: "reject" } });
+    });
+    assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"]]);
+  }
+});
+
 test("both engines: a member asks for a template change; only an admin edits a template, with its card", async () => {
   const { getTemplate, upsertTemplate } = await import("../src/gateway/skills/catalog.js");
   for (const engine of ["claude", "codex"]) {
@@ -878,4 +1097,130 @@ test("list_channel_mcps names the conversation's custom MCP servers, never their
   } finally {
     await saveChannelMeta(SLUG, original);
   }
+});
+
+
+test("both engines request durable worker approval for SSH egress, including Auto mode", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressRawHosts: ["existing.example"] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `egress-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        const result = await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } });
+        assert.match(resultText(result), awaitingCard);
+      });
+      assert.equal(approvalRequests.length, 1);
+      const request = approvalRequests[0].body;
+      assert.equal(request.approvalType, "agent");
+      assert.equal(request.requiredTier, "worker");
+      assert.deepEqual(request.durableAction.args, { host: "8.8.8.8" });
+      assert.match(request.toolInput.details, /22.*5432.*6543/);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example"]);
+      const bad = await applySaved(request, "U_UNAUTHORIZED");
+      assert.equal(bad.ok, false);
+      const saved = await applySaved(request, "U_CTRL_MEMBER");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example", "8.8.8.8"]);
+      approvalRequests.length = 0;
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } })), /allowed/);
+      });
+      assert.equal(approvalRequests.length, 0, "an existing host needs no further approval");
+      await patchChannelMeta(SLUG, { allowBash: false, adminMode: false, autoMode: false });
+      const stale = await applySaved(request, "admin UI");
+      assert.equal(stale.ok, false, "even admin UI cannot apply a worker approval in a read-only channel");
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
+});
+
+test("both engines request ADMIN-clicked approval for a pinned private destination", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressPrivateHosts: [] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `private-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        const result = await client.callTool({ name: "allow_channel_private_host", arguments: { host: "192.168.50.7", port: 22 } });
+        assert.match(resultText(result), awaitingCard);
+        const metadata = await client.callTool({ name: "allow_channel_private_host", arguments: { host: "169.254.169.254", port: 80 } });
+        assert.match(resultText(metadata), /Couldn't request private egress: .*may never reach/);
+      });
+      assert.equal(approvalRequests.length, 1, "a refused destination posts no card");
+      const request = approvalRequests[0].body;
+      assert.equal(request.requiredTier, "admin");
+      assert.deepEqual(request.durableAction.args, { host: "192.168.50.7", port: 22, address: "192.168.50.7" });
+      assert.match(request.toolInput.details, /192\.168\.50\.7:22, pinned to 192\.168\.50\.7.*Only an organization admin/);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, []);
+      assert.equal((await applySaved(request, "U_CTRL_MEMBER")).ok, false, "a member cannot approve a private destination");
+      const saved = await applySaved(request, "U_CTRL_ADMIN");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, ["192.168.50.7:22@192.168.50.7"]);
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        assert.match(resultText(await client.callTool({ name: "revoke_channel_private_host", arguments: { host: "192.168.50.7" } })), /Removed/);
+      });
+      assert.deepEqual((await getChannelMeta(SLUG)).egressPrivateHosts, []);
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
+});
+
+test("both engines propose one mandatory durable fork card carrying exact prompts", async () => {
+  const { saveSession } = await import("../src/gateway/sessions.js");
+  const author = "U_CTRL_FORKS";
+  await setUser(author, { approved: true });
+  await upsertChannelEntry(CHANNEL, { name: SLUG, type: "channel", isDM: false });
+  await saveChannelMeta(SLUG, { channelId: CHANNEL, access: "approved", autoMode: true, workDir: tempDir("mcp-forks-") });
+  const forks = [{ title: "One", prompt: "Discuss one" }, { title: "Two", prompt: "Discuss two" }];
+  for (const engine of ["claude", "codex"]) {
+    await saveSession(SLUG, "1.000", `source-${engine}`, engine, null, JSON.stringify({ backend: "container", scope: "project" }));
+    approvalRequests.length = 0;
+    approvalResponse = { pending: true, approvalId: `fork-${engine}` };
+    await withGateway({ author, engine }, async client => {
+      const result = await client.callTool({ name: "propose_thread_forks", arguments: { forks } });
+      assert.match(resultText(result), awaitingCard);
+    });
+    assert.equal(approvalRequests.length, 1);
+    const body = approvalRequests[0].body;
+    assert.equal(body.approvalType, "agent");
+    assert.equal(body.requiredTier, "owner");
+    assert.equal(body.approveText, "Create 2 forks");
+    assert.equal(body.denyText, "Cancel");
+    assert.deepEqual(body.durableAction.forks, forks);
+    assert.equal(body.durableAction.kind, "thread_forks");
+    assert.equal(body.durableAction.sourceSessionId, `source-${engine}`);
+  }
+});
+
+
+test("both engines bind custom SSH ports to durable human approval even when the hostname is already allowed", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressRawHosts: ["8.8.8.8"] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `egress-port-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8", port: 32921 } })), awaitingCard);
+      });
+      assert.equal(approvalRequests.length, 1);
+      const request = approvalRequests[0].body;
+      assert.deepEqual(request.durableAction.args, { host: "8.8.8.8", port: 32921 });
+      assert.match(request.toolInput.details, /TCP port 32921 only/);
+      assert.equal(request.requiredTier, "worker");
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["8.8.8.8"]);
+      const saved = await applySaved(request, "U_CTRL_MEMBER");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["8.8.8.8", "8.8.8.8:32921"]);
+      approvalRequests.length = 0;
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async client => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8", port: 32921 } })), /allowed/);
+      });
+      assert.equal(approvalRequests.length, 0);
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
 });

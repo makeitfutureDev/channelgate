@@ -71,13 +71,14 @@ export function createApprovalsRouter({ slack, processMessage = processMessageEv
           threadKey: record.threadKey || "",
           requesterId: record.authorId || record.event?.user || "",
           createdAt: record.choiceCreatedAt || 0,
+          queued: Boolean(record.queuedRunId),
         })),
         (c, index, users) => ({
           ...c,
           createdAt: iso(c.createdAt),
           channelName: index[c.channelId]?.name || c.slug || c.channelId,
           requesterName: users[c.requesterId]?.name || c.requesterId,
-          choices: CHOICES,
+          choices: c.queued ? ["steer", "cancel"] : CHOICES,
         }),
       );
       res.json({ approvals, threadChoices, count: approvals.length + threadChoices.length });

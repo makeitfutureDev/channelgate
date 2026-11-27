@@ -8,6 +8,10 @@ node_modules/
 # Generated release evidence and private deployment instructions.
 /dist/
 /AGENTS.local.md
+/CLAUDE.local.md
+# Agent instruction entry points the gateway assembles per deployment (see AGENTS.md): never tracked.
+/CLAUDE.md
+/AGENTS.override.md
 
 # Runtime gateway root, if a developer points it inside the repo for testing.
 .channelgate/

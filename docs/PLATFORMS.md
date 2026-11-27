@@ -90,11 +90,12 @@ matches step 2. Google's [Workspace add-on Pub/Sub guide](https://developers.goo
 and [Chat troubleshooting guide](https://developers.google.com/workspace/chat/troubleshoot-chat-apps)
 cover these distinct configurations.
 
-The app's own `users/…` id is learned automatically the first time it is added to a space; the
-optional field exists only to short-circuit that.
+The app's own `users/…` id is learned automatically the first time it is added to a space or is
+mentioned alone in a message, and remembered across restarts; the optional field exists only to
+short-circuit that.
 
-8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge).** A Chat app never receives
-   an interaction event for a reaction; Google delivers reactions only through
+8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge) and the edit trigger.** A
+   Chat app never receives an interaction event for a reaction or an edit; Google delivers both only through
    [Google Workspace Events subscriptions](https://developers.google.com/workspace/events/guides/events-chat).
    ChannelGate creates and maintains one per space the app belongs to, with **app authentication**
    (generally available since 2026-03-31), so no user has to sign in:
@@ -104,7 +105,8 @@ optional field exists only to short-circuit that.
       [authorization guide](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app):
       Marketplace SDK app configuration for the ChannelGate service account), then have a Google
       Workspace administrator **approve** the app. Without that approval the subscriptions fail;
-      messaging is unaffected.
+      messaging is unaffected. The same approval lets agents read earlier public messages of their
+      own conversation with the `conversation_history` tool, with or without a reaction topic.
    3. Workspace Events publishes with the **same publisher identity as step 5** (the add-on's
       Configuration-page service account, or `chat-api-push@system.gserviceaccount.com` for a
       standalone app), so the step 5 grant on the topic already covers it. Events then arrive
@@ -117,6 +119,13 @@ optional field exists only to short-circuit that.
    each one about hourly, reactivates suspended ones, recreates expired ones, retires those for
    spaces the app left, and reconciles on startup, on joining a space and on Google's lifecycle
    events. Reactions made while the gateway is down for longer than that are not delivered.
+
+   The same subscriptions deliver message updates (`google.workspace.chat.message.v1.updated`), so
+   this step also enables the **edit trigger**: editing a message in a space to add a mention of
+   the app runs it once, as its author, like a new mention. No extra setup is needed; subscriptions
+   created before this existed gain the event type in place on the next reconciliation. An edit
+   acts only within an hour, on a message under six days old that the app has not already
+   handled, and only once the app's own `users/…` id is known (above).
 
 9. **Optional — working card buttons (HTTP endpoint connection).** Card and button clicks reach a
    Chat app only through an HTTP endpoint connection
@@ -163,21 +172,36 @@ optional field exists only to short-circuit that.
 - **Threads:** in a space, threads are honoured. In a DM, Google mints a *new* thread for every
   top-level message, so a thread seen for the first time is treated as the main flow (one continuous
   DM session) and a thread you explicitly reply into becomes a real side thread.
+- **Thread forks:** in a named space that uses threads, `/fork <new message>` and an approved
+  `propose_thread_forks` card (**Create N forks**, requester or admin, Auto mode included) post
+  each fork as a new top-level message — a new thread — and run its opening request there as the
+  requester from a copy of the source thread's engine session; the source thread gets the links.
+  The copy waits for the source's running turn, and later messages to the source wait until every
+  child has its copy. DMs, group chats and spaces without threads are refused with the reason.
+  The card's buttons need the HTTP endpoint connection like every card; otherwise decide it on
+  the admin UI's Approvals page.
 - **Editing:** 1 write/sec per space, shared with every other app in it. Deleting leaves a tombstone,
   so ChannelGate edits rather than deletes.
 - **Private controls:** app-authenticated `privateMessageViewer` keeps settings, files and browser
   credential-entry links visible only to their requester in the original space. Opened drafts
   expire after 15 minutes; reply menu buttons are sealed and remain usable after restarts.
 - **Commands:** `/help` shows compact expandable Cards v2 with a full-text fallback. `/settings`,
-  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. In spaces
+  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. The
+  runtime tab and the typed `/model` and `/license` commands select harness, engine license, model
+  and effort as described for `/model` under Microsoft Teams below. In spaces
   mention the bot before a typed command; configured registered slash-command events also work.
   Credential entry uses private browser forms; no value is shown or prefilled. Cards render on
   both connections, but their **buttons act only with the HTTP endpoint connection** (Setup step
-  9); dialogs are never used. Stop/status use a separate durable control queue.
+  9); dialogs are never used. Stop/status use a separate durable control queue. A request queued
+  behind busy work gets a **Steer conversation** / **Cancel request** card (its sender or an
+  admitted admin); a background job's started notice carries **Check status**, answered privately,
+  and `/jobs` lists the conversation's running jobs privately.
 - **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
   as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
   message stops that session's active and queued work, including a turn already running (its
-  author or an admin); ✅ acknowledges a tracked reminder. The reactor's `users/…` id maps to the
+  author or an admin); ✅ acknowledges a tracked reminder, or on any other message marks that
+  conversation done in the reactor's Activity (the starter) or dismisses it from their list (another
+  participant). The reactor's `users/…` id maps to the
   gateway user whose messages Google has delivered before (unknown or ambiguous ids never act) and
   then passes the ordinary authorization gate. A Stop older than 10 minutes, a start older than an
   hour, a Tick older than a day, a removed reaction and a redelivered event never act; reacted text
@@ -187,6 +211,14 @@ optional field exists only to short-circuit that.
   unthreaded spaces, quote the request or a bot reply with a top-level `/stop`, `/status` or
   `/clear` to reach that turn; in threaded spaces send them in its thread. Space/group answers mention
   the requester and have Files/Variables/Settings plus referenced-file buttons below compact stats.
+- **Composio SDK mode (Enterprise):** a Google Chat author is the Composio user
+  `googlechat:<project>:user:users/<id>` and a space `googlechat:<project>:channel:spaces/<id>`,
+  where `<project>` is the `project_id` of the saved service-account key. The author is named by
+  the immutable `users/<id>` the gateway records from Google's own events — never the e-mail,
+  which an administrator can rename or reassign — so an author is connected after their first
+  message to the app. DMs receive only `composio-user`. Moving the Chat app to another Cloud
+  project starts new identities: accounts connected under the old project stay in Composio but no
+  longer attach.
 
 ---
 
@@ -322,7 +354,11 @@ For a test installation, extend the CLI setup above:
 4. Set the public HTTPS URL, enable the checkbox, save, then disconnect/reconnect Teams. Allow both
    `/api/teams/messages` (Bot Framework) and `/api/teams/notifications` (Graph notification validation
    and delivery) through the existing public reverse proxy. The Graph notification URL is separate
-   from the bot messaging endpoint; do not replace the bot endpoint with it.
+   from the bot messaging endpoint; do not replace the bot endpoint with it. The validation
+   challenge is answered only while the gateway is creating a subscription (plus two minutes), for a
+   request with no notification body and a token made of the characters Graph sends; anything else
+   carrying `validationToken` gets `400` and nothing is echoed. The echo is
+   `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
 5. Send a bot mention in each installed test conversation. An authenticated activity establishes the
    known conversation before automatic subscription creation. Existing messages from unknown chats
    are not swept or retroactively subscribed across the tenant. Subscriptions renew while enabled;
@@ -332,6 +368,13 @@ For a test installation, extend the CLI setup above:
    react with 🤖 to a user message, and react to a bot reply to continue its session. Confirm actor,
    target and session attribution with both Claude and Codex. Include an external-member group and
    desktop/mobile clients. Do not declare all-message coverage from bot-reply reaction tests alone.
+
+The same grants let agents read a conversation's earlier messages: with all-message events on,
+Teams runs get `conversation_history` (the channel or group chat they reply in, a channel thread,
+up to 200 messages) through the subscription record of that conversation, and — when file access
+is also on — `conversation_download_file` for a SharePoint file posted on one of those messages,
+through the same drive allowlist as attachments. Personal chats have no subscription and no
+history read. A 403 from Graph is reported to the agent as the missing permission, never retried.
 
 The chat Graph route uses **Microsoft Graph beta**, so this feature remains experimental. A granted
 read permission does not guarantee every client emits the same reaction shape or that every
@@ -372,17 +415,31 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
   Stop sign cancels the selected session’s active and queued requests, with author/admin checks.
   Tick button acknowledges a tracked reminder from its original or second-notice message; removing
-  it does not reopen the reminder. A tick on ordinary content reports no pending reminder.
-  Teams personal follow-up dismissal is not available. All actions require authorized reactors and
+  it does not reopen the reminder. A tick on any other message of a session is the reactor's
+  personal follow-up dismissal: the session's starter marks its Activity entry done, another
+  participant dismisses it from their own Activity list, and anyone else is told there is nothing
+  to mark; a new message in the session brings it back. All actions require authorized reactors and
   delivered reaction events. Group/channel delivery uses configured Graph events and Microsoft
   permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
   remain available as typed commands.
 - `/model` shows the current session selection and opens a picker in the same
-  conversation/thread, laid out like Settings → General: choose the engine and press Load models,
-  then choose from only that engine's models and effort levels and Apply to this session. Changes
-  affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
-  Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
-  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+  conversation/thread, laid out like Settings → General: choose the harness (Claude Code or Codex)
+  and press Load models, then choose from only that selection's models and effort levels and Apply
+  to this session. When a harness has more than one usable engine license in the conversation, a
+  **License** choice follows the harness (**Any license**, or one license with an optional **If it
+  fails, also use** list) and the button reads Load licenses and models. Changes affect its next
+  turn. Switched-on licenses, the channel's approved harnesses and dedicated Codex login
+  restrictions apply. Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
+  `/model <harness> <model|default>` and `/effort <level|default>` remain available. Typed
+  `/license` shows the session's license selection and the licenses it may choose between;
+  `/license any`, `/license <name, id or number>[, <more to move to when it fails>…]` and
+  `/license default` change it for the session. It answers that there is nothing to choose when
+  the harness has a single license there. An engine license is a provider credential, not the
+  ChannelGate license key; see [engine capabilities](ENGINE-CAPABILITIES.md#harnesses-and-licenses).
+  Typed `/harnesses` shows which harnesses and licenses the conversation may run on (its
+  Approved harnesses list, Enterprise); an organization admin sets it with `/harnesses
+  harness:claude, <license name>` or clears it with `/harnesses all`, under the same rules and
+  audit as Settings. Google Chat answers the same command.
 - `/settings` posts a compact **Open settings** card in the original channel/thread or chat.
   Clicking it opens a large native Teams popup containing General, Variables, MCPs, Skills,
   Automations and Resume. `/secrets` uses the same launcher and opens Variables directly.
@@ -392,11 +449,32 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   The launcher and each independently opened popup expire after 15 minutes. Closing with Teams'
   close control discards unapplied inputs; applied changes remain saved. Other members open their
   own requester-bound `/settings` launcher.
-  General edits channel defaults and current-session engine/model/effort independently, with
-  engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
-  or Apply to thread button saves that scope's engine/model/effort together after compatibility
-  checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
-  keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
+  The popup is a full-width Adaptive Card 1.4: a compact header, the six sections as two-column
+  navigation (three rows of two), each section's settings in grouped panels, and one **Save** area
+  at the end of every editable section with **Apply to channel**, **Apply to thread** (only when
+  opened from a thread), **Discard changes** and, for Variables/MCPs/Skills, **Follow channel**
+  (stage clearing the thread's overrides). No action set holds more than six actions.
+  Edits are **pending** until applied: General, Variables, MCPs, Skills and Automations each keep
+  their own draft in the requester-bound, 15-minute card state (daemon memory only; a staged value
+  or token is never rendered, echoed or logged). Navigation keeps every section's drafts — the
+  header lists the sections with pending changes — and **Apply saves only the open section**.
+  Apply re-authorizes, validates the whole section against the scope's current value and the
+  baseline it was staged on, and writes nothing if any part fails or the stored value changed
+  meanwhile; the refusal is shown on the card without any submitted or staged credential.
+  General edits channel defaults and current-session harness/license/model/effort independently, with
+  engine-labelled model choices, inherited labels and Follow channel default. **Apply to channel**
+  saves the channel runtime and the access controls (mode, options, policies, named people) in one
+  write, as a current manager; **Apply to thread** saves the session's runtime and refuses changed
+  access controls. Variables, MCP connections and skills apply to the channel's stores, or to the
+  thread's own override stores (`src/gateway/thread-settings.js`): a thread variable is always a
+  hidden egress placeholder on a known or declared destination, swapped only while that thread is
+  the only live work in the container and never injected into a host or legacy-bridge run (values
+  without a fixed destination are channel-only); a thread can replace or disconnect its Composio
+  and Make connections and ADD shared skills and (admins) Cloud MCP capabilities, never remove the
+  channel's. Background agents and jobs inherit the signed thread that launched them. Skill
+  templates and access are channel-only. Automations apply as one validated batch; Apply to thread
+  is limited to loops that execute in that exact thread. Resume is read-only; VPN, email accounts,
+  personal connections and personal/organization variables keep their immediate controls. Authorized users can edit runtime,
   variables, connections, channel skills and automations, matching Slack Settings. Access controls
   require a current manager/admin, organization variable changes and Cloud MCP require admins.
   Native member selectors defer to the authenticated website when the complete roster exceeds
@@ -431,10 +509,12 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
   a complete download, or eligible browser text editing (up to 250,000 characters); a `.docx`
   shows a read-only plain-text preview of its body, and PDF and other binary files show download
-  guidance. Preview works without a Public URL. Users with file-write
-  access can open the uploader. Short-lived browser grants recheck current Teams membership and
-  gateway policy. Listings and links stay inside the owner's window. Back to files returns to
-  browsing. No personal chat installation or proactive DM is required. Read-only file callbacks
+  guidance. Preview works without a Public URL. **Root**, **Parent folder**, **Refresh** and
+  page buttons navigate; a folder with nothing visible says so. Users with file-write access open
+  the destination folder and select **Upload files**: the card names that folder and **Open
+  uploader** saves there (Refresh shows the result). Short-lived browser grants recheck current
+  Teams membership and gateway policy. Listings and links stay inside the owner's window. Back to
+  files returns to the folder and page the user came from. No personal chat installation or proactive DM is required. Read-only file callbacks
   have a 3.5-second response budget, cancel stalled roster requests and reuse a single current
   membership check per callback. File launchers persist across restarts and reconnects within
   their original 15-minute lifetime; private dialog state remains ephemeral. Missing/expired/unknown
@@ -442,7 +522,11 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
 - Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
   Composio connection or public link is needed; the gateway Public URL is required for its
   authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.
-- `/settings` → MCPs → **My connections** saves or disconnects personal Composio and Toolbox
+- **Code channels are Slack-only.** `open_code_channel`, `update_code_channel` and
+  `archive_code_channel` register only where the `codeChannels` capability is declared (Slack). The
+  Slack app needs `features.code_channels.enabled` and the `code_channels:manage` scope from
+  `slack-app-manifest.json`; Slack decides eligibility per workspace and account at creation time.
+- `/settings` → MCPs → **My connections** saves or disconnects personal Composio
   tokens inside the Teams window. Stored values are never prefilled; inputs are masked.
 - Native approvals stay on their source-thread card without supplemental decision-link DMs.
   If card delivery fails, the action is refused with retry guidance in that same conversation.
@@ -499,6 +583,19 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
   matching entity. The formatter emits both together.
 - **Private controls:** settings/files use private Teams windows. Approval controls stay in the
   source conversation; no supplemental decision links are sent to a separate personal chat.
+- **Request replay (inherent to Bot Framework).** Azure Bot Service authenticates itself, not each
+  activity: one bearer token (valid about an hour) signs every activity it sends in that time, the
+  activity body is not signed, and the token carries no per-activity claim. ChannelGate therefore
+  does not apply a single-use `jti` rule, which would refuse real deliveries. It checks the issuer,
+  audience (this bot), signature against Microsoft's published keys, `exp`/`nbf` with ±5 minutes of
+  clock skew, and requires the token's `serviceurl` claim to be present and equal to the
+  activity's `serviceUrl` (itself restricted to Microsoft's Bot Framework hosts) — the same rule as
+  Microsoft's SDK. A captured request replayed verbatim is a no-op: the durable inbox keeps each
+  accepted activity's fingerprint for 7 days, longer than any token lives. What remains: whoever
+  obtains a still-valid token (from a compromised TLS terminator, proxy or request log) can POST
+  altered activities — any text, any claimed sender — until it expires, and nothing in the request
+  distinguishes them from Microsoft's. Every turn still re-checks the claimed sender's
+  authorization. Keep the endpoint behind TLS you control and never log `Authorization` headers.
 
 ---
 
@@ -515,6 +612,7 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Approvals by signed link | ✅ (in addition to the buttons) | native cards; legacy connector fallback | native thread cards; no supplemental links |
 | Session commands | full Slack controls | native help/settings/files + text controls | text subset + native settings/files (branch) |
 | Reaction controls (start / stop / acknowledge) | ✅ | with Workspace Events (setup step 8) | with event delivery |
+| Composio SDK identities (Enterprise) | ✅ | ✅ | ✅ |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
@@ -574,3 +672,11 @@ status. Validation challenges have their own `validated` event and do not prove 
 delivery. Diagnostics exclude tokens, request headers, bodies and unverified identifiers. If no
 receipt exists, correlate provider delivery with ingress/security logs; an empty queue cannot
 distinguish a blocked POST from an absent provider notification.
+
+The subscription's JSON `resource` selector uses literal Teams identifiers, for example
+`/teams/<team-id>/channels/19:example@thread.tacv2/messages`. Percent encoding belongs to the
+message-fetch HTTP path, not to this selector. `subscriptionResource` records the registered
+form; ordinary renewal cannot change a provider subscription's resource. A deployment with an
+older encoded registration and validation-only audit evidence needs a scoped replacement, not
+another renewal or restart. Preserve the conversation's activation cutoffs and actor checks;
+confirm authenticated change-notification delivery before retiring the prior registration.

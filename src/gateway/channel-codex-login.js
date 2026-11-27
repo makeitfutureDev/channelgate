@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Admin UI login for a channel or the shared gateway Codex home. The CLI owns auth.json; this module
 // never returns its contents, the API key, or raw CLI output to a browser or log.
 import { spawn } from "node:child_process";
@@ -9,6 +10,7 @@ import { readCodexAuthState } from "../engines/codex-auth.js";
 import { codexEngineHome } from "../config/paths.js";
 import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
 import { invalidateEngineMcps } from "./mcp-discovery.js";
+import { licenseKindOfId, licenseLoginHome } from "../engines/license-state.js";
 
 const DEVICE_TIMEOUT_MS = 10 * 60_000;
 const KEY_TIMEOUT_MS = 30_000;
@@ -55,7 +57,10 @@ async function loginStatus(jobKey, home) {
   };
 }
 
-export const channelCodexLoginStatus = (channelId) => loginStatus(`channel:${channelId}`, channelCodexHome(channelId));
+export const channelCodexLoginStatus = (channelId) => {
+  requireEnterpriseFeature("channelCodexLogin");
+  return loginStatus(`channel:${channelId}`, channelCodexHome(channelId));
+};
 export const gatewayCodexLoginStatus = async () => {
   const status = await loginStatus("gateway", gatewayCodexHome());
   // A service-level key is a valid shared fallback when no file login exists. Never return it.
@@ -78,6 +83,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
     throw Object.assign(new Error("Could not prepare the Codex login directory."), { statusCode: 500 });
   }
   if (jobs.get(jobKey) !== job) return loginStatus(jobKey, home);
+  if (jobKey.startsWith("channel:")) requireEnterpriseFeature("channelCodexLogin");
   const args = ["login", "-c", 'cli_auth_credentials_store="file"', method === "device" ? "--device-auth" : "--with-api-key"];
   let child;
   try {
@@ -123,6 +129,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
     try {
       const auth = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {} });
       if (!auth.authenticated || auth.method !== (method === "device" ? "chatgpt" : "api-key")) throw new Error("credential not saved");
+      if (jobKey.startsWith("channel:")) requireEnterpriseFeature("channelCodexLogin");
       await onAuthenticated();
       invalidateEngineMcps("codex", { channelId: jobKey.startsWith("channel:") ? jobKey.slice(8) : "" });
       job.phase = "complete";
@@ -134,10 +141,6 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
   return loginStatus(jobKey, home);
 }
 
-export function startChannelCodexLogin(channelId, method, options) {
-  if (!channelId) throw Object.assign(new Error("unknown channel"), { statusCode: 404 });
-  return startLogin(`channel:${channelId}`, channelCodexHome(channelId), method, options);
-}
 export const startGatewayCodexLogin = (method, options) => startLogin("gateway", gatewayCodexHome(), method, options);
 
 function cancelLogin(jobKey) {
@@ -150,5 +153,14 @@ function cancelLogin(jobKey) {
   return true;
 }
 
-export const cancelChannelCodexLogin = (channelId) => cancelLogin(`channel:${channelId}`);
 export const cancelGatewayCodexLogin = () => cancelLogin("gateway");
+
+// A Codex LICENSE's own ChatGPT sign-in (src/engines/license-state.js): the same device-code flow,
+// into that license's private directory. Device code only — an API key is a different license kind.
+function codexLicenseHome(id) {
+  if (licenseKindOfId(id)?.id !== "codex-login") throw Object.assign(new Error("not a Codex sign-in license"), { statusCode: 404 });
+  return licenseLoginHome(id);
+}
+export const licenseCodexLoginStatus = (id) => loginStatus(`license:${id}`, codexLicenseHome(id));
+export const startLicenseCodexLogin = (id, options) => startLogin(`license:${id}`, codexLicenseHome(id), "device", { ...options, key: "" });
+export const cancelLicenseCodexLogin = (id) => cancelLogin(`license:${id}`);

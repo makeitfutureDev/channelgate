@@ -6,6 +6,91 @@ import {
   patchChannelMeta,
 } from "../config/store.js";
 import { ensureChannelFolder } from "../gateway/folders.js";
+import { confirmSlackMembership, revokeSlackMembership, slackMembershipEpoch } from "../gateway/channel-membership.js";
+
+let membershipActivity = 0;
+const latestBotEvents = new Map();
+const eventTime = (event) => /^\d+(?:\.\d+)?$/.test(event?.event_ts || event?.ts || "") ? String(event.event_ts || event.ts) : "";
+const newerThan = (left, right) => !right || (left && Number(left) > Number(right));
+export function botMembershipActivity() { return membershipActivity; }
+
+function claimBotEvent(event) {
+  const timestamp = eventTime(event);
+  const previous = latestBotEvents.get(event.channel);
+  if (timestamp && previous?.timestamp && !newerThan(timestamp, previous.timestamp)) return null;
+  const marker = { timestamp, epoch: slackMembershipEpoch() };
+  latestBotEvents.set(event.channel, marker);
+  membershipActivity++;
+  revokeSlackMembership(event.channel);
+  return marker;
+}
+function currentBotEvent(event, marker, current) {
+  return latestBotEvents.get(event.channel) === marker && marker.epoch === slackMembershipEpoch()
+    && (!marker.timestamp || newerThan(marker.timestamp, current?.botMembershipEventTs));
+}
+function restoreIgnoredEvent(event, marker, current) {
+  if (latestBotEvents.get(event.channel) === marker && marker.epoch === slackMembershipEpoch()
+    && current?.botMembership === "member" && !current.archived) confirmSlackMembership(event.channel, marker.epoch);
+}
+function eventFields(marker) {
+  return marker.timestamp ? { botMembershipEventTs: marker.timestamp } : {};
+}
+
+// Claim the event BEFORE any Slack/database await. A newer departure invalidates an older join
+// even while its metadata lookup is parked. Durable event timestamps reject delayed deliveries.
+export async function handleBotJoinedChannel(event, deps) {
+  const marker = claimBotEvent(event);
+  if (!marker) return null;
+  return withChannelMembershipLock(event.channel, async () => {
+    const initialized = await deps.initialize();
+    if (!initialized) return null;
+    const { entry, initialMeta } = initialized;
+    if (!currentBotEvent(event, marker)) return null;
+    let rejectedMeta;
+    const meta = await deps.patchChannelMeta(entry.slug, (current) => {
+      if (!currentBotEvent(event, marker, current)) { rejectedMeta = current; return null; }
+      return { ...(current ? {} : initialMeta), archived: false, archivedAt: null, archivedReason: null,
+        botMembership: "member", ...eventFields(marker) };
+    });
+    if (!meta) { restoreIgnoredEvent(event, marker, rejectedMeta); return null; }
+    if (latestBotEvents.get(event.channel) !== marker) return null;
+    confirmSlackMembership(event.channel, marker.epoch);
+    await deps.provision(entry, meta);
+    return latestBotEvents.get(event.channel) === marker ? { entry, meta } : null;
+  });
+}
+
+// Short-lived shared membership cache for READ views (Activity dashboard, Automations, and the
+// other dashboard lists). A page load used to page conversations.members for every private
+// conversation one after another, on every request. Departures and joins clear the entry the
+// moment Slack reports them (invalidateConversationMembers), so the TTL only bounds a missed
+// event. Concurrent lookups of the same conversation share one request. Action paths (messages,
+// approvals, questions) keep calling listConversationMemberIds directly.
+export const CONVERSATION_MEMBERS_TTL_MS = 60 * 1000;
+// Keyed by Slack client first, so a reconnected app (new token, new workspace) starts empty.
+let memberCaches = new WeakMap(); // client -> Map(channelId -> { at, ids } | { pending })
+const invalidators = new Set();
+export function invalidateConversationMembers(channelId) {
+  if (!channelId) { memberCaches = new WeakMap(); invalidators.clear(); return; }
+  for (const cache of invalidators) cache.delete(channelId);
+}
+export async function cachedConversationMemberIds(client, channelId, { now = Date.now, ttlMs = CONVERSATION_MEMBERS_TTL_MS } = {}) {
+  let memberCache = memberCaches.get(client);
+  if (!memberCache) { memberCache = new Map(); memberCaches.set(client, memberCache); invalidators.add(memberCache); }
+  const hit = memberCache.get(channelId);
+  if (hit?.pending) return hit.pending;
+  if (hit && now() - hit.at <= ttlMs) return hit.ids;
+  const marker = {};
+  marker.pending = listConversationMemberIds(client, channelId).then((ids) => {
+    if (memberCache.get(channelId) === marker) memberCache.set(channelId, { at: now(), ids });
+    return ids;
+  }, (error) => {
+    if (memberCache.get(channelId) === marker) memberCache.delete(channelId);
+    throw error;
+  });
+  memberCache.set(channelId, marker);
+  return marker.pending;
+}
 
 const MEMBER_PAGE_SIZE = 200;
 const USER_LOOKUP_BATCH = 8;
@@ -149,14 +234,31 @@ export async function removeChannelGuestGrant(channelId, userId, deps = cleanupD
     return { allowedUsers: current.allowedUsers.filter((id) => id !== userId) };
   });
   if (!next) return false;
-  await deps.ensureChannelFolder(entry.slug, next);
+  if (!next.archived) await deps.ensureChannelFolder(entry.slug, next);
   return true;
 }
 
 export async function handleMemberLeftChannel(event, deps = cleanupDeps) {
   if (!event?.channel || !event?.user) return false;
+  const isBot = deps.botUserId && event.user === deps.botUserId;
+  const marker = isBot ? claimBotEvent(event) : null;
+  if (isBot && !marker) return false;
   return withChannelMembershipLock(
     event.channel,
-    () => removeChannelGuestGrant(event.channel, event.user, deps),
+    async () => {
+      if (isBot) {
+        const entry = await deps.getChannelEntry(event.channel);
+        if (!entry) return false;
+        let rejectedMeta;
+        const next = await deps.patchChannelMeta(entry.slug, (current) => {
+          if (!current || !currentBotEvent(event, marker, current)) { rejectedMeta = current; return null; }
+          return { archived: true, archivedAt: new Date().toISOString(), archivedReason: "bot_removed",
+            botMembership: "absent", ...eventFields(marker) };
+        });
+        if (!next) restoreIgnoredEvent(event, marker, rejectedMeta);
+        return Boolean(next);
+      }
+      return removeChannelGuestGrant(event.channel, event.user, deps);
+    },
   );
 }

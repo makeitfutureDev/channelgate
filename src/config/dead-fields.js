@@ -15,6 +15,15 @@
 export const DEAD_RECORD_FIELDS = Object.freeze([
   // Skills Manager MCP token (channel meta and user records). Retired with that integration.
   "skillsToken",
+  // Retired built-in Toolbox connection. Imported records cannot restore its credentials.
+  "toolboxToken",
+  "toolboxTokenLabel",
+  // The retired OpenCode engine's connector selection (channel meta and user records). It never
+  // held a value — the engine admitted no MCP — and nothing reads it any more.
+  "allowedOpenCodeMcps",
+  // The per-channel opt-out from the organization-default Composio token. That default is
+  // retired: composio-agent is the channel's own token only, so there is nothing to opt out of.
+  "noDefaultTokens",
 ]);
 
 // Returns the record without any dead field. The same object is returned untouched when there is
@@ -24,5 +33,23 @@ export function stripDeadFields(record) {
   if (!DEAD_RECORD_FIELDS.some((field) => Object.hasOwn(record, field))) return record;
   const out = { ...record };
   for (const field of DEAD_RECORD_FIELDS) delete out[field];
+  return out;
+}
+
+// settings.json is separate from record storage. Ignore old fields on read and strip them on
+// every save so a stale browser or imported settings cannot restore the retired integration.
+// `defaultOpenCode*` were the retired OpenCode engine's default model and effort.
+// `defaultComposioToken*` were the organization-default Composio token and its owner label;
+// composio-agent is now the channel's own token only and composio-user the author's.
+const DEAD_SETTINGS_FIELDS = Object.freeze([
+  "toolboxMcpUrl", "defaultToolboxToken", "defaultToolboxTokenLabel",
+  "defaultOpenCodeModel", "defaultOpenCodeEffort",
+  "defaultComposioToken", "defaultComposioTokenLabel",
+]);
+export function stripDeadSettings(settings) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return settings;
+  if (!DEAD_SETTINGS_FIELDS.some((field) => Object.hasOwn(settings, field))) return settings;
+  const out = { ...settings };
+  for (const field of DEAD_SETTINGS_FIELDS) delete out[field];
   return out;
 }

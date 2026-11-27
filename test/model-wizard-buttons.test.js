@@ -6,6 +6,7 @@ ensureTestEnv();
 
 const {
   modelWizardModelBlocks,
+  modelWizardEngineBlocks,
   modelWizardEffortBlocks,
   modelOptionsForEngine,
   MODEL_PICKER_ACTION_PATTERN,
@@ -110,4 +111,61 @@ test("the picker patterns still match the retired static_select action ids", () 
   assert.ok(!MODEL_PICKER_ACTION_PATTERN.test("cg_model_picker"));
   assert.ok(EFFORT_PICKER_ACTION_PATTERN.test("cg_effort_pick"));
   assert.ok(EFFORT_PICKER_ACTION_PATTERN.test("cg_effort_pick_3"));
+});
+
+
+test("wizard descriptions and posted text name the harnesses that live toggles and channel approvals leave", async () => {
+  const { saveSettings, getSettings } = await import("../src/config/settings.js");
+  const { modelWizardScopeBlocks, modelWizardEngineBlocks, modelWizardLicenseBlocks, modelWizardText, postModelWizard } = await import("../src/slack/model-wizard.js");
+  const before = getSettings().engineEnabled;
+  const meta = { approvedEngines: ["claude", "codex", "codex-eu"] };
+  const messages = [];
+  const client = { chat: { postMessage: async (message) => messages.push(message) } };
+  const labels = (m) => allButtons(modelWizardEngineBlocks({ scope: "channel", meta: m })).filter((b) => /^cg_mw_engine_(?!reset$)/.test(b.action_id)).map((b) => b.text.text);
+  try {
+    saveSettings({ engineEnabled: { claude: true, codex: true, "codex-eu": true, "claude-bedrock": true } });
+    await postModelWizard(client, { channel: "C_WIZARD", meta });
+    // A license is never a harness: Codex EU and Bedrock are licenses of the two harnesses.
+    assert.match(messages.at(-1).text, /harness \(Claude Code \/ Codex\)/);
+    assert.ok(!messages.at(-1).text.includes("Codex EU"));
+    assert.ok(!JSON.stringify(modelWizardScopeBlocks({ meta })).includes("Codex EU"));
+    assert.deepEqual(labels(meta), ["Claude Code", "Codex"]);
+    // The approved, switched-on second Codex license shows up one step later, as a license.
+    const licenses = JSON.stringify(modelWizardLicenseBlocks({ scope: "channel", meta, engine: "codex", pool: "" }));
+    assert.match(licenses, /Any license/);
+    assert.match(licenses, /Codex EU/);
+    // The unapproved Bedrock license leaves Claude Code with one license: no license step.
+    assert.equal(modelWizardLicenseBlocks({ scope: "channel", meta, engine: "claude", pool: "" }), null);
+    saveSettings({ engineEnabled: { "codex-eu": false } });
+    assert.equal(modelWizardLicenseBlocks({ scope: "channel", meta, engine: "codex", pool: "" }), null);
+    // A harness with no usable license left is not offered at all.
+    saveSettings({ engineEnabled: { codex: false } });
+    await postModelWizard(client, { channel: "C_WIZARD", meta });
+    assert.match(messages.at(-1).text, /harness \(Claude Code\)/);
+    assert.deepEqual(labels(meta), ["Claude Code"]);
+    saveSettings({ engineEnabled: { codex: true } });
+    assert.deepEqual(labels({ approvedEngines: ["codex"] }), ["Codex"]);
+    assert.match(modelWizardText({ codexAuthSource: "channel", channelId: "C_WIZARD" }), /pick scope, then harness/);
+    await postModelWizard(client, { channel: "C_WIZARD", meta: { codexAuthSource: "channel" } });
+    assert.equal(messages.at(-1).text, modelWizardText({ codexAuthSource: "channel" }));
+  } finally {
+    saveSettings({ engineEnabled: before });
+  }
+});
+
+test("the channel's own Codex sign-in is a license of Codex, offered only in its connected channel", async () => {
+  const { modelWizardLicenseBlocks } = await import("../src/slack/model-wizard.js");
+  const connected = { channelId: "C_ACCOUNT_PICKER", codexAuthSource: "channel" };
+  const ids = meta => allButtons(modelWizardEngineBlocks({ scope: "channel", meta })).map(button => button.action_id);
+  const licenses = meta => {
+    const blocks = modelWizardLicenseBlocks({ scope: "channel", meta, engine: "codex", pool: "" });
+    return blocks ? allButtons(blocks).filter((b) => /^cg_mw_license_\d+$/.test(b.action_id)).map((b) => JSON.parse(b.value).v) : null;
+  };
+  // The harness step lists harnesses only — never a license id.
+  assert.deepEqual(ids(connected).filter((id) => /^cg_mw_engine_(?!reset$)/.test(id)), ["cg_mw_engine_claude", "cg_mw_engine_codex"]);
+  assert.deepEqual(licenses(connected), ["any", "codex", "codex-channel"]);
+  // One usable Codex license: no license step at all.
+  assert.equal(licenses({ channelId: "C_UNCONNECTED" }), null);
+  assert.equal(licenses({ ...connected, approvedEngines: ["claude", "codex"] }), null);
+  assert.ok(!ids({ ...connected, approvedEngines: ["claude"] }).includes("cg_mw_engine_codex"));
 });

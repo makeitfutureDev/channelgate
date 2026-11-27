@@ -14,7 +14,7 @@ saveSettings({ adminPassword: "inventory-test-password", apiKey: "inventory-test
 await setUser("U_INVENTORY", { name: "Inventory user", composioToken: "private-user-token" });
 await setUser("U_OTHER", { name: "Other user", composioToken: "other-private-user-token" });
 const channel = await upsertChannelEntry("C_INVENTORY", { name: "inventory-fixture", type: "channel", isDM: false });
-await saveChannelMeta(channel.slug, { channelId: "C_INVENTORY", composioToken: "private-channel-token", noDefaultTokens: true });
+await saveChannelMeta(channel.slug, { channelId: "C_INVENTORY", composioToken: "private-channel-token" });
 for (const [id, entryDM, metaDM, entryType, metaType] of [
   ["D_ENTRY_DM", true, false, "im", "channel"],
   ["D_META_DM", false, true, "channel", "channel"],
@@ -71,7 +71,6 @@ test("channel inventory merges its entry with current metadata and retains polic
   assert.equal(selection.id, "C_INVENTORY");
   assert.equal(selection.record.slug, channel.slug);
   assert.equal(selection.record.composioToken, "private-channel-token");
-  assert.equal(selection.record.noDefaultTokens, true);
   assert.equal(selection.record.isDM, false);
   assert.doesNotMatch(JSON.stringify(json), /private-channel-token|composioToken/);
 });

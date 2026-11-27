@@ -12,6 +12,7 @@
 // The marker is random per call, so no transcript content can forge a record boundary, and the
 // per-file byte and line caps keep a multi-megabyte transcript from being read back wholesale —
 // the fields adoption needs (`cwd`, the session id) are in the first records.
+import { collectResourceSnapshot } from "../resource-snapshot.js";
 import { randomBytes } from "node:crypto";
 import { shellQuote, shellQuoteGlob } from "./carry.js";
 
@@ -26,6 +27,21 @@ export const INSPECT_MAX_BYTES = 512_000;
 
 export function newInspectMarker() {
   return `cg-state-${randomBytes(8).toString("hex")}`;
+}
+
+// A closed vocabulary for why the in-container usage reducer did not answer. Matched against the
+// exec result, never echoed: the category is safe in a user-facing error, the stderr is not.
+export const USAGE_INSPECTION_CATEGORIES = Object.freeze([
+  "missing-file", "permission-denied", "state-database", "timed-out", "container-unavailable", "unknown",
+]);
+export function classifyUsageInspectionFailure({ stderr = "", signal = null } = {}) {
+  const text = String(stderr || "");
+  if (/timed out after \d+ms/.test(text) || signal === "SIGKILL") return "timed-out";
+  if (/no such container|is not running|container state improper|not found/i.test(text)) return "container-unavailable";
+  if (/\bENOENT\b/.test(text)) return "missing-file";
+  if (/\bE(ACCES|PERM)\b/.test(text)) return "permission-denied";
+  if (/SQLITE|ERR_SQLITE|database/i.test(text)) return "state-database";
+  return "unknown";
 }
 
 /**
@@ -110,10 +126,31 @@ export function createContainerState({ exec, lifecycle, log = () => {} } = {}) {
     const result = await exec.runExec(target, [target.container.name, "node", "--input-type=module", "-e", source, JSON.stringify(args)], {
       retry: false, timeoutMs: INSPECT_TIMEOUT_MS,
     });
-    if (result.code !== 0) throw new Error("runtime usage inspection failed");
+    if (result.code !== 0) {
+      // The reducer's stderr can name transcript paths and host state, so the thrown message carries
+      // only an allowlisted category plus the exit facts; the first stderr line goes to the daemon
+      // log, where an operator can read it (2026-11-12: every such failure read "failed" and nothing else).
+      const category = classifyUsageInspectionFailure(result);
+      const exit = `exit ${result.code}${result.signal ? `, ${result.signal}` : ""}`;
+      log(`[container] usage inspection in ${target.container.name} failed (${exit}, ${category}): ${String(result.stderr || "").split("\n").map((line) => line.trim()).find(Boolean) || "no stderr"}`);
+      throw Object.assign(new Error(`runtime usage inspection failed (${exit}, ${category})`), {
+        details: { exitCode: result.code, signal: result.signal || null, category },
+      });
+    }
     try { return JSON.parse(result.stdout); }
     catch { throw new Error("runtime usage inspection returned invalid JSON"); }
   }
 
-  return { inspectState, inspectUsage };
+  async function inspectResources(target, { runId = "" } = {}) {
+    // No ensureUp/recreate/retry while an active run holds the lease. Lack of a process slot may
+    // prevent even this probe; the runner records unavailable rather than delaying termination.
+    const source = `(${collectResourceSnapshot.toString()})(${JSON.stringify({ runId })}).then(value => console.log(JSON.stringify(value)))`;
+    const result = await exec.runExec(target, [target.container.name, "node", "--input-type=module", "-e", source], {
+      retry: false, timeoutMs: 2_000,
+    });
+    if (result.code !== 0) throw new Error("runtime resource inspection unavailable");
+    return JSON.parse(result.stdout);
+  }
+
+  return { inspectState, inspectUsage, inspectResources };
 }

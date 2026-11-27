@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Environment secrets that are NOT the channel's: the ORGANIZATION's and a PERSON's.
 //
 // config/channel-env.js answers "this conversation's own CLI logins". Two scopes were missing
@@ -16,7 +17,7 @@
 //   • organization → settings.json `orgEnv` (already 0600, already where the org Composio and
 //     run-API secrets live, and NOT in config/settings.js's ENV_MAP, so it can never be copied
 //     into the daemon's own process.env).
-//   • person      → the `users` row's JSON blob (`data.env`), beside composioToken/toolboxToken,
+//   • person      → the `users` row's JSON blob (`data.env`), beside composioToken,
 //     the personal credentials that were already there.
 //
 // PRECEDENCE at spawn is organization → person → channel, most specific last (mergeRunEnv). The
@@ -43,6 +44,7 @@ export function listOrgEnv() {
 // One mutation entry point per scope, mirroring patchChannelEnv — the admin API and the MCP tool
 // must not grow two different validation stories.
 export function patchOrgEnv({ set = null, remove = "", actor = "", now = Date.now() } = {}) {
+  if (set) requireEnterpriseFeature("organizationVariables");
   const next = patchChannelEnv(getOrgEnv(), {
     set, remove, actor, now,
     scopeNoun: "The organization", scopeWhere: "the organization",
@@ -53,6 +55,7 @@ export function patchOrgEnv({ set = null, remove = "", actor = "", now = Date.no
 }
 
 export async function resolveOrgEnv() {
+  if (!enterpriseFeatureEnabled("organizationVariables")) return {};
   return resolveEnvMap(getOrgEnv(), { scopeLabel: "Organization" });
 }
 
@@ -81,7 +84,7 @@ export async function patchUserEnv(userId, { set = null, remove = "", actor = ""
 
 // A person's secrets are only ever resolved for a principal the platform AUTHENTICATED. The HTTP
 // run API authenticates its key, not the `author` it names, so an untrusted caller gets nothing
-// here — the same rule that already withholds the personal Composio and Toolbox tokens
+// here — the same rule that already withholds the personal Composio tokens
 // (gateway/access-grants.js). Passing the flag in rather than reading it back keeps one source.
 export async function resolveUserEnv(userId, { untrustedPrincipal = false } = {}) {
   if (!userId || untrustedPrincipal) return {};
@@ -105,6 +108,7 @@ export async function getSecretEntry({ scope, slug = "", userId = "", name } = {
 export async function patchSecretEntry({ scope, slug = "", userId = "", name, addApprovedHost = "", exposure = undefined, hosts = undefined } = {}) {
   const fields = { addApprovedHost, exposure, hosts };
   if (scope === "organization") {
+    requireEnterpriseFeature("organizationVariables");
     const next = patchEnvEntry(getOrgEnv(), name, { ...fields, scopeWhere: "the organization" });
     saveSettings({ orgEnv: next });
     emitConfigChange("org-env", {});

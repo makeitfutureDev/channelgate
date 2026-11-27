@@ -13,7 +13,7 @@ test("Composio mode defaults to personal", () => {
   assert.equal(settings.getComposioMode(), "personal");
 });
 
-test("switching Composio modes preserves organization credentials", () => {
+test("switching Composio modes preserves the SDK key; the retired organization token is purged", () => {
   settings.saveSettings({
     defaultComposioToken: "legacy-org-token",
     composioSdkApiKey: "sdk-secret",
@@ -21,7 +21,7 @@ test("switching Composio modes preserves organization credentials", () => {
   });
   settings.saveSettings({ composioMode: "personal" });
 
-  assert.equal(settings.getDefaultComposioToken(), "legacy-org-token");
+  assert.equal(settings.getSettings().defaultComposioToken, undefined);
   assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
   assert.equal(settings.getComposioMode(), "personal");
 });
@@ -50,7 +50,6 @@ after(() => server.close());
 
 test("saving only Composio mode through the admin route preserves every credential scope", async () => {
   settings.saveSettings({
-    defaultComposioToken: "legacy-org-token",
     composioSdkApiKey: "sdk-secret",
     composioMode: "personal",
   });
@@ -65,7 +64,6 @@ test("saving only Composio mode through the admin route preserves every credenti
 
   assert.equal(response.status, 200);
   assert.equal(settings.getComposioMode(), "sdk");
-  assert.equal(settings.getDefaultComposioToken(), "legacy-org-token");
   assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
   assert.equal((await getUser("U_TEST")).composioToken, "legacy-user-token");
   assert.equal((await getChannelMeta("sdk-test")).composioToken, "legacy-channel-token");
@@ -86,4 +84,33 @@ test("settings reject SDK activation/key storage without Enterprise and expose a
       assert.deepEqual((await allowed.json()).composioSdk, { tier: "enterprise", status: "beta", entitled: false });
     }
   } finally { testLicenseEnv(); }
+});
+
+test("SDK policy round-trips through settings without changing credentials", async () => {
+  const policy = { multiAccount: true, maxAccountsPerToolkit: 3, allowedApps: ["GMAIL", "custom_aioutreach", "gmail"] };
+  const response = await fetch(`${base}/settings`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ composioSdkPolicy: policy, connectSlack: false }),
+  });
+  assert.equal(response.status, 200);
+  const saved = (await response.json()).composioSdkPolicy;
+  assert.deepEqual(saved, { ...policy, allowedApps: ["custom_aioutreach", "gmail"] });
+  assert.deepEqual(settings.getComposioSdkPolicy(), saved);
+  assert.equal(settings.getComposioSdkApiKey(), "sdk-secret");
+  settings.saveSettings({ composioSdkPolicy: { allowedApps: [] } });
+  assert.deepEqual(settings.settingsForApi().composioSdkPolicy.allowedApps, []);
+  settings.saveSettings({ composioSdkPolicy: {} });
+  assert.equal(settings.settingsForApi().composioSdkPolicy.allowedApps, null);
+});
+
+test("invalid SDK policy rejects the complete HTTP update", async () => {
+  const before = settings.getSettings();
+  for (const policy of [null, [], { multiAccount: "true" }, { maxAccountsPerToolkit: 1 }, { maxAccountsPerToolkit: 11 }, { maxAccountsPerToolkit: 3.5 }, { allowedApps: "gmail" }, { allowedApps: ["*"] }, { allowedApps: [""] }, { allowedApps: [null] }]) {
+    const response = await fetch(`${base}/settings`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ composioSdkPolicy: policy, defaultComposioTokenLabel: "must-not-save", connectSlack: false }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(policy));
+    assert.deepEqual(settings.getSettings(), before);
+  }
 });

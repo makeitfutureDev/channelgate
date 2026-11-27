@@ -8,9 +8,11 @@
 // pins the two together. The daemon COMPARES it at boot: an image built from an older spec still
 // runs, but the operator is told to rebuild rather than left wondering why a channel is missing
 // this build's toolchain.
-export const IMAGE_SPEC_VERSION = "1.6.2";
+export const IMAGE_SPEC_VERSION = "1.6.4";
 
 export const CONTAINER_HOME = "/home/agent";
+// One deployment-owned outbound identity; the channel's remaining ~/.ssh stays private.
+export const CONTAINER_AGENT_SSH_DIR = `${CONTAINER_HOME}/.ssh/channelgate`;
 // Where a channel's OWN installs land, in precedence order, ahead of the image's root-owned
 // toolchain: npm -g (NPM_CONFIG_PREFIX), then pip --user / pipx / uv / curl installers
 // (~/.local/bin), then anything the agent drops in ~/bin, then the language-runtime bin dirs
@@ -64,7 +66,7 @@ export const CONTAINER_EGRESS_CONNECT = "/opt/channelgate/bin/cg-egress-connect"
 // who exec'd into a container by hand.
 //
 // Spec 1.6.0: the bridge and secret-env-bridge carry the `remote-mcp` socket service (the daemon
-// relays Composio and the toolboxes, so a container holds no remote MCP credential); the broker
+// relays Composio and the Make connection, so a container holds no remote MCP credential); the broker
 // forwards CG_MCP_SERVICE / CG_MCP_SOCKET. An older image's broker would drop the service
 // selection, which is why this is a contract bump and not only a toolchain change. The same spec
 // also ships the egress forwarder (bin/cg-egress.mjs) that cg-init starts under CG_EGRESS=proxy:
@@ -88,6 +90,9 @@ export function containerImagePaths() {
     tmpDir: CONTAINER_TMPDIR,
     claudeConfigDir: CONTAINER_CLAUDE_CONFIG_DIR,
     codexHome: CONTAINER_CODEX_HOME,
+    codexChannelHome: `${CONTAINER_HOME}/.codex-channel`,
+    codexEuHome: `${CONTAINER_HOME}/.codex-eu`,
+    claudeBedrockConfigDir: `${CONTAINER_HOME}/.claude-bedrock`,
     npmPrefix: CONTAINER_NPM_PREFIX,
     bundleRoot: CONTAINER_BUNDLE_ROOT,
     socketDir: CONTAINER_SOCKET_DIR,

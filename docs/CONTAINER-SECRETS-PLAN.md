@@ -15,8 +15,10 @@ work; `FEATURES.md` and `TEST-PLAN.md` are updated phase by phase as code lands.
    a developer attached over SSH, a background job, the memory reviewer) runs as the same uid and
    can read every other process's environment and files in that container. That is already true
    today with REAL secret values. The goal of this work is not to hide members from each other but
-   to make anything a member can take **worthless outside its run**.
-3. **The container never holds a real credential.** It holds *placeholders*. A host-side egress
+   to make provider credentials a member can take **worthless outside its run**. The deliberately
+   shared outbound SSH private key added 2026-11-18 is an exception: it is readable/copyable in
+   containers and remains usable wherever its public key has been authorized (docs/SSH-ACCESS.md).
+3. **Provider credentials use placeholders.** A host-side egress
    proxy swaps a placeholder for the real value only on requests to the hosts and headers that
    secret is declared for. Every other credential path (remote MCP headers, the Claude relay
    token, SSH session files) moves behind a daemon-side broker or becomes a placeholder too.
@@ -48,7 +50,7 @@ work; `FEATURES.md` and `TEST-PLAN.md` are updated phase by phase as code lands.
 | Path | File / mechanism | Container-visible? | Fix in |
 |---|---|---|---|
 | Org / channel / personal env secrets | `--env-file` under `~/.channelgate/channels/<p>/<slug>/runtime/env/<run>.env` (0600, unmounted) but values land in the process environment (`src/runtimes/container/exec.js:109`) | yes (env of every process, `/proc/*/environ`) | P2 |
-| Remote MCP headers (Composio user/agent legacy, toolbox, Make, catalog servers) | `cg-mcp-<uuid>.json` in the ARTIFACT dir, mounted rw (`src/gateway/run.js:1236`) | yes (file) | P1 |
+| Remote MCP headers (Composio user/agent legacy, Make, catalog servers) | `cg-mcp-<uuid>.json` in the ARTIFACT dir, mounted rw (`src/gateway/run.js:1236`) | yes (file) | P1 |
 | Codex remote MCP headers | `<artifact>/run/cg-codex-secrets-<uuid>.json` + `*.headers.cjs` (`src/engines/codex.js:946`) | yes (file) | P1 |
 | Composio SDK sessions (Enterprise) | daemon-side bridge over the control socket; container holds only the capability + session URL (`src/ee/composio-sdk-bridge.js`) | no | already correct — the model for P1 |
 | Claude login | relay of the access token in `CLAUDE_CODE_OAUTH_TOKEN` (`src/gateway/claude-token-relay.js`) | yes (env) | P2 |
@@ -117,7 +119,7 @@ gains a `remoteMcps[]` claim (server name + URL, bounded like `composioSessions`
 alone fixes what a run may reach.
 
 - `src/gateway/mcp.js` + `run-integrations.js`: every header-bearing remote server (Composio
-  legacy user/agent, toolbox, Make, credentialed catalog servers) becomes a `command` entry over
+  legacy user/agent, Make, credentialed catalog servers) becomes a `command` entry over
   the bridge; `cg-mcp-*.json` carries no token.
 - `src/engines/codex.js`: drop the secrets bundle and header helpers for remote servers; Codex
   reaches them through `secret-env-bridge → cg-mcp-bridge` exactly like the gateway server.
@@ -181,8 +183,11 @@ Then:
   `vscode.js:161`); the session note names the proxy, the CA and the personal-scope pause rule.
 - Outbound SSH from a session (`git@github.com`): a `ProxyCommand cg-egress-connect %h %p`
   helper doing raw CONNECT to declared hosts on port 22. The proxy cannot inject an SSH key;
-  outbound keys are a later restricted ssh-agent broker (destination-constrained, OpenSSH
-  `agent-restrict`), out of scope here and documented as such.
+  outbound keys were originally deferred to a restricted ssh-agent broker. The 2026-11-18 shared
+  SSH identity decision instead deliberately mounts one deployment keypair read-only in every
+  channel at `~/.ssh/channelgate` (see `docs/SSH-ACCESS.md`). Container shell users can read/copy
+  this private key. No SSH broker is required; destination and Network policy remain enforced
+  by the existing channel proxy. Provider credentials retain their placeholder/relay handling.
 - `docs/SSH-ACCESS.md`: `-L` forwards to external hosts no longer work under `--network none`;
   forwards to container-local ports and `-R` are unchanged; VS Code server downloads for unlisted
   client versions go through the proxy env.

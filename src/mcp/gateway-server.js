@@ -1,3 +1,4 @@
+import { registerIncomingCallTool, incomingCallProblem } from "./tools/incoming-calls.ts";
 // Gateway control MCP server. Injected into every gated run, scoped to the current principal by a
 // daemon-signed, expiring capability. Exposes scheduling tools (anyone allowed in the channel) and
 // channel-admin tools to manage the channel's MCP allowlist (admins only). Tool registrations live
@@ -21,26 +22,36 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
 import { listForChannel } from "../config/schedules.js";
-import { API_PRINCIPAL, canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
+import { API_PRINCIPAL, canManage, isApiPrincipal, isAgentPrincipal, isAuthorized } from "../gateway/modes.js";
 import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
 import { register as registerSchedules } from "./tools/schedules.js";
-import { register as registerBackground } from "./tools/background.js";
-import { register as registerChannelAdmin, registerMemoryTool } from "./tools/channel-admin.js";
+import { register as registerBackground, registerPermissionPrompt } from "./tools/background.js";
+import { register as registerChannelAdmin, registerMemoryTool, registerMemoryReadTools } from "./tools/channel-admin.js";
 import { register as registerTokens } from "./tools/tokens.js";
+import { register as registerApiTokens } from "./tools/api-tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerTeamsNative } from "./tools/teams-native.js";
+import { register as registerConversationHistory } from "./tools/conversation-history.js";
 import { register as registerLicense } from "./tools/license.js";
 import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
+import { getProposal } from "../gateway/skills/catalog.js";
+import { proposalDecider } from "../gateway/skills/authoring.js";
 import { register as registerAgentDirectory } from "./tools/agent-directory.js";
+import { register as registerAgentMail } from "./tools/agent-mail.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { register as registerEgressHosts } from "./tools/egress-hosts.js";
+import { isChannelWorker, prepareEgressHost, preparePrivateHost } from "../gateway/egress-hosts.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
+import { register as registerCodeChannels } from "./tools/code-channels.js";
+import { register as registerThreadForks } from "./tools/thread-forks.js";
+import { prepareThreadForkApproval, describeThreadForks } from "../gateway/thread-fork-approvals.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 import { buildControlPlaneAction, describeControlPlaneTier } from "../gateway/control-plane-approvals.js";
 
@@ -51,7 +62,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "agent-mail", "code-channel", "skill-swap", "capability"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -120,6 +131,11 @@ const ENGINE_CLAIMS = ["claude", "codex"];
 // conversation taught, so it gets the save tool and nothing else — no schedules, no admin
 // switches, no Slack writes.
 export const SSH_TOOLSET = "ssh";
+// A message another channel's agent sent here (gateway/agent-mail.js), answered as that agent's
+// own principal: the channel's knowledge (workspace reads, memory, this channel's own Slack
+// tools, approval cards) and nothing that reaches beyond the thread — no background work, no
+// schedules, no admin switches, no directory, no further agent messages. Depth one, structurally.
+export const AGENT_MESSAGE_TOOLSET = "agent-message";
 export function normalizeToolset(value) {
   return String(value || "full");
 }
@@ -129,7 +145,7 @@ export function normalizeToolset(value) {
  * `engine` / `toolset` / `progressReport` are the reader's own environment values; the signed
  * claim wins whenever it is present, so a bearer alone fixes the tool surface.
  */
-export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progressReport = false, daemon = null, verifyCapability = null } = {}) {
+export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progressReport = false, daemon = /** @type {ReturnType<typeof createDirectDaemonIpc> | ReturnType<typeof createHttpDaemonIpc> | null} */ (null), verifyCapability = null } = {}) {
   const channelId = claims.channelId || "";
   const slug = claims.slug || "";
   const claimedAuthor = claims.authorId || "";
@@ -140,9 +156,13 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // channel with no personal scope. A capability that names any other author without vouching for
   // it (principalTrusted false) maps there too, so a named id is never authority. Runs that API
   // work later spawns (a schedule, a background agent) carry the principal as their author.
-  const apiPrincipal = claims.principalTrusted !== true || isApiPrincipal(claimedAuthor);
-  const principalTrusted = !apiPrincipal;
-  const createdBy = apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
+  // A delivered agent message (gateway/agent-mail.js) runs as `agent:<source slug>`: no person, no
+  // rank — never the API principal's admin standing, never a member's. It keeps its own id so the
+  // audit trail names the source channel, and every personal/admin/manager check refuses it.
+  const agentPrincipal = isAgentPrincipal(claimedAuthor);
+  const apiPrincipal = !agentPrincipal && (claims.principalTrusted !== true || isApiPrincipal(claimedAuthor));
+  const principalTrusted = !apiPrincipal && !agentPrincipal;
+  const createdBy = agentPrincipal ? claimedAuthor : apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
   const claimedEngine = ENGINE_CLAIMS.includes(claims.engine) ? claims.engine : "";
   const activeEngine = claimedEngine || (ENGINE_CLAIMS.includes(engine) ? engine : getDefaultEngine());
 
@@ -153,9 +173,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // member / listed manager. The author comes only from the verified run capability.
   // The HTTP run API principal ranks as an admin: its key is an admin credential. Control-plane
   // changes still need a human click on their approval card, exactly as for an admin's message.
-  const requireAdmin = async () => Boolean(createdBy) && (apiPrincipal || (await isAdmin(createdBy)));
+  const requireAdmin = async () => Boolean(createdBy) && !agentPrincipal && (apiPrincipal || (await isAdmin(createdBy)));
   const requireManage = async () => {
-    if (!createdBy) return false;
+    if (!createdBy || agentPrincipal) return false;
     if (apiPrincipal) return true;
     const meta = await loadMeta();
     return canManage(meta || {}, {
@@ -169,6 +189,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     if (!createdBy) return false;
     // The API key was accepted as this channel's caller; the capability is scoped to it.
     if (apiPrincipal) return Boolean(await loadMeta());
+    // The daemon admitted the agent message on the requester's live access; the capability is
+    // scoped to this channel.
+    if (agentPrincipal) return Boolean(await loadMeta());
     const meta = await loadMeta();
     return Boolean(meta) && isAuthorized(meta, createdBy, meta.isDM, {
       isAdminUser: await isAdmin(createdBy), isApprovedUser: await isApproved(createdBy),
@@ -180,12 +203,17 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     slug,
     createdBy,
     threadKey,
+    admissionThreadKey: claims.admissionThreadKey ?? threadKey,
+    // The thread whose own settings this run uses (thread-settings.js): its own unless a signed
+    // claim names the thread that launched it. Background work inherits exactly this one.
+    settingsThreadKey: claims.settingsThreadKey || threadKey,
     questionThreadKey: claims.questionThreadKey,
     sudoSchedule: claims.sudoSchedule === true,
     origin,
     activeEngine,
     principalTrusted,
     apiPrincipal,
+    agentPrincipal,
     // A NON-EMPTY signed toolset wins (only the daemon can mint one, and every value but "full"
     // reduces); a blank/absent one falls back to the reader's own environment, which is how the
     // stdio entry has always learned it. Neither direction can widen: "full" IS the default.
@@ -195,7 +223,11 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     // than through the capability). It grants no authority: the handler acknowledges a snapshot
     // the daemon has already validated, and rendering is decided daemon-side either way.
     progressReport: claims.progressReport === true || progressReport === true,
-    daemon: daemon || createDirectDaemonIpc({}),
+    daemon: (() => {
+      const transport = daemon || createDirectDaemonIpc({});
+      return { ...transport, call: (kind, body, options) => transport.call(kind,
+        kind === "background" ? { ...body, admissionThreadKey: claims.admissionThreadKey ?? threadKey, settingsThreadKey: claims.settingsThreadKey || threadKey } : body, options) };
+    })(),
     // Re-checked at every tool call. Defaults to "the claims we were built from are still valid",
     // which is only correct for a caller that has no token to re-verify (tests).
     verifyCapability: verifyCapability || (() => ({ ok: true, claims })),
@@ -282,6 +314,9 @@ export function gateCardTier(gate, args = {}) {
 // What the table says per tool: `authz` is who may CALL it (checked first; a caller without it is
 // refused with no card), `details(args)` is the card text — or null, which means the change is
 // AUTOMATIC for that caller — and `tier` is who must click the card (defaults to the authz).
+// An optional `precheck(args)` returns why the call could not be applied at all ("" when it can):
+// the caller gets that reason as an error and NO card is posted. It never replaces the handler's
+// own validation, which runs again when the saved call is applied.
 //
 // Operator decision 2026-10-07 (minimum second-approval cards). A card survives only where one
 // unasked call would silently hand attacker-controlled content or a secret to OTHER channels and a
@@ -292,7 +327,17 @@ export function gateCardTier(gate, args = {}) {
 // A surviving card is DURABLE: the exact call is saved and applied on the click, with no deadline.
 const AUTOMATIC = () => null;
 
-export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId }) {
+// A pending proposal its skill's owning channel decides (gateway/skills/authoring.js proposalDecider).
+function channelDecided(id) {
+  try {
+    const proposal = getProposal(Number(id));
+    return proposal?.status === "pending" && proposalDecider(proposal).tier === "channel";
+  } catch {
+    return false;
+  }
+}
+
+export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId, threadKey, apiPrincipal, agentPrincipal }) {
   const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
   const sudoEdit = (args = {}) => args.sudo === true || (args.sudo !== false && listForChannel(channelId).some((s) => s.id === args.id && s.sudo === true));
   return new Map([
@@ -305,14 +350,26 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // authors in this channel, which is the posture every other card relies on — so it keeps its card.
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
+    ["allow_channel_ssh_host", { authz: "worker", details: ({ host, port }) => `Allow raw TCP connections to ${host} for THIS channel on ${port === undefined ? "ports 22 (SSH), 5432 and 6543 (PostgreSQL)" : `TCP port ${port} only`}? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
+    ["allow_channel_private_host", { authz: "worker", tier: "admin", details: ({ host, port, address }) => `Allow THIS channel to reach the PRIVATE destination ${host}:${port}, pinned to ${address}? Only an organization admin can approve. Traffic is tunnelled through the egress proxy to that exact address and port only (no other port, no other host on that network) and persists for future channel runs until revoked. No SSH key or secret access is granted.` }],
+    ["revoke_channel_private_host", { authz: "worker", details: AUTOMATIC }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
+    // Which licenses the channel may run on: admins only, and reversible with one more call. The
+    // handler keeps the Enterprise entitlement check and refuses a list that excludes the license
+    // the channel runs on.
+    ["set_channel_approved_harnesses", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_skill_swap", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_agent_profile", { authz: "manage", details: AUTOMATIC }],
     // The folder is contained to the allowlisted root (web/security.js), so it cannot point at
     // the operator home, the gateway root or another channel; a wrong change is one message away.
     ["set_channel_workdir", { authz: "admin", details: AUTOMATIC }],
     ["clear_channel_workdir", { authz: "admin", details: AUTOMATIC }],
+    // An additional folder WIDENS what the container mounts (same containment as the work folder,
+    // but beside it rather than instead of it), so adding one keeps a card; removing one narrows.
+    ["add_channel_folder", { authz: "admin", details: ({ path: dir, mode }) => `Mount the host folder ${summarize(dir)} into THIS channel's container at the same path, ${mode === "ro" ? "read-only" : "read-write"}, beside its working folder? Every run here (turns, background jobs, schedules, memory reviews) will see it until an admin removes it.` }],
+    ["remove_channel_folder", { authz: "admin", details: AUTOMATIC }],
     // With network on the agent can already upload the same files anywhere; a Drive link adds no
     // reach a card would withhold.
     ["set_channel_drive_folder", { authz: "admin", details: AUTOMATIC }],
@@ -328,7 +385,13 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => add.length
       ? `Add to the "${summarize(template)}" skill template — every conversation following it gets ${summarize(add.join(", "))}.${remove.length ? ` Also remove: ${summarize(remove.join(", "))}.` : ""}`
       : null }],
-    ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => decision === "approve" ? `APPROVE skill proposal #${Number(id) || "?"} — its change becomes part of the shared catalog.` : null }],
+    // An edit of a channel skill is decided by that channel's members with no card, like their own
+    // update_skill (the handler checks they are members of the OWNING channel); every other proposal
+    // reaches past one channel and keeps the admin tier and its card.
+    ["decide_skill_proposal", {
+      authz: ({ id }) => channelDecided(id) ? "any" : "admin",
+      details: ({ id, decision }) => decision === "approve" && !channelDecided(id) ? `APPROVE skill proposal #${Number(id) || "?"} — its change becomes part of the shared catalog.` : null,
+    }],
     ["sync_skill_sources", { authz: "admin", details: AUTOMATIC }],
     ["publish_skill", { authz: "manage", details: AUTOMATIC }],
     ["set_skill_scope", { authz: "admin", details: AUTOMATIC }],
@@ -365,10 +428,10 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // Connector identity and environment secrets: the caller's own accounts (or, for the
     // organization scope, an admin's). The value is in the caller's own message; a card would
     // only echo its name back. Never a value in a card or a listing.
+    ["set_my_reply_mentions", { authz: "any", details: AUTOMATIC }],
+    ["set_my_voice_auto_start", { authz: "any", details: AUTOMATIC }],
     ["set_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["clear_my_composio_token", { authz: "any", details: AUTOMATIC }],
-    ["set_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
-    ["clear_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
     ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
     ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
     // Making a secret READABLE puts its raw value in containers where people can read it; once
@@ -389,6 +452,30 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // and the worst unasked outcome (the no-key limits) is undone by setting it again.
     ["set_license_key", { authz: "admin", details: AUTOMATIC }],
     ["clear_license_key", { authz: "admin", details: AUTOMATIC }],
+    // Slack code channels: opening one creates a Slack channel other people are invited into and
+    // starts a turn there, so the person who asked for it confirms on a card (the model may only
+    // relay the request). Archiving is reversible in Slack and open to anyone working in the
+    // channel; the in-channel artifact/context updates are open (they land visibly in that channel).
+    ["propose_thread_forks", { authz: "any", tier: "owner", details: () => "" }],
+    ["open_code_channel", { authz: "any", tier: "owner", details: ({ task, name, mode }) => {
+      const files = mode === "in_place" ? "this channel's own files"
+        : mode === "worktree" ? "a new task branch in a git worktree inside this channel's folder"
+          : "a task branch in a git worktree when the folder is a repository, else this channel's own files";
+      return `Open a Slack code channel${name ? ` "${summarize(name)}"` : ""} for: ${summarize(task)}\nFiles: ${files}. Members of this channel may join it; the agent starts working there once approved.`;
+    } }],
+    // Agent mail (gateway/agent-mail.js): the message lands in ANOTHER channel, attributed to the
+    // requester and answered on their access, so the requester (or an admin) confirms the exact text
+    // on a card first. The daemon re-runs the access gate itself; the click is the human factor
+    // against an injected "ask #sales for …" — never auto-approved, in Auto mode too.
+    // `precheck` answers why the call cannot be placed at all (not configured, no iPhone, one
+    // already pending): the caller is told at once and no card asks for a pointless approval.
+    ["call_user", { authz: "worker", tier: "owner",
+      precheck: ({ reason, in_minutes = 0 }) => incomingCallProblem({ principalTrusted: principalTrusted === true, apiPrincipal, agentPrincipal, channelId, threadKey, createdBy }, reason, in_minutes),
+      details: ({ reason, in_minutes = 0 }) =>
+      `Ring your registered iPhone ${in_minutes ? `in ${in_minutes} minutes` : "now"} for this conversation: ${summarize(String(reason || ""), 160)}. The call can access only conversations you are currently allowed to open.` }],
+    ["send_agent_message", { authz: "any", tier: "owner", details: ({ to, message }) =>
+      `Send a message to the agent in ${summarize(String(to || ""))} on your behalf:\n${summarize(String(message || ""), 1200)}\nIts reply will be posted back into this thread.` }],
+    ["archive_code_channel", { authz: "any", tier: "", details: ({ summary }) => `Archive this code channel${summary ? " after posting the wrap-up" : ""}. History and artifact tabs stay readable and searchable; the task branch stays on disk.` }],
   ]);
 }
 
@@ -401,6 +488,7 @@ export function createGatewayMcpServer(ctx) {
   const CONTROL_PLANE = buildControlPlane(ctx);
 
   async function passesAuthzPrecheck(authz) {
+    if (authz === "worker") return ctx.principalTrusted && isChannelWorker(ctx.channelId, ctx.slug, ctx.createdBy);
     if (authz === "admin") return ctx.requireAdmin();
     if (authz === "manage") return ctx.requireManage();
     return true;
@@ -419,8 +507,8 @@ export function createGatewayMcpServer(ctx) {
         threadKey: ctx.threadKey,
         toolName,
         toolInput: { details },
-        approveText: "Approve",
-        denyText: "Deny",
+        approveText: toolName === "propose_thread_forks" ? `Create ${durableAction.forks.length} forks` : "Approve",
+        denyText: toolName === "propose_thread_forks" ? "Cancel" : "Deny",
         requiredTier,
         ...(durableAction ? { durableAction } : {}),
       }, { timeoutMs: 280_000 });
@@ -441,7 +529,7 @@ export function createGatewayMcpServer(ctx) {
     const handler = rawHandlers.get(name);
     if (!handler) throw new Error(`unknown gateway tool "${name}"`);
     if (!CONTROL_PLANE.has(name)) throw new Error(`"${name}" is not a control-plane tool`);
-    const capability = ctx.verifyCapability();
+    const capability = await ctx.verifyCapability({ tool: name });
     if (!capability.ok) throw new Error(`gateway capability rejected (${capability.reason})`);
     const result = await handler(args ?? {}, {});
     const message = (result?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join("\n");
@@ -454,7 +542,9 @@ export function createGatewayMcpServer(ctx) {
       // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
       // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
       const refuse = (message) => name === "permission_prompt" ? text(JSON.stringify({ behavior: "deny", message })) : text(message);
-      const capability = ctx.verifyCapability();
+      // The verifier receives the tool name for its audit row. Both verifiers are liveness-aware:
+      // the socket's checks in-process, the stdio one asks the daemon (may return a promise).
+      const capability = await ctx.verifyCapability({ tool: name });
       if (!capability.ok) {
         return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
@@ -471,15 +561,46 @@ export function createGatewayMcpServer(ctx) {
         if (!(await passesAuthzPrecheck(authz))) {
           return text(authz === "admin"
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
+            : authz === "worker" ? `🚫 Only authorized channel members with write access can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
-        let details = await gate.details(args ?? {});
+        // Validate before posting a card, and use canonical args for the exact saved action.
+        let hostAlreadyAllowed = false;
+        if (name === "allow_channel_ssh_host") {
+          try {
+            const prepared = await prepareEgressHost(ctx, args?.host, { port: args?.port });
+            args = { host: prepared.host, ...(prepared.port === undefined ? {} : { port: prepared.port }) };
+            hostAlreadyAllowed = prepared.alreadyAllowed;
+          } catch (error) {
+            return text(`Couldn't request SSH egress: ${error.message}`);
+          }
+        }
+        if (name === "allow_channel_private_host") {
+          try {
+            const prepared = await preparePrivateHost(ctx, args?.host, { port: args?.port, address: args?.address });
+            args = { host: prepared.host, port: prepared.port, address: prepared.address };
+            hostAlreadyAllowed = prepared.alreadyAllowed;
+          } catch (error) {
+            return text(`Couldn't request private egress: ${error.message}`);
+          }
+        }
+        // A gate may know the saved call could not be applied: say so now instead of posting a card.
+        const problem = typeof gate.precheck === "function" ? await gate.precheck(args ?? {}) : "";
+        if (problem) return { ...text(`Couldn't request \`${name}\`: ${problem} No approval card was posted and nothing was changed.`), isError: true };
+        let details = hostAlreadyAllowed ? null : await gate.details(args ?? {});
         if (details !== null) {
           // The clicker must independently hold the card's tier ("" needs no extra rank): the
           // human factor for an admin-tier change must come from an admin, never a bystander.
           const tier = gateCardTier(gate, args);
           let durableAction = null;
-          if (name === "update_channel_instructions") {
+          if (name === "propose_thread_forks") {
+            try {
+              durableAction = await prepareThreadForkApproval(ctx, args);
+              details = describeThreadForks(durableAction.forks);
+            } catch (error) {
+              return text(`Could not propose forks: ${error.message}`);
+            }
+          } else if (name === "update_channel_instructions") {
             try {
               durableAction = await prepareInstructionApproval(ctx, args);
               details = await gate.details(durableAction);
@@ -490,7 +611,9 @@ export function createGatewayMcpServer(ctx) {
             // Every other surviving card is durable: the exact call is saved and applied on the
             // click by the daemon, so no engine waits and no card expires. The public-link card
             // stays inline because the model needs the minted URL in the same turn.
-            durableAction = buildControlPlaneAction(ctx, { tool: name, args: args ?? {}, tier });
+            const asked = gateAuthz(gate, args);
+            durableAction = buildControlPlaneAction(ctx, { tool: name, args: args ?? {}, tier,
+              ...(gate.tier !== undefined && typeof asked === "string" && asked !== "any" && asked !== tier ? { requesterTier: asked } : {}) });
           }
           const d = await requireToolApproval(name, details, tier, durableAction);
           if (d.pending) {
@@ -524,19 +647,33 @@ export function createGatewayMcpServer(ctx) {
   if (ctx.toolset === "full" || ctx.toolset === SSH_TOOLSET) {
     registerWorkspaceRead(server, ctx);
     registerSchedules(server, ctx);
-    if (ctx.toolset === "full") registerBackground(server, ctx);
+    if (ctx.toolset === "full") { registerBackground(server, ctx); registerIncomingCallTool(server, ctx); }
     registerChannelAdmin(server, ctx);
+    registerEgressHosts(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
+    registerApiTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerTeamsNative(server, ctx);
+    registerConversationHistory(server, ctx);
     registerLicense(server, ctx);
     registerSkills(server, ctx);
     registerAgentDirectory(server, ctx);
+    registerAgentMail(server, ctx);
     registerQuestions(server, ctx);
     registerSshAccess(server, ctx);
     registerFileSharing(server, ctx);
     registerEmail(server, ctx);
+    registerCodeChannels(server, ctx);
+    registerThreadForks(server, ctx);
+  } else if (ctx.toolset === AGENT_MESSAGE_TOOLSET) {
+    registerWorkspaceRead(server, ctx);
+    registerMemoryReadTools(server, ctx);
+    registerMemoryTool(server, ctx);
+    registerSlackNative(server, ctx);
+    registerTeamsNative(server, ctx);
+    registerConversationHistory(server, ctx);
+    registerPermissionPrompt(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }
@@ -548,16 +685,39 @@ export function createGatewayMcpServer(ctx) {
 // process; the signed capability is still the only authority (the CG_* strings are hints the
 // claims override). Nothing here runs when the module is merely imported — the daemon's socket
 // listener imports the factory above in-process.
-export function createGatewayMcpServerFromEnv(env = process.env) {
+export const CAPABILITY_UNCONFIRMED_REASON = "the gateway daemon could not confirm that this run is still live";
+
+// The stdio server's per-call verifier: the signature and expiry are checked here, then the DAEMON
+// is asked whether the capability's conversation still has live work — the same rule, refusal
+// sentence and `capability_refused_idle` audit row the control socket applies
+// (gateway/capability-liveness.js). The liveness registry is the daemon's in-memory record, so a
+// stdio child cannot read it itself; it asks over the same loopback IPC its other daemon-side
+// effects use. Fails CLOSED: an unreachable daemon or an unexpected answer refuses the call.
+export function withDaemonCapabilityLiveness(verify, { token, daemon, timeoutMs = 5_000 } = {}) {
+  return async ({ tool = "" } = {}) => {
+    const checked = verify();
+    if (!checked.ok) return checked;
+    try {
+      if (!daemon?.available?.("capability")) return { ok: false, reason: CAPABILITY_UNCONFIRMED_REASON };
+      const answer = await daemon.call("capability", { capability: token, tool: String(tool || "").slice(0, 80) }, { timeoutMs });
+      if (answer?.ok === true) return checked;
+      return { ok: false, reason: typeof answer?.reason === "string" && answer.reason ? answer.reason.slice(0, 200) : CAPABILITY_UNCONFIRMED_REASON };
+    } catch {
+      return { ok: false, reason: CAPABILITY_UNCONFIRMED_REASON };
+    }
+  };
+}
+
+export function createGatewayMcpServerFromEnv(env = process.env, { daemon = createHttpDaemonIpc() } = {}) {
   const token = env.CG_GATEWAY_CAPABILITY || "";
-  const verifyCapability = () => verifyGatewayCapability(token, { secret: hostApprovalSecret() });
-  const initial = verifyCapability();
+  const verifySignature = () => verifyGatewayCapability(token, { secret: hostApprovalSecret() });
+  const initial = verifySignature();
   const ctx = ctxFromClaims(initial.ok ? initial.claims : {}, {
     engine: env.CG_ENGINE || "",
     toolset: env.CG_TOOLSET || "",
     progressReport: env.CG_PROGRESS_REPORT === "1",
-    daemon: createHttpDaemonIpc(),
-    verifyCapability,
+    daemon,
+    verifyCapability: withDaemonCapabilityLiveness(verifySignature, { token, daemon }),
   });
   return createGatewayMcpServer(ctx);
 }

@@ -1,9 +1,8 @@
-import { modelLabel } from "../gateway/model-info.js";
-import { engineLabel } from "../engines/registry.js";
+import { runtimeStatusLabel } from "../gateway/model-info.js";
 
 // Show identifiers only: tool arguments, results and reasoning payloads never belong in status.
 function identifier(value) {
-  return String(value || "").replace(/[^a-zA-Z0-9 ._:[\]-]/g, "").trim().slice(0, 160);
+  return String(value || "").replace(/[^a-zA-Z0-9 ._:()·[\]-]/g, "").trim().slice(0, 160);
 }
 
 function toolName(name) {
@@ -61,6 +60,7 @@ export function createConversationProgress({ connector, message, placeholder, ad
   let lastWrite = -Infinity;
   let state = "Working";
   let runtime = "";
+  let runtimeFacts = null;
   let pending = Promise.resolve();
   let updating = false;
   let stopped = false;
@@ -107,9 +107,10 @@ export function createConversationProgress({ connector, message, placeholder, ad
   return {
     phase,
     activity() { phase("Working"); },
-    runtime({ engine = "", model = "" } = {}) {
+    runtime({ engine = "", model = "", effort = "" } = {}) {
       if (stopped || (!engine && !model)) return;
-      runtime = identifier(model ? modelLabel({ engine, model }) : `${engineLabel(engine) || engine} CLI default`);
+      runtimeFacts = { engine, model, effort };
+      runtime = identifier(runtimeStatusLabel(runtimeFacts));
       update();
     },
     event(event) {
@@ -119,6 +120,11 @@ export function createConversationProgress({ connector, message, placeholder, ad
         const key = identities.map((id) => aliases.get(id)).find(Boolean) || identities[0] || String(event.name || "agent");
         for (const id of identities) aliases.set(id, key);
         if (event.status === "running") agents.add(key); else agents.delete(key);
+      }
+      // The CLI reported the model it actually runs; it fills in only what nothing configured.
+      if (event?.kind === "runtime_model" && event.model && runtimeFacts && !runtimeFacts.model) {
+        runtimeFacts = { ...runtimeFacts, model: event.model };
+        runtime = identifier(runtimeStatusLabel(runtimeFacts));
       }
       if (event?.kind === "tool_use") phase(`Using ${toolName(event.name)}`);
       else if (event?.kind === "tool_result") phase(`${event.status === "failed" ? "Error in" : "Finished"} ${toolName(event.name)}`);

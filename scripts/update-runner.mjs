@@ -10,11 +10,13 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   statfsSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -253,9 +255,9 @@ async function defaultPreflight({ root, repoRoot }) {
   logStep("→ Preflight: Git, runtime, configuration, service, disk, and daemon health…");
   await runCommand("git", ["--version"], { cwd: repoRoot, quiet: true });
   await runCommand("npm", ["--version"], { cwd: repoRoot, quiet: true });
-  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
-  if (!Number.isInteger(nodeMajor) || nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
-    throw refusal(`Node.js >=22.13 is required (found ${process.version})`); // matches package.json engines.node / src/start.js
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  if (!Number.isInteger(nodeMajor) || nodeMajor < 24) {
+    throw refusal(`Node.js >=24.0.0 is required (found ${process.version})`); // matches package.json engines.node / src/start.js
   }
   if (!existsSync(path.join(repoRoot, "package-lock.json"))) throw refusal("package-lock.json is required for an exact update");
 
@@ -460,10 +462,15 @@ export async function defaultImageBuild({
   })).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
   const before = await builtImageInfo({ cli: settings.cli, image: settings.image, run });
   const desired = expectedImageBuild(repoRoot);
-  const drift = (built) => needsImageBuild({ builtSpecVersion: built.version, expectedSpecVersion: desired.version, builtDigest: built.digest, expectedDigest: desired.digest });
-  if (!needsImageBuild({ changedPaths, builtSpecVersion: before.version, expectedSpecVersion: desired.version, builtDigest: before.digest, expectedDigest: desired.digest })) {
+  const drift = (built, extra = {}) => needsImageBuild({
+    ...extra,
+    builtSpecVersion: built.version, expectedSpecVersion: desired.version,
+    builtDigest: built.digest, expectedDigest: desired.digest,
+    builtBundleDigest: built.bundleDigest, expectedBundleDigest: desired.bundleDigest,
+  });
+  if (!drift(before, { changedPaths })) {
     await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
-    log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}) — no rebuild needed.`);
+    log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}, bundle ${before.bundleDigest}) — no rebuild needed.`);
     return { built: false, needed: false, reason: "the built image already matches this revision" };
   }
   if (settings.image !== CONTAINER_DEFAULT_IMAGE) {
@@ -473,12 +480,12 @@ export async function defaultImageBuild({
   }
 
   if (owner) updateUpdateState({ root, owner, patch: { phase: "image" } });
-  log(`→ Rebuilding the channel image ${settings.image} (spec ${before.version || "none built"} → ${desired.version}, digest ${before.digest || "unknown"} → ${desired.digest}). This takes several minutes; the restart waits for it…`);
+  log(`→ Rebuilding the channel image ${settings.image} (spec ${before.version || "none built"} → ${desired.version}, digest ${before.digest || "unknown"} → ${desired.digest}, bundle ${before.bundleDigest || "unknown"} → ${desired.bundleDigest}). This takes several minutes; the restart waits for it…`);
   try {
     const result = await run(process.execPath, [path.join(repoRoot, "scripts", "build-image.mjs"), "--cli", before.cli || settings.cli], { cwd: repoRoot, timeoutMs: IMAGE_BUILD_TIMEOUT_MS });
     if (result.code !== 0) throw new Error(`image builder exited ${result.code}`);
     const after = await builtImageInfo({ cli: before.cli || settings.cli, image: settings.image, run });
-    if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest}`);
+    if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest} / bundle digest ${desired.bundleDigest}`);
     await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
     log(`→ Channel image rebuilt: ${settings.image} → ${after.id}. Idle channels pick it up on their next turn.`);
     return { built: true, needed: true, imageId: after.id, digest: after.digest };
@@ -560,8 +567,22 @@ function defaultOps({ root, repoRoot }) {
     test: async () => {
       // The same verification set CI runs, not just the unit suite: static analysis catches a
       // candidate whose tests pass but whose source violates the repo's structural invariants.
-      await runCommand("npm", ["run", "check:static"], { cwd: repoRoot });
-      await runCommand("npm", ["test"], { cwd: repoRoot });
+      // The suite runs in its own throwaway HOME: the live daemon keeps serving turns in the
+      // service user's real home meanwhile, and the runner's home-leak guard would otherwise
+      // count the daemon's own new folders as test leaks and roll a good candidate back.
+      const testHome = mkdtempSync(path.join(os.tmpdir(), "cg-update-test-home-"));
+      try {
+        const env = { ...process.env, HOME: testHome };
+        for (const name of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CG_WORKSPACE_DIR", "CLAUDE_GATEWAY_DIR", "CLAUDE_GATEWAY_DB"]) delete env[name];
+        await runCommand("npm", ["run", "check:static"], { cwd: repoRoot, env });
+        // Half the default file concurrency, with room for the slower run: the live daemon shares
+        // this host, and on small VPSs a full-width suite starves the timing-sensitive tests
+        // into spurious failures that roll a good candidate back.
+        const concurrency = Math.max(1, Math.floor(os.availableParallelism() / 2));
+        await runCommand("npm", ["test", "--", `--test-concurrency=${concurrency}`], { cwd: repoRoot, env, timeoutMs: 60 * 60_000 });
+      } finally {
+        rmSync(testHome, { recursive: true, force: true });
+      }
     },
     provision: () => runCommand("bash", [path.join(repoRoot, "scripts", "update-provision.sh")], { cwd: repoRoot, timeoutMs: 90 * 60_000 }),
     image: ({ context, owner }) => defaultImageBuild({ root, repoRoot, context, owner }),

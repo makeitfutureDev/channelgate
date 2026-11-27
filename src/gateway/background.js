@@ -1,3 +1,4 @@
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Daemon-side background job runner. The headless `claude -p` subprocess is one-shot: it exits
 // the moment it posts its reply, so anything it backgrounds with `nohup … &` outlives it with
 // nobody left to react when the work finishes. This module moves ownership of long-running shell
@@ -6,6 +7,7 @@
 // a turn into the SAME Slack thread (same threadKey → same Claude session resumes with full
 // context) and post the continuation. This is a local reimplementation of the interactive
 // harness's <task-notification> auto-continue.
+import { backgroundStartedCard, backgroundStartedChatCard } from "./background-status.js";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -15,7 +17,7 @@ import { buildShellEnv, serviceSecretValues } from "../engines/child-env.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { killGroup, killTree, processStartTime } from "../util/proc.js";
-import { describeProcessOutcome } from "../util/process-outcome.js";
+import { describeProcessOutcome, plainFailureText } from "../util/process-outcome.js";
 import { appendTail } from "../util/tail.js";
 import { effectiveWorkDir } from "./folders.js";
 import { gatewayRoot } from "../config/paths.js";
@@ -24,20 +26,24 @@ import { deliverResult } from "../slack/deliver.js";
 import { slackThreadFor } from "../slack/thread-keys.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { logEvent } from "../util/logger.js";
+import { recordSlackThreadOutcome } from "./slack-threads.js";
 import { recordUsage, createUsageBank } from "./usage.js";
 import { countDrop } from "../util/drops.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { postNotice, automationTarget } from "../platforms/notify.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 // A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
-import { resolveRunEnv } from "../config/scoped-env.js";
 import { resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
+import { assertThreadSettingsReadable, getThreadSettings } from "./thread-settings.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 import { containerJobScript } from "./background-shell-log.js";
 import { getThreadSudo } from "./thread-engine.js";
 import { sudoModeMeta } from "./modes.js";
+import { ENGINES, isEngineEnabled, getEngine } from "../config/settings.js";
+import { modelBelongsToEngine } from "../engines/registry.js";
+import { isChannelEngineApproved } from "./channel-engines.js";
 export { containerJobScript } from "./background-shell-log.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
@@ -102,6 +108,7 @@ export function shellJobRuntimeNotice({ isolated = false, image = "" } = {}) {
 export function backgroundCompletionNotice({ what = "Background job", label = "job", outcome } = {}) {
   const resolved = outcome || describeProcessOutcome();
   const icon = resolved.ok === true ? "✅" : "⚠️";
+  if (resolved.kind === "blocked") return `${icon} ${what} *${label}* ${resolved.summary}.`;
   const continuation = resolved.ok === true
     ? "Continuing…"
     : "Continuing so I can review what happened…";
@@ -245,7 +252,7 @@ export class BackgroundJobs {
           // behaving exactly as before (pid + kernel start time are its identity); a job in an
           // isolated runtime is found again by its runId, because its pid belongs to a client
           // process that is already gone.
-          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
+          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, settingsThreadKey: j.settingsThreadKey || j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0, overrides: j.overrides || null }));
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -291,16 +298,33 @@ export class BackgroundJobs {
     });
   }
 
-  async _start({ channelId, slug, authorId, threadKey, command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
+  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, settingsThreadKey = "", command, label, maxMs = 0, kind = "shell", task, engine = "", model = "" }, approval = {}) {
     // Never persist a new job while boot recovery still has un-re-tracked rows in bg_jobs.
     if (this._recoveryGate) await this._recoveryGate;
     const isAgent = kind === "agent";
+    // An agent's optional runtime override (a skill delegated to the other engine, or an explicit
+    // ask). Checked here, at the daemon, against what this gateway can actually run: the engine
+    // must be enabled and the model must belong to the engine it will spawn on. Shell jobs have no
+    // engine and ignore both.
+    const overrideEngine = isAgent ? String(engine || "").trim().toLowerCase() : "";
+    const overrideModel = isAgent ? String(model || "").trim().toLowerCase() : "";
+    if (overrideEngine && (!ENGINES.includes(overrideEngine) || !isEngineEnabled(overrideEngine))) {
+      return { ok: false, error: `Engine "${overrideEngine}" is not available on this gateway (enabled: ${ENGINES.filter((id) => isEngineEnabled(id)).join(", ") || "none"}).` };
+    }
+    if (overrideModel && (overrideModel.length > 64 || /\s/.test(overrideModel))) return { ok: false, error: "That model id is not valid." };
     maxMs = resolveJobCap(kind, maxMs);
     const cmd = (command || "").trim();
     const taskText = (task || "").trim();
     let approvedBy = String(approval.approvedBy || "").replace(/[<@>]/g, ""); // audit trail for unsandboxed exec
     if (isAgent ? !taskText : !cmd) return { ok: false, error: isAgent ? "No task provided." : "No command provided." };
     if (!channelId || !threadKey) return { ok: false, error: "Missing channel/thread context." };
+    // The thread whose own settings (variables, MCP connections, skills) this job runs with: the
+    // signed settings thread of the run that launched it (gateway-server.js) — its own thread, or
+    // the thread a background agent was launched from. Nothing else is accepted.
+    const settingsKey = String(settingsThreadKey || threadKey);
+    if (settingsKey !== threadKey && !String(threadKey).startsWith(`${settingsKey}::`)) {
+      return { ok: false, error: "This background work does not belong to that thread." };
+    }
     if (this.count() >= MAX_GLOBAL) return { ok: false, error: "Too many background jobs are already running on the gateway. Try again shortly." };
     if (this._threadCount(threadKey) >= MAX_PER_THREAD) return { ok: false, error: `This thread already has ${MAX_PER_THREAD} background jobs running.` };
 
@@ -317,6 +341,16 @@ export class BackgroundJobs {
       }
       meta = sudoModeMeta(meta);
     }
+    if (overrideEngine && !isChannelEngineApproved(meta, overrideEngine)) {
+      return { ok: false, error: `Engine "${overrideEngine}" is not approved for this conversation.` };
+    }
+    if (overrideModel) {
+      const spawnEngine = overrideEngine || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
+      if (!modelBelongsToEngine(overrideModel, spawnEngine)) {
+        return { ok: false, error: `Model "${overrideModel}" does not belong to the ${spawnEngine} engine. Pass the matching engine too, or choose one of its models.` };
+      }
+    }
+    const agentOverrides = overrideEngine || overrideModel ? { ...(overrideEngine ? { engine: overrideEngine } : {}), ...(overrideModel ? { model: overrideModel } : {}) } : null;
 
     // WHERE this shell job runs. Agent jobs go through runMessage, which resolves its own target
     // per turn, so only the shell branch needs one here. Resolved BEFORE the approval gate because
@@ -387,6 +421,10 @@ export class BackgroundJobs {
               slug: entry.slug,
               authorId,
               threadKey,
+              ...(admissionThreadKey !== threadKey ? { admissionThreadKey } : {}),
+              // The settings thread rides the durable action, so the approved job resolves the same
+              // thread (re-validated by _start) instead of its synthetic key's nothing.
+              ...(settingsKey !== threadKey ? { settingsThreadKey: settingsKey } : {}),
               command: cmd,
               workDir,
               label: (label || cmd).slice(0, 80),
@@ -458,7 +496,7 @@ export class BackgroundJobs {
       /* logging is best-effort */
     }
 
-    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
+    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, settingsThreadKey: settingsKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target, overrides: agentOverrides };
     const writeChunk = (chunk) => {
       try {
         logStream?.write(chunk);
@@ -475,11 +513,15 @@ export class BackgroundJobs {
     //
     // Through the egress wrapper (src/gateway/egress/grants.js) with THIS job's target: in a
     // proxy-mode container a ruled secret is its placeholder, exactly as in the foreground. The
-    // redaction set is the REAL values either way (a placeholder is not a secret).
-    const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target });
+    // redaction set contains hidden REAL values; readable configuration remains shareable.
+    // The launching thread's own variables apply too, resolved HERE from its store (a removal since
+    // the launch is honoured): placeholders only in a proxy-mode container, withheld anywhere else.
+    const threadSecrets = getThreadSettings(entry.slug, settingsKey, "secrets");
+    try { assertThreadSettingsReadable(threadSecrets); } catch (error) { logStream?.end(); return { ok: false, error: error.message }; }
+    const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target,
+      thread: { key: settingsKey, env: threadSecrets.env, removed: threadSecrets.removed } });
     const jobEnv = safeSpawnEnv(jobRunEnv.env);
-    const jobPlaceholders = new Set(Object.values(jobRunEnv.placeholders));
-    const jobSecretValues = [...new Set([...Object.values(jobEnv).filter((value) => !jobPlaceholders.has(value)), ...jobRunEnv.realValues])];
+    const jobSecretValues = jobRunEnv.redactionValues;
     rec.secretValues = [...jobSecretValues, ...serviceSecretValues()];
     rec.label = redactSecretValues(rec.label, rec.secretValues);
     let onChunk = writeChunk;
@@ -517,7 +559,7 @@ export class BackgroundJobs {
       rec.lease = target.runtime.acquireLease(target, { kind: "job", id: runId });
       // A running job is live work in its channel: the egress proxy swaps the channel's (and the
       // launching author's personal) placeholders only while something like it is running.
-      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId });
+      rec.releaseLive = markLive({ channelId, ownerId: authorId, kind: "job", id: runId, threadKey: settingsKey });
       try {
         // Minimal allowlisted env plus THIS channel's own secrets — this IS agent-authored shell,
         // so the daemon's secrets must not be visible, and another channel's never are. The browser
@@ -530,8 +572,10 @@ export class BackgroundJobs {
         child = target.runtime.spawn(target, {
           cmd: "bash",
           // Isolated: a runtime-side wrapper redacts BOTH streams before writing the durable
-          // log, and starts the command in one login shell. The outer shell only execs the wrapper.
-          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv))] : ["-lc", cmd],
+          // log, and starts the command in one login shell. Hidden proxy placeholders are selected
+          // by resolver metadata: their bytes differ from the real redaction values. Readable
+          // configuration has no placeholder and remains shareable. The outer shell only execs the wrapper.
+          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv).filter((name) => Object.hasOwn(jobRunEnv.placeholders, name) || jobSecretValues.includes(jobEnv[name])))] : ["-lc", cmd],
           cwd,
           env: buildShellEnv(shellEnv),
           stdio: ["ignore", "pipe", "pipe"],
@@ -626,8 +670,15 @@ export class BackgroundJobs {
       authorId: rec.authorId,
       text: prompt,
       threadKey: `${rec.threadKey}::agent-${rec.id}`,
+      admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
       sudoSourceThreadKey: rec.threadKey,
+      // The agent's synthetic session key is not a thread anyone configured: it runs with the
+      // settings of the thread that launched it, which the daemon recorded at launch.
+      settingsThreadKey: rec.settingsThreadKey || rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
+      // The agent's own engine/model when one was asked for (validated in _start); applyRunOverrides
+      // can only narrow capability, never widen it.
+      overrides: rec.overrides || null,
       preferCold: true, // one-shot: don't leave a warm process idling after the agent finishes
       signal: controller.signal,
       onDelta: onChunk,
@@ -645,7 +696,10 @@ export class BackgroundJobs {
         } catch {
           /* accounting is best-effort */
         }
-        await this._finish(rec, { outcome: describeProcessOutcome({ code: 0 }) });
+        const refusal = runAdmissionRefusalKind(result);
+        await this._finish(rec, { outcome: refusal
+          ? { ok: false, kind: "blocked", summary: result.engineStarted ? "was blocked before further work could start" : "was not started because admission was refused", reason: refusal }
+          : describeProcessOutcome({ code: 0 }) });
       })
       .catch(async (err) => {
         clearTimeout(timer);
@@ -664,11 +718,12 @@ export class BackgroundJobs {
     if (!client) return;
     const what = rec.kind === "agent" ? "🤖 Background agent" : "⚙️ Background job";
     try {
-      // The "Check status" button is a Block Kit surface. postNotice drops `blocks` on any platform
-      // without Block Kit, so the plain `text` still delivers there — a job that starts silently is
-      // exactly what this notice exists to prevent. Re-authoring the control as a Chat card /
-      // Adaptive Card is per-platform work tracked separately.
+      // The "Check status" button is Block Kit on Slack, an Adaptive Card on Teams and a Cards v2
+      // card on Google Chat; postNotice sends whichever the surface renders, and the plain `text`
+      // everywhere else — a job that starts silently is exactly what this notice exists to prevent.
       await postNotice(client, {
+        card: backgroundStartedCard(rec),
+        chatCard: backgroundStartedChatCard(rec),
         conversationId: rec.channelId,
         threadKey: rec.threadKey,
         text: `${what} *${rec.label}* started (id ${rec.id}) — the result will be posted in this thread when it finishes.`,
@@ -691,7 +746,7 @@ export class BackgroundJobs {
   status(id) {
     const j = this.jobs.get(id);
     if (!j) return null;
-    return { id: j.id, kind: j.kind || "shell", label: j.label, runtimeMs: Date.now() - j.startedAt, maxMs: j.maxMs, tail: j.tail || "", finished: Boolean(j.pendingDelivery) };
+    return { id: j.id, slug: j.slug || "", kind: j.kind || "shell", label: j.label, runtimeMs: Date.now() - j.startedAt, maxMs: j.maxMs, tail: j.tail || "", finished: Boolean(j.pendingDelivery) };
   }
 
   // The job's process (or engine run) ended. This is NOT the terminal boundary: the thread is
@@ -736,6 +791,7 @@ export class BackgroundJobs {
       signal: signal || "",
       durMs,
     });
+    recordSlackThreadOutcome(rec.channelId, rec.threadKey, { error: !resolvedOutcome.ok });
     await this._deliver(rec);
   }
 
@@ -788,7 +844,9 @@ export class BackgroundJobs {
     try {
       // Heads-up so the thread shows the job fired before the (possibly slow) continuation turn runs.
       try {
-        await postNotice(client, {
+        // A refusal's own actionable notice is its entire completion payload. Do not first
+        // announce success or promise a continuation for work that never started.
+        if (!(isAgent && resolvedOutcome.kind === "blocked")) await postNotice(client, {
           conversationId: rec.channelId,
           threadKey: rec.threadKey,
           text: backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }),
@@ -818,7 +876,14 @@ export class BackgroundJobs {
             `${resolvedOutcome.ok === true ? "success" : resolvedOutcome.ok === false ? "failure" : "unknown"}. ` +
             `Proceed only on confirmed success; otherwise diagnose from the output above. Do not re-launch the same job.`);
 
-      if (isAgent && report && resolvedOutcome.ok === true) {
+      if (isAgent && resolvedOutcome.kind === "blocked") {
+        // Persisted outcome + report suffice after restart; never retry the refused work or
+        // spend another engine turn interpreting a gateway admission notice.
+        await this.deliver(client, {
+          channel: rec.channelId, threadKey: rec.threadKey,
+          result: { content: report || backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }), engine: rec.result?.engine || "" },
+        });
+      } else if (isAgent && report && resolvedOutcome.ok === true) {
         // The background-agent prompt requires a complete, self-contained final report. Deliver
         // that report directly instead of asking the launching thread's model to paraphrase it in
         // a SECOND engine turn. Besides wasting time/tokens, that dependency stranded completed
@@ -855,6 +920,8 @@ export class BackgroundJobs {
               authorId: rec.authorId,
               text,
               threadKey: rec.threadKey,
+              admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
+              settingsThreadKey: rec.settingsThreadKey || rec.threadKey,
               origin: "continuation",
               signal: handle.controller.signal,
             });
@@ -878,8 +945,13 @@ export class BackgroundJobs {
       // Boot recovery redelivers it (up to MAX_DELIVERY_ATTEMPTS).
       const failure = redactSecretValues(err.message, outputSecrets);
       await logEvent("bg_continue_error", { id: rec.id, error: failure });
+      // Decode before the final redaction, and redact before bounding: truncation must never
+      // leave a partial secret that the full-value redactor can no longer recognize.
+      const noticeFailure = redactSecretValues(
+        plainFailureText(failure, Number.MAX_SAFE_INTEGER) || "The continuation failed.", outputSecrets,
+      ).slice(0, 400);
       try {
-        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${failure}` });
+        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${noticeFailure}` });
       } catch {
         /* ignore */
       }
@@ -961,6 +1033,19 @@ export class BackgroundJobs {
     // that loop awaits whole continuation turns, and an agent inside one may itself launch a
     // background job, which would otherwise deadlock against a gate this same call has to release.
     this._releaseRecoveryGate();
+    // Lease every recovered container job BEFORE the loop below delivers anything. "Is anyone else
+    // inside?" is asked of leases, and these jobs' leases died with the old daemon: the loop
+    // awaits whole continuation turns, and such a turn in the same channel would otherwise see an
+    // empty container — free to be rebuilt, or restarted by the process-limit reclaim — while a
+    // later row's job is still running in it. A row that turns out finished or unverifiable goes
+    // through _finish, which releases the lease.
+    for (const rec of recs) {
+      if (rec.pendingDelivery || !rec.runtime?.backend || rec.runtime.backend === "host") continue;
+      await this._attachRecoveredRuntime(rec);
+      if (rec.target?.container?.name) {
+        try { rec.lease = rec.target.runtime.acquireLease(rec.target, { kind: "job", id: rec.runtime.runId || rec.id }); } catch { /* the watch still runs */ }
+      }
+    }
     for (const rec of recs) {
       // A row that recorded a non-host runtime needs its target rebuilt before anything can be
       // asked about it: its pid belonged to a client process that died with the old daemon, and
@@ -968,7 +1053,7 @@ export class BackgroundJobs {
       // channel has since been moved to a different backend (or the runtime can't be resolved at
       // all) we deliberately do NOT guess — the job falls through to the "could not be confirmed"
       // continuation below, which is what an unverifiable job has always produced.
-      if (rec.runtime?.backend && rec.runtime.backend !== "host") await this._attachRecoveredRuntime(rec);
+      if (rec.runtime?.backend && rec.runtime.backend !== "host" && !rec.target) await this._attachRecoveredRuntime(rec);
       rec.tail = await this._tailFromLog(rec.logFile, rec);
       if (rec.pendingDelivery) {
         // Older delivery code passed the entire synthetic agent session key to Slack as
@@ -991,7 +1076,8 @@ export class BackgroundJobs {
       } else if (await this._jobAlive(rec)) {
         await logEvent("bg_recover_watch", { id: rec.id, slug: rec.slug, pid: rec.pid, runtime: rec.runtime?.backend || "host" });
         // Still running after a restart: live work again, for the egress proxy's swap gate.
-        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id });
+        rec.releaseLive = markLive({ channelId: rec.channelId, ownerId: rec.authorId, kind: "job", id: rec.runtime?.runId || rec.id, threadKey: rec.settingsThreadKey || rec.threadKey });
+        // It keeps the lease taken before this loop (the pre-pass above) until _finish.
         this._watchByProbe(rec, { recovered: true });
       } else {
         // Already tracked above, so _finish's guard passes → force the continuation.
@@ -1029,7 +1115,9 @@ export class BackgroundJobs {
         // Recovery may attach to a job launched before this build stopped injecting operator VPN
         // credentials. Resolve a value-only projection so those former environment values remain
         // covered by output redaction without making them available to new jobs.
-        rec.secretValues = [...Object.values(safeSpawnEnv((await resolveRunEnv({ meta: { env: meta.env }, authorId: rec.authorId })).env)), ...serviceSecretValues()];
+        const threadSecrets = getThreadSettings(rec.slug, rec.settingsThreadKey || rec.threadKey, "secrets");
+        rec.secretValues = [...(await resolveEgressRunEnv({ meta: { env: meta.env }, authorId: rec.authorId,
+          thread: { key: rec.settingsThreadKey || rec.threadKey, env: threadSecrets.env } })).redactionValues, ...serviceSecretValues()];
       } catch {
         rec.secretValues = serviceSecretValues();
       }
@@ -1115,6 +1203,7 @@ export class BackgroundJobs {
         // line of its own log — so a container job reports a real outcome instead of "unknown".
         const exitCode = rec.runtimeChild && !rec.timedOut ? parseContainerJobExit(raw) : null;
         await this._finish(rec, {
+          code: exitCode,
           outcome: rec.timedOut
             ? describeProcessOutcome({ timedOut: true, timeout: fmtDur(Date.now() - rec.startedAt) })
             : exitCode != null

@@ -2,9 +2,10 @@
 
 ## Runtime boundary
 
-ChannelGate targets Linux with systemd and rootless Podman. Each conversation gets one lazily
-created container with dropped capabilities, no `sudo`, a durable HOME volume at `/home/agent`, and
-by default these directory bind mounts at identical host/container paths:
+ChannelGate targets Linux with systemd and rootless Podman. Each conversation has separate
+project and trusted-admin runtime scopes. Containers are created lazily with dropped capabilities,
+no `sudo`, and a durable HOME volume at `/home/agent`. By default each scope has these directory
+bind mounts at identical host/container paths:
 
 - the conversation work folder;
 - its clean workspace;
@@ -21,16 +22,21 @@ network. It is not Admin channel mode and not a mount. Only current admins can t
 it; every ingress/run rechecks authority, non-admin messages are rejected before work starts, and
 stored channel metadata or run-API overrides cannot select it. `/sudo off` restores the container.
 
-One operator-chosen exception: with the gateway-wide **Full-access channels see the gateway home**
-switch on (`containerFullAccessHome`, Settings → Container runtime, off by default), every Full-access conversation's
-container also mounts the gateway user's whole home read-write at its identical path — every
-conversation's work folder and memory, every repository under that home, the gateway root
-(logs, metadata, credential stores) — with only the container engine's storage masked. It is a
-boolean, never a path; it changes the container fingerprint (recreate at the next turn); and it is
-per conversation, so every admitted author can read it while only an admin author's turn receives
-write-capable bypass tools. No MCP tool can flip this gateway-wide switch. The injected
-`gateway-usage` runtime note states the current resolved operator-home grant; `$HOME` and `~`
-remain the channel's own home volume even when the operator home is mounted at another path.
+One operator-chosen exception: with the gateway-wide **Admin channels can access the host home**
+switch on (`containerFullAccessHome`, Settings → Container runtime, off by default), ONLY a current
+organization admin's trusted run in an Admin/Full-access channel receives a read-write mount of
+the gateway user's whole home at its identical path. The trusted admin runtime scope, Admin
+channel mode and gateway switch must all apply. It includes other conversations' work folders and
+memory, repositories, gateway configuration, logs, metadata and credential stores; container-engine
+storage stays masked. It does not mount the whole host filesystem or grant host root.
+
+Non-admin members and guests run in a separate project container with only their resolved project
+mounts, including in an Admin channel; they receive no operator-home mount. Admin tool bypass is
+a separate permission decision, and with the gateway switch off Admin mode adds no home mount.
+The switch is a boolean, never a path, and changes the container fingerprint for recreation at the
+next eligible turn. No MCP tool can flip it. The injected `gateway-usage` runtime note states this
+run's resolved grant. `$HOME` and `~` remain that runtime's own channel HOME at `/home/agent`,
+even when the operator home is mounted at another path.
 
 Containers are stopped when idle and recreated when their create-time fingerprint changes. The
 HOME volume and mounted workspace/artifacts survive both. Active foreground runs, background work,
@@ -48,8 +54,12 @@ placeholder credentials for real ones only on their declared hosts while the cha
 work. There is no per-domain allow-list when the switch is on. The legacy `containerEgressMode =
 "bridge"` and a channel's `rawNetwork` restore the open bridge, where the switch is advisory again;
 `networkEnforcedFor(target)` is the one answer every surface uses. Codex read mode refuses network
-itself. Do not promise more than that: a member with a live placeholder can use the real credential
-on its declared hosts, and request-signing or raw-protocol secrets stay raw.
+itself. When explaining the enforced OFF policy, state that requests outside the permitted engine
+endpoints and selected connectors receive **HTTP 403 `network-off`**. OFF preserves those engine
+and connector routes; it does not disconnect them.
+
+Do not promise more than that: a member with a live placeholder can use the real credential on its
+declared hosts, and request-signing or raw-protocol secrets stay raw.
 
 ## Permission modes
 

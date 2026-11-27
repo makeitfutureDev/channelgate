@@ -354,3 +354,26 @@ test("run queue: onWait reports the caller's position in line", async () => {
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(seen, [1, 2], "the second waiter must know it is behind the first");
 });
+
+test("run queue: waiting-only cancel and steer preserve other messages and reject promoted targets", async () => {
+  const q = createRunQueue({ waitNoticeMs: -1 });
+  const active = { runId: "active" };
+  const a = { runId: "a" };
+  const b = { runId: "b" };
+  const c = { runId: "c" };
+  await q.acquire("key", active);
+  const waiting = [q.acquire("key", a), q.acquire("key", b), q.acquire("key", c)];
+  assert.equal(q.cancelQueued("key", "active"), false);
+  assert.equal(q.cancelQueued("key", "a"), true);
+  assert.equal(a.aborted, true);
+  assert.equal(q.prioritizeQueued("key", "c"), true);
+  q.release("key", active);
+  assert.equal(q.activeHandle("key"), c);
+  assert.equal(q.cancelQueued("key", "c"), false);
+  assert.equal(q.prioritizeQueued("key", "c"), false);
+  q.release("key", c);
+  assert.equal(q.activeHandle("key"), b);
+  q.release("key", b);
+  await Promise.all(waiting);
+  assert.equal(q.count("key"), 0);
+});

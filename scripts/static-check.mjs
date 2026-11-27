@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "acorn";
 import detectGlobals from "acorn-globals";
+import { stripTypeScriptTypes } from "node:module";
 import { findSecretArtifactWrites } from "./static-secret-writes.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -22,7 +23,7 @@ function walk(rel) {
   for (const item of readdirSync(abs, { withFileTypes: true })) {
     const child = path.join(rel, item.name);
     if (item.isDirectory()) walk(child);
-    else if (/\.(?:js|mjs)$/.test(item.name)) files.push(child);
+    else if (/\.(?:js|mjs|ts)$/.test(item.name)) files.push(child);
   }
 }
 
@@ -59,7 +60,8 @@ const errors = [];
 for (const file of files.sort()) {
   const syntax = spawnSync(process.execPath, ["--check", file], { cwd: root, encoding: "utf8" });
   if (syntax.status !== 0) errors.push(`${file}: ${String(syntax.stderr || syntax.stdout).trim()}`);
-  const source = readFileSync(path.join(root, file), "utf8");
+  const rawSource = readFileSync(path.join(root, file), "utf8");
+  const source = file.endsWith(".ts") ? stripTypeScriptTypes(rawSource, { mode: "strip" }) : rawSource;
   if (syntax.status === 0) {
     try {
       errors.push(...undeclaredIdentifiers(file, source));
@@ -76,7 +78,7 @@ for (const file of files.sort()) {
       }
     }
   }
-  const lines = source.split("\n");
+  const lines = rawSource.split("\n");
   lines.forEach((line, index) => {
     if (/[ \t]+$/.test(line)) errors.push(`${file}:${index + 1}: trailing whitespace`);
     if (line.includes("\t")) errors.push(`${file}:${index + 1}: tab character`);
@@ -87,4 +89,4 @@ if (errors.length) {
   console.error(errors.join("\n"));
   process.exit(1);
 }
-console.log(`Static check passed: ${files.length} JavaScript files parse, no undeclared identifiers, no secret written under an artifact dir; whitespace is clean.`);
+console.log(`Static check passed: ${files.length} JavaScript/TypeScript files parse, no undeclared identifiers, no secret written under an artifact dir; whitespace is clean.`);

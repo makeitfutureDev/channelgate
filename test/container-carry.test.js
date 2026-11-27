@@ -312,3 +312,30 @@ test("Stop during bounded copy prevents copied history being applied on the host
   assert.equal(existsSync(destination), false);
   assert.deepEqual(walkFiles(path.join(h.target.artifactDir, "carry")), []);
 });
+
+test("copyIn: an ifMissing file (a fork's lineage source) never replaces the container's own copy", async () => {
+  const h = harness("carry-in-lineage");
+  const hostRoot = tempDir("cg-host-");
+  const day = "sessions/2026/11/14";
+  const parent = write(path.join(hostRoot, ".codex", day, "rollout-2026-11-14T10-17-18-parent.jsonl"), "host-copy\n");
+  const root = write(path.join(hostRoot, ".codex", day, "rollout-2026-11-14T01-07-56-root.jsonl"), "root-copy\n");
+  const ctrCodex = path.join(h.inside, ".codex");
+  // The container's parent copy is live (its own thread kept running there); it has no root copy.
+  write(path.join(ctrCodex, day, "rollout-2026-11-14T10-17-18-parent.jsonl"), "live-in-container\n");
+  const entries = [
+    { rel: "sessions/*/*/*/*-parent.jsonl", kind: "file", ifMissing: true, from: path.join(hostRoot, ".codex/sessions/*/*/*/*-parent.jsonl"), to: path.join(ctrCodex, "sessions/*/*/*/*-parent.jsonl") },
+    { rel: "sessions/*/*/*/*-root.jsonl", kind: "file", ifMissing: true, from: path.join(hostRoot, ".codex/sessions/*/*/*/*-root.jsonl"), to: path.join(ctrCodex, "sessions/*/*/*/*-root.jsonl") },
+  ];
+  const result = await h.carry.copyIn(h.target, entries);
+  assert.deepEqual(result, { copied: 2 }, "both were staged; the container decides what it keeps");
+  const script = h.calls[0].args[3];
+  assert.match(script, /if \[ ! -e .*rollout-2026-11-14T10-17-18-parent\.jsonl \]; then cp -a /);
+  assert.match(script, /if \[ ! -e .*rollout-2026-11-14T01-07-56-root\.jsonl \]; then cp -a /);
+  assert.equal(readFileSync(path.join(ctrCodex, day, "rollout-2026-11-14T10-17-18-parent.jsonl"), "utf8"), "live-in-container\n");
+  assert.equal(readFileSync(path.join(ctrCodex, day, "rollout-2026-11-14T01-07-56-root.jsonl"), "utf8"), "root-copy\n");
+  assert.equal(existsSync(parent) && existsSync(root), true);
+  assert.deepEqual(walkFiles(path.join(h.target.artifactDir, "carry")), []);
+  // The plain (non-lineage) pair keeps the unconditional copy the contract promises.
+  assert.doesNotMatch(buildCopyInScript([{ staged: "/s/a", to: "/home/agent/.codex/a", kind: "file" }]), /if \[ ! -e/);
+  assert.match(buildCopyInScript([{ staged: "/s/a", to: "/home/agent/.codex/a", kind: "file", ifMissing: true }]), /^if \[ ! -e \/home\/agent\/\.codex\/a \]; then cp -a \/s\/a \/home\/agent\/\.codex\/a; fi$/m);
+});

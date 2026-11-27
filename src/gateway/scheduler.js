@@ -3,6 +3,7 @@
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
 // (as the schedule's creator) and posts the result to the channel.
 import { getSchedules, updateSchedule, deleteSchedule, getSchedulerCursor, saveSchedulerCursor, claimScheduleMinute } from "../config/schedules.js";
+import { getChannelMeta } from "../config/store.js";
 import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
 import { plainFailureText } from "../util/process-outcome.js";
 import { cronMatches, elapsedMinutes } from "../util/cron.js";
@@ -11,6 +12,7 @@ import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loop
 import { logEvent } from "../util/logger.js";
 import { automationPrompt, classifyScheduleResult, suppressScheduleResult } from "./schedule-outcome.js";
 import { createScheduleRun, getScheduleRun, updateScheduleRun, appendScheduleRunEvent } from "./schedule-runs.js";
+import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
 import { redactLogValue } from "../util/redact.js";
 import { normalizeUsage, createUsageBank } from "./usage.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
@@ -28,6 +30,35 @@ const MAX_ONCE_ATTEMPTS = 2;
 let slackRef = null;
 const running = new Set(); // schedule ids currently executing
 const firedThisMinute = new Map(); // id -> minute key, to avoid double-fire within a minute
+
+// A delivery the destination can never accept: the bot is not in the channel any more, or the
+// channel is gone or archived. Retrying such a delivery every minute forever is what one archived
+// channel's weekly task did for five weeks (54,858 schedule_error events on one deployment).
+const PERMANENT_DELIVERY_ERROR = /\b(channel_not_found|not_in_channel|is_archived|channel_is_archived)\b/;
+const ARCHIVED_STATUS = "paused: channel archived (bot removed) — re-invite the bot to resume";
+
+function retireUndeliverable(sched, reason) {
+  if (sched.activeRunId) {
+    updateScheduleRun(sched.activeRunId, { deliveryStatus: "failed", errorKind: "delivery", error: reason });
+    appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_abandoned" });
+  }
+  sched.pendingDelivery = null;
+  sched.executionState = "undeliverable";
+  sched.activeRunId = null;
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `undeliverable: ${reason}`,
+    executionState: "undeliverable", pendingDelivery: null, executionThread: null, activeRunId: null });
+}
+
+// A schedule whose channel is archived (the bot was removed) neither runs nor delivers: there is
+// nobody to post to. Its row stays, enabled, so a re-invite resumes it on its next due minute. A
+// saved result or an interrupted execution is retired the same way a permanent delivery failure
+// is; the status is written once per archival, not once per minute.
+async function pauseForArchivedChannel(sched) {
+  if (needsRecovery(sched)) retireUndeliverable(sched, "channel archived (bot removed)");
+  if (sched.lastStatus === ARCHIVED_STATUS) return;
+  updateSchedule(sched.id, { lastStatus: ARCHIVED_STATUS });
+  await logEvent("schedule_paused", { id: sched.id, channel: sched.channelId, slug: sched.slug, reason: "channel_archived" });
+}
 
 // One-time ("run at") schedules delete themselves once they've run; recurring ones never do.
 function isOneTime(sched) {
@@ -181,6 +212,10 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
   const recovering = Boolean(sched.pendingDelivery || ["queued", "running"].includes(sched.executionState));
   let run;
   try {
+    if ((await getChannelMeta(sched.slug).catch(() => null))?.archived) {
+      await pauseForArchivedChannel(sched);
+      return;
+    }
     run = recovering && sched.activeRunId ? getScheduleRun(sched.activeRunId) : null;
     if (!run) run = createScheduleRun(sched);
     sched.activeRunId = run.id;
@@ -274,7 +309,8 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           escalationStyle: sched.escalationStyle || "thread",
         });
       }
-      updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered." });
+      updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered.",
+        ...(posted?.messageId ? { thread: String(posted.messageId) } : {}) });
       appendScheduleRunEvent(run.id, { kind: "delivered" });
       updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok" });
       retireOneTime(sched); // the reminder is posted — that IS this schedule's delivery
@@ -328,21 +364,20 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       }
       sched.executionState = "running";
       updateSchedule(sched.id, { executionState: "running", executionThread: threadTs });
-      updateScheduleRun(run.id, { status: "running", engineStatus: "running" });
+      // Where this run talks in its conversation (the announcement or loop thread), so the board can
+      // open it even when the run fails before anything is delivered.
+      updateScheduleRun(run.id, { status: "running", engineStatus: "running", ...(threadTs ? { thread: String(threadTs) } : {}) });
       appendScheduleRunEvent(run.id, { kind: "agent_requested" });
       result = await runMessage({
         channelId: sched.channelId,
         authorId: sched.createdBy,
-        text: loopTick ? sched.prompt : automationPrompt(sched.prompt),
+        text: loopTick ? sched.prompt : automationPrompt(sched.prompt, { successCriteria: sched.successCriteria }),
         onRuntimeResolved: (runtime) => updateScheduleRun(run.id, { engine: runtime.engine || "", model: runtime.model || "" }),
-        onEvent: (event) => {
-          if (["tool_use", "tool_result", "thinking", "quiet", "agent_activity"].includes(event?.kind)) {
-            const current = getScheduleRun(run.id);
-            if (!current.agentStartedAt) updateScheduleRun(run.id, { agentStartedAt: new Date().toISOString() });
-          }
-          if (["tool_use", "tool_result", "thinking", "quiet", "notice", "engine_note", "run_queued", "agent_activity"].includes(event?.kind)) appendScheduleRunEvent(run.id, event);
-        },
+        onEvent: (event) => recordRunEvent(run.id, event),
         threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
+        // Session keys stay fresh per fire; billing follows a known delivery thread.
+        // Silent first fires have no chat root yet: retain one logical identity per run.
+        admissionThreadKey: threadTs || `schedule-fire-${run.id}`,
         signal: loopHandle?.controller.signal ?? null,
         origin: "schedule",
         ...(platformSupports(platformOfConversation(sched.channelId), "richCards") === "block-kit" &&
@@ -370,6 +405,12 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
   } catch (err) {
     const safeError = redactLogValue(plainFailureText(err.message) || "The run failed.");
     const deliveryFailure = sched.executionState === "completed" || Boolean(sched.pendingDelivery);
+    if (deliveryFailure && PERMANENT_DELIVERY_ERROR.test(safeError)) {
+      // The saved result cannot be delivered to this destination, now or on any later minute.
+      retireUndeliverable(sched, safeError);
+      await logEvent("schedule_error", { id: sched.id, error: safeError, retired: true });
+      return;
+    }
     const failedResult = err.details?.result || { engine: err.details?.engine, usage: err.details?.usage, costUSD: err.details?.costUSD };
     const usage = normalizeUsage(failedResult);
     updateScheduleRun(run?.id, { ...(deliveryFailure ? { deliveryStatus: "failed" } : {
@@ -388,6 +429,11 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     }
   } finally {
     running.delete(sched.id);
+    // Three failures in a row: tell the creator once, by DM (the same rule API runs use).
+    if (run && client && sched.createdBy && !isLoopRow(sched)) {
+      await alertFailureStreak({ scheduleId: sched.id, channelId: sched.channelId, title: sched.description || sched.prompt || "Scheduled task",
+        enabled: sched.failureNotify !== false, notify: (text) => postDirectMessage(client, { userId: sched.createdBy, text }) });
+    }
     // Release the DURABLE claim too. runDueForMinute stamps `running: true` on a one-time schedule
     // before starting it, but nothing ever cleared it: a failure, or a postpone because Slack was
     // down, left the surviving row flagged as running forever — a task the UI shows as permanently
@@ -400,18 +446,6 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       }
     }
   }
-}
-
-function recordTaskOutcome(id, result) {
-  const previous = getScheduleRun(id);
-  const o = result.automationOutcome || { status: "unreported", summary: "Task outcome not reported.", connections: [], source: "unreported" };
-  const usage = normalizeUsage(result);
-  const refused = result.licenseRefused || result.accessRefused || result.engineRefused;
-  updateScheduleRun(id, { status: o.status, taskStatus: o.status, engineStatus: refused ? "not-started" : result.interrupted ? "interrupted" : result.engineError || result.completed === false ? "failed" : "completed",
-    summary: o.summary, connections: o.connections, outcomeSource: o.source, engine: result.engine || "", model: result.runtimeModel || result.model || "",
-    durationMs: result.durationMs || 0, tokensIn: usage.inTok, tokensOut: usage.outTok, costUsd: usage.costUSD, costEstimated: usage.estimated,
-    toolUseCount: Number(result.toolUseCount) || 0, completedAt: previous?.completedAt || new Date().toISOString(), ...(o.errorKind ? { errorKind: o.errorKind } : {}) });
-  appendScheduleRunEvent(id, { kind: "task_outcome" });
 }
 
 async function finishScheduleDelivery(client, sched, result, threadTs) {
@@ -642,6 +676,25 @@ export function tick(nowMs = Date.now(), runOptions = {}) {
   // prune old minute markers
   if (firedThisMinute.size > 500) firedThisMinute.clear();
   return Promise.allSettled(started);
+}
+
+// "Run now" from a dashboard: one immediate execution outside the cron, recorded with trigger
+// "manual". It is the same runSchedule path (same author, same delivery, same attempt budget for a
+// one-time task), so it never bypasses a gate the cron path applies. Refuses — never queues —
+// while the automation is already executing or holding an undelivered result, and respects the
+// fan-out ceiling. Returns at once; the run continues in the background.
+export function runScheduleNow(id, { by = "", runOptions = {} } = {}) {
+  const sched = getSchedules().find((s) => s.id === id);
+  const refuse = (status, message) => { throw Object.assign(new Error(message), { status, userFacing: true }); };
+  if (!sched) refuse(404, "That automation no longer exists.");
+  if (isLoopRow(sched) || sched.loop) refuse(400, "A thread loop runs in its own thread and can't be started from here.");
+  if (running.has(sched.id) || needsRecovery(sched)) refuse(409, "This automation is already running or still delivering its last result.");
+  if (running.size >= MAX_CONCURRENT_SCHED) refuse(429, `${MAX_CONCURRENT_SCHED} automations are already running. Try again in a minute.`);
+  if (!automationTarget(slackRef, sched.channelId)) refuse(503, "The chat platform for this conversation is not connected right now.");
+  logEvent("schedule_run_now", { id: sched.id, channel: sched.channelId, by: String(by || "").slice(0, 64) });
+  const started = runSchedule({ ...sched, trigger: "manual", triggeredBy: by }, runOptions)
+    .catch((error) => console.error("[scheduler] run-now failed:", error.message));
+  return { started: true, done: started };
 }
 
 // Reset the module's tick bookkeeping (tests only — the daemon has exactly one scheduler).

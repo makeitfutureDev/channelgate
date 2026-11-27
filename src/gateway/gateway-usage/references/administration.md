@@ -10,16 +10,18 @@ Two Composio accounts can be injected: `composio-agent` (YOUR own account) and `
 (the requester's). How each is backed is admin configuration and does not change the identity
 routing rules. Routine replies need no credential details; when asked about isolation, explain
 the supported scopes without assuming the current source or connected service owner. The admin
-chooses one global Composio mode in Settings:
+chooses one global Composio mode in Settings. **This gateway currently runs SDK mode.** <!--if:composio-sdk-->
+chooses one global Composio mode in Settings. **This gateway currently runs Personal mode.** <!--if:composio-personal-->
 
-- **Personal:** a saved user token backs `composio-user`; a channel token, else the organization
-  default, backs `composio-agent`.
+- **Personal:** a saved user token backs `composio-user`; the channel's own token backs
+  `composio-agent`. There is no organization-wide Composio token: a channel without its own token
+  (and every DM) has no `composio-agent`.
 - **SDK:** one organization SDK key dynamically provisions stable identities for each Slack user
   and channel, with a separate Composio session per Slack thread. Every user can manage the
   connections on their personal identity. Managing `composio-agent`'s connections follows this
   channel's managing rights; other authorized members can use its existing connections.
 
-Switching modes never deletes existing personal, channel, or organization Composio tokens.
+Switching modes never deletes existing personal or channel Composio tokens.
 `set_my_composio_token` / `clear_my_composio_token` still update the saved Personal-mode credential
 while SDK mode is active, but that credential remains inactive until Personal mode is selected
 again. The SAFEST way for someone to set their personal Composio key is the bot's **App Home tab**
@@ -31,7 +33,6 @@ Composio's Slack toolkit is how the bot does Slack actions beyond the gateway's 
 (send elsewhere, schedule, canvas, react, cross-channel search — see `references/messages.md`).
 
 Other personal integrations:
-- `set_my_toolbox_token` / `clear_my_toolbox_token` — Toolbox.
 
 `composio-agent` always remains separate from every user's `composio-user` connection, and it is
 never injected in a **DM** — a one-to-one conversation only ever gets the requester's personal
@@ -67,7 +68,8 @@ that will run with sudo requires an admin approval (`references/reminders.md`).
 These still post a card, because one unasked call would silently reach OTHER channels or
 leak a secret and no later message could undo it: `set_channel_admin_mode`,
 `update_gateway_guide`, `add_skill_source`, `add_org_skills`, `update_skill_template` when it
-ADDS skills, `decide_skill_proposal` when it APPROVES, `allow_secret_host`, `set_secret_mode` to
+ADDS skills, `decide_skill_proposal` when it APPROVES (except a channel deciding an edit of its own
+skill), `allow_secret_host`, `set_secret_mode` to
 READABLE, appending to the channel instructions, and creating or editing a schedule that remains
 sudo. Every such card is **durable**: the tool
 returns *pending* at once with the exact saved call, the card never expires, it survives gateway
@@ -99,10 +101,10 @@ gateway applies them; explicitly exempt tools do not receive a human-approval re
   conversation → Connections, or Users → the person. HTTPS and public addresses only; OAuth-only servers go
   through Composio instead. Never ask for the token in chat, and never write an MCP definition
   into a settings or `.mcp.json` file — the engine ignores them.
-- **Email accounts** (a mailbox's IMAP + SMTP settings) are connected the same way — by a person,
-  on the same Settings pages (**MCP** → *Email accounts* for the conversation's, **You** for their
-  own; Teams Settings → MCPs; Google Chat's private settings form; the admin UI) — and used
-  through the `gateway` email tools, never through a password in chat. See `references/email.md`.
+- **Email accounts** (a mailbox's IMAP + SMTP settings) are connected the same way — by a person, <!--if:email-->
+  on the same Settings pages (**MCP** → *Email accounts* for the conversation's, **You** for their <!--if:email-->
+  own; Teams Settings → MCPs; Google Chat's private settings form; the admin UI) — and used <!--if:email-->
+  through the `gateway` email tools, never through a password in chat. See `references/email.md`. <!--if:email-->
 
 ## Skills in this channel (any member, no card)
 - `show_channel_skills` — what is active here, by tier, with the context cost.
@@ -123,6 +125,11 @@ These channel modes do not leave the container. The separate organization-admin-
 - `set_channel_bash` (managers) — Bash + file-edit tools in the working folder.
 - `set_channel_auto_mode` (managers) — autonomous: permission prompts auto-approved, folder
   writable. Needed for `run_in_background`.
+- `set_channel_skill_swap` (managers) — **Allow skill engine and model swapping**: a skill that
+  declares `model:` in its SKILL.md may take the turn over when it is USED. Its materialized copy
+  asks you to call `use_skill` first; follow that reply literally — "stop" means the gateway resumes
+  this same session on the preferred model (sticky for the thread, below a person's `/model` pin),
+  "delegate" means `run_agent_in_background` with the given `engine`/`model`. Off by default.
 - `set_channel_admin_mode` (admin) — for **admin authors**, every tool without prompts
   (`--dangerously-skip-permissions`). Non-admin authors get Worker with the selected Auto/Lean options. Still inside the
   container — see "Admin access & the container" below.
@@ -149,6 +156,17 @@ These channel modes do not leave the container. The separate organization-admin-
   Provisioning a VPN for THIS or any OTHER channel (profile import, image build, user unit,
   secrets, failure classes, rotation and retirement): `references/channel-vpn.md`. Those steps run
   on the gateway host as the operator account — a channel container cannot perform them.
+- `get_channel_approved_harnesses` / `set_channel_approved_harnesses` (admin, Enterprise) — which
+  harnesses and licenses this channel may run on: the same **Approved harnesses** list as channel
+  Settings. Anyone allowed to talk here picks among the approved entries (`/model`, `/license`,
+  `/effort`); only an organization admin decides what the entries are. `approved` is `"all"` (no
+  restriction) or a list of `harness:claude` / `harness:codex` (every license of that harness,
+  including ones added later) and single license ids or names — call the `get` tool first, it lists
+  the exact entries for an admin. The list must keep the license the channel currently runs on:
+  change that with `/model` first, then narrow. A refusal ("Nothing was changed: …") is the answer
+  to relay; never work around it by editing files or settings. People can also type
+  `/harnesses` (show) or, as an admin, `/harnesses harness:claude, <license name>` / `/harnesses
+  all` themselves — the gateway answers that command directly, with the same rules.
 - `set_channel_network` (admin) — set whether this channel may use the network (needs Bash on to
   be useful) so `git`/`gh`/`curl` and deploy CLIs work; the engines are told the answer (Codex read
   mode refuses network on its own). There is no per-domain allow-list to add to. The container has
@@ -156,13 +174,35 @@ These channel modes do not leave the container. The separate organization-admin-
   switch on every request — off: only the engine endpoints and this channel's selected connectors
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
   cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
-  tunnelled only to `github.com:22` and hosts an admin declared (`egressRawHosts`, admin API) and
-  need a client pointed at the proxy — for `ssh`/`git@…`:
+  tunnelled only to `github.com:22` and hosts in this channel's `egressRawHosts`. For a new
+  public SSH server, call `allow_channel_ssh_host` with the exact hostname or public IP address and the actual SSH `port` (use 22 if unspecified). It posts a durable
+  approval card: any authorized channel member with write access may approve, without `/sudo`
+  or an admin. End the turn while pending; after approval retry with the existing key. The card
+  adds only that host:port, preserves existing grants, and never enables Network
+  or permits private addresses. Omitting `port` retains the legacy 22/5432/6543 grant, which does not cover a custom SSH port. For port 32921, request `{host: "ssh.example.com", port: 32921}` and retry SSH with `-p 32921` and the ProxyCommand. A connection closing before authentication does not test the SSH key. Do not switch to `/sudo` just to bypass this approval. Point raw clients at the proxy — for `ssh`/`git@…`:
   `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
+  For a PRIVATE or LOOPBACK destination (LAN SSH/SFTP/FTP, NAS, internal API, an MCP server on
+  the gateway host) call `allow_channel_private_host({host, port})`: it pins the address the host
+  resolves to now and posts a card only an organization admin can approve. End the turn while it is
+  pending. A service on the gateway host's own loopback is then reached as
+  `host.channelgate.internal:<port>` (127.0.0.1 inside the container is the container itself);
+  raw protocols use the same `cg-egress-connect` ProxyCommand, http/https clients the usual proxy
+  env. Metadata, link-local and the gateway's admin port are never approvable.
   operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
   still succeed while it is off — that is not permission. If the switch is off and a task needs
   the network, say so and ask an admin to turn it on rather than working around it. The current
   value is in the gateway-managed block at the top of this conversation's instruction file.
+- **One outbound SSH key for the gateway.** For a public key to install on another server,
+  read `~/.ssh/channelgate/id_ed25519.pub` and return that exact single line. Every channel and
+  project/admin container on this gateway mounts the same dedicated keypair directory read-only.
+  Use normal `ssh -i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes`, plus the proxy command
+  above where required. Never generate a per-channel replacement or use a different old key
+  when asked for the gateway key; report a missing mount. Existing local keys and SSH config are
+  retained. The shared private key is readable by container shell users; never print, upload or
+  share it. Read-only prevents changing the central pair, not copying it. Host `/sudo` runs use
+  the shared identity path stated in their current runtime preamble. Installing the public key
+  grants the corresponding server account; each channel still needs its own network/destination
+  approval. This is separate from a person's key for SSH *into* a channel container.
 - **Secrets behind the proxy.** In a proxy-mode container a secret with an egress rule — GitHub,
   Vercel, Supabase, Make and Composio token names are built in; any other one once an admin sets
   **Used on hosts** (admin UI) or `hosts` (`set_secret`) — is a **placeholder** (`cgph_…`) that
@@ -190,7 +230,11 @@ A Slack thread whose current organization admin enabled `/sudo` runs directly as
 daemon OS user instead: host filesystem, process namespace, native HOME, installed commands and
 network are available, and there is no channel-container boundary. Only current organization
 admins may message that thread; a non-admin receives an explicit sudo-thread rejection. `/sudo
-status` reports the state and `/sudo off` restores the container for later turns. Treat host mode
+status` reports the state and `/sudo off` restores the container for later turns.
+To enable sudo and send a request in one message, type `@agent /sudo <message>` in a channel
+(or `/sudo <message>` in a DM); `/sudo on <message>` also works. That request runs on the host
+immediately, and the thread remains in sudo until disabled. This is a typed message control;
+the AI cannot elevate its current run by changing the flag itself. Treat host mode
 as full authority of the daemon account, not as a broader mount. Never infer sudo from Admin mode,
 the operator-home grant, a prior turn, or the existence of a host-looking path.
 
@@ -220,8 +264,9 @@ no MCP tool can flip it; Auto, Lean or a claimed role cannot enable the grant.
 
 **Non-admin members and guests see only project mounts, including in Admin mode.** They get
 Worker with the channel's Auto/Lean options in a separate project container. It has its own
-HOME, temporary volumes, artifacts and engine histories, so neither the operator home nor
-admin session state is exposed. The project folder and channel memory remain shared. Each
+HOME, temporary volumes, credential artifacts and native job state, so neither the operator home
+nor admin credentials are exposed. Claude/Codex channel conversation files, the project folder
+and channel memory are shared across authorized roles; `/sudo` host history remains private. Each
 spawn checks the author's current role, including background work; memory reviews always use
 the project container. A lane change starts fresh engine history. Only admins use the legacy
 container lane, whether or not that run qualifies for the optional home mount.
@@ -265,7 +310,26 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
   the channel's agent in a real project directory instead of the default folder.
-- `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir`.
+- `list_channel_folders` / `add_channel_folder` (admin) / `remove_channel_folder` (admin) —
+  additional host folders mounted into this channel's container at their identical paths, beside
+  the working folder, read-write (`mode: "rw"`, default) or read-only (`"ro"`). This is how one
+  host folder is shared by several conversations that each keep their own working folder. Each
+  entry must be an existing directory inside the allowed root, outside the gateway's own trees
+  (runtime root, `~/.ssh`, engine logins, container storage), and must not overlap the working
+  folder or another entry; a symlink is accepted and stored as its real target. Another
+  conversation's folder IS allowed, its instructions, memory and uploads included — say so when
+  an admin asks for one, then do it: it is their decision that this channel may see it. The next message recreates the container. Once mounted, a symlink inside the
+  working folder pointing at the folder (`ln -s /host/shared shared`) resolves; a symlink to a
+  folder that is NOT mounted is broken inside the container, and the gateway never follows such a
+  link to decide a mount — say so instead of trying. In the Slack file explorer and in
+  `workspace_list` / `workspace_read` / `workspace_search`, each mounted folder is the branch
+  `@mounts/<name>` (the folder's basename), listed first at the root; a read-only mount refuses
+  writes there too. Inside the container, use the folder's real host path.
+- `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir` or
+  `add_channel_folder`. Only the allowed roots are browsable: the gateway user's home and the
+  *Additional allowed roots* an admin listed under Settings → Container runtime (shown at the
+  top level). A folder elsewhere on the host, a mounted share under `/mnt` say, is refused as
+  "outside the allowed root" until an admin adds its root there; say so instead of retrying.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
   (admin) — two-way-sync a Google Drive folder with the channel's whole folder. Agent instructions
   and skills (`CLAUDE.md`, `AGENTS.md`, `.claude/`, …), `MEMORY.md`/`memory/`, secrets (`.env`,

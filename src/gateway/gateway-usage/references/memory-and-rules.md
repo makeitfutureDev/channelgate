@@ -79,7 +79,9 @@ secret-shaped text is refused. Never store secrets/tokens.
 RULES about behavior across tasks in this channel ("always reply in German"). Domain procedures
 and individual automation changes belong in their skill or schedule, even when phrased “always”. These
 live in the channel's `CLAUDE.md` and are read at the start of every future session (both
-engines, and after `/clear`).
+engines, and after `/clear`). In a repository work folder that file is assembled by the gateway
+(the project's `AGENTS.md` and `AGENTS.local.md` on top, the channel's rules below); the tool only
+ever edits the channel's part, and the project's tracked `AGENTS.md` is never the place for them.
 
 - `text` — the rule, written ready to drop in (e.g. `- Always reply in German.`). Appended below
   the existing channel instructions.

@@ -304,7 +304,6 @@ test("a containerized Codex turn writes its answer file and secret bundle into t
     gatewayCapability: "signed-cap",
     composioUserToken: "ck-user-in-bundle?",
     composioToken: "ck-shared-in-bundle?",
-    toolboxToken: "tb-in-bundle?",
     makeToolboxUrl: "https://eu1.make.com/mcp/server/b",
     makeToolboxKey: "mk-in-bundle?",
     target,
@@ -323,7 +322,7 @@ test("a containerized Codex turn writes its answer file and secret bundle into t
   // helper is written beside it.
   assert.deepEqual(JSON.parse(readFileSync(bundle, "utf8")), { gatewayCapability: "signed-cap" });
   assert.deepEqual(readdirSync(path.dirname(bundle)).filter((name) => name.endsWith(".cjs")), []);
-  for (const name of ["composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]) {
+  for (const name of ["composio-user", "composio-agent", "make-toolbox"]) {
     assert.equal(cfg(spec.args, `mcp_servers.${name}.env.CG_MCP_SERVICE=`), `mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`, name);
   }
   assert.ok(!spec.args.some((arg) => /in-bundle/.test(arg)), "no token in argv either");

@@ -25,7 +25,7 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
   const { data, body } = parseFrontmatter(manifest);
 
   assert.equal(data.name, "channelgate");
-  assert.equal(data.metadata.version, "3.3.0");
+  assert.equal(data.metadata.version, "3.6.2");
   assert.match(data.description, /device-login links/);
   assert.match(data.description, /Do not\s+use for ordinary work/);
   assert.match(data.description, /server sizing and hosting-provider choice/);
@@ -54,8 +54,12 @@ test("the domain skill states the same conditional home grant as the operating g
   assert.doesNotMatch(skill, /Admin mode changes tool approval, not\s+mounts|other conversations are absent/);
   assert.match(architecture, /containerFullAccessHome/);
   assert.match(architecture, /No MCP tool can flip/);
-  assert.match(architecture, /every admitted author can read/);
-  assert.match(architecture, /\$HOME.*~.*\s+remain the channel's own home/);
+  assert.match(architecture, /ONLY a current\s+organization admin's trusted run in an Admin\/Full-access channel/);
+  assert.match(architecture, /trusted admin runtime scope, Admin\s+channel mode and gateway switch must all apply/);
+  assert.match(architecture, /Non-admin members and guests run in a separate project container/);
+  assert.match(architecture, /including in an Admin channel; they receive no operator-home mount/);
+  assert.doesNotMatch(architecture, /every admitted author can read/);
+  assert.match(architecture, /\$HOME.*~.*remain that runtime's own channel HOME at `\/home\/agent`/);
   assert.doesNotMatch(architecture, /Modes are tool presets, never mount profiles/);
 });
 

@@ -1,10 +1,15 @@
 // Native Teams controls hold conversation/session authority server-side. Card data carries only
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
-import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
-import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
+import { getPublicUrl, getDefaultModel, getMentionReactions } from '../../config/settings.js';
+import { harnessOf, modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
+import { describeSelectionText, harnessSelection, licensePicker, resolveLicensePick } from '../../gateway/license-pool.js';
+import { SESSION_RUNTIME_SAVED, createConversationControls } from '../conversation-controls.js';
+import { createTeamsQueueControls } from './queue-controls.js';
+import { createTeamsBackgroundControls } from './background-controls.js';
+import { createTeamsRecoveryControls } from './recovery-controls.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
-import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
+import { listVisibleDirectory, normalizeRelativePath, parentRelative, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl, BROWSER_EDIT_MAX_CHARS, BROWSER_EDIT_MAX_BYTES } from '../../web/file-editor.js';
 import { docxText, DOCX_MAX_FILE_BYTES } from '../../util/docx-text.js';
@@ -14,7 +19,7 @@ import { createTeamsInteractionHandler, teamsCardErrorResponse, normalizeTeamsIn
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
-import { generalRuntimeScopes } from './settings-general.js';
+import { generalRuntimeScopes, hasLicenseStep, licenseStepRows, loadLabel, staleLicenseStep } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
 import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
@@ -30,69 +35,100 @@ const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
 const execute = (title, verb, stateId, data = {}) => ({ type: 'Action.Execute', title, verb, data: { cgAction: verb, stateId, ...data }, fallback: { type: 'Action.Submit', title, data: { cgAction: verb, stateId, ...data } } });
 const link = (title, url) => ({ type: 'Action.OpenUrl', title, url });
 const response = value => ({ status: 200, body: { statusCode: 200, type: 'application/vnd.microsoft.card.adaptive', value } });
+// The listing page a detail/upload page returns to. Only a display hint: the listing clamps it.
+const listingPage = value => Math.min(Math.max(0, Math.floor(Number(value)) || 0), 100_000);
 
-export function createTeamsControls({ connector, now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
+export function createTeamsControls({ connector, conversation = createConversationControls(), now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
   const states = new Map();
+  const queue = createTeamsQueueControls({ connector, conversation, log });
+  const background = createTeamsBackgroundControls({ connector, log });
+  const recovery = createTeamsRecoveryControls({ connector });
   const consent = createTeamsFileConsent({ connector, now, authorizeWorkspace: ({ message, entry }) => authorize({ channelId: message.conversationId, ownerId: message.userId, slug: entry.slug }, { connector }) });
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   async function settings(state, stateId) {
-    const ctx = createTeamsSettingsContext(state, { connector, authorize });
+    const ctx = createTeamsSettingsContext(state, { connector, authorize, batch: true });
     await ctx.authorize();
     return buildTeamsSettings(ctx, stateId);
   }
-  // Teams ChoiceSets send no change events, so the card cannot narrow the model list on its own
-  // when the engine changes. Like /settings → General, Load models repaints the card with the
-  // chosen engine's models and efforts without saving; Apply saves. The engine whose models are
-  // on the card is held server-side, and Apply must name that same engine.
+  // Teams ChoiceSets send no change events, so the card cannot narrow the license and model lists
+  // on its own when the harness changes. Like /settings → General, the Load button repaints the
+  // card with the chosen harness's licenses and the chosen license's models and efforts without
+  // saving; Apply saves. The harness and the license whose models are on the card are held
+  // server-side, and Apply must name that same harness and a license those models belong to.
   async function modelRuntime(state) {
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
     return generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
   }
-  async function modelCard(state, stateId, { engine: requested = state.loadedEngine, draft = null, notice = '' } = {}) {
-    const { thread: current, locked } = await modelRuntime(state);
-    const summary = text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
-    if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
-      return card('Session model', [summary, text('Runtime changes in this conversation are restricted to administrators.')]);
-    }
-    const offered = value => current.engines.some(item => item.value === value);
-    const engine = locked ? 'codex' : [requested, current.engine].find(offered) || current.engines[0]?.value;
-    state.loadedEngine = engine;
+  // The license step as submitted: the License control and the "also use" multi-select (Teams
+  // sends its values as one comma-separated string). Both are absent when the step was not shown.
+  const licenseInput = data => {
+    const read = key => { const value = data[key]; if (value === undefined || value === null || value === '') return ''; if (typeof value !== 'string' || value.length > 4096) throw new Error('Choose a license and try again.'); return value.trim(); };
+    return { harness: data.engine, license: read('license'), also: read('also') };
+  };
+  const pickOf = (input, meta) => input.license && !staleLicenseStep(input)
+    ? resolveLicensePick({ harness: input.harness, meta, license: input.license, also: input.also.split(',').map(id => id.trim()).filter(Boolean) }) : null;
+  // `pick` is the license step just chosen on the card ({ engine, licensePool }); without one the
+  // card opens on the session's own selection when it is on this harness, else on the
+  // conversation's selection for it.
+  async function modelCard(state, stateId, { harness: requested = state.loadedHarness, pick = null, draft = null, notice = '' } = {}) {
+    const { thread: current } = await modelRuntime(state);
+    const summary = text(`Current harness: ${describeSelectionText({ engine: current.engine, pool: current.pool, meta: state.meta }) || current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
+    const offered = value => current.harnesses.some(item => item.value === value);
+    const harness = [requested, harnessOf(current.engine)].find(offered) || current.harnesses[0]?.value;
+    if (!harness) return card('Session model', [summary, text('No harness has a license this conversation can use.')]);
+    const stored = pick || (harness === harnessOf(current.engine) ? { engine: current.engine, licensePool: current.pool } : harnessSelection(harness, effectiveMeta(state.meta)));
+    const picker = licensePicker({ harness, meta: state.meta, engine: stored.engine, pool: stored.licensePool });
+    // The license whose models the card shows: the one a turn would run on.
+    const engine = resolveLicensePick({ harness, meta: state.meta, license: picker.selected }).engine;
+    const previous = state.loadedEngine;
+    state.loadedHarness = harness; state.loadedEngine = engine;
     const ui = teamsSettingsUi(stateId);
     const models = [...modelsForEngine(engine)];
-    // Keep the saved model and effort, or the ones chosen before Load models, while they still fit.
-    const wanted = draft || (engine === current.engine ? current.values : {});
+    // Keep the saved model and effort, or the ones chosen before the reload, while they still fit.
+    const wanted = draft ? (engine === previous ? draft : {}) : engine === current.engine ? current.values : {};
     const savedModel = wanted.model && wanted.model !== 'default' && modelBelongsToEngine(wanted.model, engine) ? wanted.model : '';
     if (savedModel && !models.some(item => item.value === savedModel)) models.push({ value: savedModel, label: `Current: ${savedModel}` });
     const efforts = [...new Set([...effortsForModel(engine), ...models.flatMap(item => effortsForModel(engine, item.value))])];
     const savedEffort = efforts.includes(wanted.effort) ? wanted.effort : '';
+    const steps = hasLicenseStep(state.meta)
+      ? 'Licenses and models are shown only for the selected harness. After changing Harness or License, use Load licenses and models, then choose model and effort and Apply to this session.'
+      : 'Models are shown only for the selected harness. After changing Harness, use Load models, then choose model and effort and Apply to this session.';
     const body = [summary, ...(notice ? [text(notice)] : []),
-      text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.'),
-      ...(locked ? [text('Engine: Codex — locked to this conversation’s Codex login.')]
-        : [ui.choice('engine', 'Engine', engine, current.engines), ui.buttons([ui.execute('Load models', 'model.load')])]),
+      text(`${steps} Changes apply to the next turn. Use /settings → General for conversation defaults.`),
+      ui.choice('engine', 'Harness', harness, current.harnesses), ...licenseStepRows(ui, '', picker), ui.buttons([ui.execute(loadLabel(state.meta), 'model.load')]),
       ui.choice('model', 'Model', savedModel || 'default', [{ label: 'Default model for selected engine', value: 'default' }, ...models]),
       ui.choice('effort', 'Effort', savedEffort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))])];
-    // The action's engine is the locked card's only engine value; elsewhere the Engine input wins.
-    return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine })]);
+    // Apply names the same harness whose licenses and models were loaded into this card.
+    return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine: harness })]);
   }
   async function files(state, stateId, context, relative = '', page = 0, signal) {
     const listing = await listVisibleDirectory(context.root, normalizeRelativePath(relative), { page, pageSize: 12 });
     signal?.throwIfAborted();
     const body = [text(`Folder: /${listing.relative} — page ${listing.page + 1}/${listing.totalPages}`)];
-    for (const file of listing.entries.filter(item => item.accessible !== false)) {
-      body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, { relative: file.relative })] });
+    const visible = listing.entries.filter(item => item.accessible !== false);
+    for (const file of visible) {
+      // A file button carries its listing page so Back to files returns to the same page.
+      const data = file.type === 'directory' ? { relative: file.relative } : { relative: file.relative, page: listing.page };
+      body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, data)] });
     }
+    if (!visible.length) body.push(text('No visible files or folders on this page.'));
+    // At most six actions: Teams renders no more than six on a card.
     const actions = [execute('Root', 'files.browse', stateId)];
+    if (listing.relative) actions.push(execute('Parent folder', 'files.browse', stateId, { relative: parentRelative(listing.relative) }));
+    actions.push(execute('Refresh', 'files.browse', stateId, { relative: listing.relative, page: listing.page }));
     if (listing.page) actions.push(execute('Previous', 'files.browse', stateId, { relative: listing.relative, page: listing.page - 1 }));
     if (listing.page + 1 < listing.totalPages) actions.push(execute('Next', 'files.browse', stateId, { relative: listing.relative, page: listing.page + 1 }));
-    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
+    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative, page: listing.page }));
     return card('Conversation files', body, actions);
   }
-  async function fileDetails(state, relative, context, stateId, signal) {
+  async function fileDetails(state, relative, context, stateId, signal, page = 0) {
     signal?.throwIfAborted();
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
-    const opened = await openConfinedFile(context.root, target.relative);
+    // An in-conversation PREVIEW for an authorized requester, not an export: protected names stay
+    // viewable here exactly as in the Slack explorer.
+    const opened = await openConfinedFile(context.root, target.relative, { protectedNames: false });
     const isDocx = /\.docx$/i.test(target.relative);
     let bytes, documentText = null;
     try {
@@ -126,7 +162,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (baseUrl && !binary && canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
       try { const editable = await readEditableFile(context.root, target.relative, { maxChars: BROWSER_EDIT_MAX_CHARS, maxBytes: BROWSER_EDIT_MAX_BYTES, label: 'Browser editing' }); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
     }
-    actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/') }));
+    actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/'), page: listingPage(page) }));
     return card('File', body, actions);
   }
   const filesResponse = value => settingsDialogResponse(value, { title: 'Conversation files' });
@@ -209,6 +245,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   async function onCommand(args) {
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
+    if (await background.command(args)) return true;
     if (message.text.trim().toLowerCase() === '/help') {
       if (args.replyCard) {
         try {
@@ -225,7 +262,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         if (recipient && connector.botId && recipient !== connector.botId) throw new Error('This command is addressed to a different bot.');
         await deliverCard({ ...args, modelCommand: true }, modelCard);
       }
-      catch (error) { await reply(`${error.message} You can change this session with /model <engine> <model|default> and /effort <level|default>.`); }
+      catch (error) { await reply(`${error.message} You can change this session with /model <harness> <model|default>, /license and /effort <level|default>.`); }
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -267,6 +304,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
     if (interaction.action.startsWith('menu.')) return openMenu(interaction, signal);
+    if (queue.isAction(interaction.action)) return queue.onAction(interaction, { respond: response });
+    if (background.isAction(interaction.action)) return background.onAction(interaction, { respond: response });
+    if (recovery.isAction(interaction.action)) return recovery.onAction(interaction, { respond: response });
     prune(); let state = states.get(interaction.data.stateId);
     if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
       const restored = inspectTeamsFileLauncher(interaction.data.stateId, connector.botId, now());
@@ -301,7 +341,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       try {
         prune();
         if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
-        const ctx = createTeamsSettingsContext(state, { connector, authorize });
+        const ctx = createTeamsSettingsContext(state, { connector, authorize, batch: true });
         const updated = await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId);
         if (state.settingsDialog) return settingsDialogResponse(updated);
         // Updating the bot's stored card works for both Execute and Submit clients and avoids
@@ -320,51 +360,70 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         messageId: state.messageId, card: updated, text: 'Session model settings' });
       return response(updated);
     };
-    if (interaction.action === 'model.load') {
-      if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
-      const { engine, model: draftModel, effort } = interaction.data;
-      if (typeof engine !== 'string' || !engine || engine.length > 64) throw new Error('Choose an engine first.');
+    const offeredHarness = async harness => {
+      if (typeof harness !== 'string' || !harness || harness.length > 64) throw new Error('Choose a harness first.');
       const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-      if (scopes.locked || !scopes.thread.engines.some(item => item.value === engine)) throw new Error('Choose an enabled engine.');
-      const draft = engine === state.loadedEngine ? { model: String(draftModel || ''), effort: String(effort || '') } : {};
-      return repaintModel(await modelCard(state, interaction.data.stateId, { engine, draft }));
+      if (!scopes.thread.harnesses.some(item => item.value === harness)) throw new Error('Choose an enabled harness.');
+      return scopes.thread;
+    };
+    if (interaction.action === 'model.load') {
+      const { engine: harness, model: draftModel, effort } = interaction.data;
+      await offeredHarness(harness);
+      // A license step left over from another harness says nothing about this one.
+      const pick = harness === state.loadedHarness ? pickOf(licenseInput(interaction.data), state.meta) : null;
+      return repaintModel(await modelCard(state, interaction.data.stateId, { harness, pick, draft: { model: String(draftModel || ''), effort: String(effort || '') } }));
     }
     if (interaction.action === 'model.save') {
-      if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
-      if (!state.loadedEngine || typeof interaction.data.engine !== 'string') throw new Error('Reopen /model.');
-      // Apply must name the engine whose models the card shows. A changed Engine without Load
-      // models loads them instead of saving a model chosen from the other engine's list.
-      if (interaction.data.engine !== state.loadedEngine) {
-        const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-        if (scopes.locked || !scopes.thread.engines.some(item => item.value === interaction.data.engine)) throw new Error('Choose an enabled engine.');
-        return repaintModel(await modelCard(state, interaction.data.stateId, { engine: interaction.data.engine, draft: {},
-          notice: 'Engine changed, so its models were loaded and nothing was saved. Choose a model and effort, then Apply.' }));
+      if (!state.loadedHarness || !state.loadedEngine || typeof interaction.data.engine !== 'string') throw new Error('Reopen /model.');
+      const harness = interaction.data.engine;
+      // Apply must name the harness whose licenses and models the card shows. A changed Harness
+      // without a reload loads them instead of saving a choice made from the other harness's lists.
+      if (harness !== state.loadedHarness) {
+        await offeredHarness(harness);
+        return repaintModel(await modelCard(state, interaction.data.stateId, { harness, draft: {},
+          notice: `Harness changed, so its ${hasLicenseStep(state.meta) ? 'licenses and ' : ''}models were loaded and nothing was saved. Choose a model and effort, then Apply.` }));
       }
       if (['model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select a model and effort before applying.');
-      const engine = state.loadedEngine, model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
-      const { thread: current } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      const input = licenseInput(interaction.data), pick = pickOf(input, state.meta);
+      // No license step on the card: the harness alone is the choice, and its models are the loaded ones.
+      const engine = pick ? pick.engine : state.loadedEngine;
+      const model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
+      await offeredHarness(harness);
       const inheritedModel = effectiveMeta(state.meta).model;
       const actualModel = model || (modelBelongsToEngine(inheritedModel, engine) ? inheritedModel : '') || getDefaultModel(engine);
-      if (!current.engines.some(item => item.value === engine) || (model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) throw new Error('Select a compatible enabled engine, model, and effort.');
+      if ((model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) {
+        // The model list on the card belongs to the license that was loaded. Another license
+        // that cannot run this choice gets its own list instead of an error.
+        if (engine === state.loadedEngine) throw new Error('Select a compatible enabled harness, model, and effort.');
+        return repaintModel(await modelCard(state, interaction.data.stateId, { harness, pick, draft: {},
+          notice: 'License changed, so its models were loaded and nothing was saved. Choose a model and effort, then Apply.' }));
+      }
       if (states.get(interaction.data.stateId) !== state) throw new Error('These settings were already submitted. Reopen the controls.');
       states.delete(interaction.data.stateId);
       const replies = [];
-      const command = async value => state.controls.command({ ...state, slug: state.entry.slug, message: { ...state.message, text: value }, reply: async value => replies.push(value) });
-      await command(`/model ${engine} ${model || 'default'}`);
+      const command = async (value, extra = {}) => state.controls.command({ ...state, ...extra, slug: state.entry.slug, message: { ...state.message, text: value }, reply: async value => replies.push(value) });
+      // The license step chosen on the card travels beside the harness word; without one this is
+      // a bare harness pick, as when it is typed.
+      await command(`/model ${harness} ${model || 'default'}`, { picked: pick ? { license: input.license, also: input.also.split(',').map(id => id.trim()).filter(Boolean) } : null });
       // A busy-lane refusal must not be followed by another mutation.
-      if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
+      if (replies.at(-1)?.startsWith(SESSION_RUNTIME_SAVED)) await command(`/effort ${effort || 'default'}`);
       return repaintModel(card('Session settings', replies.map(text)));
     }
     const relative = normalizeRelativePath(interaction.data.relative || '');
     if (interaction.action === 'files.download') {
-      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId, signal));
+      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId, signal, interaction.data.page));
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const input = { ...grant(state), baseUrl, relative };
     if (interaction.action === 'files.upload') {
       if (!canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) throw new Error('This conversation is read-only for you.');
-      return filesResponse(card('Upload files', [text('Files will be saved into this conversation workspace.')], [
-        link('Open uploader', createFileUploadGrantUrl(input)), execute('Back to files', 'files.browse', interaction.data.stateId, { relative }),
+      // The destination is the folder the user was browsing in this window; name the real one.
+      const destination = await resolveVisiblePath(context.root, relative, { kind: 'directory' });
+      signal?.throwIfAborted();
+      return filesResponse(card('Upload files', [text(`Destination: /${destination.relative}`),
+        text('Open the uploader to choose files or a folder in the browser. Come back here and select Refresh to see them.')], [
+        link('Open uploader', createFileUploadGrantUrl({ ...input, relative: destination.relative })),
+        execute('Back to files', 'files.browse', interaction.data.stateId, { relative: destination.relative, page: listingPage(interaction.data.page) }),
       ]));
     }
     throw new Error('Unsupported Teams action.');
@@ -398,5 +457,5 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     return result;
   }
-  return { onCommand, onInvoke, shareFile, stop() { states.clear(); consent.stop(); } };
+  return { onCommand, onInvoke, shareFile, queueNotice: queue.notice, conversation, stop() { states.clear(); consent.stop(); } };
 }

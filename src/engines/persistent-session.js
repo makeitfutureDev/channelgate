@@ -298,6 +298,9 @@ export class PersistentClaudeSession {
         costUSD: p.total_cost_usd ?? null,
         sessionId: p.session_id ?? null,
         durationMs: Date.now() - t.startedAt,
+        // The terminal line itself, as the cold runner carries it: the ledger reads the session's
+        // cumulative `total_cost_usd` / `modelUsage` from here to difference THIS turn's spend.
+        raw: p,
         // Same contract as the cold runner (claude.js): the CLI's own verdict on the turn travels
         // with the result, so partial narration cannot hide an incomplete turn.
         endReason: String(p.subtype || ""),
@@ -305,6 +308,8 @@ export class PersistentClaudeSession {
         completed: !engineError && !t.interrupted,
         toolUseCount: t.stream.toolUseCount,
         primaryModel: t.stream.model,
+        sessionModel: t.stream.sessionModel,
+        contextTokens: t.stream.contextTokens,
         // On a failed or answerless turn: on an abort the CLI never exits, so no error path
         // ever reads what it wrote to stderr (redacted + capped by conciseProcessDiagnostic).
         ...(!engineError && (t.stream.text || p.result) ? {} : { diagnostic: conciseProcessDiagnostic((this.stderr || "").slice(t.stderrAt)) }),

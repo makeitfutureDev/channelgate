@@ -45,7 +45,7 @@ test("a due reminder follows the requesting user's live preference and mentions 
   noteBotReply("C1", "s", "thread-off", "U_OFF", { map, nowMs: 1_000 });
   const posted = [];
   const logged = [];
-  const slack = { snapshot: () => ({ connected: true }), getClient: () => ({}) };
+  const slack = { snapshot: () => ({ connected: true }), getClient: () => ({ conversations: { replies: async ({ ts }) => ({ messages: [{ ts }] }) } }) };
 
   await sweepNudges(slack, {
     map,

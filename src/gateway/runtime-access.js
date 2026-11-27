@@ -4,6 +4,9 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { gatewayRoot, dbFile } from "../config/paths.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
+import { describeExtraFolders, extraFolderDirectories } from "./extra-folders.js";
+import { agentSshDir } from "../config/agent-ssh.js";
+import { describePidsUse } from "../runtimes/container/pids-pressure.js";
 
 function canonicalHostPath(value) {
   try { return realpathSync(value); } catch { return path.resolve(value); }
@@ -49,6 +52,17 @@ function cleanModeNote(clean) {
   return "Clean mode for this attempt is unknown because the resolved run mode was not supplied. Do not infer it from missing tools alone.";
 }
 
+export function agentSshAccessNote(target) {
+  const mount = target?.container?.mounts?.find((entry) => entry.kind === "agent-ssh");
+  const dir = target?.backend === "host" ? agentSshDir() : mount?.target;
+  if (!dir) return "";
+  return `Shared outbound SSH identity: use \`${dir}/id_ed25519\` with \`ssh -i\` and \`IdentitiesOnly=yes\`. `
+    + `When asked for the agent's public key to install on a server, read and return \`${dir}/id_ed25519.pub\`; this is the same key in every channel on this gateway. `
+    + "Do not generate a channel-specific replacement or fall back to another key if it is missing; report the missing shared mount. Never print, upload or share the private key. "
+    + (mount ? "The keypair directory is mounted read-only; the rest of HOME remains channel-specific. " : "")
+    + "The key does not grant network access or approve a server. Follow this channel's current network and SSH destination policy.";
+}
+
 function networkPolicyNote(allowNetwork, { host = false, enforced = false, rawNetwork = false } = {}) {
   if (typeof allowNetwork !== "boolean") {
     return "Network policy for this attempt is unknown because the resolved policy was not supplied. Do not infer network permission from earlier turns or successful requests.";
@@ -79,7 +93,33 @@ export function containerAccessNote(target) {
   const access = homes.length
     ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. This is an admin-author runtime. Non-admin authors run in a separate project-only container with their normal Worker tools; they cannot see this mounted home or this container's engine state.`
     : "This channel's resolved runtime has no operator-home mount. The working folder, clean workspace and artifacts remain its host directory mounts; non-admin authors keep their normal channel tool permissions and cannot see the operator home.";
-  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
+  const extras = extraFolderDirectories(target);
+  const extraNote = extras.length
+    ? ` Additional folders an admin declared for this channel are mounted at their identical host paths: ${describeExtraFolders(extras)}. A read-only one refuses writes at the kernel. Nothing else outside the folders named here is mounted.`
+    : "";
+  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access}${extraNote} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
+}
+
+// The container's process budget, and what the daemon just did about it. A container's limit counts
+// processes AND threads, is shared by every thread and job in the channel, and is held by anything
+// a turn leaves running — which is how four forgotten browser sessions left an engine unable to
+// start a thread (2026-11-18). The engine cannot see the limit from inside until it is hit, so
+// every attempt is told the number and the two habits that keep it from mattering. Nothing here
+// for a host run, an unresolved target, or a container whose runtime applies no cap.
+export function processLimitNote(target) {
+  if (target?.backend === "host" || !target?.container) return "";
+  const c = target.container;
+  const lines = [];
+  const limit = Number(c.appliedLimits?.pidsLimit) || 0;
+  if (limit > 0) {
+    lines.push(`Process limit for this container: **${limit.toLocaleString("en-US")}** processes and threads in total, shared by every thread and job in this channel. A headless browser session takes roughly 250, and anything a turn leaves running (browser sessions, dev servers, watchers) keeps its slots after that turn ends. Close each browser session when its work is finished (\`agent-browser --session <name> close\`), stop servers you started, and keep parallel browser sessions to a few. At the limit nothing can start — commands fail with "Resource temporarily unavailable" (EAGAIN) and the engine itself can crash.`);
+  }
+  if (c.processReclaim) {
+    lines.push(`The gateway restarted this container just before this attempt because it had run out of process slots (${describePidsUse(c.processReclaim)} in use): every process earlier turns left running in it is gone, including browser sessions, dev servers and shells. Files are untouched. Start again only what this task still needs, one at a time rather than the same load at once.`);
+  } else if (c.processPressure) {
+    lines.push(`This container is nearly out of process slots right now (${describePidsUse(c.processPressure)} in use)${c.processPressure.others > 0 ? " while other work is running in it" : ""}, and the gateway could not clear it. Start as few processes as possible and close what you no longer need first.`);
+  }
+  return lines.length ? `${lines.join(" ")}\n` : "";
 }
 
 // The launcher supplies its resolved decision. Channel mode, writable tools and mounted home
@@ -100,7 +140,9 @@ export function runtimeAccessPreamble(target, { clean, allowNetwork, dangerously
     + "Answer access questions from this resolved runtime, even when the conversation previously said otherwise.\n"
     + permissionBypassNote(dangerouslySkip)
     + containerAccessNote(target) + "\n"
+    + processLimitNote(target)
     + gatewayStoreAccessNote(target) + "\n"
+    + agentSshAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"
     + cleanModeNote(clean) + "\n"
     + networkPolicyNote(allowNetwork, { host: target?.backend === "host", enforced: networkEnforcedFor(target), rawNetwork: target?.container?.egress?.rawNetwork === true }) + "\n"

@@ -28,6 +28,7 @@ const PROVIDER_LIMIT_TEXT = /\busage limit\b|\bspend limit\b|hit (?:your|its) (?
 // Is this failure something a reader of THIS repository could fix? Exported for the tests and for
 // any future caller that wants the same judgement before spending a run on a diagnosis.
 export function isDiagnosableRunError(err) {
+  if (err?.code === "channel_spending_limit" || err?.code === "enterprise_required") return false;
   const details = err?.details || {};
   if (details.explicitStop === true || err?.name === "AbortError") return false; // the user ended it
   if (details.providerError === true && PROVIDER_STATE_KINDS.has(String(details.providerKind || ""))) return false;

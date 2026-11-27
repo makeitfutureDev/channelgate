@@ -3,7 +3,7 @@
 // the run-time resolvers what the current thread would actually spawn with.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
 
@@ -41,10 +41,10 @@ function fakeClient() {
   };
 }
 
-async function click(client, channelId, actionId, value) {
+async function click(client, channelId, actionId, value, user = ADMIN) {
   await handleModelWizard({
     ack: async () => {},
-    body: { user: { id: ADMIN }, channel: { id: channelId }, container: { channel_id: channelId, message_ts: "1901000000.000200" } },
+    body: { user: { id: user }, channel: { id: channelId }, container: { channel_id: channelId, message_ts: "1901000000.000200" } },
     action: { action_id: actionId, value },
     client,
     respond: async () => {},
@@ -61,7 +61,7 @@ async function channel(id, name, meta = {}) {
 }
 
 test("a channel-scope model pick applies to the thread it was made in", async () => {
-  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_SAME", "mw-same-harness");
   // A live Claude session in this thread, plus the stale thread overrides a previous
@@ -90,37 +90,40 @@ test("a channel-scope model pick applies to the thread it was made in", async ()
   assert.doesNotMatch(JSON.stringify(done.blocks), /fresh Claude session/, "nothing moved, so nothing to warn about");
 });
 
-test("a dedicated channel Codex login offers only Codex models and rejects an old Claude button", async () => {
-  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+test("a dedicated channel Codex login offers harness switching and accepts a Claude button", async () => {
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_LOCKED", "mw-codex-locked", { codexAuthSource: "channel", engine: "codex", model: "" });
   await saveSession(entry.slug, THREAD, "old-claude-session", "claude");
   await setThreadEngine(entry.slug, THREAD, "claude");
-  assert.equal(await resolveThreadEngine(entry.slug, THREAD, await getChannelMeta(entry.slug)), "codex");
+  assert.equal(await resolveThreadEngine(entry.slug, THREAD, await getChannelMeta(entry.slug)), "claude");
   const client = fakeClient();
   await click(client, "C_MW_LOCKED", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
   const card = JSON.stringify(client.updates.at(-1).blocks);
-  assert.match(card, /Choose a Codex model/);
-  assert.doesNotMatch(card, /cg_mw_engine_claude/);
+  assert.match(card, /Which harness/);
+  assert.match(card, /cg_mw_engine_claude/);
+  // The channel's own sign-in is a LICENSE of Codex: the harness step offers the two harnesses.
+  assert.match(card, /cg_mw_engine_codex"/);
+  assert.doesNotMatch(card, /cg_mw_engine_codex-channel/);
   await click(client, "C_MW_LOCKED", "cg_mw_engine_claude", wizardValue());
-  assert.equal((await getChannelMeta(entry.slug)).engine, "codex");
-  assert.match(client.ephemerals.at(-1).text, /engine stays Codex/);
+  assert.equal((await getChannelMeta(entry.slug)).engine, "claude");
+  assert.equal(client.ephemerals.length, 0);
 });
 
-test("Fable 5.1 saves its exact ID while an older Fable button remains usable", async () => {
+test("Fable 5.2 saves its exact ID while an older Fable button remains usable", async () => {
   const entry = await channel("C_MW_FABLE", "mw-fable-model");
   const client = fakeClient();
   await click(client, "C_MW_FABLE", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
   await click(client, "C_MW_FABLE", "cg_mw_engine_claude", wizardValue());
-  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_2`, wizardValue("claude-fable-5-1"));
-  assert.equal((await getChannelMeta(entry.slug)).model, "claude-fable-5-1");
+  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_2`, wizardValue("claude-fable-5-2"));
+  assert.equal((await getChannelMeta(entry.slug)).model, "claude-fable-5-2");
   await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_7`, wizardValue("fable"));
   assert.equal((await getChannelMeta(entry.slug)).model, "fable");
   assert.equal(client.ephemerals.length, 0);
 });
 
 test("a channel-scope harness pick moves a thread whose session belongs to the other harness", async () => {
-  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_MOVE", "mw-cross-harness");
   await saveSession(entry.slug, THREAD, "session-claude-2", "claude");
@@ -150,7 +153,7 @@ test("a channel-scope harness pick moves a thread whose session belongs to the o
 });
 
 test("a thread with no session of its own is never pinned by a channel-scope pick", async () => {
-  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_FRESH", "mw-fresh-thread");
 
@@ -164,7 +167,7 @@ test("a thread with no session of its own is never pinned by a channel-scope pic
 
 
 test("an unconfigured provider choice preserves thread and channel pins", async () => {
-  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true, "qwen-eu": true }, qwenEuApiKey: "", qwenEuBaseUrl: "" });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, "qwen-eu": true }, qwenEuApiKey: "", qwenEuBaseUrl: "" });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_PROVIDER_MISSING", "mw-provider-missing");
   await setThreadEngine(entry.slug, THREAD, "codex");
@@ -179,4 +182,54 @@ test("an unconfigured provider choice preserves thread and channel pins", async 
     assert.equal(await getThreadEffort(entry.slug, THREAD), "high");
     assert.match(client.ephemerals.at(-1).text, /not configured|no API key or endpoint/);
   }
+});
+
+// The rule: anyone who may talk in a channel may pick its harness, license, model and effort —
+// for the channel or for one thread — and what bounds the pick is the channel's allow list, which
+// only administrators change. A value an earlier release stored for the retired "who can change
+// the runtime" setting restricts nothing.
+test("a member who is not an administrator changes the runtime, inside the channel's allow list", async () => {
+  const MEMBER = "U_MW_MEMBER";
+  const STRANGER = "U_MW_STRANGER";
+  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
+  await setUser(MEMBER, { name: "Member", approved: true, isAdmin: false });
+  await setUser(STRANGER, { name: "Stranger", approved: false, isAdmin: false });
+  const entry = await channel("C_MW_MEMBER", "mw-member");
+  const threadValue = (value) => JSON.stringify({ s: "t", t: THREAD, ...(value === undefined ? {} : { v: value }) });
+
+  // Channel scope: the member's pick is the channel's new default.
+  const client = fakeClient();
+  await click(client, "C_MW_MEMBER", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue(), MEMBER);
+  assert.match(JSON.stringify(client.updates.at(-1).blocks), /cg_mw_engine_codex"/);
+  await click(client, "C_MW_MEMBER", "cg_mw_engine_claude", wizardValue(), MEMBER);
+  await click(client, "C_MW_MEMBER", `${MODEL_PICKER_ACTION}_1`, wizardValue("claude-opus-5-5"), MEMBER);
+  await click(client, "C_MW_MEMBER", `${EFFORT_PICKER_ACTION}_1`, wizardValue("high"), MEMBER);
+  let meta = await getChannelMeta(entry.slug);
+  assert.deepEqual([meta.engine, meta.model, meta.effort], ["claude", "claude-opus-5-5", "high"]);
+  // Thread scope: the member pins the other harness for one thread.
+  await click(client, "C_MW_MEMBER", "cg_mw_engine_codex", threadValue(), MEMBER);
+  assert.equal(await getThreadEngine(entry.slug, THREAD), "codex");
+  assert.equal(client.ephemerals.length, 0, "no refusal for a member");
+  await setThreadEngine(entry.slug, THREAD, "");
+
+  // An administrator narrows the allow list to Claude Code. The member is no longer offered Codex,
+  // and a Codex button left on an older card is refused in words with nothing written.
+  testLicenseEnv({ tier: "enterprise" });
+  try { await saveChannelMeta(entry.slug, { ...meta, approvedEngines: ["harness:claude"] }); } finally { testLicenseEnv(); }
+  await click(client, "C_MW_MEMBER", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue(), MEMBER);
+  assert.doesNotMatch(JSON.stringify(client.updates.at(-1).blocks), /cg_mw_engine_codex"/);
+  for (const value of [wizardValue(), threadValue()]) {
+    await click(client, "C_MW_MEMBER", "cg_mw_engine_codex", value, MEMBER);
+    assert.match(client.ephemerals.at(-1).text, /^Codex is not an approved harness for this channel\./);
+  }
+  assert.equal(client.ephemerals.length, 2);
+  meta = await getChannelMeta(entry.slug);
+  assert.equal(meta.engine, "claude");
+  assert.deepEqual(meta.approvedEngines, ["harness:claude"], "a member's pick never changes the allow list");
+  assert.equal(await getThreadEngine(entry.slug, THREAD), "");
+
+  // Someone who may not talk here still may not change anything.
+  await click(client, "C_MW_MEMBER", "cg_mw_engine_claude", threadValue(), STRANGER);
+  assert.match(client.ephemerals.at(-1).text, /You're not approved to change runtime settings here\./);
+  assert.equal(await getThreadEngine(entry.slug, THREAD), "");
 });

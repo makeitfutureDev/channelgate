@@ -34,12 +34,12 @@ test("semantic network policy compiles per declared capability without silently 
 });
 
 test("an engine that does not declare the on state is refused, and the default is off-only", () => {
-  // opencode declares ["off"] — turning the network on must refuse through the same generic path.
-  const oc = compileNetworkPolicy({ engine: "opencode", allowNetwork: true, supportedModes: modesOf("opencode") });
+  // An engine declaring only ["off"] — turning the network on must refuse through the same generic path.
+  const oc = compileNetworkPolicy({ engine: "offline-engine", allowNetwork: true, supportedModes: ["off"] });
   assert.equal(oc.mode, NETWORK_MODES.ON, "the requested state is still named, so the refusal is legible");
   assert.equal(oc.supported, false);
   assert.match(oc.reason, /cannot run with the network on/i);
-  assert.deepEqual(compileNetworkPolicy({ engine: "opencode", supportedModes: modesOf("opencode") }), { mode: NETWORK_MODES.OFF, supported: true });
+  assert.deepEqual(compileNetworkPolicy({ engine: "offline-engine", supportedModes: ["off"] }), { mode: NETWORK_MODES.OFF, supported: true });
   // A caller that passes nothing gets the fail-closed default (off-only), not Claude's modes.
   const bare = compileNetworkPolicy({ engine: "mystery", allowNetwork: true });
   assert.equal(bare.supported, false);

@@ -27,7 +27,7 @@ export function register(server, ctx) {
     },
   }, async (args) => {
     const authorize = async () => {
-      const capability = ctx.verifyCapability();
+      const capability = await ctx.verifyCapability({ tool: "query_channel_database" });
       // Channel access, not personal identity: an API run reads its channel's databases like a member.
       return capability?.ok === true && await ctx.requireChannelAccess();
     };

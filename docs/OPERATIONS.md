@@ -1,5 +1,86 @@
 # Operations runbook
 
+## Parallel agent runs
+
+In the admin UI, open **Settings → Agent defaults → Parallel agent runs**. Set the total
+concurrent agent runs and the slots reserved for live chat/foreground API requests. Reserved
+slots are part of the total: 32 total with 2 reserved permits up to 30 background runs.
+Interactive requests can use any free slot. Extra work queues; save applies immediately to
+existing queues, and lowering the total lets current runs finish. Lowering the total alone
+also reduces the reservation when necessary to keep one background slot. This is independent
+of **Access & security → Container runtime → Max containers running at once**.
+
+Until an admin value is saved, `MAX_CONCURRENT_RUNS` (default 8) and
+`RESERVED_INTERACTIVE_RUNS` (default 2) supply the limits. Stored admin values take precedence.
+
+## Private user Activity dashboard
+
+With the gateway's **Public URL** set to its reachable HTTPS origin, approved Slack users can open
+**Home → Activity → Open live dashboard**. This is served by the existing daemon and does not
+require administrator login, a new service or Slack OAuth setup. HTTP is accepted only on loopback
+for local development. Forward `/activity/*` to the daemon; preserve Host and Origin, disable
+proxy buffering for `/activity/*/stream`, and allow long-lived SSE connections. The bare
+administrator `/activity` history page retains its existing authentication.
+
+The private Home link expires after ten minutes and exchanges once; the scoped browser session
+lasts one hour and ends on daemon restart or current access revocation. Reopen Slack Home to get a
+fresh launch link. Treat unused links as credentials and never publish them in a shared channel.
+No thread history or admin credentials are exposed to the frontend. Private memberships are
+revalidated every snapshot and at least every 15 seconds while connected; transient Slack failures
+hide unverifiable rows. Done/Reopen shares Slack completion/reminder state. Working → Idle means
+the agent finished replying; explicit completion is still required to hide the thread.
+
+## Dashboard users, passkeys and recovery
+
+Use the existing **Users** list. Give the intended person the **Admin** role, open their details,
+and choose **Invite to dashboard**. Share the generated single-use setup link privately; it expires
+in 15 minutes and grants only passkey registration. Once registered, the user signs in with
+**Sign in with a passkey**, without entering a username or password. Settings → Admin access
+manages the signed-in user's keys. Add a spare authenticator before losing the primary device.
+
+Existing passkeys are preserved. On first use after migration, select the owning admin from the
+existing directory and request a private verification code. Enter it in the same browser within
+five minutes. This binds the existing credential to that user's stable ID without replacing it.
+The code is delivered only through the user's native private chat, never a public channel or API
+response. Google Chat users need a previously learned native user resource for private delivery;
+missing delivery configuration fails closed. Unlinked users must finish verification before using
+ordinary dashboard APIs. Names and matching email labels never silently assign credentials.
+
+Before the first passkey, **First-time setup** accepts the existing operator password. If known
+admins exist, their private-code identity proof is required before enrollment. A fresh install
+without known admins can configure its first connection temporarily; once admins exist, identity
+linking is required. First enrollment permanently disables shared-password login and revokes its
+sessions. Setup/recovery cannot restore password fallback.
+
+Configure the final HTTPS **Public URL before enrollment**. Keys belong to that origin/hostname;
+changing domains does not transfer them. Only explicit loopback origins permit local development
+without HTTPS. Public URL changes require recent passkey verification after enrollment.
+
+Removing a person's admin role revokes dashboard authority immediately, including existing sessions,
+setup links and pending authenticator results. Restoring the role requires a new sign-in; old
+sessions remain invalid. Deleting their user record also denies access. Role removal is allowed
+for the last enrolled admin, so keep another enrolled admin or host recovery available. Revoke
+sessions in the user's details when needed. Your final own key cannot be deleted normally.
+
+For lost keys, run **on the gateway host as its daemon OS user**, from the checkout:
+
+```sh
+npm run admin:recover -- --user <existing-user-id>
+```
+
+The target must currently be an admin. Recovery revokes all its keys/sessions and prints one
+registration-only URL valid for 15 minutes. Open privately at the configured HTTPS URL and enroll
+a replacement. Treat that URL as a credential. The legacy `--username` option is reserved for
+unlinked migration/bootstrap accounts; it cannot substitute for a known linked user's role.
+
+Sessions survive a gateway restart (they are stored in the database as a hash of the cookie). A
+passkey or password-plus-Slack-code session lasts 30 days and ends after 7 days without use; the
+password-only bootstrap session expires after 30 minutes idle or 12 hours total. Revoking a user's
+sessions, removing a passkey, disabling the account or changing the admin password still ends
+them immediately. Sensitive mutations,
+new authenticators and secret reveal require passkey verification within five minutes. The run
+API bearer key remains scoped automation access and cannot enroll keys or log into the dashboard.
+
 ## Backup and restore
 
 Stop the daemon before restoring. Interactive restores require typing `RESTORE`; unattended
@@ -35,7 +116,8 @@ as the service user, which fails on a root-owned checkout. A single-user box may
 user-scope unit (`~/.config/systemd/user/channelgate.service`, with `loginctl enable-linger` so it
 survives logout); the updater and the migration find both scopes. `sudo bash
 scripts/uninstall-systemd.sh` (`npm run service:uninstall`) removes either unit — current and
-pre-rename names — and leaves the service account and runtime root in place. The service must never
+pre-rename names — stops the system unit's channel containers, and leaves the service account, the
+containers' volumes and the runtime root in place. The service must never
 share credentials or a runtime root with interactive development. ChannelGate runs on Linux only;
 there is no other service packaging.
 
@@ -96,26 +178,40 @@ allowed past the DNS-rebinding guard (extra names go in `CG_ALLOWED_HOSTS`).
 **Client addresses behind that hop.** Every request then arrives on a loopback socket, so
 `req.ip` — and Express's idea of the client — is `127.0.0.1` for every caller on earth. Two things
 count failures per address: the admin login backoff and the approval-link token backoff. Keyed on
-the socket they would share ONE bucket, and a handful of bad tokens or passwords from anywhere
-would lock out every legitimate admin and every valid approval link. So both read the real client
-through one helper (`clientKey` in `src/web/security.js`): `CF-Connecting-IP` first, then the first
-hop of `X-Forwarded-For`, and **only when the socket itself is loopback** — from a non-loopback
-socket those headers are whatever the client typed and are ignored. A value that is not a valid IP
-address is ignored too.
+the socket they share ONE bucket, and a handful of bad tokens or passwords from anywhere delays
+every legitimate admin and every valid approval link. So **declare the proxy** in *Settings →
+Connection → Behind a reverse proxy* (`trustProxy` in settings.json, or `CG_TRUST_PROXY` in
+`.env`; the setting wins): `cloudflare` makes both limiters key on `CF-Connecting-IP`, which
+cloudflared overwrites on every request; `xff` keys on the **last** hop of `X-Forwarded-For`, the
+one your nginx/caddy appended (never the first, which the client typed). Without it, all remote
+logins share one backoff bucket. A loopback socket on its own is deliberately NOT taken as proof
+of a proxy — any process on the host or any tunnel opens one — so an undeclared header is ignored,
+and a value that is not a valid IP address is ignored too. Independently of the key, more than 50
+failed attempts in ten minutes across all clients puts every login on the maximum delay until the
+window drains, which bounds guessing even where a header is misdeclared. A Public URL on a loopback
+bind with no proxy declared is reported at every boot (`[gateway] WARNING: a Public URL is
+configured on a loopback bind but no reverse proxy is declared …`).
+
+**The admin password in `.env`.** A password set in the admin UI is stored as a scrypt hash, and so
+is the one generated on first boot. `ADMIN_PASSWORD` in `.env` is yours: the daemon verifies against
+it and never rewrites the file, so a cleartext value stays cleartext. Replace it with a hash —
+`npm run hash-password` asks for the password without echo (or reads it from stdin, never from the
+command line) and prints the `ADMIN_PASSWORD='scrypt$…'` line to paste — or set the password in the
+admin UI and delete the line. The UI password wins while both exist, which leaves the `.env` one as
+a forgotten fallback that becomes the admin password again if the UI one is removed; the daemon
+warns about both cases at boot and never prints the value.
 
 Notes for operators:
 
 - Express's app-wide `trust proxy` is deliberately NOT enabled: it would also re-point
   `req.secure` / `req.protocol` / `req.hostname` at client-supplied headers (the Host/Origin guard
   and the session cookie's `Secure` flag read those headers themselves, deliberately), and it knows
-  nothing about `CF-Connecting-IP`.
-- If your proxy runs on ANOTHER host, the socket is not loopback and the headers are ignored by
-  default. Set `CG_TRUST_PROXY=1` in `.env` to honour `X-Forwarded-For` there — only do this when a
-  proxy you control rewrites that header, or clients can pick their own limiter bucket.
-- Make the proxy set `X-Forwarded-For` rather than append to a client-supplied one. Where it
-  appends (Cloudflare does), `CF-Connecting-IP` is the unforgeable value and is preferred here; a
-  caller who spoofs the first XFF hop can only shed its own backoff, never push someone else into
-  one.
+  nothing about `CF-Connecting-IP`. The `Secure` cookie decision still reads `x-forwarded-proto`
+  on its own; that only ever makes the cookie stricter.
+- Only declare a proxy you control and that sets the header on EVERY request. If clients can reach
+  the daemon's port directly (a LAN bind) while `xff` is declared, a caller could append its own
+  hop; keep the bind on loopback or firewall the port, as the rest of this guide assumes.
+- The legacy `CG_TRUST_PROXY=1` still works and means `xff`.
 
 ## The ChannelGate rename migration
 
@@ -124,7 +220,19 @@ Notes for operators:
 `~/ChannelGate/<platform>/<slug>/`, and, inside the runtime root,
 `channels/<slug>` → `channels/<platform>/<slug>` plus the same for `clean-workspaces/`. It runs
 automatically at boot (before the database opens and before Slack connects) and as a post-update
-step, and it is idempotent.
+step, and it is idempotent. Normal startup and post-update runs first check for a legacy runtime
+root, registered flat metadata/clean workspace folders, unmoved default work folders, or an
+unfinished migration marker. Already migrated installations return without scanning Claude/Codex
+history, clearing run caches or regenerating channel settings. Custom work folders and unrelated
+folders left under `~/Slack Agent` do not trigger the scan. This check also works for installations
+that migrated before completion tracking existed.
+
+A real migration writes `rename-migration.pending` in the runtime root before changing paths.
+The marker moves with the root and remains on failures, collisions or unresolved session state,
+so the next startup retries even if all physical folders already moved. Dry runs and busy refusals
+do not create it. For an installation previously moved by hand or interrupted by an older version
+without this marker, use the explicit `--verify` and `--repath` commands below; normal startup does
+not audit transcript contents.
 
 **What counts as "already migrated" is STATE, not existence.** The migration runs when the old root
 holds a `gateway.db` or a `config/` directory and the new root holds neither. A `~/.channelgate/`
@@ -298,7 +406,12 @@ runs two daemons against one runtime root.
 
 **This is the runtime — required, Linux-only.** Every channel's engine processes run inside a
 long-lived container of that channel's own: its own HOME volume, its own CLI logins, its own
-process namespace, and none of the host's files reachable beyond the channel's work folder. There
+process namespace, and none of the host's files reachable beyond the channel's work folder and the
+additional folders an admin declared for it (Settings → Additional folders, or the
+`add_channel_folder` tool: existing directories inside an allowed root — the gateway user's home or
+the *Additional allowed roots* listed under Settings → Container runtime — mounted at their identical
+paths read-write or read-only, so one host folder — a shared project, a mounted file server — can
+serve several conversations that each keep their own working folder). There
 is no host fallback: the daemon refuses to boot without a usable container CLI, and a channel that
 cannot get its container (no built image, no engine login) fails the turn closed with the remedy
 named rather than running anywhere else. The daemon itself still runs on the host as an ordinary
@@ -338,13 +451,20 @@ turn (the container fingerprint follows the resolved image ID, not the moving ta
 
 **A self-update rebuilds it for you.** The transactional updater runs the build itself, after
 dependencies and before the restart, whenever the candidate
-changed anything under `containers/`, bumped `imageSpecVersion`, or no image is built at all — so a
-`/update` checks the image against the checkout's expected version and source digest. Build or
+changed anything under `containers/`, changed a file the build copies in from `src/` (the
+engine-spawned helpers and their imports, the MCP socket bridge, the egress forwarder and
+`cg-egress-connect` — listed in `src/runtimes/container/image-bundle.js`), bumped
+`imageSpecVersion`, or no image is built at all — so a
+`/update` checks the image against the checkout's expected version and source digests
+(`cg.image.digest` for `containers/`, `cg.image.bundle` for the staged `src/` files). Build or
 executable-check failures leave an explicit image warning while the host daemon can still restart.
-New container runs fail closed when the image is missing or stale; an existing image is not a
-promise that channels remain usable. Run `npm run build:image` to repair it, or retry Update / Repair
+New container runs fail closed when the image is missing; an image that is merely stale keeps
+running the files it was built from, and Settings → Container runtime says "Image rebuild
+required" until it is rebuilt. Run `npm run build:image` to repair it, or retry Update / Repair
 (the build is retried even when Git is already current). Active containers retain their current
-image until idle. A manual `git pull` still needs a matching image rebuild.
+image until idle. A manual `git pull` still needs a matching image rebuild — including one that
+only changed a staged helper. A helper-only rebuild reuses the cached toolchain layers, so it
+takes far less time than a pin bump.
 
 **Settings → Container runtime** (admin UI):
 
@@ -354,11 +474,11 @@ image until idle. A manual `git pull` still needs a matching image rebuild.
 | Image reference | default `channelgate/runtime:latest` |
 | Stop an idle channel container after | minutes, default 10 |
 | Max containers running at once | default 8; past it the least-recently-used **idle** container is stopped |
-| Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
+| Process / memory / CPU limit | `--pids-limit` (default 4096), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = current admin authors in Admin channels mount the gateway user's home; members keep a separate project container (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
-| Withhold readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
+| Withhold automatically readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is withheld unless its stored choice is explicitly `readable`, off = it is injected raw and listed as unprotected |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -396,7 +516,13 @@ channel's policy to every request:
 - **Raw sockets** (`ssh`, `psql`) get a plain CONNECT tunnel only while the network is on and only
   to `github.com:22` plus the hosts an admin lists in the channel's `egressRawHosts` (admin API:
   `PUT /api/channels/<id>/meta` with `{"egressRawHosts":["db.example.com"]}`), on ports 22, 5432
-  and 6543. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else
+  and 6543. An exact `host:port` entry instead opens only that TCP port (1–65535),
+  for example `"ssh.example.com:32921"` or `"sql.example.com:1433"`. IPv6 scoped entries use `[address]:port`.
+  An agent may request one exact public host and TCP port using
+  `allow_channel_ssh_host({host: "ssh.example.com", port: 32921})`: its durable
+  card can be approved by any currently authorized channel member with write access, even in Auto
+  mode. Approval appends rather than replaces hosts; Network must be on, and private-address
+  checks still apply on every connection. Admins retain the direct API path. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else
   leaves the container.
 - A channel that genuinely needs arbitrary raw sockets can be given the open bridge BESIDE the
   proxy: `{"rawNetwork": true}` on the same admin API. The proxy env stays set, so proxy-aware
@@ -429,11 +555,17 @@ as the useless string it is. When declaring **Used on hosts**, avoid multi-tenan
 deployment too, and a container could have the real value swapped into a request to a site it
 controls. Rotation is live (the proxy
 resolves the current value per request); removing a secret revokes its placeholder, and re-adding
-mints a new one. A secret with no rule is withheld entirely while *Withhold readable variables*
-is on (the default on a new install; the run's credential note names it as withheld), or injected
+mints a new one. An automatically readable secret with no rule is withheld entirely while
+*Withhold automatically readable variables* is on (the default on a new install; the run's
+credential note names it as withheld), or injected
 raw and listed as **unprotected** in the admin UI and the run's own credential note while it is
 off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on
-hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
+hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead. If a CLI or another
+program needs the raw value, explicitly choose `set_secret_mode` with `mode: "readable"` in the
+owning conversation and scope, then approve its durable card. That stored choice permits raw
+injection even with strict mode on; no other secret receives an exception. `list_secrets` reports
+these separately as **Explicit readable**. Only a new process receives the change. Returning to
+`auto` or `hidden` restores normal classification and strict withholding when no rule applies.
 **A secret with no rule is decided by its kind.** One that looks like a web API token is
 **hidden**: containers get a placeholder the proxy swaps in a credential-like header or query parameter (Authorization, x-api-key, `api_key=`, `token=`…), but only
 on servers an admin approved for it. The first time a program sends it to a new server, the proxy
@@ -449,7 +581,7 @@ a mail or database password, a connection string, a signing key — or that is c
 `…_ID`, `…_REPO`, `…_REGION`) stays **readable** (raw, listed unprotected). `set_secret_mode`
 overrides the decision either way.
 `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can never be swapped: they stay raw
-(withheld under strict).
+(withheld under strict unless explicitly made readable).
 
 **What the proxy refuses on the way.** Inside a tunnel the request target must be a path (an
 absolute-form `GET https://other/…` line is `400 absolute-form-in-tunnel`); a `Host` header naming
@@ -557,6 +689,35 @@ and isolated database extractor without granting tunnel privileges to ordinary c
 See [CHANNEL-VPN.md](CHANNEL-VPN.md) for protected profiles, channel Secrets, systemd persistence,
 database-only routing and live acceptance requirements.
 
+**Make.com CLI in every runtime image (spec 1.6.3).** `make-cli` is the official
+[`@makehq/cli`](https://github.com/integromat/make-cli), pinned in
+`containers/versions.json` and installed root-owned by the default image build. New deployments
+receive it with the image; existing deployments rebuild with `npm run build:image` and let the
+normal image-ID lifecycle recreate their containers. This is the Make automation CLI, separate
+from the GNU build tool.
+
+Set `MAKE_API_KEY` in the channel's Secrets and `MAKE_ZONE` to its actual API zone (for example
+`eu2.make.com`). Set the zone's mode to **Readable** when strict secret handling requires an
+explicit configuration grant. Use `make-cli --version`, `make-cli --help` and a read-only command
+such as `make-cli scenarios list --team-id=<owned-team-id>` to verify setup. The upstream CLI
+reads these names, not the older `MAKE_API` or `MAKE_API_TOKEN` names: no automatic credential
+alias or host-account fallback is supplied. The API key's placeholder is swapped only on Make
+hosts; the routing zone must remain a real hostname. Existing `MAKE_API_TOKEN` API integrations
+retain their egress rule.
+
+A deliberate interactive `make-cli login` saves credentials only under that channel's HOME at
+`~/.config/make-cli/config.json`; a host's saved login is never imported. Prefer channel Secrets
+for headless automation so credentials retain their egress protection. Saved login state, like
+other per-channel HOME data, survives a recreate.
+
+**Node runtime prerequisite.** The daemon, installer, updater and documentation build require
+Node 24.0.0 or newer; use the current Node 24 LTS patch on the host. This baseline satisfies the
+Composio SDK and agent-browser requirements. The default container base is
+`node:24-bookworm-slim`, and its resolved Node version is verified during image acceptance.
+Upgrade the host Node installation before updating an older deployment, retain its previous
+runtime for rollback, and restart the daemon safely. Rebuilding the container alone does not
+upgrade the host Node installation.
+
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:
 
@@ -583,6 +744,9 @@ container is running an image built before spec 1.1.0 widened the PATH — rebui
 **Thread `/sudo`: deliberate direct-host execution.** An organization admin may send the typed
 message `@agent /sudo` or `@agent /sudo on` in a Slack channel thread (`/sudo` as message text in a
 DM). This is an in-thread bot control, not the conversation-top-level Slack slash-command surface.
+Use `@agent /sudo <message>` (or `/sudo on <message>`) to enable the thread and run that same
+request immediately, preserving multiline text and attachments. An already enabled thread also
+accepts inline requests. `/sudo off` and `/sudo status` accept no additional message text.
 Subsequent messages in that thread run the selected engine directly
 as the daemon OS user, with its host filesystem, process namespace, native HOME, installed commands
 and network—not inside the channel container. Only current organization admins can change or use
@@ -726,12 +890,12 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the real access token again, readable by the channel's own agent (it cannot rotate anything and
   dies within hours). A daemon that authenticates Claude with its own `ANTHROPIC_API_KEY` still
   passes that key through raw — the proxy does not rewrite it.
-- **Engine keys that still reach a proxy-mode container raw.** A Qwen harness's provider key
+- **Engine keys that still reach a proxy-mode container raw.** A Qwen license's provider key
   (`ANTHROPIC_AUTH_TOKEN` pointed at the provider) still reaches that engine as a real value.
   Codex logins stored in `auth.json`, including API-key logins, are relayed behind the proxy.
 - **A self-hosted Qwen endpoint on a private address is refused in proxy mode.** The proxy never
   connects to loopback, private, link-local or CGNAT addresses, and a configured Qwen base URL is no
-  exception: point the harness at a public endpoint, or run that channel under the legacy bridge
+  exception: point the license at a public endpoint, or run that channel under the legacy bridge
   mode.
 - **Egress is policed per channel by the proxy; the switch is advisory only where the proxy is not
   the network.** Under `containerEgressMode = "bridge"` or a channel's `rawNetwork` escape the
@@ -808,16 +972,16 @@ host files under that mount, including the gateway's runtime root; use ordinary 
 for credential isolation.
 
 **Remote MCP relay (container-secrets P1).** Composio (`composio-user`, `composio-agent` in token
-mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The
+mode) and the Make toolbox never reach a container with their tokens. The
 engine's MCP entry is the image's socket bridge naming the server (`CG_MCP_SERVICE=remote-mcp`);
 the run's signed capability lists those names, and the daemon keeps the real URL and header in
 memory (never on disk, never logged) for no longer than the capability's lifetime — 6 hours for a
 turn, 12 for an SSH session — and normally only while something uses it: a cold turn's grant ends
 with the turn, a warm Claude process's when the process retires, an SSH session's at its end, and a
-person clearing their Composio or Toolbox token drops every grant minted for their runs at once. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
-service (https only; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
+person clearing their Composio token drops every grant minted for their runs at once. On a `remote-mcp` hello the daemon checks the claim and its own registration, dials the
+service (https only — plus http to an admin-approved private host:port for a custom MCP; Streamable HTTP, falling back to HTTP+SSE on a 4xx) and relays the tools. What
 an operator sees: the artifact dir's `cg-mcp-*.json` and Codex's `run/cg-codex-secrets-*.json` hold
-no Composio or toolbox token (Codex's bundle holds only the capability), and a relay that fails
+no Composio or Make token (Codex's bundle holds only the capability), and a relay that fails
 shows in the engine's MCP log as one fixed line — `remote MCP is not authorized for this run` (the
 grant expired or was revoked, or the daemon restarted since the run started: in-memory
 registrations do not survive a restart, so the next turn simply registers again), `too many remote
@@ -825,7 +989,7 @@ MCP connections for this run` (more than 8 at once for one server on one grant) 
 unavailable` (the service could not be reached; the upstream error is deliberately not repeated,
 and a failed tool call reads `remote MCP request failed`). `the gateway service takes no arguments`
 means the channel image predates spec 1.6.0. A
-`COMPOSIO_MCP_URL`/`TOOLBOX_MCP_URL` override pointing at plain http cannot be relayed: container
+`COMPOSIO_MCP_URL` override pointing at plain http cannot be relayed: container
 runs skip that server and say so in the thread. The relay removes the credential from the box; the
 egress proxy (above) is what polices where the box can connect. It needs image spec 1.6.0
 (`npm run build:image`), which also ships the egress forwarder. Direct-host `/sudo`
@@ -839,12 +1003,30 @@ copied: Claude Code rotates refresh tokens,
 and a copy that refreshes logs the original out. A relayed access token cannot rotate anything. A
 `claude setup-token` value, when configured, is used instead and needs no refresh.
 
-**Service unit:** the installer sets `KillMode=mixed`. systemd then sends SIGTERM only to the
-daemon, which drains, marks the shutdown and sweeps its own engine children (the container run
-groups) so interrupted execution is recorded for reconciliation on the next boot. With the default
-`control-group` mode systemd signals the engine (or the `podman exec` client) directly and the
-turn may be recorded as a plain error before orderly state persistence. Existing installs: add
-`KillMode=mixed` under `[Service]` and `systemctl --user daemon-reload`.
+**Service unit:** the system-service installer sets `KillMode=process`, like the units of other
+container managers. systemd then signals only the daemon, which drains, marks the shutdown and
+sweeps its own engine children (the container run groups) so interrupted execution is recorded
+for reconciliation on the next boot. Nothing else in the unit's control group is touched — and on
+a system-service install that group holds the channel containers themselves (see *Rootless Podman
+system-service upgrades*). `control-group` (systemd's default) and `mixed` (what the installer
+wrote before 0.7.0) SIGKILL every container, and the `conmon` that would have recorded its exit,
+on each stop, restart and update: Podman keeps listing them as running, work inside them is lost,
+and they have to be recreated.
+
+- **Existing system-service installs:** run `sudo bash scripts/repair-service-unit.sh`
+  (`npm run service:repair` as root) on the gateway host once. It rewrites only the `KillMode`
+  line of the installed unit, reloads systemd and restarts nothing; the new value applies from the
+  next stop. Updates cannot do this themselves — the updater runs as the service account. Until it
+  is done the daemon says so at boot (`[container] WARNING: Every stop or restart of …`), in
+  `GET /api/health` (`containerRuntime.service`) and under Settings → Container runtime, and
+  recovers on its own: boot removes containers left listed as running with their processes gone,
+  and each is recreated (HOME volume kept) on its channel's next message.
+- **A stopped service leaves its containers up.** They are idle (no engine runs without the
+  daemon) and the next start adopts them. To stop them as well, as the service account:
+  `podman stop $(podman ps -q --filter label=cg.install)`. The uninstaller does this itself.
+- **User-scope units** are unaffected when Podman uses its systemd cgroup manager (the default
+  there): every container has a scope of its own outside the unit. If a user unit reports the
+  boot warning, set `KillMode=process` under `[Service]` and `systemctl --user daemon-reload`.
 
 ## System health
 
@@ -968,7 +1150,8 @@ Settings → License → *Usage this month*.
 
 ### Verifying and recovering a container toolchain update
 
-The image carries a digest of its container build sources and its pinned CLI versions. Update
+The image carries a digest of its container build sources (`containers/`), a digest of the
+helper files it stages from `src/`, and its pinned CLI versions. Update
 compares this with the desired checkout even when no Git revision changed. A failed image build
 is retried by the next Update; a zero exit with stale labels is reported as a failure. Custom image
 references are operator-managed and are never silently replaced with the default image.
@@ -1007,3 +1190,63 @@ editor. Disabling the policy or removing a domain does not revoke existing acces
 Preview existing Slack users before applying a batch (up to 500 known users). Apply fetches fresh
 profiles and rechecks the current policy and manual opt-outs. Lookup failures grant no access and
 are counted in the result. Non-Slack users are checked on their next authenticated message.
+
+## Rootless Podman system-service upgrades
+
+The system-service installer writes only its managed
+`~/.config/containers/containers.conf.d/99-channelgate-system-service.conf` for the dedicated
+service account. It sets `cgroup_manager="cgroupfs"`: container processes stay beneath the
+system unit's `Delegate=yes` hierarchy, so `podman exec` does not cross into a different
+systemd ownership subtree. Some rootless cgroupfs versions do not create a per-container
+subgroup at all; successful execution does not imply resource-limit enforcement.
+A systemd-manager container created beneath `user@UID.service` can start
+successfully yet reject every exec from a daemon in `/system.slice/channelgate.service`.
+The installer checks the effective manager and refuses a conflicting later configuration;
+it preserves the operator's main `containers.conf` and other snippets.
+
+The unit bind-mounts service-owned mode-0700 `service-tmp` and `service-var-tmp` directories
+under the service HOME onto `/tmp` and `/var/tmp`. This keeps temporary files private while
+preserving their backing paths when Podman's rootless pause namespace outlives a daemon
+restart. `PrivateTmp` is disabled because its backing directories are deleted on stop.
+Existing temporary contents are retained; there is no automatic deletion or pruning.
+
+Changing those settings does not repair an existing stale pause namespace or migrate
+containers already created with another cgroup manager. For an **existing installation**, an
+operator first arranges an idle maintenance window (no turns, background jobs, SSH/editor
+sessions or other users of that account's Podman store), then:
+
+1. Stop the gateway service. Confirm the service username, HOME and UID from the unit rather
+   than assuming the fresh-install defaults.
+2. As that service account, from a traversable working directory and with its own `HOME` and
+   `XDG_RUNTIME_DIR=/run/user/<uid>`, inspect its named containers. Remove only stopped gateway
+   containers that must be recreated after the manager change, by exact name with `podman rm`
+   (without volume-removal options). Retain every channel HOME/tmp/var-tmp named volume.
+3. Run `podman system migrate` as that account while its containers are stopped. This resets
+   the account's shared pause namespace and affects its entire container store. If it reports
+   a stale conmon exit, inspect the named container's state; do not proceed as if migration
+   succeeded. Reconcile only the identified stopped containers, then rerun migration until it
+   exits successfully. Do not put this operation in an unconditional `ExecStartPre`.
+4. Run `sudo bash scripts/install-systemd.sh --no-start` from the intended installed revision
+   to install the managed configuration and persistent temp mounts without starting the daemon.
+   Remove any operator-added unconditional `podman system migrate` startup drop-in only after
+   the idle migration succeeded; keep unrelated overrides. Start the service and verify
+   `podman exec` through an actual gateway turn, then restart
+   while idle and repeat. Require normal file access inside `/home/agent`, accurate resource-limit
+   status (including the unenforced warning where applicable), and no `cgroup.procs` permission
+   or deleted-namespace/pasta error. Source/image changes
+   and per-channel state follow the normal deployment rules.
+
+The resource-limit probe uses `--network none --pull never`: it needs neither pasta nor
+registry access and never downloads a missing image. Missing image, mount namespace, timeout
+and other launch failures are reported as **unverified limits**, separately from a positively
+identified cgroup delegation failure. Probe diagnostics omit raw runtime output.
+
+A zero exit from `podman run --memory ...` or matching `podman inspect` settings is not proof
+of enforcement. In particular, rootless `cgroupfs` without an explicitly prepared cgroup parent
+can accept CPU/memory/pids flags yet leave processes in the service's unrestricted cgroup. The
+probe now requires actual kernel values for all three limits, inside the test container. An
+unenforced or unreadable configuration disables advertised per-container limits and produces
+an explicit warning; the gateway follows its existing run-without-limits fallback policy. This
+installer fixes container execution but does not add a delegated-parent cgroup supervisor.
+Operators requiring enforced per-container limits must use a correctly delegated configuration
+and verify the probe succeeds; configured values alone are insufficient.

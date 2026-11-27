@@ -1,4 +1,3 @@
-import { adapterFor } from "../engines/registry.js";
 import { NETWORK_ADVISORY_NOTE, networkEnforcedFor } from "../engines/network-policy.js";
 import { authorizeSudoRuntime } from "../runtimes/sudo-authority.js";
 
@@ -71,14 +70,12 @@ export function modeSettingsPatch(current = {}, { mode, autoMode, cleanMode } = 
   return patch;
 }
 
-// The channel's Allow-network switch as one of three honest words. "off" is a real state and must
+// The channel's Allow-network switch as one of two honest words. "off" is a real state and must
 // be SAID: the old label appended a suffix only when the switch was on, so every surface rendered
 // "off" and "nobody ever configured it" identically — the one thing an operator (or the engine)
 // cannot afford to guess about the network.
 export function networkState(meta = {}) {
-  if (!meta.allowNetwork) return "off";
-  const engine = String(meta.engine || "claude");
-  return (adapterFor(engine)?.supports?.networkModes || []).includes("on") ? "on" : "unsupported";
+  return meta.allowNetwork ? "on" : "off";
 }
 
 // `detail` adds the honest caveat for the OFF state where the switch is only advisory for this
@@ -94,6 +91,14 @@ export function networkLabel(meta = {}, { detail = false } = {}) {
 
 export function modeLabel(meta = {}, opts = {}) {
   return [LABELS[channelMode(meta)], meta.autoMode ? "Auto" : "", meta.cleanMode ? "Lean" : "", networkLabel(meta, opts)].filter(Boolean).join(" · ");
+}
+
+// Informational /mode replies use the same live enforcement decision as the detailed label.
+export function modeNetworkGuidance(meta = {}) {
+  const prefix = "Network is a separate switch (channel settings, or `set_channel_network`). ";
+  return prefix + (networkEnforcedFor({ meta })
+    ? "The gateway proxy enforces it: off permits only engine endpoints and selected connectors; on permits public destinations. Private, loopback and cloud-metadata addresses are refused."
+    : "For this container the switch is advisory, with no OS egress cutoff. The agent is instructed to follow it; legacy bridge or raw-network access is not blocked by this switch.");
 }
 
 // ── Capability profiles ───────────────────────────────────────────────────────
@@ -155,9 +160,11 @@ export function channelProfile(meta = {}) {
 //    ("none" is dormant: only the explicit allowedUsers grant above gets in — even admins must be
 //    added there.)
 // The HTTP run API's principal (an admin with no personal scope) — see config/api-principal.js.
-export { API_PRINCIPAL, isApiPrincipal } from "../config/api-principal.js";
+export { API_PRINCIPAL, isApiPrincipal, agentPrincipal, isAgentPrincipal, agentPrincipalSlug } from "../config/api-principal.js";
 
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
+  if (meta.workspaceLink) isDM = meta.workspaceLink.isDM === true;
+  else if (typeof meta.workspacePolicyIsDM === "boolean") isDM = meta.workspacePolicyIsDM;
   // A per-channel exclusion (meta.excludedUsers, the unticked "Use" box on Settings → Access) takes
   // an approved member out of THIS channel. Admins cannot be excluded, and a DM has no list.
   if (!isDM && !isAdminUser && Array.isArray(meta.excludedUsers) && meta.excludedUsers.includes(authorId)) return false;
@@ -172,6 +179,8 @@ export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isAppr
 // Explain a failed authorization gate without confusing a channel restriction with the
 // deployment's user approval. Called only after isAuthorized returned false.
 export function authorizationDenialReason(meta, isDM) {
+  if (meta.workspaceLink) isDM = meta.workspaceLink.isDM === true;
+  else if (typeof meta.workspacePolicyIsDM === "boolean") isDM = meta.workspacePolicyIsDM;
   if (!isDM && meta.access === "admins") return "this conversation is restricted to admins. Ask an admin to review its Access settings.";
   if (!isDM && meta.access === "none") return "this conversation is restricted to named users. Ask an admin to grant you access in its Access settings.";
   return "you're not approved to use ChannelGate yet. An admin can approve you in the Users settings.";

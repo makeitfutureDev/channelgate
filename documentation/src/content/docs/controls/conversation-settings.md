@@ -264,3 +264,49 @@ Example arguments:
 - [Drive sync](/docs/features/drive-sync)
 - [Updates and rollback](/docs/features/updates)
 - [Restart and recovery](/docs/features/restart-and-recovery)
+
+## set_channel_skill_swap
+
+**Required:** `enabled` (boolean).
+
+**Scope and result:** Enables or disables preferred engine/model selection from a skill's `model:` field in this conversation. Default is off. When enabled, a skill can resume the same session on a model of the current engine or delegate to a background agent on another engine. A person's `/model` pin takes precedence. Effective on the next `use_skill` call.
+
+**Restrictions:** Requires a channel manager or administrator and an already configured conversation. Does not change other conversations.
+
+
+## list_channel_folders
+
+**Arguments:** none.
+
+**Scope and result:** Lists this conversation's additional host-folder mounts and their
+read-only/read-write modes. This grants no access to folders outside the existing mount policy.
+
+## add_channel_folder
+
+**Required:** `path` (an existing absolute host directory). **Optional:** `mode` (`rw` or `ro`,
+default `rw`).
+
+**Scope and result:** An administrator requests an additional folder mount at its identical host
+path in this conversation's container. Adding a mount requires a human approval card. The folder
+must resolve inside an allowed root, outside the gateway's own runtime, login and storage trees,
+and must not overlap the work folder or another mount. Another conversation's directory is an
+explicit sharing decision: its files, instructions and memory become visible here. The change
+applies on the next turn when the container is recreated; it does not change other conversations.
+
+## remove_channel_folder
+
+**Required:** `path` (the exact path reported by `list_channel_folders`).
+
+**Scope and result:** An administrator removes that additional mount from the current
+conversation. Removal narrows access and needs no additional approval card. It takes effect on
+the next turn; the host folder's files and other conversations' mounts are preserved.
+
+## get_channel_approved_harnesses
+
+Call with `{}` to see which harnesses and licenses people can select with `/model` in this conversation. Organization admins also receive the IDs they can use to change the list.
+
+## set_channel_approved_harnesses
+
+An organization admin on Enterprise can replace this conversation’s list by passing `approved`. Use `"all"` to remove the restriction, or supply a list that includes the conversation’s current license.
+
+For example, `{"approved":["harness:claude","codex"]}` allows every Claude license, including future additions, and the default Codex sign-in. Use `harness:codex` for every Codex license, or select individual licenses by ID or name. The list takes effect at the next engine launch and applies to license pool moves and fallback.

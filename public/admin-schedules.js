@@ -29,7 +29,7 @@ export function automationSummaryMarkup(summary) {
     detail("No result", summary.noOp || 0), detail("Failed / blocked", `${summary.failed || 0} / ${summary.blocked || 0}`),
     detail("Unreported / interrupted", `${summary.unreported || 0} / ${summary.interrupted || 0}`), detail("Engine completed", summary.engineCompleted || 0),
     detail("Delivery failures", summary.deliveryFailed || 0), detail("Skipped", summary.skipped || 0),
-    detail("Last run requested", date(summary.lastStartedAt)), detail("Recorded cost", summary.totalCostUsd == null ? "—" : `$${Number(summary.totalCostUsd).toFixed(4)}`),
+    detail("Last run requested", date(summary.lastStartedAt)), detail(summary.costHistoryDays ? `Recorded cost (last ${summary.costHistoryDays} days)` : "Recorded cost", summary.totalCostUsd == null ? "—" : `$${Number(summary.totalCostUsd).toFixed(4)}`),
   ].join("")}</div><p class="hint">Task outcomes and connection checks are reported by the agent. Engine completion and delivery are tracked separately.</p>`;
 }
 export function automationRunMarkup(run) {

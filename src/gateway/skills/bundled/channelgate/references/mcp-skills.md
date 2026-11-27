@@ -33,8 +33,25 @@ creates a pending authorization (`status: "initiated"`) instead of reporting not
 reserved for a toolkit the search tool already shows as connected there, or for a connection the
 user explicitly asked for. An inventory request never authorizes initiating connections.
 
-The gateway may also inject the privileged MakeItFuture toolbox according to its channel → user →
-organization token precedence. Clean runs and reduced-tool memory reviews omit optional identities.
+Running code against connections has two paths (detail: `gateway-usage` →
+`references/composio-scripts.md`). Composio's remote Workbench works with either injected identity
+and needs no key in the container. In **SDK mode** a script in the channel container uses the
+gateway's **Composio script relay** — no key at all: each turn gets a short-lived grant file (named
+in its prompt) and the daemon executes every call with the organization key, as exactly the
+requester's (`identity: "user"`) or the channel's (`"agent"`) SDK identity, with the allowed-apps
+policy, account ownership and the membership approval card enforced. An organization admin's run
+in an Admin-mode channel may also pass any `userId` in the organization project (re-checked live
+per call). In **Personal mode** a local script still needs a Composio **project API key** stored
+as a channel or personal secret (hidden, approved for `backend.composio.dev`). The gateway's own
+Personal-mode tokens and its SDK-mode organization key stay daemon-side and are never exposed to a
+container. A project key can act as any user id in
+its project, so it is admin-level: keep it personal or in an admin-only conversation, never in
+organization scope or in channels with members or guests, and have scripts use only the userId and
+connected account of the identity the request selected. Both paths execute app calls on Composio;
+the container keeps code, intermediate data and results out of the remote sandbox.
+
+The gateway may also inject a configured Make MCP connection for the conversation.
+Clean runs and reduced-tool memory reviews omit optional identities.
 
 The daemon builds a fresh explicit MCP config for each spawn and uses strict MCP mode. A channel's
 selected MCPs plus daemon-injected servers are the whole set; locally configured host MCPs are not
@@ -44,7 +61,7 @@ See [folder and headless configuration](folder-headless.md) for the low-level po
 ## Local governed skill catalog
 
 ChannelGate's SQLite catalog stores exact, content-hashed skill revisions and bundled resources.
-Skills may be bundled, locally authored, imported from reviewed host folders, synchronized from Git
+Skills may be bundled, gateway-owned, imported from reviewed host folders, synchronized from Git
 sources, or synchronized from a peer gateway. Review mode stages source changes; auto mode
 activates them. Excluding a skill is sticky across future syncs; deleting/tombstoning and restoring
 retain revision history.
@@ -60,6 +77,12 @@ Development, Sales, Marketing, and Management templates are seeded and remain li
 a template updates following conversations without removing their additions.
 Resolution reports missing/review-pending skills, cycles, compatibility, and estimated always-on
 description context.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## Materialization and discovery
 

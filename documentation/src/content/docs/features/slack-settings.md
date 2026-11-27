@@ -18,7 +18,7 @@ A reply requested by a person binds its menu to that requester. Automation menus
 | Automations | Conversation schedules and eligible controls |
 | Resume | Current session handoff and adoption |
 
-Runtime dropdowns in General save as soon as selected. When opened inside a thread, the view shows both **channel defaults** and **thread selections**. Follow channel default clears that thread's engine, model, and effort pins. An existing unpinned session can keep its original engine even when the channel default changes; the console identifies this state.
+Runtime dropdowns in General save as soon as selected. When opened inside a thread, the view shows both **channel defaults** and **thread selections**. Follow channel default clears that thread's harness, license, model, and effort pins. An existing unpinned session can keep its original license even when the channel default changes; the console identifies this state. When a harness has more than one usable license in the conversation, a **License** control follows the harness: **Any license**, or one license with an optional **If it fails, also use** list. See [engine licenses](/docs/features/engine-licenses).
 
 ## Know which controls you can change
 

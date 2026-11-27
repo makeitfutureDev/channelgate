@@ -19,6 +19,7 @@ out=""
 previous=""
 resume="no"
 fork="no"
+fork_unavailable="no"
 resume_id=""
 mcp="no"
 cancel="no"
@@ -58,6 +59,7 @@ for arg in "$@"; do
     *'domains = { "api.github.com" = "allow" }'*) network_domain="yes" ;;
     *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
     *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
+    *CODEX_STUB_FORK_UNAVAILABLE*) fork_unavailable="yes" ;;
     *CODEX_STUB_TWO_SEGMENTS*) two_segments="yes" ;;
     *CODEX_STUB_SUBAGENTS*) subagents="yes" ;;
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
@@ -73,6 +75,10 @@ for arg in "$@"; do
     *CODEX_STUB_REJECT_ALL_MODELS*) reject_all_models="yes" ;;
     *CODEX_STUB_REJECT_AFTER_TOOL*) reject_after_tool="yes" ;;
     *CODEX_STUB_LIMIT_FAIL_SAFE*) limit_fail="yes" ;;
+    # The same limit on every login, and on every login EXCEPT an added license's own
+    # CODEX_HOME: the default sign-in is exhausted while a second license still answers.
+    *CODEX_STUB_LIMIT_ALL_LICENSES*) limit_fail="yes" ;;
+    *CODEX_STUB_LIMIT_DEFAULT_LICENSE*) case "$CODEX_HOME" in *codex-lic-*) : ;; *) limit_fail="yes" ;; esac ;;
     *CODEX_STUB_LIMIT_STDERR*) limit_stderr="yes" ;;
     *CODEX_STUB_LIMIT_AFTER_TOOL*) limit_after_tool="yes" ;;
     *CODEX_STUB_AUTH_HANG*) auth_hang="yes" ;;
@@ -112,6 +118,38 @@ if [ "$cancel" = "yes" ]; then
   esac
   exec sleep 30
 fi
+# Runtime process creation fails, optionally after prior work or followed by recovery.
+case "$*" in
+  *CODEX_STUB_RESOURCE_*)
+    printf '%s\n' '{"type":"thread.started","thread_id":"stub-resource-session"}'
+    case "$*" in *AFTER_TOOL*) printf '%s\n' '{"type":"item.started","item":{"id":"effect","type":"command_execution","command":"fixture effect"}}' ;; esac
+    resource_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+    case "$*" in *REORDER*)
+      printf '%s\n' '{"type":"item.completed","item":{"id":"recovered","type":"command_execution","exit_code":0}}'
+      sleep 0.03 ;;
+    esac
+    resource_format="%s %s\n"
+    case "$*" in *NO_NEWLINE*) resource_format="%s %s" ;; esac
+    printf "$resource_format" "$resource_at" 'ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec process: Resource temporarily unavailable (os error 11)\")" }' >&2
+    case "$*" in
+      *RECOVER*|*REORDER*)
+        sleep 0.03
+        printf '%s\n' '{"type":"item.completed","item":{"id":"recovered","type":"command_execution","exit_code":0}}'
+        sleep 0.2
+        printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}'
+        printf '%s' 'Recovered successfully' > "$out"
+        exit 0 ;;
+      *EXIT*) exit 1 ;;
+    esac
+    printf '%s\n' '{"type":"turn.failed","error":{"message":"tool process unavailable"},"usage":{"input_tokens":12,"output_tokens":3}}'
+    while :; do
+      case "$*" in *NO_NEWLINE*) : ;; *) printf '%s\n' 'retrying tool process' >&2 ;; esac
+      printf '%s\n' '{"type":"item.completed","item":{"id":"failed","type":"command_execution","exit_code":1}}'
+      sleep 0.05
+    done
+    ;;
+esac
+
 # Credential lost mid-flight: Codex says so on stderr and then keeps waiting instead of exiting.
 # This is the shape that used to heartbeat until a human pressed stop.
 if [ "$auth_hang" = "yes" ]; then
@@ -240,10 +278,21 @@ if [ "$reject_all_models_body" = "yes" ] || { [ "$reject_model_body" = "yes" ] &
   printf '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '\''%s'\'' model is not supported when using Codex with a ChatGPT account.\\"}}"}}\n' "$model"
   exit 1
 fi
+# Codex 0.162.1 refusing `exec fork` for a thread whose rollout lineage it cannot resolve: a
+# plain stderr line and exit 1, before any thread/turn event.
+if [ "$fork" = "yes" ] && [ "$fork_unavailable" = "yes" ]; then
+  printf '%s\n' 'Error: thread/fork: thread/fork failed: invalid paginated history lineage for 01a1ca13-2104-7fc0-be74-eacd5f0771bb: missing source rollout (code -32600)' >&2
+  exit 1
+fi
 if [ "$fork" = "yes" ]; then
-  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}'
+  case "$*" in
+    *BATCH_UNIQUE*) printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"codex-stub-fork-$$\"}" ;;
+    *) printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}' ;;
+  esac
 elif [ -n "$resume_id" ]; then
   printf '{"type":"thread.started","thread_id":"%s"}\n' "$resume_id"
+elif [ "${CODEX_HOME##*/}" = ".codex-eu" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-eu-stub-session"}'
 else
   printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
 fi

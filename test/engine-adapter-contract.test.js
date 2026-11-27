@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { commandHealth, createAdapterRegistry, validateRunContext } from "../src/engines/contract.js";
-import { engineUiManifest, fallbackTargets, requireAdapter } from "../src/engines/registry.js";
+import { engineSupports, engineUiManifest, fallbackTargets, requireAdapter } from "../src/engines/registry.js";
 
 function fakeAdapter(id = "third") {
   return {
-    id, label: "Third", cli: "third", defaultModelKey: "defaultThirdModel", mcpMetaKey: "allowedThirdMcps",
+    id, label: "Third", cli: "third", defaultModelKey: "defaultThirdModel", defaultEffortKey: "defaultThirdEffort", mcpMetaKey: "allowedThirdMcps",
     instructionFile: "THIRD.md", skillsDir: ".third/skills", mcpTransport: "argv", contextWindow: 1000,
     efforts: ["low"], models: [{ label: "Third One", value: "third-1" }], mintsOwnSessionId: true,
     supports: { warmPool: false, networkModes: ["off"] }, modelBelongs: (m) => m.startsWith("third-"),
@@ -38,11 +38,11 @@ test("adapter registration and RunContext validation fail closed", () => {
 
 test("built-in registry publishes safe UI manifests and a generic fallback graph", () => {
   const manifests = engineUiManifest();
-  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "qwen", "qwen-eu", "opencode"]);
+  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "codex-channel", "codex-eu", "claude-bedrock", "qwen", "qwen-eu"]);
   assert.ok(manifests.every((m) => !Object.values(m).some((v) => typeof v === "function")));
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"], "failover is bidirectional — either harness covers the other");
-  assert.deepEqual(fallbackTargets("opencode"), []);
+  assert.deepEqual(fallbackTargets("qwen"), []);
   // An opt-in, third-party-provider harness is a terminal node in BOTH directions: failing a Qwen
   // turn over would spend the operator's Anthropic quota, and failing Claude over to Qwen would
   // spend a QwenCloud balance nobody pointed at that thread.
@@ -51,6 +51,15 @@ test("built-in registry publishes safe UI manifests and a generic fallback graph
   assert.ok(!fallbackTargets("claude").includes("qwen"));
   assert.ok(!fallbackTargets("claude").includes("qwen-eu"));
   assert.throws(() => requireAdapter("missing"), /Unknown or unavailable/);
+});
+
+test("native fork capability follows compatible runner variants and excludes unsupported engines", () => {
+  for (const engine of ["claude", "codex", "codex-eu", "codex-channel", "claude-bedrock"]) {
+    assert.equal(engineSupports(engine, "nativeFork"), true, engine);
+  }
+  for (const engine of ["qwen", "qwen-eu", "unknown-engine"]) {
+    assert.equal(engineSupports(engine, "nativeFork"), false, engine);
+  }
 });
 
 test("CLI health failures explain the outcome without exposing a numeric process code", async () => {

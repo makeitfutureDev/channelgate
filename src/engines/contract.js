@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { processFailureMessage } from "../util/process-outcome.js";
 
-export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "ssh_session", "schedule", "background_agent", "continuation", "recovery", "diagnosis", "memory_review"]);
+export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "voice_call", "ssh_session", "schedule", "background_agent", "agent_message", "continuation", "recovery", "diagnosis", "memory_review"]);
 export const PRINCIPAL_KINDS = Object.freeze(["user", "daemon"]);
 
 // Which principal kind each origin implies for a TRUSTED author. Explicit per-origin — the old
@@ -16,12 +16,20 @@ export const PRINCIPAL_KIND_BY_ORIGIN = Object.freeze({
   googlechat_foreground: "user",
   msteams_foreground: "user",
   api_foreground: "user",
+  // A task the caller dispatched by voice (gateway/voice/calls.js): the person was authenticated
+  // by their Activity session and authorized like a poster in the bound thread. It is a live user
+  // turn for progress and queueing, but deliberately NOT escalatable (run.js ESCALATABLE_ORIGINS):
+  // an admin's spoken request runs as Worker and answers tool prompts through the thread's cards.
+  voice_call: "user",
   // An interactive SSH / VS Code Remote-SSH session inside a channel container. The developer was
   // authenticated by their registered key and authorized like a poster (gateway/ssh-broker.js);
   // the gateway prepares the session the way it prepares a turn, so its tool calls are theirs.
   ssh_session: "user",
   schedule: "daemon",
   background_agent: "daemon",
+  // A message another channel's agent sent here (gateway/agent-mail.js), delivered by the daemon
+  // and answered as that agent's own fixed principal — no person, no rank.
+  agent_message: "daemon",
   continuation: "daemon",
   recovery: "daemon",
   memory_review: "daemon",
@@ -49,7 +57,7 @@ export function validateRunContext(context) {
 }
 
 const REQUIRED_METHODS = ["compileConfinement", "run", "interrupt", "discoverMcps", "health"];
-const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
+const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "defaultEffortKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
 
 export function validateEngineAdapter(adapter) {
   if (!adapter || typeof adapter !== "object") throw new TypeError("EngineAdapter must be an object");
@@ -76,11 +84,33 @@ export function validateEngineAdapter(adapter) {
     if (!state || typeof state.hostDir !== "function" || typeof state.files !== "function" || typeof state.containerDirKey !== "string" || !state.containerDirKey) {
       throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares an incomplete sessionState fact`);
     }
+    if (state.channelHistory !== undefined && typeof state.channelHistory !== "boolean") {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed channelHistory fact`);
+    }
+    // OPTIONAL: `parentSession(firstLine)` names the session a transcript CONTINUES (a paginated
+    // Codex fork), so a carry brings that source along. Declared → a function; a malformed
+    // declaration must not load, or a carried fork would resume into "missing source rollout".
+    if (state.parentSession !== undefined && typeof state.parentSession !== "function") {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed parentSession fact`);
+    }
   }
   // OPTIONAL: the provider-failure kinds the orchestrator may replay in place. Declared → an array
   // of kind names; a malformed declaration must not load, or the retry would silently never fire.
   if (adapter.transientKinds !== undefined && (!Array.isArray(adapter.transientKinds) || adapter.transientKinds.some((k) => typeof k !== "string" || !k))) {
     throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed transientKinds fact`);
+  }
+  // OPTIONAL: `ownCredential` names what this license stores for ITSELF — settings keys, or a
+  // sign-in directory on the gateway host — so removing a shipped license (config/engine-licenses.js)
+  // deletes its credential without a per-engine branch. Declared → a kind plus at least one of the
+  // two; a malformed declaration must not load, or a removed license would quietly keep its key.
+  if (adapter.ownCredential !== undefined) {
+    const own = adapter.ownCredential;
+    const keys = own?.settingsKeys;
+    const keysOk = keys === undefined || (Array.isArray(keys) && keys.length > 0 && keys.every((key) => typeof key === "string" && key));
+    const dirOk = own?.directory === undefined || typeof own.directory === "function";
+    if (!own || !["api-key", "sign-in"].includes(own.kind) || !keysOk || !dirOk || (keys === undefined && own.directory === undefined)) {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed ownCredential fact`);
+    }
   }
   const probe = adapter.compileConfinement({ allowNetwork: false, dangerouslySkip: false, writable: false });
   if (!probe || probe.supported !== true || probe.network?.mode !== "off") {
@@ -89,24 +119,55 @@ export function validateEngineAdapter(adapter) {
   return Object.freeze(adapter);
 }
 
+// The registry holds two layers. The BUILT-IN adapters are fixed at boot and never change. The
+// DYNAMIC layer is the licenses an administrator added (src/engines/license-adapters.js): it is
+// replaced as a whole by `setDynamic`, live, when the stored list changes. `ids` is ONE array for
+// the life of the process, updated in place, because modules hold it by reference (`ENGINE_IDS`,
+// `ENGINES`) and a consumer that captured a frozen copy would never learn of a new license.
+// Readers must therefore never cache a derived Set of it — ask `get(id)` instead.
 export function createAdapterRegistry(adapters) {
-  const map = new Map();
+  const builtin = new Map();
   for (const raw of adapters || []) {
     const adapter = validateEngineAdapter(raw);
-    if (map.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
-    map.set(adapter.id, adapter);
+    if (builtin.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
+    builtin.set(adapter.id, adapter);
   }
+  let dynamic = new Map();
+  const ids = [...builtin.keys()];
+  const lookup = (id) => { const key = String(id || ""); return builtin.get(key) || dynamic.get(key) || null; };
+  const all = () => [...builtin.values(), ...dynamic.values()];
   return Object.freeze({
-    ids: Object.freeze([...map.keys()]),
-    get: (id) => map.get(String(id || "")) || null,
+    ids,
+    builtinIds: Object.freeze([...builtin.keys()]),
+    get: lookup,
     require(id) {
-      const adapter = map.get(String(id || ""));
+      const adapter = lookup(id);
       if (!adapter) throw new Error(`Unknown or unavailable engine: ${id || "(missing)"}`);
       return adapter;
     },
+    isBuiltin: (id) => builtin.has(String(id || "")),
+    // Replace the dynamic layer. All-or-nothing: every adapter is validated first, and an id that
+    // collides with a built-in (or repeats) refuses the whole set, so a bad record can never
+    // shadow a shipped harness or leave the registry half-applied.
+    setDynamic(list) {
+      const next = new Map();
+      for (const raw of list || []) {
+        const adapter = validateEngineAdapter(raw);
+        if (builtin.has(adapter.id) || next.has(adapter.id)) throw new TypeError(`Duplicate EngineAdapter id: ${adapter.id}`);
+        next.set(adapter.id, adapter);
+      }
+      const removed = [...dynamic.keys()].filter((id) => !next.has(id));
+      dynamic = next;
+      ids.length = 0;
+      ids.push(...builtin.keys(), ...dynamic.keys());
+      return removed;
+    },
     // `sessionState` is stripped like the other behaviour-bearing fields: it holds functions, and
-    // structuredClone throws on those. The UI has no use for where a transcript lives on disk.
-    manifests: () => [...map.values()].map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, ...manifest }) => structuredClone(manifest)),
+    // structuredClone throws on those. The UI has no use for where a transcript lives on disk —
+    // nor for where a license keeps its credential (`ownCredential`).
+    // Any other method an adapter carries is behaviour too, and is dropped rather than thrown on:
+    // one license with a method this list did not know took the whole settings page down.
+    manifests: () => all().map(({ run, interrupt, discoverMcps, discoverModels, resolveOptionalMcpConfig, modelCatalogSource, health, credentialState, selectionReadiness, updateSmoke, compileConfinement, modelBelongs, resumeCommand, sessionState, licenseStatus, ownCredential, claudeRunAccess, terminalAccess, terminalRouting, ...manifest }) => structuredClone(withoutMethods(manifest))),
   });
 }
 
@@ -123,7 +184,23 @@ export function argvSafePrompt(prompt) {
   return text.startsWith("-") ? ` ${text}` : text;
 }
 
-export function commandHealth(cli, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
+// `cliProbes` (a Map the caller owns) makes one check ask each CLI once: every license of a harness
+// runs the same binary, so a health check over N licenses used to start N `--version` processes
+// at once. The map lives for ONE check — nothing here caches a version across checks, because an
+// update replaces the binary under a running daemon.
+export function commandHealth(cli, options = {}) {
+  const shared = options?.cliProbes instanceof Map ? options.cliProbes : null;
+  if (!shared) return probeCommand(cli, options);
+  if (!shared.has(cli)) shared.set(cli, probeCommand(cli, options));
+  return shared.get(cli);
+}
+
+// The serializable part of an adapter: its facts, without any method.
+function withoutMethods(manifest) {
+  return Object.fromEntries(Object.entries(manifest).filter(([, value]) => typeof value !== "function"));
+}
+
+function probeCommand(cli, { spawnImpl = spawn, timeoutMs = 10_000 } = {}) {
   return new Promise((resolve) => {
     let output = "";
     let settled = false;

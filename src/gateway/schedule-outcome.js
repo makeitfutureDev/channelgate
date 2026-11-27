@@ -1,9 +1,23 @@
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Engine completion and task completion are different facts. Only an explicit, validated
 // agent report can describe the task. Missing/ambiguous reports never become empty successes.
 import { redactLogValue } from "../util/redact.js";
 
-export function automationPrompt(prompt) {
-  return `${prompt}\n\n[Automation outcome reporting]\nAfter doing the task, append exactly one final fenced block named automation-result containing JSON:
+// Optional caller-stated success criteria ("goal"): what must be true for the run to count as
+// succeeded. Bounded, and still agent-reported evidence — never independent verification.
+export const SUCCESS_CRITERIA_MAX = 2000;
+export function normalizeSuccessCriteria(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") throw Object.assign(new Error("successCriteria must be a string."), { statusCode: 400 });
+  const v = value.trim();
+  if (v.length > SUCCESS_CRITERIA_MAX) throw Object.assign(new Error(`successCriteria is limited to ${SUCCESS_CRITERIA_MAX} characters.`), { statusCode: 400 });
+  return v;
+}
+
+export function automationPrompt(prompt, { successCriteria = "" } = {}) {
+  const criteria = String(successCriteria || "").trim().slice(0, SUCCESS_CRITERIA_MAX);
+  const goal = criteria ? `\nSuccess criteria (the expected result, set by whoever configured this task):\n${criteria}\nCheck each criterion against the actual target systems before reporting. Report succeeded only when every criterion is met, failed when the work ran but a criterion is unmet, blocked when a prerequisite prevented checking; name the unmet criterion in the summary.` : "";
+  return `${prompt}\n\n[Automation outcome reporting]${goal}\nAfter doing the task, append exactly one final fenced block named automation-result containing JSON:
 \`\`\`automation-result
 {"status":"succeeded","summary":"What actually completed","connections":[{"name":"composio-user/gmail","status":"available"}]}
 \`\`\`
@@ -15,8 +29,9 @@ export function classifyScheduleResult(result = {}) {
   const content = typeof result.content === "string" ? result.content : "";
   const fallback = { status: "unreported", summary: "The agent did not provide a valid task outcome.", connections: [], source: "unreported" };
   // Refusal gates do not execute the agent, even though their notices are normal-shaped results.
-  if (result.licenseRefused || result.accessRefused || result.engineRefused) {
-    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(content).slice(0, 1000), source: "gateway", errorKind: result.licenseRefused ? "license" : result.accessRefused ? "access" : "engine_disabled" } };
+  const refusal = runAdmissionRefusalKind(result);
+  if (refusal) {
+    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(content).slice(0, 1000), source: "gateway", errorKind: refusal } };
   }
   if (result.interrupted || result.engineError || result.completed === false || result.answerless) {
     const status = result.interrupted ? "interrupted" : result.answerless ? "unreported" : "failed";
@@ -46,8 +61,22 @@ export function classifyScheduleResult(result = {}) {
   } };
 }
 
+// The outcomes that ask for attention: everything but a reported success or healthy no-op.
+export const HEALTHY_OUTCOMES = new Set(["succeeded", "no-op"]);
+export const needsAttention = (status) => !HEALTHY_OUTCOMES.has(status || "unreported");
+
+// The ONE rule for "does this finished run post in chat?", for both triggers. A schedule states it
+// with `resultPolicy` + `failureNotify`; an API run's `visibility` maps onto the same policy
+// (apiPostingRule). `never` exists only through that mapping: a hidden API run posts nothing.
+export function resultPosts({ resultPolicy = "always", failureNotify = true } = {}, status = "unreported") {
+  if (resultPolicy === "never") return false;
+  if (resultPolicy === "on-result" && status === "no-op") return false;
+  if (resultPolicy === "on-failure" && !needsAttention(status)) return false;
+  if (failureNotify === false && needsAttention(status)) return false;
+  return true;
+}
+export const apiPostingRule = (visibility) => ({ resultPolicy: visibility === "hidden" ? "never" : visibility === "on-failure" ? "on-failure" : "always" });
+
 export function suppressScheduleResult(sched, result) {
-  const status = result?.automationOutcome?.status || "unreported";
-  return (sched.resultPolicy === "on-result" && status === "no-op") ||
-    (sched.failureNotify === false && !["succeeded", "no-op"].includes(status));
+  return !resultPosts(sched, result?.automationOutcome?.status || "unreported");
 }

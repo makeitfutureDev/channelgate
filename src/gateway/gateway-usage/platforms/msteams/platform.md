@@ -23,6 +23,15 @@ but writing for the surface produces a much better reply.
   it. Do not post extra messages to compensate.
 - **Threads exist in channels only.** A 1:1 or group chat is flat — every reply is a new message
   there, so don't say "in this thread" unless you are in a channel.
+- A background job or agent you start announces itself with a **Check status** button (live
+  elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
+  running background work. Point people there instead of polling the job yourself.
+
+## Earlier messages
+You only see the messages addressed to you. Where the administrator enabled Teams all-message
+events, read the thread first with `gateway` → `conversation_history` (`thread: "current"`), and
+fetch a file from an earlier message with `conversation_download_file`. Details:
+`references/reading.md`.
 
 ## What is NOT available here
 No native data tables, no native charts, no Lists, no canvases, and **no ephemeral (private)
@@ -48,8 +57,15 @@ personal chat. Navigation and saves stay inside the popup; its launcher never co
 Controls belong to the person who requested them; other members open their own `/settings`.
 Each opening has separate drafts and confirmations and expires after 15 minutes. Close the window
 with Teams' close control; unapplied inputs are not saved.
-Engine/model/effort save together with Apply to channel or Apply to thread. Other settings keep
-their explicit controls; changing tabs discards unsaved drafts. Runtime, channel credentials,
+General, Variables, MCPs, Skills and Automations collect edits as pending changes; each section
+ends with one Save area: **Apply to channel** (the whole conversation), **Apply to thread** (only
+the thread the window was opened from) and **Discard**. Apply saves that section only; pending
+changes in other sections stay until applied, discarded or the window expires. Access settings
+and skill templates are channel-only. A thread can override variables (hidden placeholders on
+fixed hosts only, paused while other work runs in the container), replace or disconnect its
+Composio/Make connection, and ADD shared skills or (admins) Cloud MCPs — never remove the
+channel's. Thread automations are only loops running in that thread. Resume is read-only.
+VPN, email accounts, personal connections and personal/organization variables save at once. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
 values are never shown or prefilled. Personal and organization variable metadata and eligible
@@ -64,7 +80,10 @@ complete oversized edits use the authenticated browser settings.
 browse, download, edit eligible text, or upload with write access in a Teams window. `/sendfile
 <path>` posts **Open file** for the selected workspace file. No personal bot chat is required;
 file listings and one-time browser grants appear only inside the authorized user's window.
-Downloads, editing and uploads require the gateway Public URL. Back to files returns to browsing.
+Downloads, editing and uploads require the gateway Public URL. The window has **Root**, **Parent
+folder**, **Refresh** and page buttons. To upload, open the destination folder and select **Upload
+files**: the card names that folder, and **Open uploader** saves there; select **Refresh** after
+uploading. Back to files returns to the folder and page the user came from.
 File launchers expire after 15 minutes but survive gateway restarts and Teams reconnects.
 Already open private file windows lose their state on restart; reopen using an unexpired launcher.
 Buttons created before durable launcher support need a fresh `/files` once. Missing, unknown,
@@ -84,7 +103,7 @@ and other binary files open after download. Slack-only tools are
 unavailable on Teams. A public download URL remains a separate `create_public_file_link` action:
 ask for its duration and wait for the original conversation's native Approve card.
 
-Personal Composio and Toolbox tokens can be saved or disconnected under `/settings` → MCPs →
+Personal Composio tokens can be saved or disconnected under `/settings` → MCPs →
 **My connections**. Inputs are masked and never prefilled. Do not ask anyone to paste credentials
 into a channel/group message or move to a DM to set them.
 
@@ -101,10 +120,14 @@ When Teams reaction events are enabled and delivered to the gateway, 👽 **Alie
 sending a shortcut as text does not add a reaction. Smile robot IDs remain recognized
 when Teams delivers them. **Stop sign** (`stopsign`)
 requests cancellation of that session’s active and queued work; only the author or an administrator
-can stop it. React to the original message or a bot reply to select the session. **Tick button**
+can stop it. React to the original message or a bot reply to select the session.
+A message sent while its session is busy is queued and runs on its own; its queue card offers
+**Steer conversation** (interrupt the sender's own running request and answer this one next) and
+**Cancel request** (drop only this message). Only the sender or an admitted admin can use them. **Tick button**
 (`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.
-Removing the tick does not reopen that reminder. A tick on an ordinary message has no tracked
-reminder to close. Teams personal follow-up dismissal is not available.
+Removing the tick does not reopen that reminder. A tick on any other message of a session is the
+reactor's personal "done": the person who started the session marks its Activity entry done, any
+other participant dismisses it from their own Activity list; a new message brings it back.
 
 Group/channel reaction delivery requires the configured all-message Graph events and Microsoft
 permissions. In personal chat, delivered Bot Framework reaction activities use the same controls.

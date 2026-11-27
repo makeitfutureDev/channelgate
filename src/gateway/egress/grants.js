@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Placeholder grants: what a channel container holds instead of a secret, and how the proxy gets
 // back to the real value.
 //
@@ -14,6 +15,8 @@
 // background job and the next turn all hold the same string, and the pool fingerprint does not
 // churn on a rotation. Scopes (DB spelling → placeholder letter): organization → o (channel ''),
 // channel → c, personal → p (per channel AND author: another author's turn never receives it),
+// thread → c (a thread's own variable, gateway/thread-settings.js: per channel AND thread key —
+// the owner column holds the thread key — so no other thread or channel resolves it),
 // relay → r (an engine login relay, per channel: the Claude access token `CLAUDE_CODE_OAUTH_TOKEN`,
 // and its Codex twin `CODEX_ACCESS_TOKEN` — codex-token-relay.js — keyed by secret name).
 import { getDb } from "../../db/index.js";
@@ -21,18 +24,24 @@ import { getChannelEntry, getChannelMeta, getChannelsIndex } from "../../config/
 import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
-import { getContainerRuntime, getPerplexityResearchConfig } from "../../config/settings.js";
+import { getContainerRuntime, getPerplexityResearchConfig, isEngineEnabled, refreshEngineLicenses } from "../../config/settings.js";
+import { LICENSE_KINDS, isProviderKind, licenseCredentialStored, licenseLoginHome, licenseOfRelaySecret, licenseRecord, licenseRelaySecretName } from "../../engines/license-state.js";
 import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
 import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
 import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
+import { codexEuLoginHome, dedicatedCodexLogin, isChannelCodex } from "../channel-codex-paths.js";
+import path from "node:path";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
-import { CLAUDE_API_RELAY_NAMES, CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { CLAUDE_API_RELAY_NAMES, CLAUDE_EXTRA_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME, CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
-export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
-const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
+export const GRANT_SCOPES = Object.freeze(["organization", "channel", "thread", "personal", "relay"]);
+// A thread placeholder carries the channel letter: the grant ROW is what decides its scope, never
+// the string's spelling.
+const MINT_SCOPE = { organization: "org", channel: "channel", thread: "channel", personal: "personal", relay: "relay" };
+const OWNED_SCOPES = new Set(["personal", "thread"]);
 export const RELAY_CACHE_MS = 60_000;
 export const MATERIAL_CACHE_MS = 5_000;
 
@@ -51,7 +60,7 @@ function keyFor({ scope, channelId = "", ownerId = "", secretName }) {
     scope,
     // The organization's placeholder is shared by every channel; everything else is bound to one.
     channelId: scope === "organization" ? "" : String(channelId || ""),
-    ownerId: scope === "personal" ? String(ownerId || "") : "",
+    ownerId: OWNED_SCOPES.has(scope) ? String(ownerId || "") : "",
     secretName: name,
   };
 }
@@ -74,7 +83,7 @@ function rowOut(row) {
 export function placeholderFor({ scope, channelId = "", ownerId = "", secretName, now = Date.now() }) {
   const key = keyFor({ scope, channelId, ownerId, secretName });
   if (key.scope !== "organization" && !key.channelId) throw new Error(`a ${key.scope} egress grant needs a channel`);
-  if (key.scope === "personal" && !key.ownerId) throw new Error("a personal egress grant needs an owner");
+  if (OWNED_SCOPES.has(key.scope) && !key.ownerId) throw new Error(`a ${key.scope} egress grant needs an owner`);
   const db = getDb();
   const find = () => db.prepare(
     "SELECT placeholder FROM egress_grants WHERE scope = ? AND channel_id = ? AND owner_id = ? AND secret_name = ? AND revoked_ms = 0",
@@ -150,20 +159,111 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 // One cache per relay (secret name): the live token behind the channel placeholders, resolved —
 // and refreshed when it is about to expire — at most once a minute.
 const relayCaches = new Map(); // secret name → { at, promise }
+// One generation per relay name: a rotated sign-in must not grow an unbounded cache.
+function relayCacheFor(secretName, key, load) {
+  let cache = relayCaches.get(key);
+  if (!cache || Date.now() - cache.at > RELAY_CACHE_MS) {
+    for (const old of relayCaches.keys()) if (old.startsWith(`${secretName}:`)) relayCaches.delete(old);
+    cache = { at: Date.now(), promise: Promise.resolve().then(load) };
+    relayCaches.set(key, cache);
+    cache.promise.catch(() => { if (relayCaches.get(key) === cache) relayCaches.delete(key); });
+  }
+  return cache.promise;
+}
+
+// The live credential behind an admin-added license's placeholders. The license and its sign-in
+// are re-read BEFORE any cached token is consulted: a deleted license, a sign-out, a rotation or a
+// replaced key must take effect at the next request, even inside the cache window.
+async function licenseRelayToken(license, secretName, deps) {
+  const record = (deps.licenseRecord || licenseRecord)(license.id);
+  if (!record) return "";
+  if (isProviderKind(license.kind)) return (await licenseCredentialValue(record, deps)).value;
+  const home = licenseLoginHome(license.id);
+  if (license.kind === "claude-login") {
+    const extra = await import("../../engines/bedrock.js");
+    const auth = (deps.licenseClaudeState || extra.extraClaudeCredentialState)({ configDir: home });
+    if (!auth.authenticated || auth.method !== "claude-subscription") return "";
+    const relay = await relayCacheFor(secretName, `${secretName}:${auth.fingerprint}`, () => (deps.licenseClaudeRelayToken || extra.resolveExtraClaudeToken)({ configDir: home }));
+    return String(relay?.token || "");
+  }
+  const auth = await (deps.licenseCodexState || (await import("../../engines/codex-eu.js")).dedicatedCodexCredentialState)({ home, label: record.label });
+  if (!auth.authenticated) return "";
+  const relay = await relayCacheFor(secretName, `${secretName}:${auth.fingerprint}`, async () => {
+    const token = await (deps.codexRelayToken || resolveContainerCodexToken)({ candidates: [path.join(home, "auth.json")] });
+    return token?.source === "chatgpt" ? token : { token: "" };
+  });
+  return String(relay?.token || "");
+}
+
+// May this channel's placeholder for a license still be swapped? A placeholder outlives the turn
+// that minted it (it sits in the channel's HOME volume and in any process still running there), so
+// what an administrator decided SINCE is asked at every swap: a license switched off in Settings,
+// or taken off the channel's approved list, stops answering on its server at the next request —
+// the same moment a removed license does. Nothing is revoked: switching it back on restores it.
+async function licenseUsableIn(licenseId, channelId, deps) {
+  if (deps.licenseUsable) return Boolean(await deps.licenseUsable(licenseId, channelId));
+  if (!isEngineEnabled(licenseId)) return false;
+  const meta = channelId ? await channelMetaFor(channelId, deps) : null;
+  // The grant's own channel is the conversation asked about: a license limited to one conversation
+  // (engines/license-state.js) is swapped there and in the code channels opened from it, never in
+  // a container of any other channel that still holds its placeholder.
+  return (await import("../channel-engines.js")).isChannelEngineApproved({ ...(meta || {}), channelId: meta?.channelId || channelId || "" }, licenseId);
+}
+
+// The gateway's own Claude login is the license `claude`, and its placeholder is in every channel
+// container whatever that channel runs on (gateway/nested-claude-login.js, the editor token file,
+// an SSH session's login file). So the channel's approved list is asked at every swap, exactly as
+// for an added license: a channel whose administrator approved other harnesses or licenses only
+// gets no answer from Anthropic on this login — from a turn's tool, a terminal or a file an
+// earlier session left behind. Switching the engine off in Settings is not asked: the gateway's
+// own helpers (the memory reviewer) follow the approved list alone.
+async function gatewayClaudeApprovedIn(channelId, deps) {
+  if (deps.gatewayClaudeApproved) return Boolean(await deps.gatewayClaudeApproved(channelId));
+  const meta = channelId ? await channelMetaFor(channelId, deps) : null;
+  return (await import("../channel-engines.js")).isChannelEngineApproved(meta || {}, "claude");
+}
+
 async function cachedRelayToken(secretName, deps, channelId = "") {
-  const codexSecret = secretName === CODEX_RELAY_SECRET_NAME || secretName === CODEX_API_RELAY_SECRET_NAME;
+  const license = licenseOfRelaySecret(secretName);
+  if (license) return (await licenseUsableIn(license.id, channelId, deps)) ? licenseRelayToken(license, secretName, deps) : "";
+  if (secretName === RELAY_SECRET_NAME && !(await gatewayClaudeApprovedIn(channelId, deps))) return "";
+  if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) {
+    const extra = await import("../../engines/bedrock.js");
+    // Recheck the dedicated file/provider before consulting a cached token: deletion, expiry,
+    // rotation or a switch to AWS must take effect immediately, even within the cache window.
+    const auth = (deps.extraClaudeState || extra.extraClaudeCredentialState)();
+    if (!auth.authenticated || auth.method !== "claude-subscription") return "";
+    const key = `${secretName}:${auth.fingerprint}`;
+    let cache = relayCaches.get(key);
+    if (!cache || Date.now() - cache.at > RELAY_CACHE_MS) {
+      // Keep only one generation; token rotations must not grow an unbounded cache.
+      for (const old of relayCaches.keys()) if (old.startsWith(`${secretName}:`)) relayCaches.delete(old);
+      cache = { at: Date.now(), promise: Promise.resolve().then(() => (deps.extraClaudeRelayToken || extra.resolveExtraClaudeToken)()) };
+      relayCaches.set(key, cache);
+      cache.promise.catch(() => { if (relayCaches.get(key) === cache) relayCaches.delete(key); });
+    }
+    return String((await cache.promise)?.token || "");
+  }
+  const euSecret = secretName === CODEX_EU_RELAY_SECRET_NAME;
+  const channelSecret = [CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
+  const apiSecret = [CODEX_API_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
+  const codexSecret = euSecret || channelSecret || secretName === CODEX_RELAY_SECRET_NAME || secretName === CODEX_API_RELAY_SECRET_NAME;
+  const euAuth = euSecret ? await (await import("../../engines/codex-eu.js")).codexEuCredentialState() : null;
+  if (euSecret && !euAuth?.authenticated) return "";
   const resolve = codexSecret
     ? (deps.codexRelayToken || resolveContainerCodexToken)
     : (deps.relayToken || resolveContainerClaudeToken);
   const now = Date.now();
-  const meta = codexSecret ? await channelMetaFor(channelId, deps) : null;
-  const cacheKey = codexSecret ? `${secretName}:${channelId}:${meta?.codexAuthSource || "gateway"}` : secretName;
+  const meta = codexSecret && !euSecret ? await channelMetaFor(channelId, deps) : null;
+  // An existing dedicated-login relay must pause immediately, including warm cached tokens.
+  if (channelSecret && (meta?.codexAuthSource !== "channel" || !enterpriseFeatureEnabled("channelCodexLogin"))) return "";
+  const cacheKey = codexSecret ? `${secretName}:${channelId}:${euAuth?.fingerprint || (channelSecret ? "channel" : "gateway")}` : secretName;
   let cache = relayCaches.get(cacheKey);
   if (!cache || now - cache.at > RELAY_CACHE_MS) {
     cache = { at: now, promise: Promise.resolve().then(async () => {
       if (!codexSecret) return resolve();
-      const token = await resolve({ candidates: codexLoginCandidatesFor(meta) });
-      return token?.source === (secretName === CODEX_API_RELAY_SECRET_NAME ? "api-key" : "chatgpt") ? token : { token: "" };
+      const token = await resolve({ candidates: euSecret ? [path.join(codexEuLoginHome(), "auth.json")] : codexLoginCandidatesFor({ ...meta, channelId, engine: channelSecret ? "codex-channel" : "codex", codexHarness: "" }) });
+      return token?.source === (apiSecret ? "api-key" : "chatgpt") ? token : { token: "" };
     }) };
     relayCaches.set(cacheKey, cache);
     cache.promise.catch(() => { if (relayCaches.get(cacheKey) === cache) relayCaches.delete(cacheKey); });
@@ -188,7 +288,14 @@ async function channelMetaFor(channelId, deps) {
 export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
   if (row.scope === "relay") {
+    // The license list lives in settings.json, which the stdio MCP child can also write: read it
+    // now, so a license removed there is gone here before its rule is asked for.
+    if (licenseOfRelaySecret(name) && !deps.licenseRecord) refreshEngineLicenses();
     if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
+    if (name === "AWS_BEARER_TOKEN_BEDROCK") {
+      const provider = (deps.bedrockProvider || (await import("../../engines/bedrock.js")).resolveBedrockProvider)();
+      return { value: provider.configured ? String(provider.bearerToken || "") : "", entry: null, exists: Boolean(provider.configured) };
+    }
     if (name === PERPLEXITY_RELAY_SECRET_NAME) {
       const config = (deps.perplexityConfig || getPerplexityResearchConfig)();
       const value = config.enabled ? String(config.sessionToken || "") : "";
@@ -202,11 +309,13 @@ export async function resolveGrantMaterial(row, deps = {}) {
     if (CLAUDE_API_RELAY_NAMES.includes(name)) {
       const env = deps.env || process.env;
       const value = hasCanonicalClaudeApiEndpoint(env) ? String(env[name] || "") : "";
-      return { value, entry: null, exists: Boolean(value) };
+      // The same login in its API-key form: paused, not revoked, while the channel excludes it.
+      return { value: value && (await gatewayClaudeApprovedIn(row.channelId, deps)) ? value : "", entry: null, exists: Boolean(value) };
     }
     return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }
   if (row.scope === "organization") {
+    if (!enterpriseFeatureEnabled("organizationVariables")) return { value: "", entry: null, exists: false };
     const entry = (deps.orgEntries ? deps.orgEntries() : getOrgEnv())[name] || null;
     const values = await (deps.resolveOrgEnv || resolveOrgEnv)();
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
@@ -217,12 +326,29 @@ export async function resolveGrantMaterial(row, deps = {}) {
     const values = meta ? await (deps.resolveChannelEnv || resolveChannelEnv)(meta) : {};
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
   }
+  if (row.scope === "thread") {
+    // Resolved LIVE from the thread's own store, through the channel the grant was issued in, so
+    // a removed variable, a deleted thread row or a moved channel resolves to nothing.
+    const entry = await threadEntryFor(row.channelId, row.ownerId, name, deps);
+    if (!entry) return { value: "", entry: null, exists: false };
+    const values = await (deps.resolveChannelEnv || resolveChannelEnv)({ env: { [name]: entry } });
+    return { value: String(values[name] || ""), entry, exists: true };
+  }
   if (row.scope === "personal") {
     const entry = (await (deps.userEntries || getUserEnv)(row.ownerId))[name] || null;
     const values = await (deps.resolveUserEnv || resolveUserEnv)(row.ownerId);
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
   }
   return { value: "", entry: null, exists: false };
+}
+
+async function threadEntryFor(channelId, threadKey, name, deps) {
+  if (!channelId || !threadKey) return null;
+  if (deps.threadEntries) return (await deps.threadEntries(channelId, threadKey))?.[name] || null;
+  const entry = await getChannelEntry(channelId);
+  if (!entry?.slug) return null;
+  const { getThreadSettings } = await import("../thread-settings.js");
+  return normalizeChannelEnv(getThreadSettings(entry.slug, threadKey, "secrets").env)[name] || null;
 }
 
 // The spec's name for the value half: "" when the secret no longer exists.
@@ -237,9 +363,13 @@ export async function resolveGrantValue(row, deps = {}) {
 export async function resolveEgressGrant(core, deps = {}) {
   const row = lookupGrant(core);
   if (!row) return null;
+  // Check entitlement before the material cache: downgrade must stop existing placeholders too.
+  if (row.scope === "organization" && !enterpriseFeatureEnabled("organizationVariables")) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
-  if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
+  // A thread variable is re-read on every swap (one indexed row): its removal, a deleted thread
+  // row or a thread-settings write from another connection takes effect on the next request.
+  if (row.scope === "relay" || row.scope === "thread" || !material || now - material.at > MATERIAL_CACHE_MS) {
     material = { at: now, ...(await resolveGrantMaterial(row, deps)) };
     materialCache.set(row.placeholder, material);
   }
@@ -247,7 +377,11 @@ export async function resolveEgressGrant(core, deps = {}) {
     revokeGrants({ scope: row.scope, channelId: row.channelId, ownerId: row.ownerId, secretName: row.secretName });
     return null;
   }
-  const rule = row.scope === "relay" ? relayRuleFor(row.secretName) : rulesFor(row.secretName, material.entry, { value: material.value });
+  // A removal can commit while a provider resolves: never hand out a row revoked meanwhile.
+  if (row.scope === "thread" && !lookupGrant(row.placeholder)) return null;
+  const rule = row.scope === "relay" ? relayRuleFor(row.secretName)
+    : row.scope === "thread" ? (await import("../thread-settings.js")).threadVariableRule(row.secretName, material.entry, { value: material.value })
+      : rulesFor(row.secretName, material.entry, { value: material.value });
   if (!rule || !material.value) return null;
   return {
     ...(rule.approval ? { approval: true, neverHosts: engineHostsFor() } : {}),
@@ -278,33 +412,61 @@ function strictSetting(target) {
 // active → exactly resolveRunEnv()'s answer (real values), with empty egress facts. Active → every
 // name WITH a swap rule becomes its placeholder; a name WITHOUT one keeps its real value and is
 // listed `unprotected` — unless the gateway's egressSecretsStrict is on, when it is dropped and
-// listed `withheld`. `realValues` is every real value that exists, for the output redactor (the
-// container should never see one, and a reply must never carry one either way).
+// listed `withheld`. An explicit stored `exposure: "readable"` opts that entry into raw injection
+// even under strict mode; automatic classification never grants this exception.
+// `realValues` inventories all real values; `redactionValues` contains only hidden values
+// for output redaction. Readable variables may appear in replies and job output.
 // `personalPaused` is true when the author holds personal PLACEHOLDERS that the proxy will refuse
 // right now because a DIFFERENT person has an SSH session open in the channel (liveness.js) — the
 // per-attempt credential note says so instead of letting the agent chase a 403. A snapshot at
 // resolve time: the proxy re-checks on every request.
-export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
-  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false };
+//
+// `thread` ({ key, env, removed }, gateway/thread-settings.js) is the SIGNED settings thread of this
+// spawn: its variables win over every other scope for their names, but only ever as `thread`
+// placeholders bound to fixed destination hosts, and only when the proxy is this target's egress.
+// Anywhere else (legacy bridge mode, the `/sudo` host lane, a variable without a fixed
+// destination) a thread variable is WITHHELD — listed in `threadWithheld` — and its name is not
+// filled from another scope either: that would silently act as a different account. `removed`
+// hides inherited CHANNEL variables in this thread only.
+export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, thread = null, deps = {} } = {}) {
+  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false, threadWithheld: [], threadPaused: false };
   if (clean) return empty;
-  const [org, user, channel] = await Promise.all([
-    (deps.resolveOrgEnv || resolveOrgEnv)(),
+  const threadKey = String(thread?.key || "");
+  const threadEntries = threadKey ? normalizeChannelEnv(thread?.env) : {};
+  const threadNames = Object.keys(threadEntries).sort();
+  const threadRemoved = threadKey && Array.isArray(thread?.removed) ? thread.removed.map(String) : [];
+  const [org, user, channelResolved, threadValues] = await Promise.all([
+    enterpriseFeatureEnabled("organizationVariables") ? (deps.resolveOrgEnv || resolveOrgEnv)() : {},
     (deps.resolveUserEnv || resolveUserEnv)(authorId, { untrustedPrincipal }),
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
+    threadNames.length ? (deps.resolveChannelEnv || resolveChannelEnv)({ env: threadEntries }) : {},
   ]);
+  if (thread?.unreadable) throw new Error("This thread's own variables could not be read.");
+  const channel = channelResolved;
   const merged = mergeRunEnv({ org, user, channel });
+  // A thread's names are decided below, never by the scopes it overrides; a name the thread HID is
+  // not injected from any scope there (no personal or organization value stands in for it).
+  for (const name of [...threadNames, ...threadRemoved]) { delete merged.env[name]; delete merged.scopes[name]; }
+  const threadReal = safeSpawnEnv(threadValues);
   const real = safeSpawnEnv(merged.env);
-  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
-  if (!egressActive(target)) {
-    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, personalPaused: false };
-  }
-  const channelKey = String(channelId || meta?.channelId || "");
+  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel)), ...Object.values(threadReal)])];
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
   const entries = {
-    organization: deps.orgEntries ? deps.orgEntries() : getOrgEnv(),
+    organization: enterpriseFeatureEnabled("organizationVariables") ? (deps.orgEntries ? deps.orgEntries() : getOrgEnv()) : {},
     personal: personalOwner ? await (deps.userEntries || getUserEnv)(personalOwner) : {},
     channel: normalizeChannelEnv(meta?.env),
   };
+  // Visibility applies to output as well as injection. Classify every scope separately so a
+  // readable override cannot unmask a hidden value from another scope with the same bytes.
+  // Every thread value is hidden by construction (thread-settings.js), so all of them redact.
+  const redactionValues = [...new Set([...Object.entries({ organization: org, personal: user, channel })
+    .flatMap(([scope, values]) => Object.entries(safeSpawnEnv(values))
+      .filter(([name, value]) => rulesFor(name, entries[scope]?.[name] || null, { value }))
+      .map(([, value]) => value)), ...Object.values(threadReal)])];
+  if (!egressActive(target)) {
+    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, redactionValues, personalPaused: false, threadWithheld: threadNames, threadPaused: false };
+  }
+  const channelKey = String(channelId || meta?.channelId || "");
   // Reconcile first: a secret REMOVED since the last run loses its placeholder now, even if the
   // change listener never saw the write. Keyed by the STORED entry names, never by what resolved: a
   // secret that briefly resolves empty (a provider hiccup) is still a secret, and revoking it would
@@ -312,6 +474,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   revokeMissing({ scope: "organization", present: Object.keys(entries.organization) });
   if (channelKey) revokeMissing({ scope: "channel", channelId: channelKey, present: Object.keys(entries.channel) });
   if (channelKey && personalOwner) revokeMissing({ scope: "personal", channelId: channelKey, ownerId: personalOwner, present: Object.keys(entries.personal) });
+  if (channelKey && threadKey) revokeMissing({ scope: "thread", channelId: channelKey, ownerId: threadKey, present: threadNames });
 
   const strict = strictSetting(target);
   const env = {};
@@ -325,7 +488,8 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const approval = [];
   for (const name of Object.keys(real).sort()) {
     const scope = merged.scopes[name];
-    const rule = rulesFor(name, entries[scope]?.[name] || null, { value: real[name] });
+    const entry = entries[scope]?.[name] || null;
+    const rule = rulesFor(name, entry, { value: real[name] });
     const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner));
     if (rule && bindable) {
       const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: personalOwner, secretName: name });
@@ -336,13 +500,30 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
       if (rule.approval) approval.push(name);
       continue;
     }
-    if (strict) {
+    if (strict && entry?.exposure !== "readable") {
       withheld.push(name);
       continue;
     }
     env[name] = real[name];
     scopes[name] = scope;
     unprotected.push(name);
+  }
+  // The thread's own variables: placeholders on their fixed hosts, or withheld.
+  const threadWithheld = [];
+  const { threadVariableRule } = threadNames.length ? await import("../thread-settings.js") : {};
+  for (const name of threadNames) {
+    const rule = threadReal[name] && channelKey ? threadVariableRule(name, threadEntries[name], { value: threadReal[name] }) : null;
+    if (!rule) { threadWithheld.push(name); continue; }
+    const placeholder = placeholderFor({ scope: "thread", channelId: channelKey, ownerId: threadKey, secretName: name });
+    env[name] = placeholder;
+    scopes[name] = "thread";
+    placeholders[name] = placeholder;
+    hosts[name] = [...rule.hosts];
+  }
+  let threadPaused = false;
+  if (Object.values(scopes).includes("thread")) {
+    const liveness = await import("./liveness.js");
+    threadPaused = Boolean((deps.otherThreadActive || liveness.otherThreadActive)(channelKey, threadKey));
   }
   let personalPaused = false;
   if (channelKey && personalOwner && Object.keys(placeholders).some((name) => scopes[name] === "personal")) {
@@ -354,7 +535,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     const otherOwnerActive = deps.otherOwnerActive || liveness.otherOwnerActive;
     personalPaused = Boolean(otherSshOpen(channelKey, personalOwner) || otherOwnerActive(channelKey, personalOwner));
   }
-  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, personalPaused };
+  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, redactionValues, personalPaused, threadWithheld, threadPaused };
 }
 
 // ── The Claude relay ──────────────────────────────────────────────────────────────────────────
@@ -374,6 +555,50 @@ export function containerClaudeCredential({ target, relay, channelId = "" }) {
   if (!key) return relay;
   const placeholder = relayPlaceholderFor({ channelId: key });
   return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholder}`, placeholder: true };
+}
+
+// The additional subscription gets its own live resolver and placeholder, never the regular
+// Claude relay. A raw token is admitted only to an explicitly resolved direct-host run.
+// `secretName` / `label` name WHICH isolated sign-in: the built-in extra subscription by default,
+// or one admin-added Claude license (its own relay name, so its own placeholder and grant).
+export function containerExtraClaudeCredential({ target, relay, secretName = CLAUDE_EXTRA_RELAY_SECRET_NAME, label = "The extra Claude subscription" } = {}) {
+  if (!relay?.token) return { token: "", error: relay?.error || `${label} is not signed in` };
+  if (target?.backend === "host") return relay;
+  if (!egressActive(target)) return { token: "", error: `${label} requires the egress proxy to relay its isolated login` };
+  const channelId = String(target?.meta?.channelId || "");
+  if (!channelId) return { token: "", error: `the run has no channel to bind ${label}'s sign-in to` };
+  return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholderFor({ scope: "relay", channelId, secretName })}`, placeholder: true };
+}
+
+// The LIVE credential of a provider license (engines/license-state.js): the stored key, or — for a
+// Vertex license — an access token the daemon mints from the stored service-account key
+// (gateway/vertex-token.js). → `{ value, error }`; `error` is value-free and names the remedy.
+export async function licenseCredentialValue(record, deps = {}) {
+  if (!licenseCredentialStored(record)) return { value: "", error: "no credential is stored" };
+  if (LICENSE_KINDS[record.kind].credential !== "service-account") return { value: String(record.apiKey || "") };
+  try {
+    const mintToken = deps.vertexAccessToken || (await import("../vertex-token.js")).vertexAccessToken;
+    const minted = await mintToken(record.serviceAccount, { ...(deps.vertexFetch ? { fetchImpl: deps.vertexFetch } : {}), ...(deps.minRemainingMs ? { minRemainingMs: deps.minRemainingMs } : {}) });
+    return { value: String(minted?.token || ""), expiresAt: minted?.expiresAt || 0 };
+  } catch (error) {
+    return { value: "", error: String(error?.message || "the service-account key could not be exchanged for a token"), rejected: error?.rejected === true };
+  }
+}
+
+// A provider license's credential for one run (engines/license-adapters.js). A container receives
+// only the channel's placeholder for THAT license, which the proxy swaps on the license's own
+// hosts; the live value (`hostValue`, resolved by the caller) is admitted only to an explicitly
+// resolved direct-host run, which holds every credential anyway.
+export function containerLicenseApiCredential({ target, record, hostValue = "" } = {}) {
+  if (!licenseCredentialStored(record)) return { token: "", error: `${record?.label || "This license"} has no credential stored` };
+  if (target?.backend === "host") {
+    const value = String(hostValue || record.apiKey || "");
+    return value ? { token: value } : { token: "", error: `${record.label}'s credential could not be resolved` };
+  }
+  if (!egressActive(target)) return { token: "", error: `${record.label} requires the egress proxy to relay its credential` };
+  const channelId = String(target?.meta?.channelId || "");
+  if (!channelId) return { token: "", error: `the run has no channel to bind ${record.label}'s credential to` };
+  return { token: placeholderFor({ scope: "relay", channelId, secretName: licenseRelaySecretName(record.id) }), placeholder: true };
 }
 
 // The durable nested-CLI login holds only channel-bound placeholders. An API-key installation
@@ -403,12 +628,12 @@ async function channelIdOfTarget(target) {
   return Object.entries(index).find(([, entry]) => entry?.slug === slug && platformOr(entry?.platform).id === platform)?.[0] || "";
 }
 
-export function codexRelayPlaceholderFor({ channelId }) {
-  return placeholderFor({ scope: "relay", channelId, secretName: CODEX_RELAY_SECRET_NAME });
+export function codexRelayPlaceholderFor({ channelId, eu = false, channel = false, license = "" }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: license ? licenseRelaySecretName(license) : eu ? CODEX_EU_RELAY_SECRET_NAME : channel ? CODEX_CHANNEL_RELAY_SECRET_NAME : CODEX_RELAY_SECRET_NAME });
 }
 
-export function codexApiRelayPlaceholderFor({ channelId }) {
-  return placeholderFor({ scope: "relay", channelId, secretName: CODEX_API_RELAY_SECRET_NAME });
+export function codexApiRelayPlaceholderFor({ channelId, channel = false }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: channel ? CODEX_CHANNEL_API_RELAY_SECRET_NAME : CODEX_API_RELAY_SECRET_NAME });
 }
 
 // What a containerized Codex reads as its sign-in: the body of the ACCESS-ONLY auth.json the
@@ -420,21 +645,38 @@ export async function containerCodexCredential({ target, channelId = "", resolve
   if (!egressActive(target)) return { error: "the egress proxy is not this container's network, so Codex cannot use a relayed sign-in" };
   const key = String(channelId || target?.meta?.channelId || "") || (await channelIdOfTarget(target));
   if (!key) return { error: "the run has no channel to bind Codex's relayed sign-in to" };
+  // A dedicated login — Codex EU or an admin-added Codex license — is one isolated ChatGPT sign-in
+  // with its own relay name; nothing of the gateway's or the channel's own login stands in for it.
+  const dedicated = dedicatedCodexLogin(target?.meta);
+  if (dedicated && !dedicated.exists) return { error: "this Codex license no longer exists" };
+  if (dedicated && !(await (await import("../../engines/codex-eu.js")).dedicatedCodexCredentialState({ home: dedicated.home, label: dedicated.label, loginHint: dedicated.loginHint })).authenticated) return { error: `${dedicated.label} requires the dedicated ChatGPT sign-in` };
+  const eu = dedicated?.kind === "eu";
   const relay = await resolveRelay({ candidates: codexLoginCandidatesFor(target?.meta) });
   if (!relay?.token) return { error: relay?.error || "the gateway has no Codex sign-in to relay", source: relay?.source || "none" };
+  if (dedicated && relay.source !== "chatgpt") return { error: `${dedicated.label} requires a ChatGPT sign-in` };
   if (relay.source === "api-key") {
     return {
-      authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key }) }),
+      authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key, channel: isChannelCodex(target?.meta) }) }),
       expiresAt: 0,
       source: "api-key",
       placeholder: true,
     };
   }
-  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key }), { shape: "jwt", claimsFrom: relay.token });
+  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key, eu, channel: isChannelCodex(target?.meta), license: dedicated?.kind === "license" ? dedicated.id : "" }), { shape: "jwt", claimsFrom: relay.token });
   return {
     authJson: renderContainerCodexAuth({ accessToken, idToken: relay.idToken, accountId: relay.accountId, now }),
     expiresAt: relay.expiresAt || 0,
     source: relay.source,
     placeholder: true,
   };
+}
+
+// Bedrock's bearer login is provider-owned; containers receive only a destination-bound relay.
+export function containerBedrockCredential({ target, provider } = {}) {
+  if (!provider?.configured || !provider?.bearerToken) return { token: "", error: provider?.error || "Claude Bedrock is not configured" };
+  if (target?.backend === "host") return { token: provider.bearerToken };
+  if (!egressActive(target)) return { token: "", error: "Claude Bedrock requires the egress proxy to relay its bearer sign-in" };
+  const channelId = String(target?.meta?.channelId || "");
+  if (!channelId) return { token: "", error: "the run has no channel to bind the Bedrock sign-in to" };
+  return { token: placeholderFor({ scope: "relay", channelId, secretName: "AWS_BEARER_TOKEN_BEDROCK" }) };
 }

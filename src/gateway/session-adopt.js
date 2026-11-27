@@ -21,6 +21,12 @@
 // readable, and otherwise the container itself, asked through the runtime's read-only
 // `inspectState`. Whichever store answers, the same-channel rule below is applied to the cwd the
 // transcript itself recorded.
+//
+// WHOSE directory it is depends on the license. A harness's own sign-in keeps its transcripts in the
+// harness's state dir; every added license keeps its own, in a directory of its own (on the host
+// and in the channel's HOME volume alike), so a session started under one is invisible from the
+// harness's default directory. A lookup therefore asks per LICENSE: the thread's own first, then
+// the other licenses of that harness this conversation may run on.
 import path from "node:path";
 import os from "node:os";
 import { createReadStream } from "node:fs";
@@ -28,15 +34,16 @@ import { access, constants, realpath, stat } from "node:fs/promises";
 import readline from "node:readline";
 import { getDb } from "../db/index.js";
 import { findCodexRollout } from "../engines/codex-usage.js";
-import { engineLabel, engineStateDir, ENGINE_IDS } from "../engines/registry.js";
+import { adapterFor, engineDisplayName, engineLabel, engineStateDir, harnessOf } from "../engines/registry.js";
 import { runtimeCanInspectState } from "../runtimes/contract.js";
 import { expandCarryEntry } from "../runtimes/copy.js";
 import { listChannels } from "../config/store.js";
 import { effectiveWorkDir } from "./folders.js";
+import { selectableLicenses } from "./license-pool.js";
 
-// Engines whose sessions live in a local, gateway-readable store and can therefore be adopted.
-// OpenCode keeps its history in its own server-side store with no cwd we can verify, so a session
-// of its cannot pass the same-channel check and is refused explicitly rather than silently bound.
+// Harnesses whose sessions live in a local, gateway-readable store and can therefore be adopted:
+// only a transcript whose cwd we can verify passes the same-channel check. Every license of one
+// writes that harness's transcript format, into its own directory.
 const ADOPTABLE = new Set(["claude", "codex"]);
 
 // The real state dirs — the same expressions run-grant-artifacts.js uses to build the engine
@@ -78,7 +85,6 @@ const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 const COMMAND_FORMS = [
   { engine: "claude", re: /\bclaude\b[^&|;]*?\s(?:--resume|-r)\s+("[^"]+"|'[^']+'|\S+)/i },
   { engine: "codex", re: /\bcodex\b(?:\s+exec)?\s+resume\s+("[^"]+"|'[^']+'|\S+)/i },
-  { engine: "opencode", re: /\bopencode\b[^&|;]*?\s--session\s+("[^"]+"|'[^']+'|\S+)/i },
 ];
 
 const CD_RE = /\bcd\s+("[^"]+"|'[^']+'|[^\s&|;]+)/i;
@@ -256,14 +262,37 @@ function volumeView(target, inside) {
   return path.join(volume, rel);
 }
 
-// The stores to search for this engine, cheapest first. The daemon's own dirs cost a readdir; the
+// This license's state dir on the daemon's filesystem. `dirs` overrides it by engine id (tests); a
+// license that shares its harness's directory follows the harness's override.
+function hostStateDir(engine, { dirs = {}, target = null } = {}) {
+  if (dirs[engine]) return dirs[engine];
+  // A channel-account license names its directory from the channel, never from a container.
+  const onHost = target?.meta ? { meta: target.meta } : null;
+  const own = engineStateDir(engine, onHost);
+  const harness = harnessOf(engine);
+  if (harness && harness !== engine && dirs[harness] && own === engineStateDir(harness, onHost)) return dirs[harness];
+  return own;
+}
+
+// Two licenses that keep their transcripts in the same directories are one place to look.
+function storeIdentity(engine, options = {}) {
+  return `${hostStateDir(engine, options)}\n${containerStateDir(engine, options.target)}`;
+}
+
+// The stores to search for this license, cheapest first. The daemon's own dirs cost a readdir; the
 // container costs a container start, so it is asked last and only when the first two say nothing.
 async function storesFor(engine, { dirs = {}, target = null } = {}) {
   const stores = [];
-  const hostDir = engine === "claude" ? dirs.claude || claudeStateDir() : dirs.codex || codexStateDir();
-  if (hostDir && target?.runtimeScope !== "project") stores.push(directoryStore("host", hostDir));
+  const hostDir = hostStateDir(engine, { dirs, target });
+  if (hostDir && target?.runtimeScope !== "project" && target?.container?.sharedHistory !== true) stores.push(directoryStore("host", hostDir));
   const inside = containerStateDir(engine, target);
   if (!inside) return stores;
+  // The HOME's underlying projects/sessions directories are shadowed by shared history mounts.
+  // Inspect the live mount view, never the preserved private legacy files below those mounts.
+  if (target?.container?.sharedHistory === true) {
+    if (runtimeCanInspectState(target)) stores.push(runtimeStore(target, inside));
+    return stores;
+  }
   const onHost = volumeView(target, inside);
   if (onHost && (await readableDir(onHost))) stores.push(directoryStore("volume", onHost));
   else if (runtimeCanInspectState(target)) stores.push(runtimeStore(target, inside));
@@ -329,10 +358,10 @@ async function locateCodexSession(sessionId, store) {
 }
 
 /**
- * Locate a session in the stores this channel can reach. Returns null when the id doesn't exist
- * anywhere the gateway can see — the gateway resumes sessions, it never invents them.
+ * Locate a session in the stores this channel can reach for ONE license. Returns null when the id
+ * doesn't exist anywhere the gateway can see — the gateway resumes sessions, it never invents them.
  *
- * @param {string} engine
+ * @param {string} engine   a license of an adoptable harness (the harness id is its own sign-in)
  * @param {string} sessionId
  * @param {object} [options]
  * @param {object} [options.dirs]    override the daemon-side state dirs (tests)
@@ -343,12 +372,13 @@ export async function locateSession(engine, sessionId, options = {}) {
   const id = String(sessionId || "");
   // The id goes into a glob on both sides of the container boundary; SESSION_ID_RE is what keeps a
   // path fragment or a wildcard from ever reaching one.
-  if (!SESSION_ID_RE.test(id) || !ADOPTABLE.has(engine)) return null;
+  const harness = harnessOf(engine);
+  if (!SESSION_ID_RE.test(id) || !ADOPTABLE.has(harness) || !adapterFor(engine)?.sessionState) return null;
   const log = options.log || (() => {});
   for (const store of await storesFor(engine, options)) {
     let found = null;
     try {
-      found = engine === "claude" ? await locateClaudeSession(id, store) : await locateCodexSession(id, store);
+      found = harness === "claude" ? await locateClaudeSession(id, store) : await locateCodexSession(id, store);
     } catch (error) {
       // A container that will not start, a CLI that is gone: the remaining stores still answer, and
       // "not found" stays a fact about this machine rather than a swallowed crash.
@@ -363,6 +393,29 @@ export async function locateSession(engine, sessionId, options = {}) {
     }
   }
   return null;
+}
+
+// The licenses of `harness` whose stores are searched, likeliest first: the thread's own license,
+// then every license of that harness this conversation may run on (switched on, admitted by the
+// channel's approved list), and the harness's own sign-in last — a session it wrote before the
+// channel was narrowed is still this channel's session. A license the conversation may not run on
+// is never searched, so `/resume` cannot pin a thread to one.
+function licenseCandidates(harness, { threadEngine = "", meta = {} } = {}) {
+  const out = [];
+  const add = (id) => {
+    if (id && harnessOf(id) === harness && adapterFor(id)?.sessionState && !out.includes(id)) out.push(id);
+  };
+  add(threadEngine);
+  let usable = [];
+  try {
+    usable = selectableLicenses(harness, meta || {});
+  } catch {
+    usable = [];
+  }
+  if (usable.includes(harness)) add(harness);
+  for (const id of usable) add(id);
+  add(harness);
+  return out;
 }
 
 // Every thread currently bound to this session id, excluding the thread asking to adopt it. A
@@ -446,8 +499,12 @@ function ago(ms) {
 // `target` is the channel's RuntimeTarget — without it only the daemon's own state dirs are
 // searched, which under the container runtime means every live session is invisible.
 //
+// `meta` is the channel's metadata: it decides which added licenses this conversation may run on,
+// and so which of their directories are searched. `engine` in the answer is the LICENSE whose
+// directory held the session — the one the thread must run on to continue it.
+//
 // Returns { ok:true, sessionId, engine, cwd, replacing, message } or { ok:false, message }.
-export async function planSessionAdoption({ arg, slug, threadKey, workDir, threadEngine = "", currentSessionId = "", dirs = {}, target = null, log = () => {} }) {
+export async function planSessionAdoption({ arg, slug, threadKey, workDir, threadEngine = "", currentSessionId = "", dirs = {}, target = null, meta = {}, log = () => {} }) {
   const parsed = parseResumeRequest(arg);
   if (!parsed) {
     return {
@@ -457,27 +514,30 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
         "```/resume cd \"/path/to/folder\" && claude --resume <session-id>```",
     };
   }
-  // Only an EXPLICIT harness in the pasted text can make the request unadoptable. An inherited
-  // thread engine is a guess, so a bare id in an OpenCode thread still gets looked up properly.
-  if (parsed.engine && !ENGINE_IDS.includes(parsed.engine)) return { ok: false, message: `I don't know the \`${parsed.engine}\` harness, so I can't resume its sessions.` };
-  if (parsed.engine && !ADOPTABLE.has(parsed.engine)) {
-    return { ok: false, message: `${engineLabel(parsed.engine)} sessions can't be adopted into a thread — it keeps no local transcript I can verify belongs to this channel.` };
-  }
-  const engine = parsed.engine || (ADOPTABLE.has(threadEngine) ? threadEngine : "claude");
+  // A harness named in the pasted text is always an adoptable one (COMMAND_FORMS recognizes no
+  // other). An inherited thread engine is only a guess, so a bare id in a thread on any other
+  // harness still gets looked up properly.
+  const threadHarness = harnessOf(threadEngine);
+  const harness = parsed.engine || (ADOPTABLE.has(threadHarness) ? threadHarness : "claude");
 
-  // When the text named no harness, the thread's engine is only a first guess — Claude and Codex
-  // both mint uuids, so a pasted bare id says nothing about who owns it. Try the other adoptable
-  // stores before declaring the session missing.
+  // When the text named no harness, the thread's is only a first guess — Claude and Codex both
+  // mint uuids, so a pasted bare id says nothing about who owns it. Try the other adoptable
+  // harness before declaring the session missing. Within a harness, every license this
+  // conversation may run on keeps its own directory, so each is asked in turn.
   const lookup = { dirs, target, log };
-  let located = await locateSession(engine, parsed.sessionId, lookup);
-  let resolvedEngine = engine;
-  if (!located && !parsed.engine) {
-    for (const candidate of ADOPTABLE) {
-      if (candidate === engine) continue;
-      located = await locateSession(candidate, parsed.sessionId, lookup);
+  const harnesses = parsed.engine ? [harness] : [harness, ...[...ADOPTABLE].filter((candidate) => candidate !== harness)];
+  const searched = new Set();
+  let located = null;
+  let resolvedEngine = harness;
+  search: for (const candidateHarness of harnesses) {
+    for (const license of licenseCandidates(candidateHarness, { threadEngine, meta })) {
+      const identity = storeIdentity(license, lookup);
+      if (searched.has(identity)) continue;
+      searched.add(identity);
+      located = await locateSession(license, parsed.sessionId, lookup);
       if (located) {
-        resolvedEngine = candidate;
-        break;
+        resolvedEngine = license;
+        break search;
       }
     }
   }
@@ -489,11 +549,13 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
     const missing = parsed.engine
       ? `${engineLabel(parsed.engine)} session \`${parsed.sessionId}\``
       : `session \`${parsed.sessionId}\` in Claude's or Codex's history`;
-    const searched = target?.container ? "this channel's container and the gateway's own history" : "the gateway's own history";
+    const places = target?.container ? "this channel's container and the gateway's own history" : "the gateway's own history";
+    // More than one directory per harness was asked only when this conversation has further licenses.
+    const licenses = searched.size > harnesses.length ? ", under every license this conversation can use" : "";
     return {
       ok: false,
       message:
-        `I can't find ${missing} — I looked in ${searched}. ` +
+        `I can't find ${missing} — I looked in ${places}${licenses}. ` +
         "Check the id, and make sure the session was created in THIS channel: another channel's sessions stay in its own container, and sessions from your laptop aren't here.",
     };
   }
@@ -548,7 +610,7 @@ export async function planSessionAdoption({ arg, slug, threadKey, workDir, threa
     cwd: workDir,
     replacing: Boolean(currentSessionId),
     message:
-      `🔁 This thread now continues ${engineLabel(resolvedEngine)} session \`${parsed.sessionId}\`` +
+      `🔁 This thread now continues ${engineDisplayName(resolvedEngine)} session \`${parsed.sessionId}\`` +
       (last ? ` (last active ${last})` : "") +
       `, running in \`${workDir}\`.` +
       (currentSessionId ? " Its previous session was replaced." : "") +

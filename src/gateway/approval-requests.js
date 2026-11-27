@@ -36,6 +36,12 @@ export function approvalActionKey(action = {}) {
     exact.args = JSON.stringify(action.args || {}, (key, value) =>
       value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, value[k]])) : value);
   }
+  if (action.kind === "thread_forks") {
+    exact.forks = action.forks;
+    exact.sourceSessionId = action.sourceSessionId;
+    exact.sourceEngine = action.sourceEngine;
+    exact.sourceScope = action.sourceScope;
+  }
   if (action.kind === "channel_instructions") {
     exact.text = String(action.text || "");
     exact.mode = String(action.mode || "");

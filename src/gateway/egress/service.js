@@ -21,6 +21,8 @@
 // its telemetry batch between turns, and each attempt was a row (241 in 25 minutes across six
 // channels); those refusals are expected, carry no secret a person set, and are still counted.
 // Everything is counted per channel in memory for egressStatus().
+import { effectiveMeta } from "../effective-meta.js";
+import { privateDestinationsFor } from "./private-hosts.js";
 import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
@@ -32,18 +34,19 @@ import { normalizeChannelEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv } from "../../config/scoped-env.js";
 import { onConfigChange } from "../../config/change-events.js";
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
+import { licenseApiHosts } from "../../engines/license-state.js";
+import { resolveBedrockProvider } from "../../engines/bedrock.js";
 import { logEvent } from "../../util/logger.js";
 import { platformOr } from "../../platforms/registry.js";
 import { egressActive as hookEgressActive, egressModeOf, setEgressProvider } from "../../runtimes/container/egress-hook.js";
 import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
-import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
-import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
+import { isChannelLive, isOwnerLive, isThreadLive, otherOwnerActive, otherSshOpen, otherThreadActive } from "./liveness.js";
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
-import { isValidRuleHost } from "./catalog-rules.js";
+import { parseRawDestination } from "./catalog-rules.js";
 
 // sockaddr_un.sun_path is 108 bytes including the terminating NUL.
 export const MAX_SOCKET_PATH_BYTES = 107;
@@ -110,12 +113,16 @@ export function modelApiHosts() {
 
 function qwenHosts() {
   const hosts = [];
+  const bedrock = resolveBedrockProvider();
+  if (bedrock.configured) hosts.push(hostOfUrl(bedrock.endpoint));
   for (const entry of QWEN_PROVIDERS) {
     try {
       const host = hostOfUrl(getQwenConfig(entry.id).baseUrl);
       if (host) hosts.push(host);
     } catch { /* an unconfigured provider has no host */ }
   }
+  // Every admin-added API license's endpoint is a model API of the same standing.
+  hosts.push(...licenseApiHosts());
   return hosts;
 }
 
@@ -123,9 +130,11 @@ export function rawPassthroughFor(meta = {}) {
   const out = [...ALWAYS_RAW.map((rule) => ({ ...rule }))];
   const declared = Array.isArray(meta?.egressRawHosts) ? meta.egressRawHosts : [];
   for (const raw of declared) {
-    const host = normalizeHost(raw);
-    if (!host || !isValidRuleHost(host)) continue;
-    for (const port of RAW_PASSTHROUGH_PORTS) out.push({ host, port });
+    const destination = parseRawDestination(raw);
+    if (!destination) continue;
+    for (const port of destination.port === null ? RAW_PASSTHROUGH_PORTS : [destination.port]) {
+      out.push({ host: destination.host, port });
+    }
   }
   return out;
 }
@@ -148,10 +157,19 @@ function editorAttached(ctx) {
 
 // canUse: the swap-time gate. Channel binding first (a placeholder only swaps from the channel it
 // was issued to; the organization's from any channel), then liveness (liveness.js).
+// A THREAD grant (a thread's own variable) swaps only while work of that thread is live and nothing
+// else is: another thread, ownerless work, an SSH session or an attached editor would otherwise be
+// able to drive it from the shared container. An unknown scope never swaps.
 export function canUseGrant(grant, ctx) {
   const channelId = String(ctx?.channelId || "");
+  if (!["organization", "channel", "thread", "personal", "relay"].includes(grant?.scope)) return { ok: false, reason: "unknown-scope" };
   if (!channelId) return { ok: false, reason: "unbound-channel" };
   if (grant.scope !== "organization" && String(grant.channelId || "") !== channelId) return { ok: false, reason: "other-channel" };
+  if (grant.scope === "thread") {
+    if (!grant.owner || !isThreadLive(channelId, grant.owner)) return { ok: false, reason: "thread-not-live" };
+    if (otherThreadActive(channelId, grant.owner) || editorAttached(ctx)) return { ok: false, reason: "another-thread-active" };
+    return { ok: true };
+  }
   if (grant.scope === "personal") {
     if (!isOwnerLive(channelId, grant.owner)) return { ok: false, reason: "owner-not-live" };
     if (otherSshOpen(channelId, grant.owner)) return { ok: false, reason: "another-person-ssh-session" };
@@ -212,7 +230,7 @@ export async function egressPolicyFor(ctx) {
 }
 
 async function policyForCtx(ctx) {
-  const meta = (await getChannelMeta(ctx?.slug)) || {};
+  const meta = effectiveMeta((await getChannelMeta(ctx?.slug)) || {});
   const runHosts = [];
   const seen = state?.runHosts.get(channelKey(ctx));
   if (seen) {
@@ -223,6 +241,7 @@ async function policyForCtx(ctx) {
     mode: meta.allowNetwork === true ? "on" : "off",
     engineHosts: [...new Set([...engineHostsFor(), ...qwenHosts(), ...runHosts])],
     rawPassthrough: rawPassthroughFor(meta),
+    privateDestinations: privateDestinationsFor(meta),
   };
 }
 
@@ -233,6 +252,11 @@ function watchConfig(log) {
     try {
       if (change.kind === "org-env") revokeMissing({ scope: "organization", present: Object.keys(getOrgEnv()) });
       else if (change.kind === "user" && change.userId) revokeMissing({ scope: "personal", ownerId: change.userId, present: Object.keys(await getUserEnv(change.userId)) });
+      else if (change.kind === "thread-settings" && change.slug && change.threadKey && change.section === "secrets") {
+        const meta = await getChannelMeta(change.slug);
+        const { getThreadSettings } = await import("../thread-settings.js");
+        if (meta?.channelId) revokeMissing({ scope: "thread", channelId: meta.channelId, ownerId: change.threadKey, present: Object.keys(normalizeChannelEnv(getThreadSettings(change.slug, change.threadKey, "secrets").env)) });
+      }
       else if (change.kind === "channel-meta" && change.slug) {
         const meta = await getChannelMeta(change.slug);
         if (meta?.channelId) revokeMissing({ scope: "channel", channelId: meta.channelId, present: Object.keys(normalizeChannelEnv(meta.env)) });
@@ -411,6 +435,10 @@ export async function bindRunningChannelEgress({ listContainers = null, resolveT
   const index = await getChannelsIndex();
   let bound = 0;
   let failed = 0;
+  // Slack channels are unverified until the membership pass completes after Slack connects, and
+  // the runtime resolver refuses them until then. At boot that is every Slack channel: count them
+  // as waiting rather than failed — the daemon calls this again once membership is verified.
+  let deferred = 0;
   for (const container of containers) {
     if (container?.state !== "running" || !container.slug) continue;
     const platform = platformOr(container.platform).id;
@@ -422,12 +450,19 @@ export async function bindRunningChannelEgress({ listContainers = null, resolveT
       await ensureChannelEgress(target);
       bound += 1;
     } catch (error) {
+      if (error?.code === "channel_membership_unverified") {
+        deferred += 1;
+        continue;
+      }
       failed += 1;
       log?.warn?.(`[egress] could not restore the egress listener of ${container.slug}: ${error?.message || error}`);
     }
   }
-  if (bound || failed) log?.log?.(`[egress] restored ${bound} running container listener(s)${failed ? `, ${failed} failed` : ""}`);
-  return { bound, failed };
+  if (bound || failed || deferred) {
+    log?.log?.(`[egress] restored ${bound} running container listener(s)${failed ? `, ${failed} failed` : ""}` +
+      `${deferred ? `, ${deferred} waiting for Slack membership verification` : ""}`);
+  }
+  return { bound, failed, deferred };
 }
 
 export async function closeChannelEgress(target) {

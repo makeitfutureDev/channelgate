@@ -1,8 +1,12 @@
 # ChannelGate — AGENTS.md
 
-Canonical instruction file for Claude Code, Codex and contributors. `CLAUDE.md` symlinks to this
-file — edit here only. A deployment may add private rules in a gitignored `AGENTS.local.md` (see
-Contributor workflow).
+Canonical instruction file for Claude Code, Codex and contributors — edit here only. `CLAUDE.md` is
+not tracked: for a local Claude Code session link it to this file (`ln -s AGENTS.md CLAUDE.md`); in
+a ChannelGate channel whose work folder is this repository the gateway assembles it (this guide,
+then `AGENTS.local.md`, then the channel's own rules) and links `AGENTS.override.md` to it for
+Codex. A deployment may add private rules in a gitignored `AGENTS.local.md`: **when that file
+exists, read it before starting any task — it is binding alongside this one** (see Contributor
+workflow).
 
 ## What this is
 
@@ -11,9 +15,8 @@ team chat. Every conversation — a Slack DM, group or channel; Microsoft Teams 
 Beta — gets its **own work folder** (`~/ChannelGate/<platform>/<slug>/`), its **own rootless
 Podman containers for project and admin authors**, its own persistent memory and one engine
 session per thread and runtime lane. Each ordinary message runs a **headless engine turn inside
-that container**: Claude Code (`claude -p`, the primary engine),
-OpenAI Codex (`codex exec`), or OpenCode (a proof adapter admitted only read-only and
-network-off). An organization admin can explicitly turn one Slack thread into a direct-host
+that container**: Claude Code (`claude -p`, the primary engine) or
+OpenAI Codex (`codex exec`). An organization admin can explicitly turn one Slack thread into a direct-host
 `/sudo` thread; only admins may then message it. The container is the default confinement boundary;
 the folder's `.claude/settings.json` carries the tool policy. A built-in admin web UI (same process) manages users, channels, engines,
 MCP connections, skills, per-channel secrets, schedules, usage and the license. `src/ee/` is the
@@ -23,7 +26,7 @@ Project records: `FEATURES.md` (shipped behavior), `TEST-PLAN.md` (the cumulativ
 the live acceptance gates) and `CHANGELOG.md` (user-visible changes). There is no `TASKS.md` and no
 mandatory planning phase (rule below). Operator and design references: `README.md`, `INSTALL.md`,
 `docs/OPERATIONS.md`, `docs/PLATFORMS.md`, `docs/SKILLS.md`, `docs/ENGINE-CAPABILITIES.md`,
-`docs/COMPATIBILITY.md`, `docs/OPENCODE-ADAPTER.md`, `docs/LICENSE-KEYS.md`. The bundled skills
+`docs/COMPATIBILITY.md`, `docs/LICENSE-KEYS.md`. The bundled skills
 `channelgate`, `headless-app-creator` and `skill-authoring` (`src/gateway/skills/bundled/`) describe
 this repository's own conventions to agents working on it.
 
@@ -46,7 +49,7 @@ Gateway daemon
   │     host: daemon OS account and native HOME/toolchain)
   │  resolve session: thread key → engine session id (resume) | fresh (memory catalog prepended)
   │  build MCP config: gateway control (socket bridge) + composio-user (author) + composio-agent
-  │    (channel → org token) + selected catalog/plugin servers → a 0600 file in the artifact dir
+  │    (channel token) + selected catalog/plugin servers → a 0600 file in the artifact dir
   ▼
 exec in the resolved runtime (Claude, cold):
   claude -p <text> --output-format stream-json --verbose --include-partial-messages
@@ -64,7 +67,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 ## Where things live
 
 - `src/start.js` + `src/platform-gate.js` + `src/server.js` — entry and boot. `start.js` checks the
-  Node floor (≥ 22.13, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
+  Node floor (≥ 24.0.0, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
   host with one plain line, then `server.js` boots in this order: `.env`, the legacy-layout
   migration FIRST, the runtime root + database + singleton lock, settings over env, the skills
   catalog, hardening, the container CLI probe (FATAL without one), the MCP socket, Express,
@@ -80,7 +83,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 33 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 65 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -90,7 +93,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 - `src/gateway/folders.js` + `library-skills.js` — channel folder provisioning: the generated
   `.claude/settings.json` (curated `permissions.allow`/`ask`/`deny`, `allowedMcpServers`,
   `autoMemoryEnabled:false`, `autoDreamEnabled:false`, the Stop hook — no `sandbox` block, no host
-  path except the operator home in the admin variant's `additionalDirectories`), the
+  path in `additionalDirectories` except the mounted additional folders and, in the admin variant,
+  the operator home), the
   marker-guarded managed block in `CLAUDE.md` (`AGENTS.md` is a symlink to it: the channel's
   Mode/Auto/Lean/Network switches, the hard rules, the admin's global instructions), the
   `channel-memory` protocol and the granted catalog skills materialized as REAL files under
@@ -110,8 +114,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 - `src/gateway/mcp.js` + `run-engine-mcp.js` + `mcp-catalog.js` + `mcp-discovery.js` +
   `mcp-capability.js` — the per-run MCP payload: the `gateway` control server (always; over the
   read-only socket bridge in containers, carrying only a signed HMAC run capability with a toolset
-  and TTL), `composio-user` (the author's personal token only), `composio-agent` (channel token →
-  organization default; suppressed in DMs), the toolbox/Make servers when a token resolves, then
+  and TTL), `composio-user` (the author's personal token only), `composio-agent` (the channel's
+  own token only — no organization default; suppressed in DMs), the Make toolbox server when a token resolves, then
   — through the engine adapter — the channel/organization-selected catalog servers ("Cloud MCP")
   and plugin-package servers mapped onto explicitly selected connections, plus the custom MCP
   connections people add by URL + Bearer token (`custom-mcps.js` rules, `custom-mcp-store.js`
@@ -166,6 +170,17 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   idempotency window, in-flight cap, `api_jobs`; the key is an admin credential and every run acts
   as the fixed admin `api` principal with no personal scope — the caller-supplied author is
   attribution only, never trusted for personal tokens or admin state).
+- `src/gateway/voice/` + `src/web/call-overlay.js` + `src/slack/call-button.js` — voice calls
+  (`docs/VOICE-CALLS.md`): `gemini-live.js` is the Gemini Live WebSocket client (setup, binary
+  PCM frames, transcription, function calls, usage deltas, resumption on `goAway`); `calls.js`
+  the call manager — admission by the Dashboard rule, one bound conversation at a time (or none),
+  the voice's tools (list/search the caller's OWN Activity conversations, switch thread or
+  channel with the segment transcript posted to the thread left behind, read, dispatch), a spoken
+  task dispatched as a turn AUTHORED BY THE CALLER with origin `voice_call` (interactive, never
+  escalatable), the hang-up summary, the `gemini-live` usage row and one memory line in the
+  caller's DM folder. The browser side is an overlay on the Activity dashboard
+  (`src/web/activity.js` routes: SSE down, octet-stream POSTs up; no WebSocket server); the
+  Gemini key is a write-only setting (`getVoiceCallConfig`).
 - `src/gateway/{approval-requests,instruction-approvals,approval-link-tokens}.js` +
   `src/slack/approvals.js` + `src/web/approval-links.js` + `src/platforms/approval-delivery.js` —
   approvals: one decision path with scopes once / thread / forever ("forever" is admin-only), the
@@ -212,7 +227,8 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   and a data-dependent capacity forecast. Admin routes in `src/web/routes/system-health.js`,
   browser page in `public/admin-system-health.js`, isolated canary in `scripts/system-health-soak.mjs`.
 - Smaller gateway modules: `sessions.js` + `thread-engine.js` (thread key ↔ engine session,
-  per-thread pins), `session-adopt.js` + `session-carry.js` (`/resume` of a local session whose
+  per-thread pins), `engine-target.js` (the ONE place a resolved target is re-pointed at another
+  license — its login and its directory — for a turn's pool move and an SSH session's `codex`), `session-adopt.js` + `session-carry.js` (`/resume` of a local session whose
   cwd is this channel; host → container carry-over), `stopped-turns.js`, `active-runs.js`
   (durable rows so interactive turns recover after a restart), `usage.js` + `usage-repair.js`,
   `model-info.js`, `runtime-identity.js` + `runtime-access.js` + `channel-credentials.js` (the
@@ -220,18 +236,41 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   a root-cause thread and proposes, never applies), `drivesync.js`, `transcribe.js` (local
   Whisper), `browser-env.js`, `make-toolbox.js`, `safe-fs.js` (no-follow writes under
   agent-writable folders), `shutdown.js`.
-- `src/engines/` — engines. `adapters.js` holds the validated manifests (`claude`, `codex`,
-  `opencode`); `registry.js` derives ids, the fallback graph (claude ↔ codex only) and the
+- `src/engines/` — engines. `adapters.js` holds the validated manifests (`claude`, `codex`
+  and their account variants, `qwen`); `registry.js` derives ids, the fallback graph (claude ↔ codex only) and the
   optional `credentialState()` fingerprint the orchestrator only ever COMPARES; `contract.js`
   enforces the required facts (cli, session identity, MCP transport, settings/meta keys,
   instruction file + skills dir, models/efforts, context window, resume command) and methods
   (`compileConfinement`, `run`, `interrupt`, `discoverMcps`, `health`). Add an engine by adding a
   runner + a manifest, never by adding another `engine === "codex"` branch. Runners: `claude.js`
-  + `session-pool.js`/`persistent-session.js` (warm pool), `codex.js`, `opencode.js` (read-only,
-  network-off, no MCP, outside the failover graph; its CLI is not shipped in the runtime image).
+  + `session-pool.js`/`persistent-session.js` (warm pool), `codex.js`, `qwen.js`. `retired.js` lists the ids of
+  harnesses this build no longer ships (today `opencode`), so a stored channel default, thread pin,
+  approval list or session stamp naming one resolves to the normal default instead of throwing.
+  **Harnesses and licenses:** there are two harnesses (an adapter's `cli`: Claude Code, Codex) and
+  every engine id is a LICENSE of one — a credential plus its server. `license-state.js` holds the
+  dependency-free facts (harnesses, license kinds and types, id shapes `<kind prefix><8 hex>` —
+  the sign-in kinds `codex-lic-`/`claude-lic-` and the PROVIDER kinds `claude-api-`/`-aws-`/`-gcp-`/
+  `-azure-` and `codex-api-`/`-aws-`/`-gcp-`/`-azure-`, each declaring the fields it asks for, its
+  key schemes, relay headers and hosts — pool reader, sign-in directories, relay names);
+  `src/gateway/vertex-token.js` mints a Vertex license's access tokens from its stored
+  service-account key (Google's fixed token endpoint only), so neither reaches a container;
+  `license-adapters.js`
+  turns each admin-added record (`settings.engineLicenses`, CRUD + verification in
+  `src/config/engine-licenses.js`, admin routes `src/web/routes/licenses.js` at
+  `/api/engine-licenses`) into a live adapter, re-synced by `settings.js` on every changed read
+  and right after a write, so `ENGINE_IDS` is ONE array updated in place — never cache a copy or a
+  Set of it. A selection is `engine` (the first license) plus a pool of more licenses of the same
+  harness (`""` | `"any"` | ordered ids): settings `enginePool`, channel meta `licensePool`,
+  thread override `license_pool`, run API `harness` + `licenses`. `src/gateway/license-pool.js`
+  is the one place that validates a pool, lists a conversation's usable licenses and builds the
+  picker shape every surface renders (`licensePicker`: no license control when a harness has one
+  usable license); `run.js` walks the pool before cross-harness failover, and a pool applies to a
+  pinned thread because the harness does not change. The approved-harness lock
+  (`src/gateway/channel-engines.js`) takes license ids and `harness:<cli>` entries. This is NOT
+  the product license in `src/ee/`; new code says `engine-licenses` / `licensePool`.
   Shared: `stream.js` (NDJSON → deltas/events), `watchdog.js` (the ONE stall watchdog),
-  `child-env.js` (the child env and passthrough list; `buildClaudeEnv`/`buildCodexEnv`/
-  `buildOpenCodeEnv` live in their runners), `network-policy.js` (the switch checked against the
+  `child-env.js` (the child env and passthrough list; `buildClaudeEnv`/`buildCodexEnv`
+  live in their runners), `network-policy.js` (the switch checked against the
   engine's declared `networkModes`, and `networkEnforcedFor(target)` — enforced by the egress proxy,
   advisory only under the legacy bridge mode or a channel's `rawNetwork`), `model-discovery.js`, `engine-health.js`,
   `codex-auth.js` (is Codex signed in — reads the CLI's own `auth.json`), `loop-wakeup.js`,
@@ -243,21 +282,23 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   backend plus the admin-authenticated `/sudo` host backend; `local.js` remains an unregistered
   daemon-internal spawner kept for direct-runner tests), `host.js` (direct daemon-account spawn) and
   `container/` — the rootless Podman backend: the CLI probe (`podman`, then `docker`), the image
-  (expected version + digest over every file in `containers/` compared with the built image's
-  labels; a missing or stale image fails the run closed with the `npm run build:image` remedy),
+  (expected version + digest over every file in `containers/` + `image-bundle.js`'s digest over
+  the `src/` files the build stages, compared with the built image's labels; a missing image fails
+  the run closed with the `npm run build:image` remedy, a stale one is flagged and rebuilt on update),
   the lifecycle (create/start/stop, recreate by create-time fingerprint and image ID, leases, the
   idle reaper), exec (session-leader helpers so a later exec can signal the whole tree),
   credentials, the per-channel HOME volume and the mounts, the operator's VS Code lease
   (`npm run vscode -- <channel>`).
-- `containers/` — the runtime image: `Containerfile` (`node:22-bookworm-slim`, the `agent` user
+- `containers/` — the runtime image: `Containerfile` (`node:24-bookworm-slim`, the `agent` user
   at the daemon's real uid/gid, tini, a root-owned toolchain under `/opt/channelgate`),
   `versions.json` (`imageSpecVersion` + every pin: Claude Code, Codex, `mcp-remote`, `vercel`,
   `supabase`, Playwright + `agent-browser` with Chromium, Python with OpenCV and faster-whisper;
   apt adds `gh`, `git`, `ffmpeg`, `ripgrep`, `psql` and friends) and `bin/` (the POSIX `cg-*`
   helpers: init, exec, probe, signal, sweep, the MCP socket bridge shim; `cg-init` also starts the
   egress forwarder under `CG_EGRESS=proxy`). `scripts/build-image.mjs` stages only the import
-  closure of the engine-spawned helpers plus the verbatim socket bridge and egress forwarder,
-  never the checkout.
+  closure of the engine-spawned helpers plus the verbatim socket bridge, egress forwarder and SSH
+  ProxyCommand helper — the set declared once in `src/runtimes/container/image-bundle.js` and
+  digested into the `cg.image.bundle` label — never the checkout.
 - `src/mcp/` — `gateway-server.js` is a thin assembler over `tools/` (`background`,
   `channel-admin`, `license`, `schedules`, `skills`, `slack-native`, `tokens`, `workspace-read`),
   each registering its tools behind the verified capability; `socket-server.js` serves it on the
@@ -265,7 +306,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   DB mount, no port), `socket-bridge.js` is the container-side stdio↔socket pipe copied into the
   image verbatim, `secret-env-bridge.js` launches credentialed stdio MCPs from a 0600 bundle so a
   secret never rides argv (`remote-secret-bridge.js` was retired in container-secrets P4). In a container the header-bearing
-  remotes (Composio token mode, the toolboxes) are the socket's `remote-mcp` service instead:
+  remotes (Composio token mode, the Make toolbox) are the socket's `remote-mcp` service instead:
   `remote-mcp-registry.js` holds their URL + headers in daemon memory under the capability's jti,
   `remote-relay.js` dials them and relays the tools, so the credential never enters the container.
   `egress-forwarder.js` is the container-side half of the egress proxy (127.0.0.1:3128 → the
@@ -359,7 +400,8 @@ through the control MCP.
 - Tables: identity and conversations (`users`, `channels`, `channel_meta`, `sessions`,
   `thread_overrides`, `conversation_reply_sessions`, `active_runs`, `stopped_turns`,
   `inbound_events`, `teams_graph_subscriptions`); automation (`schedules`, `acks`,
-  `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`, `api_conversations`, `schedule_runs`);
+  `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`, `api_conversations`, `schedule_runs`,
+  `roi_assignments`);
   approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); SSH
   access (`ssh_keys`, `ssh_sessions`); skills (`skills`, `skill_revisions`,
   `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`, `skill_proposals`,
@@ -391,9 +433,16 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   foreground, background job, schedule, API run, memory review — runs inside the channel's
   selected author container (rootless Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME
   volume at `/home/agent` (engine sessions, CLI logins, installed tools) and, bind-mounted at
-  their identical absolute paths, ONLY the channel's work folder, its clean workspace and its
+  their identical absolute paths, ONLY the channel's work folder, its clean workspace, its
   artifact dir (`~/ChannelGate/.runtime/<platform>/<slug>`, which also backs `/tmp` and
-  `/var/tmp`), plus the read-only control socket, the channel's OWN read-only egress socket
+  `/var/tmp`) and the channel's admin-declared **additional folders** (`meta.extraFolders`,
+  `src/gateway/extra-folders.js`: each an existing real directory inside the allowlisted root
+  that is none of the daemon's own trees — any conversation folder is allowed, another channel's
+  default folder included, as the admin's explicit sharing decision — never overlapping the work
+  folder or each other, read-write or read-only,
+  re-checked at every spawn and failing the spawn closed when it no longer passes; a symlink is
+  never what decides a mount — the daemon stores and mounts the link's real target), plus the
+  read-only control socket, the channel's OWN read-only egress socket
   directory and the CA trust bundle. Nothing else exists on that side: no host home,
   no gateway root, no `gateway.db`, no other channel's folder or egress socket, no daemon checkout,
   no operator `~/.claude`/`~/.codex`. Every container runs with `--network none`: its only way out
@@ -401,8 +450,8 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   the channel identity. The per-channel *Allow network* switch (`allowNetwork`) is the proxy's live
   policy — off admits only the engine endpoints and the channel's selected remote MCPs, on admits
   public destinations, and private/loopback/metadata addresses are always refused — and is also
-  checked against the engine's declared `networkModes` (OpenCode refuses "on", Codex read mode
-  refuses network on its own); there is no per-domain allow-list. A proxy-mode container holds no
+  checked against the engine's declared `networkModes` (Codex read mode refuses network on its
+  own); there is no per-domain allow-list. A proxy-mode container holds no
   ruled secret and no Claude login: it holds placeholders the proxy swaps for real values only on
   their declared hosts and only while the channel has live work (`NETWORK_POLICY_ENFORCED = true`,
   asked per target through `networkEnforcedFor`). Two operator/admin escapes make the switch
@@ -465,8 +514,9 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   harness's OWN error plus the manual-switch hint instead of being quietly answered by the other
   engine. Channel and gateway defaults are not pins.
 - **Composio identities stay distinct.** Inject the active author's personal token as
-  `composio-user` and, independently, the channel token as `composio-agent`, falling back to the
-  organization token (never the other way round; a DM gets only `composio-user`). A channel folder
+  `composio-user` and, independently, the channel's own token as `composio-agent`. There is no
+  organization-wide Composio token and no fallback between the two (a channel without a token has
+  no `composio-agent`; a DM gets only `composio-user`). A channel folder
   never stores either token in plain settings. "My account" means `composio-user`; "your/channel
   account" means `composio-agent`. Reads/searches may use either or both unless the user restricts
   the account or scope. Writes/sends/state changes require the intended identity and connected
@@ -529,7 +579,9 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   login fails closed with the remedy named when Claude is the selected engine; a missing optional
   child login does not block Codex or Qwen. Before every proxy-mode container turn,
   `nested-claude-login.js` prepares a private HOME env file containing only channel-bound relay
-  placeholders and the nested CLI launcher. Qwen's main CLI bypasses that launcher; nested
+  placeholders and the nested CLI launcher — in a channel whose approved harnesses leave the
+  license `claude` out, only a line saying so, and the proxy refuses that login's placeholder for
+  the channel (`gatewayClaudeApprovedIn`), as an SSH session and the editor attach do. Qwen's main CLI bypasses that launcher; nested
   `claude` clears inherited provider settings before loading the Anthropic relay. API-key child
   logins also use destination-bound relay grants. A new consumer
   asks the resolver; it never adds a second notion of "the login". The ONE login file the gateway
@@ -646,8 +698,21 @@ git worktree add -b <type>/<slug> .worktrees/<slug> origin/beta
 Land in the shared checkout (under the deployment's landing lock where one applies): bring `beta`
 current, `git merge --no-ff <type>/<slug>`, re-run a proportionate check after any conflict
 resolution, then push. Clean up only after `git merge-base --is-ancestor <type>/<slug> beta`
-succeeds, with `git worktree remove` followed by `git branch -d` — never `rm -rf` the directory,
-which leaves git's entry `prunable` and then blocks the branch delete.
+succeeds — and clean up ALL of it, every time, in this order:
+
+```sh
+git worktree remove .worktrees/<slug>        # the task worktree (never rm -rf it)
+git branch -d <type>/<slug>                  # the local branch
+git push origin --delete <type>/<slug>       # the GitHub branch, if it was ever pushed
+git fetch --prune origin                     # drop stale origin/* refs
+```
+
+Remove the worktree with `git worktree remove`, never `rm -rf` the directory: that leaves git's
+entry `prunable` and then blocks the branch delete (`git worktree prune` recovers it). A pull request merged on GitHub may already have deleted its
+head branch; that is fine. Only ever delete the task's own `<type>/<slug>` — never `main`, `beta`
+or any `archive/*` ref — and never delete an unmerged branch, local or on GitHub: leave it and
+say so. At the start of a session, `git worktree list`, `git branch --merged beta` and
+`git branch -r --merged origin/beta` show leftovers of landed work to clean up the same way.
 
 If you find uncommitted changes in the shared checkout that you did not write, they are another
 task's work in progress. Leave them alone, say so in your reply, and open your own worktree.

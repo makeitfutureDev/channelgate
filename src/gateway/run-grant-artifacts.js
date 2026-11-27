@@ -152,14 +152,28 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   // change their content hash on every turn and retire an otherwise reusable warm process.
   // Omit only that generated observation field here; ordinary workspace materialization keeps
   // its real timestamp, and all revision facts, skill bytes and grants remain fingerprinted.
-  const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false });
+  const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false, generatedProtocolsFromWorkspace: true });
   // A package is delivered through its own explicit native plugin or per-run catalog. Leaving
   // its wrapper here would let recursive engine discovery activate the unsanitized source tree.
   for (const pkg of grantedPluginPackages(skillNames)) await rm(path.join(skillsDir, pkg.slug), { recursive: true, force: true });
+  // A legacy folder grant can name a parent directory rather than a skill. Do not
+  // pass its children to native discovery or let catalog construction abort the run.
+  const invalidSkillFolders = [];
+  for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = await lstat(path.join(skillsDir, entry.name, "SKILL.md")).catch((error) => {
+      if (["ENOENT", "ENOTDIR"].includes(error.code)) return null;
+      throw error;
+    });
+    if (manifest?.isFile()) continue;
+    invalidSkillFolders.push(entry.name);
+    await rm(path.join(skillsDir, entry.name), { recursive: true, force: true });
+  }
   // Gateway-generated rather than source-library entries. Import fixed names only, never an
   // arbitrary project skill. `cp` retains references/, scripts/, and assets.
   // Same no-follow rule as copyWorkspaceAgents: both the container and the named skill folder must
   // be REAL directories in the workspace, or the copy walks wherever a planted link points.
+  const generatedSkills = [];
   const skillsSourceOk = Boolean(workspaceSkillsDir) && (await isRealDir(workspaceSkillsDir));
   for (const skillName of ["gateway-usage", "channel-memory"]) {
     if (!skillsSourceOk) continue;
@@ -167,6 +181,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
     const destination = path.join(skillsDir, skillName);
     if (!(await isRealDir(source)) || await exists(destination)) continue;
     await cp(source, destination, { recursive: true });
+    if ((await lstat(path.join(destination, "SKILL.md")).catch(() => null))?.isFile()) generatedSkills.push(skillName);
   }
   const hasAgents = await copyWorkspaceAgents(pluginDir, workspaceAgentsDir);
   // The manifest is written LAST so it can declare the directories that actually exist. Claude Code
@@ -179,7 +194,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   );
   const populated =
     hasAgents || (await readdir(skillsDir, { withFileTypes: true })).some((entry) => entry.isDirectory() || entry.isSymbolicLink());
-  return { populated, missing: copied.missing };
+  return { populated, missing: [...new Set([...copied.missing, ...invalidSkillFolders])], invalidSkillFolders, generatedSkills };
 }
 
 export async function createRunGrantArtifacts({
@@ -266,6 +281,8 @@ export async function createRunGrantArtifacts({
       }
     }
     let missingSkills = [];
+    const invalidSkillFolders = new Set();
+    const generatedSkills = new Set();
     // The two content-addressed roots a warm process keeps reading between turns live under the
     // artifact dir, mounted at the same absolute path inside the container so the digest path the
     // engine was given resolves there.
@@ -285,6 +302,8 @@ export async function createRunGrantArtifacts({
         workspaceAgentsDir,
       });
       missingSkills = [...new Set([...missingSkills, ...shared.missing])];
+      for (const name of shared.invalidSkillFolders) invalidSkillFolders.add(name);
+      for (const name of shared.generatedSkills) generatedSkills.add(name);
       if (shared.populated) {
         const digest = await treeDigest(staging);
         const stableRoot = path.join(stableArtifactRoot, "claude-plugins");
@@ -312,23 +331,30 @@ export async function createRunGrantArtifacts({
         name: "gateway-user-grants",
         description: "Private skill grants for one gateway run",
         skillNames: userSkills,
+        workspaceSkillsDir,
       });
       // An unavailable grant or dependency is a profile warning, not a reason to strand every
       // request by this author. Keep the available instructions isolated and report omissions to
       // the orchestrator, just as for shared skills. Ownership/confinement checks still throw.
       missingSkills = [...new Set([...missingSkills, ...personal.missing])];
+      for (const name of personal.invalidSkillFolders) invalidSkillFolders.add(name);
       if (personal.populated) {
         claudePluginDirs.push(pluginDir);
         claudePluginEphemeral = true;
         const personalDir = path.join(pluginDir, "skills");
         for (const entry of (await readdir(personalDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
           if (!entry.isDirectory()) continue;
+          if (["gateway-usage", "channel-memory"].includes(entry.name)) continue;
           const file = path.join(personalDir, entry.name, "SKILL.md");
           const metadata = skillMetadata(parseFrontmatter(await readFile(file, "utf8")).data);
           personalSkillCatalog.push({ name: metadata.name || entry.name, description: metadata.description || `Personal skill ${entry.name}`, path: file });
         }
       }
     }
+
+    // Generated protocols satisfy dependencies from either grant tier. Only clear omissions
+    // after their manifests were actually copied into the shared plugin for this run.
+    missingSkills = missingSkills.filter((name) => !generatedSkills.has(name));
 
     let settingsFile = "";
     if (needsClaudeSettings || sharedPackages.length || personalPackages.length) {
@@ -372,6 +398,7 @@ export async function createRunGrantArtifacts({
       codexSkillSupportDir: codexSkillsDir,
       personalSkillCatalog,
       missingSkills,
+      invalidSkillFolders: [...invalidSkillFolders],
       // Every engine-facing path this run produced sits under one root (the mkdtemp above for the
       // per-run pieces; the content-addressed stable roots survive on purpose, as they always did).
       artifactRoot,

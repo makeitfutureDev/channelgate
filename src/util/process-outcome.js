@@ -3,6 +3,7 @@
 // and every other non-zero value is application-specific. Keep the raw code/signal in structured
 // logs or error.details while surfaces shown to people use these semantic summaries.
 
+import { resourceSnapshotFacts } from "../runtimes/resource-snapshot.js";
 import { redactLogValue } from "./redact.js";
 
 const SIGNAL_SUMMARIES = Object.freeze({
@@ -209,6 +210,12 @@ export function processFailureMessage(label, options = {}) {
   return `${subject} ${outcome.summary}${diagnostic ? `: ${diagnostic}` : "."}${context.killedDuringTool ? " — a tool call had no recorded result when the engine was killed; cause unknown." : ""}`;
 }
 
+// Numbers only: nothing an engine or a tool wrote can ride this into the event log.
+function processLimitCounts(value) {
+  const n = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : null);
+  return { current: n(value.current), max: n(value.max), denied: n(value.denied) };
+}
+
 // Preserve bounded, named outcome facts without copying stdout, stderr or arbitrary provider data.
 export function runFailureDiagnostics(error) {
   const d = error?.details || {};
@@ -219,7 +226,12 @@ export function runFailureDiagnostics(error) {
     processEnded: d.processEnded === true,
     explicitStop: d.explicitStop === true,
     providerError: d.providerError === true,
+    ...(d.errorCode === "ENGINE_RESOURCE_EXHAUSTED" ? {
+      errorCode: d.errorCode, resourceSnapshot: resourceSnapshotFacts(d.resourceSnapshot),
+    } : {}),
     runtime: typeof d.runtime === "string" ? d.runtime.slice(0, 80) : null,
+    // The container's process limit refused starts during the turn (gateway/process-limit.js).
+    ...(d.processLimit && typeof d.processLimit === "object" ? { processLimit: processLimitCounts(d.processLimit) } : {}),
     ...(d.killedDuringTool === true ? midToolKillDetails({ code: d.exitCode, signal: d.signal, pendingToolNames: d.pendingToolNames }) : {}),
   };
 }

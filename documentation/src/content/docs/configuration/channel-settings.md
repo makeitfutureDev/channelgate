@@ -3,7 +3,7 @@ title: Channel settings
 description: Configure one conversation's tools, runtime, workspace, skills, and access.
 ---
 
-Each ChannelGate conversation has its own settings. A conversation can be a Slack channel, group, DM, or a supported conversation on another platform. Threads share that conversation's workspace and permissions, while a thread can have its own engine session and runtime selection.
+Each ChannelGate conversation has its own settings. A conversation can be a Slack channel, group, DM, or a supported conversation on another platform. Threads share that conversation's workspace and permissions, while a thread can have its own session and runtime selection.
 
 ## Where to configure
 
@@ -13,10 +13,10 @@ In the admin interface, open **Conversations**, select a conversation, and use i
 | --- | --- |
 | Access | Read-only, Worker, or Admin mode; Auto, Lean, network, user and manager policies |
 | MCP Connections | Conversation-level shared connections and token fallback preferences |
-| Cloud MCP | Additional servers or app groups selected separately for each engine |
+| Cloud MCP | Additional servers or app groups selected separately for each harness |
 | Environment | Write-only variables for this conversation |
 | Skills | Explicit skill grants and the followed skill template |
-| Runtime | Engine, model, effort, working folder, and related runtime options |
+| Runtime | Harness, license, model, effort, approved harnesses, working folder, and related runtime options |
 | Instructions | Standing instructions specific to the conversation |
 | Memory | Conversation memory and review information |
 
@@ -24,7 +24,7 @@ In the admin interface, open **Conversations**, select a conversation, and use i
 
 1. Approve the people who will use the bot and choose the conversation's access policy.
 2. Choose **Worker** if the agent needs to edit files or run commands. Turn **Auto** on only when you intend to automatically approve tool requests.
-3. Choose the engine and model, or leave the engine at **Default (global setting)** to inherit the gateway default.
+3. Choose the harness and model, or leave the harness at **Default (global setting)** to inherit the gateway default. When the harness has more than one usable license here, also choose the **License**.
 4. Select a relevant skill template and add project-specific skills.
 5. Configure the necessary app connections or environment variables in this conversation's scope.
 6. Save the conversation settings, then send a small test request in a fresh thread.
@@ -43,10 +43,49 @@ Do not paste credentials into instructions. Use **Environment** or the relevant 
 
 **Working folder** accepts a custom path; blank uses the default conversation folder. **Browse…** helps an administrator select an existing folder. Saving a new path changes the workspace used by future runs; existing files remain where they were. **Reset to default** changes the selection after saving, without copying the old project's files.
 
-Most saved conversation changes apply on the next message. Secrets and Codex sign-in controls have their own save actions. Existing threads can retain engine sessions and thread pins, so use a fresh thread when checking inherited defaults.
+Most saved conversation changes apply on the next message. Secrets and Codex sign-in controls have their own save actions. Existing threads can retain their sessions and thread pins, so use a fresh thread when checking inherited defaults.
 
 ## Who can change what
 
 Gateway admins can manage conversation access. Delegated channel managers can use the Slack Access settings allowed by the management policy, but cannot make themselves organization admins. Runtime changes have a separate organization policy. Conversation skill assignments are available to members; organization templates remain admin-managed.
 
 See [Permissions](/docs/features/permissions), [Models and effort](/docs/features/models-and-effort), [Shared workspaces](/docs/features/shared-workspaces), and [Environment variables](/docs/configuration/environment-variables).
+
+## Harness and license
+
+A conversation selects its runtime in four steps: harness, license, model, effort. The harness is Claude Code or Codex. A license is one credential of that harness together with the server it talks to.
+
+The **License** control offers **Any license** or one named license. With one named license, **If it fails, also use** adds more licenses of the same harness; when a license cannot answer, the turn moves to the next one. **Any license** also covers licenses added after you saved the conversation.
+
+The control is not shown when the harness has a single usable license in the conversation. A license is usable when it is switched on in gateway settings, admitted by the conversation's approved harnesses, and available there. A conversation's own Codex login is a license only in that conversation.
+
+When a selected license is removed, the conversation falls back to the gateway default, and a thread that pinned it follows the conversation again. [Engine licenses](/docs/features/engine-licenses) describes the license kinds, their verification, and the failover order.
+
+## Approved harnesses · Enterprise
+
+**Approved harnesses** locks a conversation to what it may run. Leave it unrestricted, or approve any mix of:
+
+- a whole harness, shown with **(any license)**, which admits every license of that harness, including licenses added later;
+- single licenses, which admit only those licenses.
+
+The conversation default must be approved. Thread pins, **If it fails, also use** candidates, run API overrides, queued work, and failover to the other harness are checked against the saved lock. A conversation locked to one harness never moves to the other one. A selection outside the lock produces a notice and is not replaced by an approved one.
+
+A lock that names only a removed license approves nothing. The conversation stays closed until an administrator with Enterprise selects again; in a longer lock, the remaining entries keep working.
+
+Changing the lock requires an Enterprise product license. A saved lock stays enforced after downgrade or expiry.
+
+## Monthly channel spending limit · Enterprise
+
+Set a positive USD amount for the conversation's monthly spending limit, or leave it unset for
+no cap (`monthlySpendingLimitUSD: null`). The limit compares recorded spend in the current UTC
+calendar month before admitting another run. Foreground, scheduled, API and background agent
+launches use the same admission check.
+
+This is not a provider invoice cap. A running job can finish above the limit, and concurrent
+launches can overshoot because spend is not reserved in advance. Unknown-cost records in the
+current month block admission until pricing is repaired or an admin clears the cap. Usage and
+costs outside this gateway are not controlled.
+
+Setting a limit requires Enterprise. A saved limit refuses new runs after downgrade instead of
+silently removing the safety control; an admin can clear it without Enterprise. Existing recorded
+usage is retained and the accounting month changes at midnight UTC on the first of the month.

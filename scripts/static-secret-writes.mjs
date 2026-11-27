@@ -11,14 +11,14 @@
 //      a name already artifact-derived (repeated to a fixpoint; by name, per file — conservative);
 //   2. a write call (WRITERS) whose PATH argument mentions a root or an artifact-derived name is
 //      flagged when its CONTENT argument mentions one of the SECRET_SOURCES — the resolver outputs
-//      that hold real values (the Composio/toolbox tokens, a relay's token, a resolved run env, the
+//      that hold real values (the Composio/Make tokens, a relay's token, a resolved run env, the
 //      redactor's list of real values).
 // A write that is deliberate and reviewed carries `static-check: allow-secret-artifact-write <why>`
 // in a comment on one of the two lines above it.
 import { parse } from "acorn";
 
 export const ARTIFACT_ROOTS = /\b(?:artifactDir|runArtifactRoot|sshUserDir|sshUsersDir|channelArtifactDir)\b/;
-export const SECRET_SOURCES = /\b(?:composioUserToken|composioToken|toolboxToken|makeToolboxKey|resolvedRunEnv|realValues)\b|\brelay\??\.token\b/;
+export const SECRET_SOURCES = /\b(?:composioUserToken|composioToken|makeToolboxKey|resolvedRunEnv|realValues|redactionValues)\b|\brelay\??\.token\b/;
 export const WRITERS = new Set(["writeFile", "writeFileSync", "appendFile", "appendFileSync", "writePrivate", "writeSecretFile"]);
 export const ALLOW_MARKER = "static-check: allow-secret-artifact-write";
 

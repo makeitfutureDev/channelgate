@@ -23,8 +23,10 @@
 //   gateway       the control plane (src/mcp/gateway-server.js), tool surface fixed by the claims.
 //   composio-sdk  Enterprise SDK-mode Composio: args[0] is the session URL, which the capability's
 //                 `composioSessions` must grant (src/ee/composio-sdk-bridge.js).
+//   composio-exec the Composio script relay (./composio-exec.js): newline-delimited JSON requests,
+//                 not MCP, for scripts in the container; needs a "composio-exec" scoped capability.
 //   remote-mcp    a header-bearing remote MCP server (composio-user / composio-agent in token
-//                 mode, makeitfuture-toolbox, make-toolbox) relayed by the daemon: args[0] is the
+//                 mode, make-toolbox) relayed by the daemon: args[0] is the
 //                 server NAME. The capability's signed `remoteMcps` claim must name it AND the
 //                 daemon's in-memory registry (./remote-mcp-registry.js) must hold a live
 //                 registration for it under the capability's jti; the daemon then dials the real
@@ -61,11 +63,14 @@ import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runtimeSocketDir, runtimeSocketFile } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
+import { withCapabilityLiveness } from "../gateway/capability-liveness.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./gateway-server.js";
 import { runBridge } from "../ee/composio-sdk-bridge.js";
 import { authorizeRemoteMcp, retainRemoteMcps } from "./remote-mcp-registry.js";
 import { runRemoteRelay } from "./remote-relay.js";
+import { getPrivateMcpHosts } from "../config/settings.js";
 import { withComposioApproval } from "./composio-approval.js";
+import { COMPOSIO_EXEC_SERVICE, serveComposioExec } from "./composio-exec.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_MAX_BYTES = 64 * 1024;
@@ -73,7 +78,7 @@ const HELLO_MAX_BYTES = 64 * 1024;
 // a truncation. A gateway root deep enough to blow it must degrade to "container runs can't reach
 // the control plane", never to a failed boot.
 const MAX_SOCKET_PATH_BYTES = 100;
-const SERVICES = new Set(["gateway", "composio-sdk", "remote-mcp"]);
+const SERVICES = new Set(["gateway", "composio-sdk", "remote-mcp", COMPOSIO_EXEC_SERVICE]);
 const REFUSAL_BY_SERVICE = { "composio-sdk": "composio bridge unavailable", "remote-mcp": "remote MCP unavailable" };
 // At most this many relay connections at once per grant and server. A slot is held from the
 // accepted hello until BOTH the socket has closed AND the upstream dial has settled (and been torn
@@ -138,7 +143,7 @@ export function relaySlotStats() {
  * `secret()` is the daemon's own capability signing secret; `handlers` are the daemon-side
  * background/approval/restart functions the in-process tools call directly.
  */
-export function serveMcpConnection(socket, { handlers = {}, secret = () => process.env.CG_APPROVAL_SECRET || "", log = console, connectRemote = undefined } = {}) {
+export function serveMcpConnection(socket, { handlers = {}, secret = () => process.env.CG_APPROVAL_SECRET || "", log = console, connectRemote = undefined, composioExec = {} } = {}) {
   socket.setNoDelay?.(true);
   let head = Buffer.alloc(0);
   let settled = false;
@@ -189,14 +194,34 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     if (!SERVICES.has(frame.service)) return refuse(socket, `unsupported service "${helloString(frame.service, 40)}"`);
     // The gateway service takes no arguments. A relayed entry reaching it anyway means a broker
     // that dropped CG_MCP_SERVICE — an image older than spec 1.6.0 — and serving the control plane
-    // under a Composio/toolbox server's name would be silently wrong. Say what to do instead.
+    // under a Composio/Make server's name would be silently wrong. Say what to do instead.
     if (frame.service === "gateway" && Array.isArray(frame.args) && frame.args.length) {
       return refuse(socket, "the gateway service takes no arguments; if this came from a relayed MCP entry the channel image is older than this gateway — run `npm run build:image`");
     }
 
     const cap = typeof frame.cap === "string" ? frame.cap : "";
-    const verify = () => verifyGatewayCapability(cap, { secret: secret() });
-    const checked = verify();
+    // The Composio script relay speaks plain JSON lines, not MCP, and opens ONLY with a
+    // composio-exec scoped capability (a gateway-tools token is refused here, and a composio-exec
+    // token is refused by every other service). Liveness is re-checked on every request.
+    if (frame.service === COMPOSIO_EXEC_SERVICE) {
+      const verifyExec = withCapabilityLiveness(() => verifyGatewayCapability(cap, { secret: secret(), scope: "composio-exec" }));
+      const checkedExec = verifyExec({ tool: "composio-exec" });
+      if (!checkedExec.ok) return refuse(socket, `capability rejected (${checkedExec.reason})`);
+      const daemon = createDirectDaemonIpc(handlers);
+      if (frame.framed === true) writeFrame(socket, { channelgate: "ready", v: 1, service: frame.service });
+      serveComposioExec(socket, rest, {
+        ...composioExec, // test seams only (client, entitlement, mode); production passes none
+        verify: () => verifyExec({ tool: "composio-exec" }),
+        requestApproval: (body) => daemon.call("approval", body),
+      });
+      return;
+    }
+    // Signature and expiry, THEN liveness: a validly signed capability is authority only while
+    // its conversation has live work (gateway/capability-liveness.js). Re-run on every tool call
+    // and every relayed request, so a token copied out of the container stops working when the
+    // turn, job, review or SSH session that minted it is over.
+    const verify = withCapabilityLiveness(() => verifyGatewayCapability(cap, { secret: secret() }));
+    const checked = verify({ tool: "hello" });
     if (!checked.ok) return refuse(socket, `capability rejected (${checked.reason})`);
 
     // remote-mcp is authorized BEFORE anything is dialled, and refused with one fixed sentence that
@@ -275,6 +300,8 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
             url: remoteTarget.url,
             headers: remoteTarget.headers,
             publicOnly: remoteTarget.publicOnly === true,
+            // A custom MCP may also reach an admin-approved private host:port, read live per dial.
+            ...(remoteTarget.publicOnly === true ? { privateHosts: getPrivateMcpHosts } : {}),
             transport,
             authorize: () => authorizeRemoteMcp(verify(), remoteName),
             ...(connectRemote ? { connect: connectRemote } : {}),

@@ -14,22 +14,23 @@ process.env.PATH = `${path.join(root, "test", "fixtures")}${path.delimiter}${pro
 process.env.SESSION_KEEPALIVE = "0";
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "conversation-driver-workspaces");
 
-const { upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { upsertChannelEntry, saveChannelMeta, patchChannelMeta, setUser } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { setRuntimeResolver } = await import("../src/gateway/run.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { startApiRun, getApiJob } = await import("../src/gateway/api-runs.js");
 const { createRunsRouter } = await import("../src/web/routes/runs.js");
+const { setThreadEffort, getThreadEffort } = await import("../src/gateway/thread-engine.js");
 const { runQueue } = await import("../src/slack/message-lifecycle.js");
 const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
 
 let sequence = 0;
-async function fixture(engine = "claude") {
+async function fixture(engine = "claude", { isDM = false } = {}) {
   saveSettings({ engine, engineEnabled: { claude: true, codex: true }, engineFallback: false, memoryReviewEvery: 0, composioMode: "personal" });
   const id = `C_API_CONV_DRIVER_${++sequence}`;
   const name = `api-conv-driver-${sequence}`;
-  const entry = await upsertChannelEntry(id, { name, type: "channel" });
-  const meta = { channelId: id, name, type: "channel", platform: "slack", template: "custom", engine, allowedMcps: [] };
+  const entry = await upsertChannelEntry(id, { name, type: isDM ? "im" : "channel", isDM });
+  const meta = { channelId: id, name, type: isDM ? "im" : "channel", isDM, platform: "slack", template: "custom", engine, allowedMcps: [] };
   await saveChannelMeta(entry.slug, meta);
   await mkdir(resolveRuntime(entry.slug, meta).cwd, { recursive: true });
   const posts = [];
@@ -57,7 +58,7 @@ async function fixture(engine = "claude") {
     agent: { sessions: { setStatus: async () => ({ ok: true }) } },
   };
   const slack = { snapshot: () => ({ connected: true, teamId: "T_CONV_DRIVER" }), getClient: () => client };
-  return { id, entry, posts, slack };
+  return { id, entry, posts, slack, client };
 }
 
 async function waitFor(check, timeoutMs = 15_000) {
@@ -72,6 +73,47 @@ async function settled(id) {
   return getApiJob(id);
 }
 test.afterEach(() => setRuntimeResolver(null));
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: real API replies use only the verified owner's preference and never tag in DMs`, async () => {
+    const owner = `U_API_MENTIONS_${engine.toUpperCase()}`;
+    const other = `U_API_MENTIONS_OTHER_${engine.toUpperCase()}`;
+    await setUser(owner, { name: "Mention owner", approved: true, replyMentions: true });
+    await setUser(other, { name: "Other author", approved: true, replyMentions: false });
+    const backend = createFakeRuntimeBackend();
+    setRuntimeResolver((slug, meta, options) => fakeTarget(backend, slug, meta, options));
+    for (const scenario of ["owner-on", "owner-off", "attributed-owner", "unknown-author", "dm-owner-on"]) {
+      const f = await fixture(engine, { isDM: scenario === "dm-owner-on" });
+      await patchChannelMeta(f.entry.slug, { access: "approved" });
+      await setUser(owner, { replyMentions: scenario !== "owner-off" });
+      // Model ChatStreamer's stable message identity, so successful finalization does not use
+      // its recovery fallback. Every answer below crosses the real API driver and engine runner.
+      const stream = f.client.chatStream;
+      f.client.chatStream = (input) => ({ ...stream(input), ts: "1700000000.900000" });
+      const trusted = scenario.startsWith("owner-") || scenario === "dm-owner-on";
+      const principal = trusted ? { channelId: f.id, slug: f.entry.slug, createdBy: owner, tokenId: "fixture-channel-token" } : null;
+      const started = await startApiRun({
+        message: "Reply with the short fixture answer",
+        channel: f.id,
+        author: scenario === "unknown-author" ? "U_UNKNOWN_ATTRIBUTION" : trusted ? other : owner,
+        principal,
+        slack: f.slack,
+        queueMemoryReview: () => null,
+      });
+      assert.equal(started.ok, true, scenario);
+      const job = await settled(started.jobId);
+      assert.equal(job.status, "completed", `${scenario}: ${job.error || ""}`);
+      assert.equal(job.engine, engine);
+      const replies = f.posts.filter((post) => post.thread_ts === started.threadTs && /(?:Stub engine|Codex stub) reply/.test(post.text || ""));
+      assert.ok(replies.length, `${scenario}: the engine answer was delivered`);
+      const answer = replies.map((post) => post.text).join("\n");
+      assert.equal(answer.split(`<@${owner}>`).length - 1, scenario === "owner-on" ? 1 : 0, scenario);
+      assert.ok(!answer.includes(`<@${other}>`), "caller attribution cannot replace the verified owner");
+      assert.ok(!answer.includes("<@U_UNKNOWN_ATTRIBUTION>"), "unknown attribution cannot opt in");
+    }
+    assert.equal(backend.calls.spawn.length, 5);
+  });
+}
 
 test("simultaneous conversation events queue on one Slack thread and resume the first session", async () => {
   const f = await fixture();
@@ -208,3 +250,34 @@ test("a keyed Codex conversation resumes the provider-minted session on its next
   assert.ok(replies.some((p) => /resume=no/.test(p.text)));
   assert.ok(replies.some((p) => /resume=yes/.test(p.text)), "both Codex results are delivered in the same Slack thread");
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: API model and mode overrides preserve a reused conversation's effort pin`, async () => {
+    const f = await fixture(engine);
+    const model = engine === "claude" ? "sonnet" : "gpt-5.6-sol";
+    await patchChannelMeta(f.entry.slug, { model, effort: "low" });
+    const backend = createFakeRuntimeBackend();
+    setRuntimeResolver((slug, meta, options) => fakeTarget(backend, slug, meta, options));
+    const input = { channel: f.id, conversationKey: "effort:inheritance", slack: f.slack, queueMemoryReview: () => null };
+    const first = await startApiRun({ ...input, message: "Start this conversation" });
+    assert.equal(first.ok, true);
+    assert.equal((await settled(first.jobId)).status, "completed");
+    await setThreadEffort(f.entry.slug, first.threadTs, "high");
+    const cases = [
+      { model }, { mode: "read" }, { engine }, { model, effort: null },
+      { model, effort: "" }, { model, effort: "medium" }, {},
+    ];
+    for (const overrides of cases) {
+      const next = await startApiRun({ ...input, ...overrides, message: "Continue with this request's settings" });
+      assert.equal(next.ok, true);
+      assert.equal(next.threadTs, first.threadTs);
+      const job = await settled(next.jobId);
+      assert.equal(job.status, "completed", job.error || "");
+      const expected = overrides.effort || "high";
+      const call = backend.calls.spawn.at(-1);
+      if (engine === "claude") assert.equal(call.args[call.args.indexOf("--effort") + 1], expected);
+      else assert.ok(call.args.includes(`model_reasoning_effort="${expected}"`));
+      assert.equal(await getThreadEffort(f.entry.slug, first.threadTs), "high", "per-request overrides never mutate the thread pin");
+    }
+  });
+}

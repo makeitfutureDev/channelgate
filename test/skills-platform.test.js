@@ -863,3 +863,22 @@ test("templates: only admins edit them; anyone may ask — an approved template 
   assert.deepEqual(removed.removed, ["tpl-req"]);
   assert.deepEqual(catalog.getTemplate("req-tpl").skills, []);
 });
+
+test("proposal deciders: a channel decides edits of its own writable skills; everything else is an admin's", async () => {
+  const decide = (slug, kind = "change") => authoring.proposalDecider({ slug, kind });
+  catalog.putSkillRevision({ files: [md("Decider Local", "channel skill")], ownerKind: "local" });
+  catalog.setSkillChannelScope("decider-local", "C_DECIDER");
+  catalog.putSkillRevision({ files: [md("Decider Source", "read-only source")], ownerKind: "folder" });
+  catalog.setSkillChannelScope("decider-source", "C_DECIDER");
+  catalog.putSkillRevision({ files: [md("Decider Org", "library skill")], ownerKind: "local" });
+  assert.deepEqual(decide("decider-local"), { tier: "channel", channelId: "C_DECIDER" });
+  assert.deepEqual(decide("decider-local", "feedback"), { tier: "channel", channelId: "C_DECIDER" });
+  for (const kind of ["promote", "delete", "template"]) assert.equal(decide("decider-local", kind).tier, "admin", kind);
+  assert.equal(decide("decider-source").tier, "admin", "approving would pin an override of a source the channel cannot write");
+  assert.equal(decide("decider-source", "feedback").tier, "channel", "feedback writes nothing");
+  assert.equal(decide("decider-org").tier, "admin");
+  assert.equal(decide("no-such-skill").tier, "admin");
+  const { proposal } = authoring.proposeSkillChange({ skill: "decider-org", files: [md("Decider Org", "edited")], note: "n", proposedBy: "U2" });
+  await assert.rejects(authoring.decideSkillProposal(proposal.id, { decision: "approve", decidedBy: "U2", asChannelMember: true }), /needs an admin/);
+  assert.equal(catalog.getProposal(proposal.id).status, "pending");
+});

@@ -28,6 +28,7 @@ test('parser maps typed settings to the guarded card actions and rejects anythin
   assert.deepEqual(parseSettingsCommand('auto on'), { action: 'settings.access', data: { field: 'autoMode', access_autoMode: 'on' } });
   assert.deepEqual(parseSettingsCommand('Mode Read'), { action: 'settings.access', data: { field: 'mode', access_mode: 'read' } });
   assert.deepEqual(parseSettingsCommand('managers members'), { action: 'settings.access', data: { field: 'manageAccess', access_manageAccess: 'members' } });
+  assert.deepEqual(parseSettingsCommand('skillswap on'), { action: 'settings.access', data: { field: 'skillRuntimeSwap', access_skillRuntimeSwap: 'on' } });
   assert.deepEqual(parseSettingsCommand('vpn off'), { action: 'settings.vpn', data: { enabled: false } });
   assert.deepEqual(parseSettingsCommand('effort high'), { action: 'settings.runtime', data: { scope: 'thread', field: 'effort', thread_effort: 'high' } });
   assert.deepEqual(parseSettingsCommand('channel model default'), { action: 'settings.runtime', data: { scope: 'channel', field: 'model', channel_model: '__default__' } });

@@ -4,9 +4,9 @@
 
 [![License: Sustainable Use License 1.4](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.4-2f6f4e)](./LICENSE.md)
 [![CI](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml)
-[![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2022.13-3c873a)](./docs/COMPATIBILITY.md)
+[![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2024.0.0-3c873a)](./docs/COMPATIBILITY.md)
 [![Chat platforms and support status](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](#supported-platforms-and-ai-engines)
-[![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode-8a3ffc)](#supported-platforms-and-ai-engines)
+[![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex-8a3ffc)](#supported-platforms-and-ai-engines)
 
 ChannelGate is a **self-hosted AI agent gateway** that brings coding, research and workflow
 automation into your team's conversations. Use it as a Slack AI bot, or connect Microsoft Teams
@@ -21,7 +21,7 @@ their external services; see [privacy and data flow](./docs/PRIVACY-AND-DATA-FLO
 
 **Support status:** Slack is the primary supported surface. **Microsoft Teams and Google Chat are
 Beta. Composio SDK mode is Enterprise-only and Beta**; standard Composio MCP mode is available in
-every tier. OpenCode is experimental and restricted to its documented read profile.
+every tier.
 
 [Get started](#getting-started) · [Team benefits](#what-you-get) · [Full feature list](#full-feature-list) ·
 [Use cases](#use-cases) · [License and tiers](#licensing--partners) · [Documentation](#documentation)
@@ -40,7 +40,7 @@ Formerly Claude Gateway for Slack.
 
 ## Getting started
 
-**Requirements:** Linux, Node.js ≥ 22.13, rootless Podman, and credentials for the engine you will
+**Requirements:** Linux, Node.js ≥ 24.0.0, rootless Podman, and credentials for the engine you will
 use. The default Claude setup uses the daemon user's host login, a configured setup token or
 `ANTHROPIC_API_KEY`; Codex requires its own authentication. See the
 [installation guide](./INSTALL.md) for prerequisites and service-account setup.
@@ -56,8 +56,12 @@ The installer checks prerequisites, installs dependencies, scaffolds `.env` and 
 container image with the engine CLIs and media tools. If the image build fails, fix the reported
 prerequisite and run `npm run build:image` before sending the first prompt.
 
-1. Open the admin UI at <http://localhost:4747>. On a new install, use the admin password printed
-   once at first boot, or your configured password. The UI starts without Slack credentials.
+1. Open the admin UI at <http://localhost:4747>. First-time setup uses username `admin` and the
+   password printed once at first boot (or your configured password), then asks you to create a
+   passkey. Set the HTTPS Public URL before enrolling keys for remote access. After first
+   enrollment, select **Sign in with a passkey** and choose your saved account; password login is
+   retired and no username entry is needed. The UI starts without
+   Slack credentials. See [admin access and recovery](./docs/OPERATIONS.md#admin-accounts-passkeys-and-recovery).
 2. Create a Slack app at <https://api.slack.com/apps> using the bundled
    [Slack app manifest](./slack-app-manifest.json). Generate an app-level token with
    `connections:write`, install the app, and copy its bot token and signing secret.
@@ -138,12 +142,12 @@ catalog, including edge cases and links to regression coverage.
 - **User and guest access:** select approved-member access, admins only or locked access,
   with separate use/manage controls and channel guest grants. DMs require admin or approved status.
 - **Scoped MCP access:** grant external tool servers per channel and select optional engine
-  integrations. A channel can opt out of inherited organization tokens.
+  integrations. Composio is per channel (`composio-agent`) and per person (`composio-user`).
 - **Channel environment secrets:** configure credentials for tools such as provider CLIs through
   write-only settings. Names are validated, rotations retire warm sessions, and known values are
   redacted from replies and job output. Runtime access and limits are documented below.
-- **Protected administration:** password sign-in, masked secret listings, password-confirmed
-  reveal for eligible settings, audit records and separately scoped API access.
+- **Protected administration:** individual usernames and passkey sign-in, masked secret listings,
+  recent-passkey verification for eligible secret reveals, audit records and separately scoped API access.
 
 ### MCP integrations and Composio accounts
 
@@ -192,6 +196,9 @@ catalog, including edge cases and links to regression coverage.
   to the workspace through short-lived, scoped links.
 - **Voice prompts:** optional local Whisper transcription with Slack transcript fallback turns
   supported voice clips into text instructions. Raw audio is not passed to the coding engines.
+- **Voice calls (Beta):** a **📞 Call** reply button opens a private browser call bound to the
+  thread. The gateway speaks through Google's Gemini Live API, your spoken requests run as normal
+  turns in that thread, and the transcript lands there when you hang up (`docs/VOICE-CALLS.md`).
 - **Video and screen recordings:** bundled media tools and a video-analysis workflow extract
   frames and speech for the agent to inspect inside the channel workspace.
 - **Browser automation:** bundled Playwright, Chromium and Chrome DevTools tooling support
@@ -283,11 +290,9 @@ release gate. They do not provide every Slack interaction or artifact. See
 | --- | --- | --- |
 | **Claude Code** | Default engine | Warm processes, thread resume, steering, skills, MCP tools and provider-reported cost. |
 | **OpenAI Codex** | Supported engine | Fresh process per turn with thread resume, skills, MCP tools, token usage and configured cost estimates. |
-| **OpenCode** | Experimental | Restricted workspace read profile; shell, edits, external tools/MCP and bypass modes are unavailable. |
 
-Claude and Codex versions are pinned in the runtime image. Check the [compatibility matrix](./docs/COMPATIBILITY.md),
-[engine capabilities](./docs/ENGINE-CAPABILITIES.md) and [OpenCode restrictions](./docs/OPENCODE-ADAPTER.md)
-before choosing a deployment profile.
+Claude and Codex versions are pinned in the runtime image. Check the [compatibility matrix](./docs/COMPATIBILITY.md)
+and [engine capabilities](./docs/ENGINE-CAPABILITIES.md) before choosing a deployment profile.
 
 ## How it works
 
@@ -349,20 +354,24 @@ license. See [why teams choose a self-hosted agent gateway](./docs/WHY.md) for m
 noncommercial use. It is not OSI open-source software, and no version
 is relicensed automatically.
 
-| | Registered channels | Registered users | AI messages per conversation per month |
-| --- | --- | --- | --- |
-| **No key** — install and run | 20 (one active per month) | 20 | 500 |
-| **Registered (free key)** — an account with your email | 20 | 20 | 500 |
-| **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default |
+| | Registered channels | Registered users | Active conversations per channel per UTC month | AI runs per channel per UTC month |
+| --- | --- | --- | --- | --- |
+| **No key** — install and run | 10 (one active per month) | 10 | 100 in the active channel | 500 |
+| **Registered (free key)** — an account with your email | 10 | 10 | 100 in each channel | 500 |
+| **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
-A free key lifts the one-active-conversation limit. Registered installations support up to 20
-channels (including DMs) and 20 users, at 500 AI messages per conversation per month. Enterprise
-removes these default caps and adds per-channel approved harnesses. A key belongs to the
-organization that operates the deployment; core confinement remains available in every tier.
+A conversation here is a chat thread, distinct from its registered channel. A free key supports
+up to 10 channels (including DMs) and 10 users, with up to 100 active conversations **in each
+channel per UTC month**, 500 AI runs per channel per month, and one month (30 days) of
+cost-tracking history. Repeated messages in an admitted thread do not consume another
+conversation slot. Thread counting starts with activity after the upgrade; old threads are
+counted when next used. Enterprise removes these default caps and adds per-channel approved
+harnesses. A key belongs to the organization that operates the deployment; core confinement
+remains available in every tier.
 Definitions, the offline grace period, and exactly what a deployment reports are in
 [`docs/LICENSE-KEYS.md`](./docs/LICENSE-KEYS.md).
 
-- **Registered — run it yourself.** Up to 20 registered channels and 20 users with a free key, on your own
+- **Registered — run it yourself.** Up to 10 registered channels and 10 users with a free key, on your own
   infrastructure. Modify SUL-covered code within the license; the EE directory has separate contribution and
   redistribution conditions. There is no obligation to publish internal modifications.
 - **Partner — operate it for clients.** Installing, configuring, supporting or running a **dedicated

@@ -1,4 +1,5 @@
 export const guides = [
+  { source: 'docs/VOICE-CALLS.md', slug: 'voice-calls', title: 'Voice calls', description: 'Native and browser voice calls, incoming iPhone calls, and APNs setup.' },
   { source: 'INSTALL.md', slug: 'installation', title: 'Install ChannelGate', description: 'Prepare a Linux host, connect Slack, and run the gateway.' },
   { source: 'docs/PLATFORMS.md', slug: 'platforms', title: 'Chat platforms', description: 'Slack setup and Microsoft Teams and Google Chat Beta support.' },
   { source: 'docs/ENGINE-CAPABILITIES.md', slug: 'engines', title: 'Engines and permissions', description: 'Engine capabilities, runtime boundaries, and permissions.' },

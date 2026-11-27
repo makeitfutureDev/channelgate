@@ -116,7 +116,7 @@ test("scheduled digest persists only the source threads visibly listed in the po
 
   let postedText = "";
   const client = {
-    conversations: { open: async () => ({ channel: { id: "D2" } }) },
+    conversations: { replies: async ({ ts }) => ({ messages: [{ ts }] }), open: async () => ({ channel: { id: "D2" } }) },
     chat: {
       getPermalink: async ({ channel, message_ts }) => ({ permalink: `https://slack.test/${channel}/${message_ts}` }),
       postMessage: async ({ text }) => {
@@ -145,7 +145,7 @@ test("scheduled digest without a returned Slack timestamp does not guess a snaps
   recordActivity({ ...row, userId: "U3", isBot: false, aiTurn: true, text: "question", tsMs: 50_000 });
   recordActivity({ ...row, userId: BOT, isBot: true, aiTurn: true, text: "answer", tsMs: 50_001 });
   const client = {
-    conversations: { open: async () => ({ channel: { id: "D3" } }) },
+    conversations: { replies: async ({ ts }) => ({ messages: [{ ts }] }), open: async () => ({ channel: { id: "D3" } }) },
     chat: {
       getPermalink: async () => ({ permalink: "" }),
       postMessage: async () => ({ ok: true }),

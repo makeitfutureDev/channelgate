@@ -106,7 +106,7 @@ export async function runUpdateSmoke({
 } = {}) {
   const startedAt = Date.now();
   const results = [];
-  let target, probe, release, releaseLive, owned = false;
+  let target, probe, lease, releaseLive, owned = false;
   try {
     target = resolveTarget(`update-smoke-${randomUUID()}`);
     if (target?.backend !== "container" || !target.runtime?.capabilities?.isolated) {
@@ -115,8 +115,8 @@ export async function runUpdateSmoke({
     owned = true;
     releaseLive = markLive({ channelId: target.meta?.channelId, kind: "turn", id: target.slug });
     probe = await prepareUpdateSmokeFolder({ root, folder: target.cwd });
-    release = target.runtime.acquireLease(target, { kind: "update-smoke" });
-    await target.runtime.ensureUp(target, { forceImage: true });
+    lease = target.runtime.acquireLease(target, { kind: "update-smoke" });
+    await target.runtime.ensureUp(target, { forceImage: true, lease });
     for (const engine of engines) {
       const credentialFailure = await target.runtime.credentialError(target, engine.id);
       if (credentialFailure) {
@@ -161,7 +161,8 @@ export async function runUpdateSmoke({
       if (probe) await cleanup(() => probe.cleanup());
       for (const dir of [target.cleanWorkDir, target.artifactDir]) if (dir) await cleanup(() => rm(dir, { recursive: true, force: true }));
     }
-    if (typeof release === "function") release();
+    if (typeof lease === "function") lease();
+    else if (typeof lease?.release === "function") lease.release();
     if (typeof releaseLive === "function") releaseLive();
   }
   for (const id of requiredEngines) {

@@ -11,6 +11,10 @@ const BASE = "https://chat.googleapis.com/v1";
 // Keep the API cap equal to the formatter's 4096-character chunks; the cap here is the
 // last line of defence for text the formatter never saw (an edit payload, a raw notice).
 export const MAX_CHAT_TEXT = MAX_CHAT_MESSAGE_CHARS;
+// The formatter writes standard Markdown (`**bold**`, `[label](url)`, `<chat-user …>` mentions).
+// A Chat app's default syntax depends on when it was created — older apps default to Chat syntax,
+// where those render as literal asterisks and brackets — so every text write names the syntax.
+export const MARKUP_SYNTAX = "MARKUP_SYNTAX_MARKDOWN";
 
 const SPACE_RE = /^spaces\/[A-Za-z0-9_-]+$/;
 const MESSAGE_RE = /^spaces\/[A-Za-z0-9_-]+\/messages\/[A-Za-z0-9_.-]+$/;
@@ -69,13 +73,30 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
     throw lastErr;
   }
 
+  // A Chat API that refuses the markupSyntax field (an older API surface, a proxy that validates the
+  // schema) must not turn every reply into a failure: drop the field once, remember that for this
+  // client, and deliver the text in the app's default syntax rather than not at all.
+  let markupRefused = false;
+  async function callWithMarkup(path, opts) {
+    if (markupRefused) delete opts.body.markupSyntax;
+    if (!opts.body.markupSyntax) return call(path, opts);
+    try {
+      return await call(path, opts);
+    } catch (err) {
+      if (err?.status !== 400 || !/markup_?syntax/i.test(err.message)) throw err;
+      markupRefused = true;
+      delete opts.body.markupSyntax;
+      return call(path, opts);
+    }
+  }
+
   return {
     // `threadName` present ⇒ we MUST also send messageReplyOption. Without it Chat silently ignores
     // the thread and starts a new one ("Default. Starts a new thread. Using this option ignores any
     // thread ID"), which reads as a bot that cannot follow a conversation.
     async createMessage(space, { text, threadName = "", cardsV2 = null, privateMessageViewer = null } = {}) {
       const parent = requireName(space, isSpaceName, "space");
-      const body = { text: String(text ?? "").slice(0, MAX_CHAT_TEXT) };
+      const body = { text: String(text ?? "").slice(0, MAX_CHAT_TEXT), markupSyntax: MARKUP_SYNTAX };
       if (cardsV2) body.cardsV2 = cardsV2;
       if (privateMessageViewer) body.privateMessageViewer = { name: requireName(
         typeof privateMessageViewer === 'string' ? privateMessageViewer : privateMessageViewer.name,
@@ -88,7 +109,7 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
         // delivered answer in a new thread beats a dropped one.
         query.messageReplyOption = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD";
       }
-      const res = await call(`${parent}/messages`, { method: "POST", query, body });
+      const res = await callWithMarkup(`${parent}/messages`, { method: "POST", query, body });
       return { messageId: res?.name || "", threadName: res?.thread?.name || "" };
     },
 
@@ -99,10 +120,11 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
       const name = requireName(messageName, isMessageName, "message");
       const body = {};
       const mask = [];
-      if (text != null) { body.text = String(text).slice(0, MAX_CHAT_TEXT); mask.push("text"); }
+      // markupSyntax rides beside text but is NOT an updateMask path (Chat rejects it there).
+      if (text != null) { body.text = String(text).slice(0, MAX_CHAT_TEXT); body.markupSyntax = MARKUP_SYNTAX; mask.push("text"); }
       if (cardsV2) { body.cardsV2 = cardsV2; mask.push("cardsV2"); }
       if (!mask.length) return { messageId: name };
-      const res = await call(name, { method: "PATCH", query: { updateMask: mask.join(",") }, body });
+      const res = await callWithMarkup(name, { method: "PATCH", query: { updateMask: mask.join(",") }, body });
       return { messageId: res?.name || name };
     },
 
@@ -119,6 +141,30 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
     // also reaches other public messages in a space the app belongs to.
     async getMessage(messageName) {
       return call(requireName(messageName, isMessageName, "message"));
+    },
+
+    // The newest public messages of one space (or one of its threads), returned oldest → newest.
+    // Needs the admin-approved chat.app.messages.readonly app scope; chat.bot cannot list messages.
+    // Private messages (privateMessageViewer) are never returned to an app-authenticated caller.
+    async listMessages(space, { threadName = "", limit = 30, pageSize = 100 } = {}) {
+      const parent = requireName(space, isSpaceName, "space");
+      const max = Math.max(1, Math.min(200, Math.floor(Number(limit) || 30)));
+      let filter = null;
+      if (threadName) {
+        const thread = requireName(threadName, isThreadName, "thread");
+        if (!thread.startsWith(`${parent}/threads/`)) throw new Error('Google Chat thread belongs to another space');
+        filter = `thread.name = ${thread}`;
+      }
+      const out = [];
+      let pageToken = "";
+      do {
+        const res = await call(`${parent}/messages`, { query: {
+          pageSize: Math.min(pageSize, max - out.length), orderBy: "createTime desc", filter, pageToken: pageToken || null,
+        } });
+        for (const message of res?.messages || []) if (isMessageName(message?.name)) out.push(message);
+        pageToken = res?.nextPageToken || "";
+      } while (pageToken && out.length < max);
+      return out.slice(0, max).reverse();
     },
 
     // Every space the app is a member of (chat.bot). Reaction subscriptions are per space.
@@ -157,6 +203,27 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
         pageToken = res?.nextPageToken || "";
       } while (pageToken && out.length < 1000);
       return out;
+    },
+
+    // The COMPLETE membership roster of a space, for proofs that need every reader (the agent
+    // directory's audience check, agent mail's requester check). Unlike listMembers it keeps the
+    // raw state/type and Google Group memberships (showGroups), and answers null when the roster
+    // is longer than `maxPages` pages: a truncated roster proves nothing.
+    async listMemberships(space, { pageSize = 1000, maxPages = 10 } = {}) {
+      const parent = requireName(space, isSpaceName, "space");
+      const out = [];
+      const tokens = new Set();
+      let pageToken = "";
+      for (let page = 0; page < maxPages; page += 1) {
+        const res = await call(`${parent}/members`, { query: { pageSize, showGroups: true, pageToken: pageToken || null } });
+        if (res?.memberships != null && !Array.isArray(res.memberships)) return null;
+        for (const m of res?.memberships || []) out.push(m);
+        pageToken = res?.nextPageToken || "";
+        if (!pageToken) return out;
+        if (tokens.has(pageToken)) return null;
+        tokens.add(pageToken);
+      }
+      return null;
     },
 
     // Inbound attachment bytes. Only the bot path (attachmentDataRef.resourceName → media.download)

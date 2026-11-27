@@ -15,7 +15,9 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 
-const { connectAuthority, DEFAULT_PROXY_PORT, DEFAULT_PROXY_HOST } = await import("../src/mcp/egress-connect.js");
+const { connectAuthority, connectThroughProxy, tunnelMode, TUNNEL_MODE_HEADER, DEFAULT_PROXY_PORT, DEFAULT_PROXY_HOST } = await import("../src/mcp/egress-connect.js");
+const { TUNNEL_MODE_HEADER: PROXY_TUNNEL_MODE_HEADER } = await import("../src/gateway/egress/proxy.js");
+const { PassThrough } = await import("node:stream");
 const HELPER = fileURLToPath(new URL("../src/mcp/egress-connect.js", import.meta.url));
 
 // A stand-in for the forwarder + proxy on 127.0.0.1: records each CONNECT head, then runs `serve`.
@@ -116,6 +118,70 @@ test("a refusal is one stderr line naming the proxy's reason, exit 1, nothing on
   }
 });
 
+test("the tunnel-mode header: the helper's copy matches the proxy's, and parsing is exact", () => {
+  assert.equal(TUNNEL_MODE_HEADER, PROXY_TUNNEL_MODE_HEADER, "the helper is staged on its own, so it keeps a copy");
+  assert.equal(tunnelMode("HTTP/1.1 200 Connection Established\r\nX-ChannelGate-Tunnel: inspect"), "inspect");
+  assert.equal(tunnelMode("HTTP/1.1 200 Connection Established\r\nx-channelgate-tunnel: RAW"), "raw");
+  assert.equal(tunnelMode("HTTP/1.1 200 Connection Established"), "", "an older proxy sends no header: bytes pass as before");
+  assert.equal(tunnelMode("HTTP/1.1 200 OK\r\nX-Other: X-ChannelGate-Tunnel: inspect"), "");
+});
+
+test("an inspected tunnel refuses a non-TLS client with the reason and sends nothing", async () => {
+  // A TDS PRELOGIN (Azure SQL) starts with 0x12, not the TLS handshake byte 0x16.
+  const proxy = await fakeProxy((socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\nX-ChannelGate-Tunnel: inspect\r\n\r\n");
+    socket.on("data", (chunk) => { proxy.received = (proxy.received || 0) + chunk.length; });
+  });
+  try {
+    const out = await runHelper(["sql.example.com", "1433"], { port: proxy.port, input: Buffer.from([0x12, 0x01, 0x00, 0x2f]), keepOpenMs: 2000 });
+    assert.equal(out.code, 1);
+    assert.equal(out.stdout, "");
+    assert.match(out.stderr, /^cg-egress-connect: sql\.example\.com:1433 is not a declared raw destination for this channel; the gateway's egress proxy carries only HTTPS \(TLS\) to it, and this client is not speaking TLS, so nothing was sent\. Ask for the exact host and port with allow_channel_ssh_host\(\{host: "sql\.example\.com", port: 1433\}\)/);
+    assert.equal(out.stderr.split("\n").filter(Boolean).length, 1, "one line");
+    assert.equal(proxy.received || 0, 0, "the refused bytes never left the container");
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("an inspected tunnel passes a TLS client through unchanged", async () => {
+  const proxy = await fakeProxy((socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\nX-ChannelGate-Tunnel: inspect\r\n\r\n");
+    let got = Buffer.alloc(0);
+    socket.on("data", (chunk) => { got = Buffer.concat([got, chunk]); });
+    socket.on("end", () => socket.end(`got:${got.toString("hex")}`));
+  });
+  try {
+    const out = await runHelper(["example.com", "443"], { port: proxy.port, input: Buffer.from([0x16, 0x03, 0x01, 0xaa]), keepOpenMs: 50 });
+    assert.equal(out.code, 0, out.stderr);
+    assert.equal(out.stdout, "got:160301aa");
+    assert.equal(out.stderr, "");
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("a client that waits for the server on an inspected tunnel gets one hint, and the tunnel stays up", async () => {
+  const proxy = await fakeProxy((socket) => {
+    socket.write("HTTP/1.1 200 Connection Established\r\nX-ChannelGate-Tunnel: inspect\r\n\r\n");
+    setTimeout(() => socket.end(), 120);
+  });
+  try {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let err = "";
+    stderr.on("data", (c) => { err += c; });
+    stdout.resume();
+    const code = await connectThroughProxy({ host: "db.example.com", port: 3306, proxyPort: proxy.port, stdin, stdout, stderr, inspectHintMs: 20 });
+    assert.equal(code, 0, "the hint does not end the tunnel; the server closing it does");
+    assert.match(err, /^cg-egress-connect: db\.example\.com:3306 is not a declared raw destination for this channel; .*no TLS handshake has arrived yet .*allow_channel_ssh_host\(\{host: "db\.example\.com", port: 3306\}\)/);
+    assert.equal(err.split("\n").filter(Boolean).length, 1);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("an unreachable forwarder and bad arguments fail with the reason", async () => {
   const closed = await fakeProxy(() => {});
   const port = closed.port;
@@ -128,15 +194,17 @@ test("an unreachable forwarder and bad arguments fail with the reason", async ()
   assert.match(usage.stderr, /invalid port[\s\S]*usage: cg-egress-connect <host> <port>/);
 });
 
-test("the helper is dependency-free, and the image stages it behind a POSIX shim", () => {
+test("the helper is dependency-free, and the image stages it behind a POSIX shim", async () => {
   const source = readFileSync(HELPER, "utf8");
   const imports = [...source.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
   assert.ok(imports.length > 0);
   for (const spec of imports) assert.match(spec, /^node:/, `${spec} is not a node built-in`);
+  const { EGRESS_CONNECT, VERBATIM_HELPERS } = await import("../src/runtimes/container/image-bundle.js");
+  assert.equal(EGRESS_CONNECT.source, "src/mcp/egress-connect.js");
+  assert.equal(EGRESS_CONNECT.dest, "bin/cg-egress-connect.mjs");
+  assert.ok(VERBATIM_HELPERS.includes(EGRESS_CONNECT));
   const build = readFileSync(new URL("../scripts/build-image.mjs", import.meta.url), "utf8");
-  assert.match(build, /const EGRESS_CONNECT_SOURCE = "src\/mcp\/egress-connect\.js";/);
-  assert.match(build, /const EGRESS_CONNECT_DEST = "bin\/cg-egress-connect\.mjs";/);
-  assert.match(build, /cpSync\(connect, path\.join\(dir, EGRESS_CONNECT_DEST\)\)/);
+  assert.match(build, /for \(const helper of VERBATIM_HELPERS\)[\s\S]*?cpSync\(source, path\.join\(dir, helper\.dest\)\)/);
   const shim = readFileSync(new URL("../containers/bin/cg-egress-connect", import.meta.url), "utf8");
   assert.match(shim, /^#!\/bin\/sh\n/);
   assert.match(shim, /exec node \/opt\/channelgate\/bin\/cg-egress-connect\.mjs "\$@"\n$/);

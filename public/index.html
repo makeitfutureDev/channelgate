@@ -20,9 +20,11 @@
         </div>
         <nav class="nav">
           <a class="nav-item active" data-view="dashboard" href="/overview"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg> Overview</a>
+          <a class="nav-item" data-view="subscriptions" href="/subscriptions"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="M2 6.5h12M4 10h3"/></svg> Subscriptions</a>
           <a class="nav-item" data-view="channels" href="/conversations"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 1.5 4 14.5M12 1.5l-1.5 13M2 5.5h12.5M1.5 10.5H14"/></svg> Conversations</a>
           <a class="nav-item" data-view="users" href="/users"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.6"/><path d="M1.5 14c0-2.5 1.8-4 4-4s4 1.5 4 4M11 5.6a2.4 2.4 0 1 0 .1-4.7M11.5 9.9c1.9.3 3 1.8 3 4.1"/></svg> Users</a>
           <a class="nav-item" data-view="schedules" href="/automations"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M8 4.5V8l2.4 1.6"/></svg> Automations</a>
+          <a class="nav-item" data-view="roi" href="/roi"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.5 2.5L14 4.5"/><path d="M10.5 4.5H14V8"/></svg> ROI</a>
           <a class="nav-item" data-view="audit" href="/activity"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13.5V9M6 13.5V5.5M10 13.5V2.5M14 13.5V7"/></svg> Activity</a>
           <a class="nav-item" data-view="skills" href="/skills"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 2 4.75v6.5L8 14.5l6-3.25v-6.5Z"/><path d="M2 4.75 8 8l6-3.25M8 8v6.5"/></svg> Skills</a>
           <a class="nav-item" data-view="api" href="/api-docs"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 2.5 7 13.5"/></svg> API</a>
@@ -30,6 +32,7 @@
           <a class="nav-item" data-view="system-health" href="/system-health"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5V9.2M5 12.5V5.8M8 12.5V7.5M11 12.5V3.2M14 12.5V6.2M1.5 14h13"/></svg> System health</a>
         </nav>
         <div class="sidebar-foot">
+          <a id="my-activity" class="personal-activity" href="/activity/from-admin">My Activity ↗</a>
           <div id="health" class="health"><div class="statuschip"><span class="dot off"></span>Loading…</div></div>
           <!-- Gateway version + one-click update (populated by loadUpdateStatus in app.js) -->
           <div id="update" class="health"></div>
@@ -38,6 +41,7 @@
       </aside>
 
       <main class="content">
+        <section id="view-subscriptions" class="view full"></section>
         <section id="view-system-health" class="view full"></section>
         <!-- Dashboard: usage KPIs + charts for a selectable date range (default landing view) -->
         <section id="view-dashboard" class="view full active">
@@ -103,7 +107,7 @@
           <div class="view-head dash-head">
             <div>
               <h2>Users</h2>
-              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> / <strong>Toolbox</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
+              <p class="hint">Approve who may use the bot, mark <strong>admins</strong>, and set each user's personal <strong>Composio</strong> tokens (injected only into their own messages) and personal skill grants. Click a row to edit.</p>
             </div>
             <div class="dash-tools">
               <div class="setsearch user-search">
@@ -115,7 +119,7 @@
             </div>
           </div>
           <details class="card" id="user-auto-approval">
-            <summary>Auto-approval by company email domain</summary>
+            <summary>Auto-approval by company email domain · Enterprise</summary>
             <p class="hint">Approve members automatically when their platform-provided email matches an exact domain. This grants Approved access, never Admin. Manual revocations prevent automatic reapproval. Removing a domain does not revoke existing approvals.</p>
             <form id="user-auto-approval-form">
               <label><input id="user-auto-approval-enabled" type="checkbox" /> Enable auto-approval</label>
@@ -140,7 +144,7 @@
           </div>
         </section>
 
-        <!-- Skills: the local skill catalog, its sources, the review queue, templates and usage -->
+        <!-- Skills: the gateway skill catalog, its sources, the review queue, templates and usage -->
         <section id="view-skills" class="view full">
           <div class="view-head dash-head">
             <div>
@@ -168,17 +172,19 @@
         <section id="view-schedules" class="view full">
           <div class="view-head">
             <h2>Automations</h2>
-            <p class="hint">Cron jobs, grouped by channel. Users create these by asking the bot (e.g. "every weekday at 9am, summarize yesterday"); it runs the saved prompt and posts to the channel. Server local time.</p>
+            <p class="hint">Scheduled tasks, reminders, loops and API runs in every conversation. What didn&rsquo;t run or didn&rsquo;t arrive comes first, with how to fix it. Members see the same page in their Activity dashboard, limited to the conversations they can access.</p>
           </div>
-          <div class="schedule-search-wrap">
-            <div class="setsearch">
-              <svg class="setsearch-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
-              <input id="schedule-search" type="search" placeholder="Search by channel, person, or automation…" aria-label="Search automations" autocomplete="off" />
-              <button id="schedule-search-clear" class="setsearch-clear" type="button" aria-label="Clear automation search" title="Clear search" hidden>×</button>
-            </div>
+          <div id="ab-root" class="ab">Loading…</div>
+          <button id="schedule-history-all" class="ghost" type="button">Run history of every automation, deleted ones included</button>
+        </section>
+
+        <!-- ROI: time saved and value of automations, API runs and skills against their AI cost -->
+        <section id="view-roi" class="view full">
+          <div class="view-head">
+            <h2>ROI</h2>
+            <p class="hint">What automations, API runs and skills are worth: the time each successful run or use saves, at an hourly rate, against what the runs cost. The inputs are your own estimates; set them here or on each automation. Members see the same page in their Activity dashboard, limited to the conversations they can access.</p>
           </div>
-          <div id="schedules" class="cards">Loading…</div>
-          <button id="schedule-history-all" class="ghost" type="button">View all run history (including deleted automations)</button>
+          <div id="roi-root" class="ab">Loading…</div>
         </section>
 
         <!-- Activity: full width — filterable run history + a quiet all-time totals strip -->
@@ -247,7 +253,12 @@
 
             <div class="setcard">
               <h4>Authentication</h4>
-              <p class="desc">Send the token you generated in Settings as either an <code>X-API-Key</code> header or an <code>Authorization: Bearer</code> header. The token is scoped to <code>/api/runs</code> only — it is <strong>not</strong> a general admin credential and can't read settings, tokens, or the filesystem browser. A logged-in admin session cookie also works from the browser.</p>
+              <p class="desc"><strong>Channel tokens</strong> are the way to authenticate: anyone working in a conversation asks the agent there to <code>create_api_token</code> (or uses <code>list_api_tokens</code> / <code>revoke_api_token</code>). Such a token belongs to that one conversation and to the person who created it: runs it starts are posted there, act with that person's current role and authorization (an admin's token can do what an admin can; a member's token is a member), and stop working the moment the token is revoked or the person loses access. Send it as <code>X-API-Key</code> or <code>Authorization: Bearer</code>. It is scoped to <code>/api/runs</code> and to its conversation only; <code>channel</code> may be omitted or must name that conversation, and <code>author</code> is ignored.</p>
+              <p class="desc"><strong>Deprecated — organization-wide key.</strong> The single key under Settings → HTTP run API still works for existing automations, acts as a fixed admin principal in any conversation, and logs a deprecation warning when used. Replace it with channel tokens and clear it.</p>
+              <table class="utable apidoc-table" id="apitok-table">
+                <thead><tr><th>Token</th><th>Conversation</th><th>Created by</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+                <tbody id="apitok-rows"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
+              </table>
             </div>
 
             <div class="setcard">
@@ -264,13 +275,16 @@
                   <tr><td><code>fileUrl</code></td><td>string</td><td>http(s) URL the daemon downloads into the run's <code>uploads/</code>. ≤25&nbsp;MB.</td></tr>
                   <tr><td><code>fileName</code></td><td>string</td><td>Override the saved filename (with <code>fileUrl</code>/inline).</td></tr>
                   <tr><td><code>webhook</code></td><td>string</td><td>http(s) URL POSTed once the run finishes (completed <em>or</em> failed).</td></tr>
-                  <tr><td><code>engine</code></td><td>string</td><td>Per-run override: <code>claude</code> or <code>codex</code>.</td></tr>
+                  <tr><td><code>harness</code></td><td>string</td><td>Per-run harness ID, such as <code>claude</code>, <code>codex</code> (gateway account), <code>codex-channel</code> (channel account), or <code>codex-eu</code>. Must be enabled, configured and approved for this conversation.</td></tr>
+                  <tr><td><code>engine</code></td><td>string</td><td>Supported alias of <code>harness</code>. If both are supplied, they must name the same harness.</td></tr>
                   <tr><td><code>model</code> / <code>effort</code></td><td>string</td><td>Per-run model / reasoning-effort override.</td></tr>
                   <tr><td><code>mode</code></td><td>string</td><td>Capability profile: <code>read</code>, <code>worker</code>, <code>auto</code>, <code>full</code>, <code>lean</code> (aliases <code>bash</code>→worker, <code>admin</code>→full).</td></tr>
                   <tr><td><code>idempotencyKey</code></td><td>string</td><td>Any unique-per-request string. A repeat POST with the same key within 15&nbsp;min returns the original job instead of starting a second run.</td></tr>
                 </tbody>
               </table>
+              <p class="desc"><code>codex-channel</code> selects <strong>Codex (channel account)</strong> and requires Enterprise plus a Codex account connected to the target conversation. It keeps a separate session from the gateway's <code>codex</code> and <code>codex-eu</code> harnesses. An explicit <code>harness</code> or <code>engine</code> pins this run; a provider failure does not silently switch it to another harness. Omit both to use the thread/channel/gateway selection.</p>
               <p class="desc"><strong>Responses:</strong> <code>202</code> a fresh run started · <code>200</code> an idempotent hit (<code>reused:true</code>) · <code>400</code> validation error · <code>409</code> an event key belongs to another keyed conversation · <code>429</code> too many runs in flight (max 25) · <code>503</code> Slack unavailable or thread verification failed for a keyed conversation. <code>401</code> if the token is missing or wrong.</p>
+              <p class="desc">POST, status, list and webhook responses include <code>harness</code> and the compatible <code>engine</code> alias with the same ID. At completion they identify the harness actually used. For a reused conversation the live thread selection resolves after waiting for its queue; the initial response reports the admission selection.</p>
               <p class="desc">POST, status, list and webhook responses include <code>threadTs</code>, <code>threadReused</code> and <code>threadPermalink</code>. Headless runs return null timestamps/links; link lookup failure also returns null. <code>threadReused</code> means an existing thread was used for this event; <code>reused</code> means the event itself was deduplicated. Keyed runs resolve the agent session after acquiring the thread queue: <code>sessionId</code> and <code>resumeCommand</code> are null until completion. A deleted root is replaced; access errors or throttling fail without creating a duplicate thread.</p>
               <pre class="apidoc-pre"><code>curl -X POST <span class="apidoc-base">https://your-gateway</span>/api/runs \
   -H "X-API-Key: &lt;your token&gt;" \
@@ -287,6 +301,7 @@
   "ok": true,
   "jobId": "a1b2c3d4e5f6",
   "status": "running",
+  "harness": "claude",
   "engine": "claude",
   "conversationKey": "mail:thread:conversation-42",
   "threadTs": "1791540000.000001",
@@ -305,6 +320,7 @@
   "ok": true,
   "jobId": "a1b2c3d4e5f6",
   "status": "completed",
+  "harness": "claude",
   "engine": "claude",
   "sessionId": "…",
   "resumeCommand": "…",
@@ -336,6 +352,7 @@
   "status": "completed",          // or "failed"
   "sessionId": "…",
   "resumeCommand": "…",
+  "harness": "claude",
   "engine": "claude",
   "costUSD": 0.0123,
   "costEstimated": false,         // true = priced from the usage ledger (Codex reports no cost)
@@ -431,11 +448,14 @@
                    being read. On narrow screens this becomes a compact horizontal row. -->
               <nav class="setnav" id="settings-nav" aria-label="Settings sections">
                 <a href="#set-connection" data-sec="connection">Connection</a>
+                <a href="#set-appearance" data-sec="appearance">Appearance</a>
                 <a href="#set-agent" data-sec="agent">Agent defaults</a>
+                <a href="#set-engine-licenses" data-sec="engine-licenses">Engine licenses</a>
                 <a href="#set-templates" data-sec="templates">Access Templates</a>
                 <a href="#set-integrations" data-sec="integrations">Integrations</a>
                 <a href="#set-license" data-sec="license">License</a>
                 <a href="#set-access" data-sec="access">Access &amp; security</a>
+                <a href="#set-admin-access" data-sec="admin-access">Admin access</a>
                 <a href="#set-system" class="dz" data-sec="system">System</a>
               </nav>
 
@@ -479,6 +499,163 @@
                   <h4>Google Chat (Beta)</h4>
                   <div id="gchat-status" class="status-banner">Not configured</div>
                   <p class="desc">Google publishes the app's events to your Pub/Sub topic and the daemon pulls them (grant the service account <code>roles/pubsub.subscriber</code> on the subscription). For <strong>working card buttons</strong> set the Chat app's connection to the <strong>HTTP endpoint URL</strong> below instead of the topic — Google never delivers button clicks over Pub/Sub — and keep the subscription for reaction events.</p>
+                  <details class="gchat-guide" id="gchat-setup-guide">
+                    <summary>Google Chat setup guide — start here</summary>
+                    <div class="gchat-guide-body">
+                      <p>Create a new Google Chat app and connect it to this gateway. Follow steps 1–9 for your first reply, step 10 for working buttons, and step 11 for optional reaction controls. Open a step to see its instructions and links.</p>
+                      <p>Before you start: use a Google Workspace work account with permission to create a Cloud project. Keep this dashboard open in one tab and Google Cloud in another. This gateway already provides the application code.</p>
+                      <p><strong>Examples:</strong> this guide uses <code>Atlas</code> as the app name, <code>atlas-chat-events</code> as the topic, and <code>atlas-chat-events-sub</code> as the subscription. You can choose other names. Replace <code>PROJECT_ID</code> with your project's actual ID and keep the same project selected in Google Cloud throughout.</p>
+                      <details class="gchat-guide-step" id="gchat-step-1" open>
+                        <summary>1. Create a Google Cloud project</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener noreferrer">Create a project</a> using your Workspace work account.</li>
+                            <li>Enter a project name, for example <code>Atlas Google Chat</code>, and select your organization's appropriate location.</li>
+                            <li>Choose an available project ID, for example <code>atlas-google-chat</code>, then click <strong>Create</strong>. Google may add a suffix: use the actual ID it assigns.</li>
+                            <li>Select the new project in the top project selector. On the <a href="https://console.cloud.google.com/home/dashboard" target="_blank" rel="noopener noreferrer">project dashboard</a>, record its <strong>Project ID</strong> and <strong>Project number</strong>. These are different values.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/guides/create-project" target="_blank" rel="noopener noreferrer">Google's project setup instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-2">
+                        <summary>2. Enable the APIs and billing</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/apis/library/chat.googleapis.com" target="_blank" rel="noopener noreferrer">Google Chat API</a> and click <strong>Enable</strong>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/apis/library/pubsub.googleapis.com" target="_blank" rel="noopener noreferrer">Cloud Pub/Sub API</a> and click <strong>Enable</strong>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Billing</a> and link the project to your organization's approved billing account, as required by Google's Pub/Sub setup.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/chat/quickstart/pub-sub" target="_blank" rel="noopener noreferrer">Google's Pub/Sub prerequisites</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-3">
+                        <summary>3. Set up Google Auth branding</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/auth/branding" target="_blank" rel="noopener noreferrer">Google Auth Platform → Branding</a>. Click <strong>Get started</strong> if prompted.</li>
+                            <li>Set <strong>App name</strong> to <code>Atlas</code>, enter your work or support email as <strong>User support email</strong>, select <strong>Internal</strong> as the audience, and enter a work contact email.</li>
+                            <li>Complete the wizard. Basic messaging uses a service account; you do not need a browser OAuth client or redirect URL.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/guides/configure-oauth-consent" target="_blank" rel="noopener noreferrer">Google's branding and consent instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-4">
+                        <summary>4. Create the gateway service account and JSON key</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer">IAM &amp; Admin → Service Accounts</a> and click <strong>Create service account</strong>.</li>
+                            <li>Use <code>Atlas ChannelGate</code> as the name, <code>atlas-channelgate</code> as the ID, and <code>Connects ChannelGate to Google Chat</code> as the description.</li>
+                            <li>Finish creation. Leave the optional project-role and user-access sections empty; step 6 grants the needed subscription role.</li>
+                            <li>Open the new account, then choose <strong>Keys → Add key → Create new key → JSON → Create</strong>.</li>
+                          </ol>
+                          <p>Keep the downloaded JSON key private. Paste it only into this dashboard's <strong>Service-account key (JSON)</strong> field in step 8. If your organization blocks key creation, ask its Google Cloud administrator to resolve the policy restriction.</p>
+                          <p><a href="https://docs.cloud.google.com/iam/docs/keys-create-delete" target="_blank" rel="noopener noreferrer">Google's key creation instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-5">
+                        <summary>5. Create a Pub/Sub topic and Pull subscription</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/cloudpubsub/topic/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Topics</a> and click <strong>Create topic</strong>. Set <strong>Topic ID</strong> to <code>atlas-chat-events</code>, clear <strong>Add a default subscription</strong> if selected, and create it.</li>
+                            <li>Record the full topic name: <code>projects/PROJECT_ID/topics/atlas-chat-events</code>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/cloudpubsub/subscription/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Subscriptions</a> and click <strong>Create subscription</strong>. Set <strong>Subscription ID</strong> to <code>atlas-chat-events-sub</code>, select your topic, choose <strong>Pull</strong> delivery, and create it.</li>
+                            <li>Record the full subscription name: <code>projects/PROJECT_ID/subscriptions/atlas-chat-events-sub</code>.</li>
+                          </ol>
+                          <p><a href="https://docs.cloud.google.com/pubsub/docs/create-topic" target="_blank" rel="noopener noreferrer">Create a topic</a> · <a href="https://docs.cloud.google.com/pubsub/docs/create-subscription" target="_blank" rel="noopener noreferrer">Create a subscription</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-6">
+                        <summary>6. Allow the gateway to read the subscription</summary>
+                        <div>
+                          <ol>
+                            <li>In <a href="https://console.cloud.google.com/cloudpubsub/subscription/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Subscriptions</a>, open <code>atlas-chat-events-sub</code> and its <strong>Permissions</strong> panel.</li>
+                            <li>Click <strong>Grant access</strong>. Enter the step 4 account, <code>atlas-channelgate@PROJECT_ID.iam.gserviceaccount.com</code>, as the principal.</li>
+                            <li>Select <strong>Pub/Sub Subscriber</strong> (<code>roles/pubsub.subscriber</code>) and save. Apply this role to the <strong>subscription</strong>.</li>
+                          </ol>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-7">
+                        <summary>7. Configure the Google Chat app and publisher</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat" target="_blank" rel="noopener noreferrer">Google Chat API → Configuration</a>.</li>
+                            <li>Set <strong>App name</strong> to <code>Atlas</code> and add a short description, for example <code>Team AI assistant</code>. For <strong>Avatar URL</strong>, use your app's public square PNG or JPEG, or the <a href="https://developers.google.com/workspace/chat/images/quickstart-app-avatar.png" target="_blank" rel="noopener noreferrer">Google sample avatar</a>.</li>
+                            <li>Keep <strong>Build this Chat app as a Google Workspace add-on</strong> enabled if selected. Enable <strong>Interactive features</strong> and <strong>Join spaces and group conversations</strong>; enable direct messages if a separate option is shown.</li>
+                            <li>Under <strong>Connection settings</strong>, choose <strong>Cloud Pub/Sub</strong> and enter <code>projects/PROJECT_ID/topics/atlas-chat-events</code>.</li>
+                            <li>Under <strong>Visibility</strong>, add your work email and intended testers. Enable error logging, set <strong>App status</strong> to <strong>Live — available to users</strong> if offered, and click <strong>Save</strong>.</li>
+                            <li>After saving, copy the <strong>Service account email</strong> shown under Connection settings. It typically looks like <code>service-PROJECT_NUMBER@gcp-sa-gsuiteaddons.iam.gserviceaccount.com</code>.</li>
+                            <li>Open your <a href="https://console.cloud.google.com/cloudpubsub/topic/list" target="_blank" rel="noopener noreferrer">Pub/Sub topic</a> → <strong>Permissions → Grant access</strong>. Use that exact Google-generated email as principal, choose <strong>Pub/Sub Publisher</strong> (<code>roles/pubsub.publisher</code>), and save. This grant belongs on the <strong>topic</strong>.</li>
+                          </ol>
+                          <p><strong>Two different accounts:</strong> the step 4 account owns the JSON key used by the gateway. The Google-generated step 7 account publishes events and identifies incoming HTTP requests. Do not swap them.</p>
+                          <p>If you deliberately chose a standalone Chat app instead of a Workspace add-on, its Pub/Sub publisher is <code>chat-api-push@system.gserviceaccount.com</code>.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/configure-chat-api" target="_blank" rel="noopener noreferrer">Google's Chat app configuration guide</a> · <a href="https://developers.google.com/workspace/add-ons/chat/quickstart-pubsub" target="_blank" rel="noopener noreferrer">Workspace add-on Pub/Sub guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-8">
+                        <summary>8. Fill in this gateway's Google Chat fields</summary>
+                        <div>
+                          <p>In <strong>Settings → Connection → Google Chat</strong>, use the form directly below this guide:</p>
+                          <ul>
+                            <li><strong>Service-account key (JSON):</strong> the complete contents of the private JSON file downloaded in step 4.</li>
+                            <li><strong>Pub/Sub subscription:</strong> <code>projects/PROJECT_ID/subscriptions/atlas-chat-events-sub</code>.</li>
+                            <li><strong>Chat app service account:</strong> the exact Google-generated email copied in step 7.</li>
+                            <li><strong>Reaction events topic:</strong> leave empty for the first messaging test.</li>
+                            <li><strong>Google Cloud project number</strong> and <strong>Bot user id:</strong> leave empty for this Workspace add-on setup; the bot ID is learned automatically.</li>
+                          </ul>
+                          <p>Click <strong>Save</strong>, then <strong>Connect</strong> in the Google Chat section. Expect <strong>Connected — pulling …</strong>. This confirms that the subscription can be read; step 9 checks the complete message path.</p>
+                          <p><a href="#set-gchat-key">Go to the Google Chat fields</a> · <a href="https://developers.google.com/workspace/chat/authenticate-authorize-chat-app" target="_blank" rel="noopener noreferrer">Google's service-account authentication guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-9">
+                        <summary>9. Add the app to Google Chat and test a reply</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://chat.google.com" target="_blank" rel="noopener noreferrer">Google Chat</a>. Start a <strong>New chat</strong>, search for your app's name, open a direct message, and send <code>Hello</code>.</li>
+                            <li>For a shared space, open its <strong>Apps &amp; integrations / Manage apps</strong>, add the app, and send a new message mentioning it, for example <code>@Atlas hello</code>.</li>
+                            <li>If the app says your user is unapproved, have a gateway administrator approve your <strong>Google Chat identity</strong> in this dashboard's <strong>Users</strong> page.</li>
+                          </ol>
+                          <p><strong>Pass:</strong> an actual reply arrives in Google Chat. A connected subscription alone does not prove messages are working.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/test-interactive-features" target="_blank" rel="noopener noreferrer">Google's testing instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-10">
+                        <summary>10. Enable working Files / Settings buttons with HTTPS</summary>
+                        <div>
+                          <p>Use two tabs: this dashboard and Google Cloud. The gateway already provides the receiving endpoint; no new application code is needed.</p>
+                          <ol>
+                            <li><strong>Find the gateway's public address.</strong> If its dashboard opens at <code>https://gateway.example.com/settings</code>, the base address is <code>https://gateway.example.com</code>. This is only an example: use the actual gateway you are connecting. Google must be able to reach it over HTTPS. For localhost, a private IP or VPN-only access, ask the server administrator for a public HTTPS address first.</li>
+                            <li><strong>Set Public URL.</strong> In this page's <a href="#set-public-url">Public URL field</a>, enter that base address without <code>/settings</code> or <code>/api/googlechat/events</code>, then click <strong>Save</strong>. Filling this field records an existing address; it does not create a website, domain or tunnel.</li>
+                            <li><strong>Copy the HTTP endpoint URL.</strong> In the Google Chat section below this guide, copy the complete displayed endpoint. The gateway automatically adds <code>/api/googlechat/events</code>; for the example it is <code>https://gateway.example.com/api/googlechat/events</code>.</li>
+                            <li><strong>Check Chat app service account.</strong> In <a href="https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat" target="_blank" rel="noopener noreferrer">Google Chat API → Configuration</a>, select the correct project and copy <strong>Service account email</strong> from Connection settings. Paste that Google-generated step 7 email into this dashboard's <strong>Chat app service account</strong> field. It is separate from the JSON-key account.</li>
+                            <li><strong>Activate it here.</strong> Click <strong>Save</strong>, then <strong>Connect</strong> in the Google Chat section. The status should include <code>endpoint https://…/api/googlechat/events</code>.</li>
+                            <li><strong>Tell Google where to send events.</strong> Back in Google Cloud's <strong>Connection settings</strong>, change <strong>Cloud Pub/Sub</strong> to <strong>HTTP endpoint URL</strong>. Select <strong>Use a common HTTP endpoint URL for all triggers</strong> if shown and paste the exact endpoint copied from this dashboard. If separate trigger URLs are shown instead, use the same endpoint for message, membership, app command and app home triggers as applicable. Click <strong>Save</strong>.</li>
+                            <li><strong>Keep the Pub/Sub topic and subscription.</strong> Optional reactions in step 11 still use them.</li>
+                            <li><strong>Test the button.</strong> Send another message in Google Chat, then press <strong>Files</strong> under the reply. The conversation file card should open without a red error.</li>
+                          </ol>
+                          <p>For a standalone Chat app, choose the <strong>HTTP endpoint URL</strong> authentication audience. If you instead use the project-number audience, enter that numeric value in this dashboard's <strong>Google Cloud project number</strong> field. Standalone requests are signed as <code>chat@system.gserviceaccount.com</code>; the Workspace add-on email above is required only for add-ons.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/configure-chat-api" target="_blank" rel="noopener noreferrer">Google's connection settings</a> · <a href="https://developers.google.com/workspace/chat/verify-requests-from-chat" target="_blank" rel="noopener noreferrer">Google's request verification guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-11">
+                        <summary>11. Optional: enable 🤖 / 🛑 / ✅ reaction controls and the edit trigger</summary>
+                        <div>
+                          <p>Complete messaging first. Reactions require Google Workspace administrator approval; they are not enabled by the basic JSON key setup.</p>
+                          <ol>
+                            <li>Enable the <a href="https://console.cloud.google.com/apis/library/workspaceevents.googleapis.com" target="_blank" rel="noopener noreferrer">Google Workspace Events API</a> in the same project.</li>
+                            <li>Open the step 4 account in <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer">Service Accounts</a>, then <strong>Advanced settings → Create Google Workspace Marketplace-compatible OAuth client</strong>.</li>
+                            <li>Enable the <a href="https://console.cloud.google.com/apis/library/appsmarket-component.googleapis.com" target="_blank" rel="noopener noreferrer">Google Workspace Marketplace SDK</a>. In its <strong>App Configuration</strong>, choose <strong>Private</strong> visibility, <strong>Individual + admin install</strong>, and the <strong>Chat app</strong> integration.</li>
+                            <li>Add <code>https://www.googleapis.com/auth/chat.app.messages.readonly</code> to the Marketplace OAuth scopes. Do not add <code>chat.bot</code> to this scope list.</li>
+                            <li>Complete the required developer information and store listing, <strong>publish the app privately</strong>, and have a Google Workspace administrator install and approve it. Saving a draft or trusting an OAuth client alone does not grant this scope.</li>
+                            <li>Confirm the step 7 publisher still has <strong>Pub/Sub Publisher</strong> on the topic. In this dashboard, set <strong>Reaction events topic</strong> to <code>projects/PROJECT_ID/topics/atlas-chat-events</code>, then <strong>Save → Connect</strong>.</li>
+                          </ol>
+                          <p>Look for <code>reactions N/M spaces</code> in the connection status. If approval fails, basic messaging can still work.</p>
+                          <p>The same subscriptions report message edits, so this step also lets an edit that adds a mention of the app run that message, as on Slack and Teams. No extra setup is needed.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/authenticate-authorize-chat-app#admin-approval" target="_blank" rel="noopener noreferrer">Google's full administrator-approval procedure</a> · <a href="https://developers.google.com/workspace/events/guides/events-chat" target="_blank" rel="noopener noreferrer">Google Chat event subscriptions</a></p>
+                        </div>
+                      </details>
+                      <p class="gchat-guide-help"><strong>If something fails:</strong> subscription <code>403</code> → check step 6; connected but no replies → check the step 7 publisher, visibility and topic name; buttons fail → check step 10. Share the step number and error with your administrator, with the JSON key hidden. <a href="https://developers.google.com/workspace/chat/troubleshoot-chat-apps" target="_blank" rel="noopener noreferrer">Google's troubleshooting guide</a></p>
+                    </div>
+                  </details>
                   <p class="desc">HTTP endpoint URL: <code id="gchat-endpoint">set the Public URL first</code></p>
                   <label class="field">
                     <span>Service-account key (JSON)</span>
@@ -491,7 +668,7 @@
                     <input id="set-gchat-sub" type="text" placeholder="projects/my-project/subscriptions/chat-events" />
                   </label>
                   <label class="field">
-                    <span>Reaction events topic <code>projects/&lt;project&gt;/topics/&lt;name&gt;</code> (optional — enables 🤖 / 🛑 / ✅ reactions through Google Workspace Events; needs the admin-approved <code>chat.app.messages.readonly</code> scope)</span>
+                    <span>Reaction events topic <code>projects/&lt;project&gt;/topics/&lt;name&gt;</code> (optional — enables 🤖 / 🛑 / ✅ reactions and edits that add a mention, through Google Workspace Events; needs the admin-approved <code>chat.app.messages.readonly</code> scope)</span>
                     <input id="set-gchat-reaction-topic" type="text" placeholder="projects/my-project/topics/chat-events" />
                   </label>
                   <label class="field">
@@ -503,7 +680,7 @@
                     <input id="set-gchat-project-number" type="text" placeholder="123456789012" />
                   </label>
                   <label class="field">
-                    <span>Bot user id <code>users/…</code> (optional — learned automatically when the app is added to a space)</span>
+                    <span>Bot user id <code>users/…</code> (optional — learned automatically when the app is added to a space or mentioned, and remembered)</span>
                     <input id="set-gchat-bot" type="text" placeholder="users/1234567890" />
                   </label>
                   <div class="tok-foot">
@@ -554,6 +731,19 @@
                     <span>Public URL (the daemon's externally-reachable base URL)</span>
                     <input id="set-public-url" type="text" placeholder="https://gateway.makeitfuture.com" />
                   </label>
+                  <label class="field">
+                    <span>iPhone app identifiers for passkeys (<code>&lt;Team ID&gt;.&lt;bundle id&gt;</code>, comma-separated; published at <code>/.well-known/apple-app-site-association</code>)</span>
+                    <input id="set-apple-app-ids" type="text" placeholder="ABCDE12345.com.example.channelgate" />
+                  </label>
+                  <label class="field">
+                    <span>Behind a reverse proxy — which header names the real client (login and approval-link backoff)</span>
+                    <select id="set-trust-proxy">
+                      <option value="">None — the connecting address is the client</option>
+                      <option value="cloudflare">Cloudflare tunnel (CF-Connecting-IP)</option>
+                      <option value="xff">nginx / caddy / other (last X-Forwarded-For hop)</option>
+                    </select>
+                  </label>
+                  <p class="desc">Without this, every remote login shares one backoff bucket behind the proxy; with it, each real client gets its own. Only declare a proxy you control: it must set the header on every request.</p>
                 </div>
                 <div class="setcard">
                   <h4>Approval links</h4>
@@ -577,6 +767,22 @@
                 </div>
               </section>
 
+              <section class="setsec" id="set-appearance" data-sec="appearance" aria-labelledby="set-appearance-h">
+                <header class="setsec-head"><h3 id="set-appearance-h">Appearance</h3>
+                  <p class="setsec-desc">Give this gateway its own app color, so installed apps are easy to distinguish.</p></header>
+                <div class="setcard" data-setkey="logo color icon dock chrome app branding">
+                  <h4>ChannelGate logo color</h4>
+                  <p class="desc">Shared by everyone on this gateway. Updates the Activity logo, browser icon and installed app icons. Each gateway keeps its own color.</p>
+                  <div class="logo-color-editor">
+                    <svg id="set-logo-preview" viewBox="0 0 48 48" width="64" height="64" role="img" aria-label="ChannelGate app icon preview"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>
+                    <label class="field">Logo color<input id="set-logo-color" type="color" value="#ff642f" /></label>
+                    <label class="field">Hex color<input id="set-logo-hex" type="text" value="#ff642f" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" placeholder="#ff642f" /></label>
+                    <button id="reset-logo-color" type="button" class="btn">Reset to orange</button>
+                  </div>
+                  <p class="hint">Save, then reopen Activity. Chrome controls when an installed app updates its Dock icon; you may need to reinstall the app to refresh it.</p>
+                </div>
+              </section>
+
               <!-- ── Agent defaults ──────────────────────────────────────── -->
               <section class="setsec" id="set-agent" data-sec="agent" aria-labelledby="set-agent-h">
                 <header class="setsec-head">
@@ -584,17 +790,26 @@
                   <p class="setsec-desc">Harnesses, models, replies, instructions, schedules and Drive sync for every conversation that doesn&rsquo;t override them.</p>
                 </header>
                 <div class="setcard">
-                  <h4>Engine &amp; runtime</h4>
-                  <div class="field">
-                    <span>Harnesses the gateway may use</span>
-                    <div id="engine-enabled-box" class="engine-toggles"></div>
-                    <p class="desc">Turn off an engine you don't have set up. A disabled harness disappears from every engine picker (here, per channel, and the Slack <code>/model</code> wizard), is never used as a failover target, and any channel or thread still pointing at it runs on an enabled one instead. At least one must stay on.</p>
-                  </div>
+                  <h4>Parallel agent runs</h4>
+                  <p class="desc">Gateway-wide limit across conversations and harnesses. Extra requests wait in a queue. Changes apply when saved; active runs finish normally if you lower the limit. This is separate from the running-container limit under Access &amp; security.</p>
                   <label class="field">
-                    <span>Engine (which CLI drives the bot)</span>
+                    <span>Maximum parallel agent runs</span>
+                    <input id="set-max-concurrent-runs" type="number" min="1" max="500" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Slots reserved for interactive requests</span>
+                    <input id="set-reserved-interactive-runs" type="number" min="0" max="499" step="1" required />
+                    <em class="state">Interactive requests are live Slack, Teams and Google Chat messages, plus foreground API requests. Scheduled and background agents share the remaining slots. These slots are included in the total; reserve fewer than the total so background work can run. For example, 32 total with 2 reserved allows up to 30 background runs. Interactive requests can use any free slot.</em>
+                  </label>
+                </div>
+                <div class="setcard">
+                  <h4>Engine &amp; runtime</h4>
+                  <p class="desc">Which sign-ins, API keys and servers the two harnesses may run on — including the gateway's own Codex sign-in (Codex → Default sign-in → Sign in) — is managed under <a href="#set-engine-licenses" class="lic-jump">Engine licenses</a>. Below is which one a conversation uses when it does not choose its own.</p>
+                  <label class="field">
+                    <span>Harness (which CLI drives the bot)</span>
                     <select id="set-engine">
-                      <option value="claude">Claude Code (full features: warm sessions, skills, $ cost)</option>
-                      <option value="codex">OpenAI Codex (cold resume; no warm sessions / skills / $ cost)</option>
+                      <option value="claude">Claude Code</option>
+                      <option value="codex">Codex</option>
                     </select>
                   </label>
                   <label class="field">
@@ -602,21 +817,19 @@
                     <select id="set-default-claude-model"></select>
                   </label>
                   <label class="field">
+                    <span>Default Claude effort</span>
+                    <select id="set-default-claude-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
+                  </label>
+                  <label class="field">
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
                   </label>
-                  <div class="ch-codex-login" id="gateway-codex-login">
-                    <strong>Default gateway Codex login</strong>
-                    <p class="desc">Shared by channels that use the gateway login.</p>
-                    <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
-                    <div class="ch-codex-login-status state">Checking sign-in…</div>
-                    <div class="ch-codex-device-section" hidden>
-                      <div class="ch-codex-device-code" hidden><a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a><span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span></div>
-                      <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
-                    </div>
-                    <div class="row-actions ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Gateway OpenAI API key"><button type="button" class="btn ch-codex-key-save">Save API key</button></div>
-                    <em class="state ch-codex-api-note" hidden>OpenAI bills API key use separately from a ChatGPT subscription.</em>
-                  </div>
+                  <label class="field">
+                    <span>Default Codex effort</span>
+                    <select id="set-default-codex-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
+                  </label>
                   <div class="dz-row">
                     <span class="t">Reset all channels to these gateway defaults<small>Clears every channel's engine, model and effort overrides, and optionally the per-thread <code>/model</code> pins that would otherwise survive it. Access, tools, tokens and DM templates stay unchanged. Existing threads keep their current engine session; new threads inherit these defaults. Can't be undone.</small></span>
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
@@ -641,6 +854,31 @@
                     <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
                   </label>
                 </div>
+                <div class="setcard" id="voice-calls-card">
+                  <h4>Voice calls · Beta</h4>
+                  <p class="desc">Let approved users talk to a channel's agent from a browser call page (the <strong>📞 Call</strong> reply button and the Activity page). The daemon holds a Google Gemini Live session; spoken requests run as ordinary turns in the bound Slack thread, authored by the caller, and the transcript is posted there when the call ends. Voice minutes are billed to your Gemini API key (about $0.02 per minute).</p>
+                  <label class="toggle"><input type="checkbox" id="set-voice-calls-enabled" /> Enable voice calls</label>
+                  <label class="field">
+                    <span>Gemini API key <em class="state" id="gemini-api-key-state"></em></span>
+                    <input id="set-gemini-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" maxlength="256" />
+                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-gemini-api-key">clear</button></div>
+                    <em class="state">Create a key in Google AI Studio. It stays in gateway settings and never reaches a browser or a channel container.</em>
+                  </label>
+                  <label class="field"><span>Voice model</span><select id="set-voice-call-model"></select></label>
+                  <label class="field"><span>Voice</span><select id="set-voice-call-voice"></select></label>
+                </div>
+                <div class="setcard" id="iphone-calls-card">
+                  <h4>Incoming iPhone calls · Beta</h4>
+                  <p class="desc">Let an agent ask to call the requesting person in its current thread. Each invitation requires approval and expires after 45 seconds. Enable voice calls above, then configure an Apple APNs key with VoIP permission for your app.</p>
+                  <label class="toggle"><input type="checkbox" id="set-ios-calls-enabled" /> Enable incoming iPhone calls</label>
+                  <label class="field"><span>Apple team ID</span><input id="set-apns-team-id" maxlength="10" placeholder="3J929KZ29B" /></label>
+                  <label class="field"><span>APNs key ID</span><input id="set-apns-key-id" maxlength="10" /></label>
+                  <label class="field"><span>iPhone bundle ID</span><input id="set-apns-bundle-id" maxlength="200" /></label>
+                  <label class="field"><span>APNs .p8 private key <em class="state" id="apns-key-state"></em></span>
+                    <textarea id="set-apns-private-key" rows="4" autocomplete="off" placeholder="Paste the .p8 contents; leave blank to keep the stored key"></textarea>
+                  </label>
+                  <label class="toggle"><input type="checkbox" id="clear-apns-private-key" /> Remove the stored APNs key</label>
+                </div>
                 <div class="setcard" id="perplexity-research-card">
                   <h4>Perplexity research</h4>
                   <p class="desc">Let agents delegate research through your Perplexity subscription. This is a gateway-wide shared login for research only, using the unofficial Perplexity web bridge.</p>
@@ -652,6 +890,16 @@
                     <em class="state">Run <code>pwm login</code> on your computer and paste the token from <code>~/.config/perplexity-web-mcp/token</code>, or copy the value of the <code>__Secure-next-auth.session-token</code> cookie from your signed-in Perplexity browser. Paste only the value. The token is write-only; replace it here if the session expires.</em>
                   </label>
                 </div>
+                <template id="terminal-harness-tpl">
+                  <div class="setcard terminal-harness-card">
+                    <h4 data-role="label"></h4>
+                    <p class="desc" data-role="description"></p>
+                    <p class="desc">Optional: switch this license on under <em>Engine licenses</em>, save, then configure its dedicated login in a terminal on the gateway server.</p>
+                    <div class="field"><span>Terminal command</span><pre><code data-role="command"></code></pre><div class="row-actions"><button type="button" class="ghost" data-role="copy-command">Copy command</button><span class="state" data-role="copy-state" role="status" aria-live="polite"></span></div></div>
+                    <label class="field"><span>Default model</span><select data-role="default-model"></select><em class="state">Blank uses the isolated login's provider default.</em></label>
+                    <label class="field"><span>Default effort</span><select data-role="default-effort"></select></label>
+                  </div>
+                </template>
                 <!-- One card per Anthropic-compatible provider (src/engines/qwen.js holds the
                      table; /api/settings sends `qwenProviders`). The cards are cloned from this
                      template into the section as SIBLINGS, so each one is searched, jumped to and
@@ -659,7 +907,7 @@
                 <template id="qwen-provider-tpl">
                   <div class="setcard qwen-provider-card">
                     <h4 data-role="label"></h4>
-                    <p class="desc"><span data-role="description"></span> An optional extra harness: the same Claude Code CLI pointed at this provider, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Engine &amp; runtime &rarr; Harnesses the gateway may use</em>. Your Anthropic login is never sent to this provider, this harness is never used as an automatic failover target in either direction, and because the provider reports no usable dollar cost its turns are recorded with tokens only.</p>
+                    <p class="desc"><span data-role="description"></span> An optional license of the Claude Code harness: the same CLI pointed at this provider, so it keeps the CLI&rsquo;s tool loop, approval cards, connectors and skills. It is <strong>off until you switch it on</strong> under <em>Settings &rarr; Engine licenses</em>. Your Anthropic login is never sent to this provider, a turn moves to or from this license only in a conversation whose selection names it beside other Claude Code licenses (<em>Any license</em> or <em>If it fails, also use</em>) &mdash; never through the automatic failover between Claude Code and Codex &mdash; and because the provider reports no usable dollar cost its turns are recorded with tokens only.</p>
                     <label class="field">
                       <span>API key <em class="state" data-role="key-state"></em></span>
                       <input type="password" data-role="api-key" placeholder="leave blank to keep current" autocomplete="new-password" />
@@ -675,6 +923,11 @@
                       <span>Default model</span>
                       <select data-role="default-model"></select>
                       <em class="state" data-role="catalog-note"></em>
+                    </label>
+                    <label class="field">
+                      <span>Default effort</span>
+                      <select data-role="default-effort"></select>
+                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                     </label>
                   </div>
                 </template>
@@ -706,8 +959,10 @@
                   <h4>Agent instructions</h4>
                   <label class="toggle"><input type="checkbox" id="set-agentsfile" /> Write <code>CLAUDE.md</code> + an <code>AGENTS.md</code> symlink in each channel folder (read by both Claude and Codex — edit <code>CLAUDE.md</code> directly)</label>
                   <label class="field">
-                    <span>Instructions (CLAUDE.md content, applied to all channels)</span>
-                    <textarea id="set-agents-instructions" rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <span>Organization instructions · Enterprise (applied to all channels)</span>
+                    <textarea id="set-agents-instructions" readonly rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <small id="organization-instructions-entitlement"></small>
+                    <button type="button" id="clear-organization-instructions" class="ghost">Clear organization instructions</button>
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets uncapped Markdown memory, searched on demand through a derived local FTS index. Fresh sessions receive only a compact catalog; the memory body stays in the channel folder. Per-channel override available.</label>
                   <label class="field">
@@ -764,12 +1019,17 @@
                   </label>
                 </div>
                 <div class="setcard">
+                  <h4>Email accounts (IMAP/SMTP)</h4>
+                  <p class="desc">Lets people connect a mailbox by its IMAP and SMTP settings — to a conversation or for themselves — and gives runs the email tools for those accounts. While off, the <strong>Email accounts</strong> sections are hidden on every surface, new accounts cannot be connected and runs get no email tools; accounts already stored are kept and return when it is switched back on.</p>
+                  <label class="toggle"><input type="checkbox" id="set-email-accounts-enabled" /> <strong>Enable email accounts</strong> — off hides them from everyone.</label>
+                </div>
+                <div class="setcard">
                   <h4>Public file links</h4>
                   <p class="desc">Lets a conversation mint a <strong>temporary public download URL</strong> for one file in its own working folder — anyone holding the link can fetch it with no login. Two uses: handing a file to an API that ingests by URL (a few minutes, capped fetches), and sending a person a link (duration chosen per link, <strong>48 hours maximum</strong>). Links are re-checked on every fetch against this switch, their expiry, their fetch count and the file's continued presence inside the channel folder; turning this off kills every outstanding link immediately. Requires <strong>Public URL</strong> (above) to be set. Destinations reachable through Composio do not need this — those files are staged directly into Composio storage and never published.</p>
                   <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>
                 </div>
                 <div class="setcard">
-                  <h4>Google Drive sync</h4>
+                  <h4>Google Drive sync · Enterprise</h4>
                   <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and that channel's whole working folder — except agent instructions and skills (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/</code>, …), channel memory, secrets (<code>.env</code>, keys), <code>.git</code> and dependency trees, plus anything listed in the folder's <code>.driveignore</code>. Symlinks are never followed, and rclone runs in a throwaway container that sees only the channel folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
                   <label class="field">
@@ -810,6 +1070,35 @@
               </section>
 
               <!-- ── Access Templates ────────────────────────────────────── -->
+              <!-- The credentials a harness runs on (src/config/engine-licenses.js, /api/engine-licenses).
+                   NOT the ChannelGate product license, which has its own section (License). A key or a
+                   service-account file typed here is sent once and never read back. -->
+              <section class="setsec" id="set-engine-licenses" data-sec="engine-licenses" aria-labelledby="set-engine-licenses-h">
+                <header class="setsec-head">
+                  <h3 id="set-engine-licenses-h">Engine licenses</h3>
+                  <p class="setsec-desc">The sign-ins, API keys and servers Claude Code and Codex run on. Not your ChannelGate license &mdash; that is under <strong>License</strong>.</p>
+                </header>
+                <div class="setcard">
+                  <h4>Licenses the gateway may use</h4>
+                  <p class="desc">There are two harnesses, Claude Code and Codex. A license is one way a harness reaches a model: a sign-in (a subscription, business or enterprise plan), an API key, a custom server, or a cloud account on Amazon Bedrock, Google Vertex AI or Microsoft Azure. Add as many as you need with <strong>Add license</strong>; each one then shows a <strong>Sign in</strong> button or command, or is checked against its server with <strong>Verify</strong>.</p>
+                  <div class="lic-manager">
+                    <div id="engine-enabled-box" class="lic-groups"></div>
+                  </div>
+                  <p class="desc">Switch off a license you don't have set up: it disappears from every picker (here, per channel, and the Slack <code>/model</code> wizard), is never used as a failover target, and any channel or thread still pointing at it runs on one that is on instead. At least one must stay on. Where a harness has a single license, pickers show the harness alone. The switches are saved with <strong>Save</strong>; adding, editing, verifying and removing a license take effect at once.</p>
+                </div>
+                <div class="setcard">
+                  <h4>What each kind needs</h4>
+                  <ul class="lic-kinds-help">
+                    <li><strong>Sign-in</strong> &mdash; a name and a plan type. Codex signs in here with a ChatGPT device code; Claude Code gives you one command to run on the gateway host.</li>
+                    <li><strong>API key or custom server</strong> &mdash; the server address and a key, plus the model ids it serves. For Claude Code the server must speak the Anthropic Messages API; for Codex it must speak the OpenAI <em>Responses</em> API (a server that only offers chat completions will not work).</li>
+                    <li><strong>Amazon Bedrock</strong> &mdash; the region and a Bedrock API key (not an AWS access key or SSO login).</li>
+                    <li><strong>Google Vertex AI</strong> &mdash; the project, the location and a service-account key file. The gateway keeps the key and hands runs short-lived tokens.</li>
+                    <li><strong>Microsoft Azure</strong> &mdash; your resource&rsquo;s endpoint and its key, and for Codex the deployment names.</li>
+                  </ul>
+                  <p class="desc">In a container a run never holds the real key: it holds a placeholder the gateway swaps in on that license&rsquo;s own server only.</p>
+                </div>
+              </section>
+
               <!-- The two org DM access templates (baseline capabilities a person gets in their DM),
                    configured with the same capability picker as a channel. Each editor is a
                    buildConfigEditor mounted at load; both fold into the one global Save. -->
@@ -819,7 +1108,7 @@
                   <p class="setsec-desc">The capabilities new channels and DMs start from.</p>
                 </header>
                 <div class="setcard" id="skill-templates-card">
-                  <h4>Skill templates <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
+                  <h4>Skill templates · Enterprise <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
                   <p class="desc">A named, explicit set of skills from the catalog. Assign one to a conversation under Conversations → Tools or with <code>set_channel_skill_template</code>; edits reach every conversation that follows it, and channel-specific skills come on top.</p>
                   <div id="skill-templates-editor">Loading…</div>
                 </div>
@@ -844,16 +1133,16 @@
               <section class="setsec" id="set-integrations" data-sec="integrations" aria-labelledby="set-integrations-h">
                 <header class="setsec-head">
                   <h3 id="set-integrations-h">Integrations</h3>
-                  <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
+                  <p class="setsec-desc">Composio mode and endpoint. A conversation's shared <code>composio-agent</code> uses its own channel token; each person's <code>composio-user</code> uses their own. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
-                  <h4>Organization variables <em class="state secret-state"></em></h4>
+                  <h4>Organization variables · Enterprise <em class="state secret-state"></em></h4>
                   <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
                   <div id="org-secrets-editor"></div>
                 </div>
                 <div class="setcard">
                   <h4>Composio connection mode</h4>
-                  <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal, channel, or organization tokens.</p>
+                  <p class="desc">Choose how both <code>composio-user</code> (personal) and <code>composio</code> (shared channel) are provisioned. Switching modes never deletes saved personal or channel tokens.</p>
                   <label class="field">
                     <span>Mode</span>
                     <select id="set-composio-mode">
@@ -868,6 +1157,24 @@
                     <em class="state">Organization-level secret. It stays in gateway settings and is never passed to Claude, Codex, or a channel folder.</em>
                     <div class="tok-foot"><button type="button" class="clear-tok" id="clear-composio-sdk-key">clear</button></div>
                   </label>
+                  <div id="composio-sdk-policy" hidden>
+                    <label class="toggle"><input class="csdk-multi" type="checkbox" checked /> Allow multiple accounts per app</label>
+                    <p class="desc">Each person can connect separate accounts, such as work and personal Gmail, with their own aliases. When several are connected, the agent must explicitly select which account to use.</p>
+                    <label class="field">
+                      <span>Maximum accounts per app</span>
+                      <input class="csdk-max" type="number" min="2" max="10" step="1" value="5" />
+                    </label>
+                    <label class="field">
+                      <span>Available apps</span>
+                      <select class="csdk-app-mode"><option value="all">All apps</option><option value="selected">Only selected apps</option></select>
+                    </label>
+                    <label class="field csdk-app-list" hidden>
+                      <span>Allowed app slugs</span>
+                      <textarea class="csdk-apps" rows="3" placeholder="gmail, slack, custom_aioutreach"></textarea>
+                      <em class="state">Separate Composio toolkit slugs with commas or spaces. An empty selected list blocks every app.</em>
+                    </label>
+                    <p class="desc">Applies to personal and shared SDK sessions across the gateway. Existing sessions receive changes on their next run. Restricting apps does not delete saved connections. Save with the settings below.</p>
+                  </div>
                 </div>
                 <div class="setcard">
                   <h4>MCP server URLs</h4>
@@ -875,30 +1182,11 @@
                     <span>Personal-mode Composio MCP URL</span>
                     <input id="set-composio" type="text" placeholder="https://connect.composio.dev/mcp" />
                   </label>
-                  <label class="field">
-                    <span>Toolbox MCP URL</span>
-                    <input id="set-toolbox" type="text" placeholder="https://www.skillsmanager.uk/toolbox" />
-                  </label>
-                </div>
-                <div class="setcard">
-                  <h4>Org-default tokens <em class="state" id="composio-personal-token-note"></em></h4>
-                  <p class="desc">In Personal mode, shared Composio resolves <strong>channel → this org default</strong> while the active user's personal Composio remains separate. Saved Composio tokens are retained but inactive in SDK mode. Toolbox always resolves <strong>channel → user → this org default</strong>. Shown masked — click the eye to reveal. The <strong>owner</strong> label is only an admin note.</p>
-                  <label class="field">
-                    <span>Default Composio token <em class="state" id="default-composio-state"></em></span>
-                    <input id="set-default-composio-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-                    <input id="set-default-composio" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-composio">clear</button></div>
-                  </label>
-                  <label class="field">
-                    <span>Default Toolbox token <em class="state" id="default-toolbox-state"></em></span>
-                    <input id="set-default-toolbox-label" class="tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-                    <input id="set-default-toolbox" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-default-toolbox">clear</button></div>
-                  </label>
                 </div>
               </section>
 
               <!-- ── License ─────────────────────────────────────────────── -->
+              <!-- ── Engine licenses ─────────────────────────────────────── -->
               <!-- The licensing state of this deployment (src/ee/). Everything here is read from
                    GET /api/license, which returns has*/last4 for the key like every other listing —
                    the value itself comes one at a time from /api/secrets/reveal behind the eye. -->
@@ -909,7 +1197,7 @@
                 </header>
                 <div class="setcard">
                   <h4>License <em class="state" id="license-state-chip"></em></h4>
-                  <p class="desc">Without a key this deployment serves <strong>one conversation</strong> per UTC month. A Registered (free) key supports up to 20 channels and 20 users; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
+                  <p class="desc">Without a key this deployment serves <strong>one active channel</strong> per UTC month. A Registered (free) key supports 100 active conversation threads <strong>per channel</strong> per UTC month, up to 10 channels and 10 users, and 30 days of cost history; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
                   <div id="license-banner" class="license-banner" hidden></div>
                   <dl class="license-facts" id="license-facts"></dl>
                   <label class="field">
@@ -968,19 +1256,8 @@
                   </label>
                 </div>
                 <div class="setcard">
-                  <h4>Runtime changes</h4>
-                  <label class="field">
-                    <span>Who can change the model/runtime in channels</span>
-                    <select id="set-model-change-access">
-                      <option value="admins">Org admins only</option>
-                      <option value="users">All authorized users</option>
-                    </select>
-                    <em class="state">Controls both channel-wide and thread-only <code>/model</code> changes. DM users can always customize their own runtime.</em>
-                  </label>
-                </div>
-                <div class="setcard">
                   <h4>Model shortcuts</h4>
-                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply.</p>
+                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply. New installations include Astra, Sol, Terra, Fable, Opus and <code>:sonet</code> for Sonnet. Until this list is customized, targets follow the newest stable version in each family from the supported model catalog. Saving an edited list keeps those exact choices. Add an effort after the name (<code>:opus :high</code>), or use <code>:low</code>, <code>:mid</code>, <code>:medium</code> or <code>:high</code> alone to change only the effort; these four names are reserved. The selectors may follow the mention anywhere in the message.</p>
                   <div id="model-shortcuts-editor"></div>
                   <button type="button" class="clear-tok" id="add-model-shortcut" disabled>Add shortcut</button>
                 </div>
@@ -1006,10 +1283,11 @@
                   <label class="field">
                     <span>Max containers running at once — the least recently used is stopped past this</span>
                     <input id="set-container-max" type="number" min="1" max="500" step="1" placeholder="8" />
+                    <em class="state">Counts containers, not agent runs. Set parallel agent runs under Agent defaults.</em>
                   </label>
                   <label class="field">
                     <span>Process limit per container (pids)</span>
-                    <input id="set-container-pids" type="number" min="64" max="65536" step="1" placeholder="1024" />
+                    <input id="set-container-pids" type="number" min="64" max="65536" step="1" placeholder="4096" />
                   </label>
                   <label class="field">
                     <span>Memory limit — e.g. <code>2g</code>, <code>512m</code> (blank = no limit)</span>
@@ -1020,8 +1298,18 @@
                     <input id="set-container-cpus" type="text" placeholder="blank = no limit" />
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Admin channels can access the host home.</strong> Gives current organization admins in Admin channels read-write access to the gateway user’s home directory: other channel folders and memory, repositories, gateway logs, metadata, and credential stores. Other members keep Worker permissions in a separate project container with isolated HOME, temporary files, artifacts and engine histories. This does not grant host root access. Off keeps Admin channels confined to their own channel folder. Changing it reconciles the admin containers at their next turn.</label>
+                  <label class="field">
+                    <span>Additional allowed roots for working and additional folders (one absolute path per line; blank = only the gateway user's home)</span>
+                    <textarea id="set-fs-roots" rows="3" placeholder="/mnt/shares&#10;/srv/projects"></textarea>
+                    <em class="state">Channel working folders and additional folders may be chosen from the gateway user's home and from these directories. Each must exist on the gateway host; the gateway's own runtime, SSH and login directories are refused.</em>
+                  </label>
+                  <label class="field">
+                    <span>Private MCP servers on your network (one <code>host:port</code> per line; blank = public MCP servers only)</span>
+                    <textarea id="set-private-mcp-hosts" rows="3" placeholder="192.168.1.20:10500&#10;cad-ws.lan:8080"></textarea>
+                    <em class="state">Custom MCP connections normally reach public https:// servers only. A server listed here may also be added by its private LAN address, over http:// or https://. Only private addresses (10.x, 172.16–31.x, 192.168.x, fc00::/7) on exactly that port are allowed; loopback and cloud metadata never are. Anyone who can add a custom MCP can then use these servers, so list only servers that require their own authentication or that you trust every channel to reach.</em>
+                  </label>
                   <label class="toggle"><input type="checkbox" id="set-container-egress-bridge" /> <strong>Legacy open network (no egress proxy).</strong> Off (the default): every channel container runs with no network of its own and reaches the internet only through the gateway's egress proxy, which enforces each channel's Allow network switch, blocks private and metadata addresses, and swaps placeholder credentials for real secrets only on their declared hosts. On: containers use the open bridge network and receive raw secret values, as before this release. Changing it recreates containers at their next turn.</label>
-                  <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold readable variables.</strong> On (the default for new installs): a secret with no egress rule — no built-in rule and no “Used on hosts” — is withheld from proxy-mode containers, and the run is told its name was withheld. To give it to containers, add the hosts it is used on (the secret's “Used on hosts” field, or <code>hosts</code> with <code>set_secret</code>): the container then gets a placeholder the proxy swaps on those hosts only. Off: an unruled secret is injected raw and listed as unprotected.</label>
+                  <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold automatically readable variables.</strong> On (the default for new installs): variables without a proxy rule are withheld from containers unless explicitly made readable. For an HTTPS token, set its allowed servers so programs receive a protected stand-in. If a CLI or another program needs the real value, choose Make readable for that variable with the required confirmation; the next run receives its raw value even with this switch on. Off: variables without a proxy rule are injected raw and listed as unprotected.</label>
                   <label class="field">
                     <span>Claude token for container runs <em class="state" id="container-token-state"></em></span>
                     <input id="set-container-claude-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
@@ -1038,22 +1326,23 @@
                 </div>
                 </section>
 
+              <section class="setsec" id="set-admin-access" data-sec="admin-access" aria-labelledby="set-admin-access-h">
+                <header class="setsec-head">
+                  <h3 id="set-admin-access-h">Admin access</h3>
+                  <p class="setsec-desc">Your passkeys and the gateway admin user they belong to. Invite other admins from Users.</p>
+                </header>
+                <div class="setcard admin-access-card" id="admin-access"></div>
+              </section>
+
               <!-- ── System ──────────────────────────────────────────────── -->
               <section class="setsec" id="set-system" data-sec="system" aria-labelledby="set-system-h">
                 <header class="setsec-head">
                   <h3 id="set-system-h">System</h3>
-                  <p class="setsec-desc">Admin UI password, the HTTP run API token, Slack connection controls and the danger zone.</p>
+                  <p class="setsec-desc">The HTTP run API token, Slack connection controls and the danger zone.</p>
                 </header>
                 <div class="setcard">
-                  <h4>Admin UI</h4>
-                  <label class="field">
-                    <span>Admin password (sign-in to this UI) <em class="state" id="adminpw-state"></em></span>
-                    <input id="set-adminpw" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                  </label>
-                </div>
-                <div class="setcard">
-                  <h4>HTTP run API</h4>
-                  <p class="desc">A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
+                  <h4>HTTP run API — deprecated organization-wide key</h4>
+                  <p class="desc"><strong>Deprecated:</strong> prefer channel tokens (ask the agent in a conversation for <code>create_api_token</code>; listed on the API page). This single key acts as a fixed admin in every conversation. A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
                   <label class="field">
                     <span>API token <em class="state" id="apikey-state"></em></span>
                     <input id="set-apikey" type="password" placeholder="leave blank to keep current" autocomplete="off" />
@@ -1076,10 +1365,6 @@
                     <span class="t">Reset every channel's access to default<small>Resets who-can-use (→ default) and who-can-manage (→ org admins only) on every channel, and clears custom guest &amp; manager lists. Profiles, skills, connectors and tokens are left untouched. Can't be undone.</small></span>
                     <button type="button" id="reset-access" class="dz-btn">Reset all…</button>
                     <span class="saved" id="reset-access-saved"></span>
-                  </div>
-                  <div class="dz-row">
-                    <span class="t">Remove admin password<small>The UI becomes open — anyone who can reach it can administer.</small></span>
-                    <button type="button" id="remove-password" class="dz-btn">Remove…</button>
                   </div>
                   <div class="dz-row">
                     <span class="t">Restart daemon<small>Choose to wait for ongoing work or force a restart and interrupt active turns and jobs.</small></span>
@@ -1147,51 +1432,7 @@
       </div>
     </div>
 
-    <!-- Automation details + full prompt editor. -->
-    <div id="schedule-modal" class="modal" hidden>
-      <div class="modal-card schedule-card" role="dialog" aria-modal="true" aria-labelledby="schedule-modal-title">
-        <div class="session-head">
-          <h3 id="schedule-modal-title">Automation details</h3>
-          <button id="schedule-modal-close" class="ghost icon-btn" type="button" aria-label="Close" title="Close">✕</button>
-        </div>
-        <div id="schedule-modal-details" class="schedule-details"></div>
-        <div class="schedule-form-grid">
-          <label class="field schedule-wide"><span>Automation name</span><input id="schedule-modal-description" type="text" /></label>
-          <label class="toggle schedule-enabled"><input id="schedule-modal-enabled" type="checkbox" /> <strong>Enabled</strong></label>
-          <fieldset id="schedule-modal-timing" class="schedule-timing schedule-wide">
-            <legend>Timing</legend>
-            <div id="schedule-recurring-fields" class="schedule-timing-grid">
-              <label class="field"><span>Frequency</span><select id="schedule-frequency"><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="hourly">Hourly</option><option value="advanced">Advanced cron</option></select></label>
-              <label id="schedule-day-wrap" class="field"><span id="schedule-day-label">Day</span><select id="schedule-day"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
-              <label id="schedule-month-day-wrap" class="field"><span>Day of month</span><input id="schedule-month-day" type="number" min="1" max="31" value="1" /></label>
-              <label id="schedule-time-wrap" class="field"><span>Time</span><input id="schedule-time" type="time" step="60" /></label>
-              <label id="schedule-minute-wrap" class="field"><span>Minute past the hour</span><input id="schedule-minute" type="number" min="0" max="59" value="0" /></label>
-              <label id="schedule-cron-wrap" class="field schedule-wide"><span>Advanced cron</span><input id="schedule-modal-cron" type="text" spellcheck="false" /><small>minute hour day-of-month month day-of-week</small></label>
-            </div>
-            <label id="schedule-once-wrap" class="field"><span>Run once at</span><input id="schedule-modal-run-at" type="datetime-local" /></label>
-          </fieldset>
-          <label class="field"><span>Mention</span><select id="schedule-modal-notify"><option value="channel">Mention channel</option><option value="user">Mention person</option><option value="none">No mention</option></select></label>
-          <label id="schedule-modal-notify-user-wrap" class="field"><span>Person ID</span><input id="schedule-modal-notify-user" type="text" placeholder="U…" /></label>
-          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option><option value="thread">Reuse a specific existing thread</option><option value="dm-on-match">DM creator only when result matches</option></select></label>
-          <label id="schedule-modal-thread-wrap" class="field schedule-wide" hidden><span>Existing thread ID</span><input id="schedule-modal-thread" type="text" placeholder="Thread ID in this conversation" /><small>Every run uses a fresh agent session and delivers to this thread.</small></label>
-          <label class="field schedule-task-control"><span>Run visibility</span><select id="schedule-modal-visibility"><option value="visible">Show when a run starts</option><option value="silent">Run silently in the background</option></select></label>
-          <label class="field schedule-task-control"><span>Result messages</span><select id="schedule-modal-result-policy"><option value="always">Send every result</option><option value="on-result">Send only when there is a result</option></select><small>Only an explicitly reported no-result outcome is suppressed.</small></label>
-          <label class="toggle schedule-task-control"><input id="schedule-modal-failure-notify" type="checkbox" checked /> <strong>Send failure notifications</strong></label>
-          <label class="field schedule-task-control"><span class="toggle"><input id="schedule-modal-sudo" type="checkbox" /> <strong>Run as sudo on the gateway host</strong></span><small>Bypasses agent permission prompts. The creator must remain an organization admin. Leave off for normal container execution.</small></label>
-        </div>
-        <label class="field schedule-prompt-field">
-          <span>Prompt</span>
-          <textarea id="schedule-modal-prompt" rows="12" spellcheck="false"></textarea>
-        </label>
-        <p id="schedule-modal-error" class="schedule-modal-error" role="alert" hidden></p>
-        <button id="schedule-history-open" class="ghost" type="button">View health and run logs</button>
-        <div class="modal-foot">
-          <span style="flex:1"></span>
-          <button id="schedule-modal-cancel" class="ghost" type="button">Cancel</button>
-          <button id="schedule-modal-save" type="button">Save automation</button>
-        </div>
-      </div>
-    </div>
+    <!-- Run history of every automation (deleted ones included). -->
     <div id="schedule-history-modal" class="modal" hidden>
       <div class="modal-card schedule-card" role="dialog" aria-modal="true" aria-labelledby="schedule-history-title">
         <div class="session-head"><h3 id="schedule-history-title">Automation run history</h3><button id="schedule-history-close" class="ghost icon-btn" type="button" aria-label="Close run history">✕</button></div>
@@ -1314,12 +1555,6 @@
               <input class="ch-composio" type="password" placeholder="leave blank to keep / use org shared default" />
               <em class="state ch-composio-state"></em>
             </label>
-            <label class="field">
-              <span>Channel Toolbox token (used for everyone here — overrides per-user)</span>
-              <input class="ch-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-              <input class="ch-toolboxtoken" type="password" placeholder="leave blank to keep / use per-user" />
-              <em class="state ch-toolboxtoken-state"></em>
-            </label>
           </div>
           <div class="setcard make-toolbox-card">
             <h4>Make MCP toolbox <em class="state ch-make-toolbox-state"></em></h4>
@@ -1339,7 +1574,7 @@
           </div>
           <div class="setcard custom-mcp-card">
             <h4>Custom MCP servers <em class="state cmcp-state"></em></h4>
-            <p class="desc">Remote MCP servers every run in this conversation receives, each as <code>custom-&lt;name&gt;</code>, authenticated with a Bearer token (servers that need an OAuth sign-in go through Composio). HTTPS only, public addresses only. The gateway connects on the agent's behalf, so the token never enters the conversation's container. Saved and removed immediately; write-only — a stored token is never shown again.</p>
+            <p class="desc">Remote MCP servers every run in this conversation receives, each as <code>custom-&lt;name&gt;</code>, authenticated with a Bearer token, a Composio consumer key, or custom headers and query parameters. HTTPS only, public addresses only. The gateway connects on the agent's behalf, so credentials never enter the conversation's container. Saved and removed immediately; write-only — stored credential values are never shown again.</p>
             <!-- Built by public/admin-custom-mcps.js, shared with the user drawer. -->
             <div class="ch-custom-mcps"></div>
           </div>
@@ -1374,7 +1609,7 @@
         <div class="subpane" data-pane="skills">
           <div class="col tools-col">
             <label class="field">
-              <span>Skill template <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
+              <span>Skill template · Enterprise <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
               <select class="ch-skill-template"><option value="">none</option></select>
               <em class="state ch-skill-template-state"></em>
             </label>
@@ -1384,49 +1619,28 @@
 
         <!-- ── RUNTIME ────────────────────────────────────────────────────── -->
         <div class="subpane" data-pane="runtime">
-          <div class="ch-auth-chooser">
-            <label class="field">
-              <span>Which Codex login should this channel use?</span>
-              <select class="ch-codex-auth-source">
-                <option value="gateway">Default gateway login (shared)</option>
-                <option value="channel">This channel's own login</option>
-              </select>
-            </label>
-          </div>
-          <div class="ch-auth-channel-panel" hidden>
-            <h4>This channel's Codex setup</h4>
-            <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
-            <div class="field ch-codex-login">
-              <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
-              <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="ch-codex-device-section" hidden>
-                <div class="ch-codex-device-code" hidden>
-                  <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                  <span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span>
-                </div>
-                <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
-              </div>
-              <div class="row-actions ch-codex-api-section" hidden>
-                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Channel OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Save API key</button>
-              </div>
-              <em class="state ch-codex-api-note" hidden>The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
-            </div>
-            <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
+          <div class="setcard ch-licenses-card">
+            <h4>Licenses for this channel · Enterprise</h4>
+            <p class="desc">Accounts only this channel runs on: a Claude or Codex engine license limited to this channel (a ChatGPT or Claude sign-in, an API key, or a provider such as Bedrock, Vertex AI or Azure). It is offered in this channel's harness picker and nowhere else. All licenses are managed under <a href="#set-engine-licenses" class="ch-licenses-all">Settings → Engine licenses</a>.</p>
+            <p class="hint ch-licenses-enterprise" hidden>Adding a license limited to one channel needs an active Enterprise license. Existing ones stay listed and can be removed.</p>
+            <div class="ch-licenses"></div>
           </div>
           <fieldset class="ch-harness-policy" disabled>
             <legend>Approved harnesses · Enterprise</legend>
-            <label><input type="checkbox" class="ch-harness-restrict"> Restrict this channel to selected harnesses</label>
-            <div class="ch-harness-options checks"></div>
+            <label><input type="checkbox" class="ch-harness-restrict"> Lock this channel to selected harnesses or licenses</label>
+            <div class="ch-harness-options checks lic-lock"></div>
             <p class="hint ch-harness-help">Loading license…</p>
           </fieldset>
+          <label class="field">
+            <span>Monthly spending limit (USD) · Enterprise</span>
+            <input type="number" class="ch-monthly-spending-limit" min="0.01" step="any" placeholder="Unlimited" /><em class="state ch-budget-status" role="status"></em>
+            <em class="state">Recorded gateway usage per UTC month. Blank clears the limit. In-flight runs may exceed it; unpriced usage blocks new runs while a limit is configured. External service charges are excluded.</em>
+          </label>
           <div class="grid grid-2">
             <label class="field ch-engine-field">
-              <span>Engine (which CLI drives this channel)</span>
+              <span>Harness (which CLI drives this channel)</span>
               <select class="ch-engine">
                 <option value="">Default (global setting)</option>
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
               </select>
             </label>
             <label class="field">
@@ -1444,6 +1658,11 @@
               </select>
             </label>
           </div>
+          <label class="togglerow">
+            <input type="checkbox" class="ch-skillswap" />
+            <span class="switch"></span>
+            <span class="t"><b>Allow skill engine and model swapping · Enterprise</b><small>A skill that declares a preferred model (its SKILL.md <code>model:</code> field) switches the turn to it when the skill is used: the same session continues on that model, and a skill preferring the other engine is delegated to a background agent there. A person's /model pin always wins.</small></span>
+          </label>
           <label class="field">
             <span>Working folder (blank = default gateway folder)</span>
             <div class="row">
@@ -1453,6 +1672,14 @@
             </div>
             <span class="hint">Save to apply a folder change. Existing files stay in their current folders.</span>
           </label>
+          <div class="field ch-extrafolders-field">
+            <span>Additional folders (mounted into the container at the same path, beside the working folder)</span>
+            <div class="ch-extrafolders"></div>
+            <div class="row">
+              <button type="button" class="ch-extrafolder-add ghost">Add folder…</button>
+            </div>
+            <span class="hint">Share one host folder with several conversations while each keeps its own working folder. Each entry must be an existing directory inside the allowed root, outside the gateway's own trees (runtime root, SSH and engine logins, container storage), and must not overlap the working folder or another entry. Another conversation's folder is allowed: everyone in this channel then sees that conversation's files, instructions and memory. Read-only entries refuse writes. Save to apply; the next message recreates the container.</span>
+          </div>
           <label class="field">
             <span>Google Drive sync folder (blank = off — 2-way synced with the whole working folder, minus agent instructions, memory and secrets; exclude more in <code>.driveignore</code>; set up the service account under Settings → Google Drive sync)</span>
             <div class="row">
@@ -1465,7 +1692,6 @@
           </label>
           <div class="ch-toggles" style="margin-top:8px">
                 <label class="toggle"><input type="checkbox" class="ch-memory" /> Folder memory — uncapped <code>MEMORY.md</code> + <code>memory/</code> topic files, with compact catalog injection and on-demand FTS retrieval (overrides the global default)</label>
-            <label class="toggle"><input type="checkbox" class="ch-nodefaulttokens" /> Refuse org-default tokens — don't fall back to the gateway-wide Composio/Skills/Toolbox tokens here (channel/user tokens still apply)</label>
           </div>
         </div>
 
@@ -1527,6 +1753,16 @@
           <label class="toggle inline"><input type="checkbox" class="ud-approved" /> Approved</label>
           <label class="toggle inline"><input type="checkbox" class="ud-admin" /> Admin</label>
           <label class="toggle inline"><input type="checkbox" class="ud-nudges" /> Quiet-thread reminders</label>
+          <label class="toggle inline"><input type="checkbox" class="ud-reply-mentions" /> Mention in replies</label>
+        </div>
+
+        <div class="ud-row ud-dashboard-access"></div>
+        <div class="ud-row">
+          <label class="fldlab">Combined Activity accounts</label>
+          <div id="ud-activity-identities" class="ud-activity-identities user-picker"></div>
+          <p class="hint">Select this person's approved Google Chat and Microsoft Teams accounts. This combines Activity only; permissions, sign-ins, secrets and connected accounts stay separate.</p>
+          <button type="button" class="ud-save-activity ghost">Save Activity accounts</button>
+          <em class="state ud-activity-saved"></em>
         </div>
 
         <div class="ud-row ud-grants"></div>
@@ -1539,16 +1775,10 @@
         </div>
         <div class="ud-row ud-composio-inventory"></div>
         <p class="hint">This person's personal accounts. Shared accounts are listed on each channel's Connections page. Save key changes before refreshing.</p>
-        <div class="ud-row">
-          <label class="fldlab">Toolbox token</label>
-          <input class="ud-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
-          <input class="ud-toolboxtoken" type="password" placeholder="Toolbox token (Authorization: Bearer)" />
-          <em class="state ud-toolbox-state"></em>
-        </div>
 
         <div class="ud-row ud-custom-mcps-row">
           <label class="fldlab">Personal MCP servers<em class="state cmcp-state"></em></label>
-          <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token only (OAuth servers go through Composio); HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
+          <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token or Composio consumer key; HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
           <div class="ud-custom-mcps"></div>
         </div>
 
@@ -1571,6 +1801,7 @@
       </div>
     </template>
 
+    <script src="/passkeys.js?v={{ASSET_V}}"></script>
     <script type="module" src="/app.js?v={{ASSET_V}}"></script>
   </body>
 </html>

@@ -2,7 +2,6 @@ import path from "node:path";
 import { resolveClaudeMcpConfig } from "./claude-mcp.js";
 import { runClaude, buildClaudeEnv, buildPersistentArgs, canUseClaudeWarmPool } from "./claude.js";
 import { runCodex } from "./codex.js";
-import { runOpenCode } from "./opencode.js";
 import { discoverQwenModels, qwenCredentialState, qwenProviderEnv, isQwenTextModel, resolveQwenProvider, QWEN_PROVIDERS } from "./qwen.js";
 import { runPooled, abortPooled } from "./session-pool.js";
 import { compileNetworkPolicy } from "./network-policy.js";
@@ -14,6 +13,10 @@ import { codexEngineHome } from "../config/paths.js";
 import { hostClaudeStateDir, hostCodexStateDir } from "./host-state.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
+import { makeChannelCodexAdapter } from "./codex-channel.js";
+import { makeCodexEuAdapter } from "./codex-eu.js";
+import { makeBedrockAdapter } from "./bedrock.js";
+import { buildLicenseAdapters } from "./license-adapters.js";
 
 // Which Claude login the gateway is using (src/gateway/claude-login.js). Imported LAZILY: that
 // module reads a setting, src/config/settings.js imports the engine registry, and the registry
@@ -59,11 +62,12 @@ const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
 const claude = validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
-  id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
+  subscriptionUsage: { provider: "claude" },
+  id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", defaultEffortKey: "defaultClaudeEffort", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
     { label: "Opus 5.5", value: "claude-opus-5-5", description: "Current Opus model for most coding and knowledge work." },
-    { label: "Fable 5.1", value: "claude-fable-5-1", description: "Current Fable model for demanding long-running work." },
+    { label: "Fable 5.2", value: "claude-fable-5-2", description: "Current Fable model for demanding long-running work." },
     { label: "Sonnet 5.5", value: "claude-sonnet-5-5", description: "Current Sonnet model for everyday work." },
     { label: "Haiku 4.5", value: "claude-haiku-4-5", description: "Current Haiku model for fast, low-cost work." },
   ], mintsOwnSessionId: false,
@@ -71,10 +75,11 @@ const claude = validateEngineAdapter({
   // this engine: the provider did not answer the request. Never the limit/credential kinds (their
   // own failover) and never the catch-all "provider" (a rejected request fails the same way twice).
   transientKinds: Object.freeze(["availability", "connection"]),
-  supports: { warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
+  supports: { nativeFork: true, warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
+    channelHistory: true,
     // A direct `/sudo` turn uses the daemon account's native Claude config/state directory.
     hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
@@ -205,7 +210,7 @@ const claude = validateEngineAdapter({
 const makeQwenAdapter = (entry) => validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
-  id: entry.id, label: entry.label, cli: "claude", defaultModelKey: entry.defaultModelKey,
+  id: entry.id, label: entry.label, cli: "claude", defaultModelKey: entry.defaultModelKey, defaultEffortKey: entry.defaultEffortKey,
   // The shared model-ID vocabulary these harnesses draw from (Qwen/GLM/DeepSeek/Kimi/MiniMax).
   // Declared so the admin UI can recognise a provider harness's model without a hard-coded engine
   // id — a provider added to the table would otherwise have its saved model silently dropped from
@@ -223,6 +228,8 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   modelCatalogSource: "fallback",
   mintsOwnSessionId: false,
   optIn: true,
+  // The key and endpoint this provider is configured with; removing the license deletes both.
+  ownCredential: Object.freeze({ kind: "api-key", settingsKeys: Object.freeze([entry.settings.apiKey, entry.settings.baseUrl]) }),
   transientKinds: Object.freeze(["availability", "connection"]),
   supports: { warmPool: false, interruptSteer: false, permissionPrompt: true, compact: true, realCost: false, usageLimitFallback: false, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => isQwenTextModel(m),
@@ -230,6 +237,7 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   // Identical to Claude's: the same binary, writing the same transcripts, keyed by the same
   // project-directory rule into the same config dir.
   sessionState: Object.freeze({
+    channelHistory: true,
     hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
     files: ({ cwd, sessionId }) => {
@@ -312,20 +320,26 @@ const codex = validateEngineAdapter({
     }
     return { servers, rejected };
   },
-  id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
+  subscriptionUsage: { provider: "codex" },
+  id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", defaultEffortKey: "defaultCodexEffort", mcpMetaKey: "allowedCodexMcps",
   // Codex reports no dollar cost, so the ledger prices it from this configured rate (Settings →
   // Audit). Declared here so no other engine inherits OpenAI's rates by falling through.
   costRateKey: "codexRatePer1MTokens",
   instructionFile: "AGENTS.md", skillsDir: ".agents/skills", mcpTransport: "argv", contextWindow: 272_000,
   efforts: ["none", "low", "medium", "high", "xhigh", "max", "ultra"], models: [
-    ...["codex", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
+    ...["astra", "sol"].map((family) => ({
+      label: `GPT-6.2 ${family === "astra" ? "Astra" : "Sol"}`, value: `gpt-6.2-${family}`,
+      description: `GPT-6.2 ${family} model.`, efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    })),
+    ...["codex", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"].map((value) => ({ label: value === "codex" ? "Codex" : value.toUpperCase().replace("GPT-", "GPT-"), value, description: `${value} model.` })),
   ], mintsOwnSessionId: true,
   // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
   transientKinds: Object.freeze(["transient"]),
-  supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false, realCost: false, usageLimitFallback: true, userSkillOverlay: true, networkModes: FULL_NETWORK_MODES },
+  supports: { nativeFork: true, warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false, realCost: false, usageLimitFallback: true, userSkillOverlay: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
   sessionState: Object.freeze({
+    channelHistory: true,
     // A direct `/sudo` turn uses the daemon account's native CODEX_HOME.
     hostDir: () => hostCodexStateDir(),
     containerDirKey: "codexHome",
@@ -333,13 +347,30 @@ const codex = validateEngineAdapter({
     // recomputed, so the location is a PATTERN — and the date directories must survive the copy,
     // because that tree is how `codex exec resume <id>` finds the file.
     files: ({ sessionId }) => [{ rel: `sessions/*/*/*/*-${sessionId}.jsonl`, kind: "file" }],
+    // A forked thread (`exec fork`) is a PAGINATED rollout: its `session_meta` names the source
+    // rollout it continues and the file holds only the child's own turns, so `exec resume` walks
+    // that chain and refuses ("invalid paginated history lineage … missing source rollout") when a
+    // link is absent. The first line of the rollout is enough to name the next link; a legacy
+    // (non-paginated) rollout carries its whole history and needs nothing.
+    parentSession: (firstLine) => {
+      let record;
+      try {
+        record = JSON.parse(String(firstLine || ""));
+      } catch {
+        return "";
+      }
+      const payload = record?.type === "session_meta" ? record.payload : null;
+      if (!payload || payload.history_mode !== "paginated") return "";
+      const parent = String(payload.history_base?.thread_id || payload.forked_from_id || "").trim();
+      return parent && parent !== String(payload.id || "") ? parent : "";
+    },
   }),
   compileConfinement: (request) => baseCompile("codex", request, FULL_NETWORK_MODES),
   async run(ctx) {
     const r = ctx.runtime;
     requirePluginRuntime(r.pluginRuntime, this.id);
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    const catalog = await listEngineMcps("codex", { channelId: target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }).catch(() => []);
+    const catalog = await listEngineMcps("codex", { channelId: target?.meta?.engine === "codex-channel" ? target.meta.channelId : "" }).catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
     codexMcpPolicy.servers.push(...(r.managedMcpServers || []));
@@ -349,7 +380,7 @@ const codex = validateEngineAdapter({
     for (const server of codexMcpPolicy.servers) {
       if (server.enabled && !server.definition) server.enabled = false;
     }
-    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, forkSourceSessionId: r.forkSourceSessionId, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, toolboxToken: r.toolboxToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, customMcps: r.customMcps, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved });
+    return runCodex({ cwd: ctx.cwd, prompt: ctx.prompt, extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, sessionId: ctx.session.id, isNewSession: ctx.session.fresh, forkSourceSessionId: r.forkSourceSessionId, dangerouslySkip: r.dangerouslySkip, writable: r.writable, networkMode: ctx.policy.network.mode, clean: r.clean, autoApprove: r.autoApprove, composioUserEndpoint: r.composioUserEndpoint, composioEndpoint: r.composioEndpoint, composioUserToken: r.composioUserToken, composioToken: r.composioToken, makeToolboxUrl: r.makeToolboxUrl, makeToolboxKey: r.makeToolboxKey, customMcps: r.customMcps, codexMcpPolicy, gatewayCapability: r.gatewayCapability, gatewayFsRoot: r.gatewayFsRoot, gatewayWorkspaceRoot: r.gatewayWorkspaceRoot, progressReport: r.progressReport, model: r.model, effort: r.effort, codexStateDir: r.codexStateDir, personalSkills: r.personalSkillCatalog, pluginSkills: requirePluginRuntime(r.pluginRuntime, this.id).skills, attachments: r.attachments, target, artifactDir: ctx.artifactDir ?? target.artifactDir ?? null, signal: r.signal, timeoutMs: r.timeoutMs, maxSilenceMs: r.maxSilenceMs, onDelta: r.onDelta, onEvent: r.onEvent, onSessionResolved: r.onSessionResolved, provider: r.codexProvider || null });
   },
   interrupt: () => false,
   discoverMcps: ({ channelId = "" } = {}) => listEngineMcps("codex", { channelId }),
@@ -374,44 +405,8 @@ const codex = validateEngineAdapter({
   },
 });
 
-const opencode = validateEngineAdapter({
-  id: "opencode", label: "OpenCode (read-only)", cli: "opencode", defaultModelKey: "defaultOpenCodeModel",
-  mcpMetaKey: "allowedOpenCodeMcps", instructionFile: "AGENTS.md", skillsDir: ".opencode/skills",
-  mcpTransport: "none", contextWindow: 200_000, efforts: ["low", "medium", "high"], models: [],
-  mintsOwnSessionId: true,
-  transientKinds: Object.freeze([]), // its runner classifies no provider failures yet
-  supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false,
-    realCost: true, usageLimitFallback: false, userSkillOverlay: false, networkModes: ["off"], readOnly: true, mcp: false },
-  // OpenCode model IDs are provider/model. An empty value deliberately delegates to its configured
-  // default; non-empty IDs must retain the provider boundary.
-  modelBelongs: (model) => /^[a-z0-9._-]+\/[a-z0-9._:/-]+$/i.test(model),
-  resumeCommand: (id) => `opencode run --session ${id}`,
-  compileConfinement(request = {}) {
-    if (request.dangerouslySkip || request.writable || request.allowNetwork) {
-      return {
-        supported: false,
-        reason: "OpenCode is admitted only for read-only, network-off runs because its permission rules are not an OS sandbox",
-        network: { mode: request.allowNetwork ? "on" : "off", supported: false },
-        writable: false,
-        bypass: false,
-      };
-    }
-    return { supported: true, reason: "", network: { mode: "off", supported: true }, writable: false, bypass: false };
-  },
-  async run(ctx) {
-    const runtime = ctx.runtime;
-    if (ctx.policy.writable || ctx.policy.network?.mode !== "off" || runtime.allowedMcps?.length) {
-      throw new Error("OpenCode adapter refused unsupported write, network, or MCP capability");
-    }
-    return runOpenCode({ cwd: ctx.cwd, prompt: ctx.prompt, sessionId: ctx.session.id,
-      isNewSession: ctx.session.fresh, model: runtime.model, effort: runtime.effort,
-      attachments: runtime.attachments, timeoutMs: runtime.timeoutMs, maxSilenceMs: runtime.maxSilenceMs,
-      target: runtimeTargetOr(ctx.target, ctx.cwd),
-      signal: runtime.signal, onDelta: runtime.onDelta, onEvent: runtime.onEvent });
-  },
-  interrupt: () => false,
-  discoverMcps: async () => [],
-  health: (options) => commandHealth("opencode", options),
-});
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeChannelCodexAdapter(codex), makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter)]);
 
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);
+// The adapters of the licenses an administrator added (license-adapters.js), built from the same
+// two base harnesses as every built-in above. Unvalidated: the registry validates the set.
+export const licenseAdaptersFor = (records) => buildLicenseAdapters({ claude, codex }, records);

@@ -112,6 +112,7 @@ test("runMessage threads one per-channel Make toolbox through Claude, Codex, and
   assert.match(integrations, /resolveCustomMcpsForRun\(/);
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?makeToolboxKey, customMcps,/);
   assert.ok((run.match(/makeToolboxKey, customMcps/g) || []).length >= 3);
-  assert.match(run, /customMcpServers: Object\.entries\(customMcps\)\.map\(\(\[name, \{ url \}\]\) => \(\{ name, \.\.\.\(target\?\.backend === "host"/);
+  // Custom servers are relayed on host and container targets: settings carry names, never URLs.
+  assert.match(run, /customMcpServers: Object\.keys\(customMcps\)\.map\(\(name\) => \(\{ name \}\)\)/);
   assert.match(adapters, /customMcps: r\.customMcps/);
 });

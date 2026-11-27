@@ -14,6 +14,7 @@ import { channelHistory, threadReplies } from "../../slack/read.js";
 import { downloadChannelFile, formatBytes, uploadsSubFor } from "../../slack/download.js";
 import { resolveSlackConfig } from "../../config/settings.js";
 import { effectiveWorkDir } from "../../gateway/folders.js";
+import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
 import { platformOfConversation } from "../../platforms/ids.js";
 
@@ -68,7 +69,9 @@ export function register(server, ctx) {
         "Add a row (item) to a Slack List. `list_id` is the List's F-id or a pasted List URL. `name` " +
         "sets the primary/title column. `fields` is an optional map of other columns keyed by column " +
         "name, key, or id → value (e.g. {\"Status\":\"In progress\"}; select values accept the option " +
-        "label). Use slack_list_info first if you're unsure of the columns.",
+        "label). Message fields take Slack message URLs; attachment fields take existing Slack file IDs; " +
+        "link fields take URLs or {original_url, display_name?, display_as_url?} objects. Scalars and arrays " +
+        "are accepted; [] clears these fields. Use slack_list_info first if you're unsure of the columns.",
       inputSchema: {
         list_id: z.string(),
         name: z.string().optional(),
@@ -92,7 +95,9 @@ export function register(server, ctx) {
       description:
         "Update an existing row in a Slack List. Needs `list_id` and the item's `item_id` (the Rec-id " +
         "from slack_list_items). Pass `name` to change the title and/or `fields` (map of column " +
-        "name/key/id → value, e.g. {\"Status\":\"Done\"}) to change other cells.",
+        "name/key/id → value, e.g. {\"Status\":\"Done\"}) to change other cells. Message fields take Slack " +
+        "message URLs; attachments take existing Slack file IDs; links take URLs or {original_url, " +
+        "display_name?, display_as_url?} objects. Scalars and arrays are accepted; [] clears these fields.",
       inputSchema: {
         list_id: z.string(),
         item_id: z.string(),
@@ -229,7 +234,9 @@ export function register(server, ctx) {
       let opened;
       try {
         const meta = await loadMeta();
-        opened = await openConfinedFile(effectiveWorkDir(slug, { ...(meta || {}), _slug: slug }), relative);
+        // Into THIS thread, for the people who can already browse the folder: lenient export policy
+        // (hidden and credential-shaped files still never leave; MEMORY.md or a report may).
+        opened = await openConfinedFile(channelFileRoot(slug, meta), relative, { protectedNames: "lenient" });
       } catch (e) {
         return text(`Sharing refused: ${String(e?.message || e)}`);
       }

@@ -15,6 +15,10 @@ and any separate agreement with the Licensor. This summary does not replace them
   it does not unlock optional Enterprise features or permit disabling enforcement.
 - **Composio SDK mode is Enterprise-only and Beta.** Standard Composio MCP mode remains available
   in every tier. Google Chat and Microsoft Teams are Beta connectors available in every tier.
+- **Enterprise organization controls:** skill preferred-model switching, exact company email-domain
+  auto-approval, dedicated per-channel Codex logins, external skill-catalog MCP/tokens, organization
+  environment variables, Google Drive sync, channel skill templates and monthly per-channel USD
+  spending limits. [Behavior and limits](LICENSE-KEYS.md#enterprise-organization-controls).
 - Filesystem/process isolation, authorization, secret handling, audit records and backup/restore
   retain the same protections in every tier.
 

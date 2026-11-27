@@ -362,3 +362,21 @@ test("stop during thread-context preflight cannot resurrect the durable row or l
   assert.equal(client.posted.some((message) => String(message.text || "").includes("preflight race prompt")), false,
     "prompt-echo runner must never launch after the stop barrier");
 });
+
+test("a promoted foreground run retains its actual Slack thread target for App Home status", async () => {
+  await setUser(USER, { name: "Context User", approved: true });
+  const backend = await __useFakeRuntime();
+  const spawn = backend.spawn.bind(backend);
+  let activeAtSpawn;
+  backend.spawn = (target, spec) => {
+    activeAtSpawn = listActiveRuns().find((row) => row.channelId === "D444444444");
+    return spawn(target, spec);
+  };
+  const client = fakeSlack();
+  const root = { user: USER, ts: "1782919936.000001", text: "Original task" };
+  const event = { type: "message", channel: "D444444444", channel_type: "im", user: USER,
+    text: "Continue the task", thread_ts: root.ts, ts: "1782919936.000002" };
+  client.conversations.replies = async () => ({ messages: [root, event], response_metadata: {} });
+  await processMessageEvent(event, client, { botUserId: "U111111111", teamId: TEAM });
+  assert.equal(activeAtSpawn?.slackThreadTs, root.ts, "promotion and runtime enrichment preserve the real link target");
+});

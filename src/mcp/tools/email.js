@@ -11,9 +11,11 @@ import path from "node:path";
 import { z } from "zod";
 
 import { effectiveWorkDir } from "../../gateway/folders.js";
+import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { openConfinedFile } from "../../gateway/confined-file.js";
 import { ensureRealDir, writeStreamNoFollow } from "../../gateway/safe-fs.js";
 import { getUser } from "../../config/store.js";
+import { getEmailAccountsEnabled } from "../../config/settings.js";
 import { resolveEmailAccountsForRun, selectEmailAccount } from "../../gateway/email-accounts.js";
 import * as mailClient from "../../gateway/email-client.js";
 import { formatBytes } from "../../util/bounded-bytes.js";
@@ -44,8 +46,11 @@ function renderMessages(result) {
 export function register(server, ctx) {
   const { createdBy, text, principalTrusted, loadMeta, slug } = ctx;
   const client = ctx.emailClient || mailClient;
+  // An admin switch (Settings → Email accounts): off means no email tool at all.
+  if (!getEmailAccountsEnabled()) return;
 
   async function accountsForRun() {
+    if (!getEmailAccountsEnabled()) return [];
     const meta = await loadMeta();
     const user = principalTrusted && createdBy ? await getUser(createdBy) : null;
     return resolveEmailAccountsForRun({ channelList: meta?.emailAccounts, userList: user?.emailAccounts, principalTrusted: Boolean(principalTrusted && createdBy) });
@@ -267,11 +272,11 @@ export function register(server, ctx) {
         const chosen = await pick(account);
         if (chosen.sendEnabled === false) return text(`❌ Sending is disabled on ${describeAccount(chosen)}; it can be enabled where the account was connected.`);
         const meta = await loadMeta();
-        const root = effectiveWorkDir(slug, { ...(meta || {}), _slug: slug });
+        const root = channelFileRoot(slug, meta);
         const files = [];
         let total = 0;
         for (const relative of attachments) {
-          const file = await openConfinedFile(root, relative);
+          const file = await openConfinedFile(root, relative, { protectedNames: "lenient" }); // the sender's own mail account
           opened.push(file);
           total += file.stat.size;
           if (total > ATTACHMENT_TOTAL_MAX_BYTES) throw new Error(`attachments exceed ${formatBytes(ATTACHMENT_TOTAL_MAX_BYTES)} in total`);

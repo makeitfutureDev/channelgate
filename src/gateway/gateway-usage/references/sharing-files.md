@@ -11,7 +11,8 @@ Pick the route by **where the file is going**, in this order.
 
 If the person only wants to see it here, write the folder-relative path in inline code
 (`` `work/acme/PROPOSAL.pdf` ``) and the reply gets a `📄 PROPOSAL.pdf` button that opens it in the
-file explorer. No tool call. See `references/writing-replies.md`.
+file explorer. No tool call. See `references/writing-replies.md`. A file inside one of the
+channel's additional mounted folders is addressed as `` `@mounts/<name>/path/to/file` ``.
 
 If they want the **file itself** in this conversation ("send it", "attach the PDF") and the
 `slack_share_file` tool is available, use it: it posts the file into this thread as the bot, any

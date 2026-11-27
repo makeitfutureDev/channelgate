@@ -1,9 +1,9 @@
-// Reply-footer cluster: the run-stats line ("Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings) that rides under it.
+// Reply-footer cluster: the run-stats line ("Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%"),
+// its Block Kit form, and the reply menu (Fork / 📂 Files / 🔑 Variables / ⚙️ Settings / 📊 Dashboard) that rides under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
-import { resumeCommandFor } from "../engines/registry.js";
+import { adapterFor, engineDisplayName, resumeCommandFor, requireAdapter } from "../engines/registry.js";
 import { footerText } from "../gateway/reply-stats.js";
 import { referencedWorkspaceFiles } from "../gateway/reply-files.js";
 export { referencedWorkspaceFiles } from "../gateway/reply-files.js";
@@ -11,6 +11,9 @@ export { footerText } from "../gateway/reply-stats.js";
 import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer.js";
 import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-explorer.js";
 import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
+import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
+import { REPLY_CALL_ACTION_ID } from "./call-button.js";
+import { voiceCallsAvailable } from "../config/settings.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
 // working folder first, because Claude/Codex locate a session by the directory you run them in
@@ -22,20 +25,40 @@ import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "
 // stays today's `cd "<folder>" && <cmd>` line, byte for byte.
 export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   if (!sessionId || !cwd) return "";
-  const base = resumeCommandFor(engine, sessionId);
+  // A license deleted since this session ran has no command to offer; a footer never throws for it.
+  if (!adapterFor(engine)) return "";
+  if (requireAdapter(engine).channelScoped && !target?.meta?.channelId) return "";
+  const base = requireAdapter(engine).resumeCommand(sessionId, { target });
   const wrapped = target ? resumeCommandFor(engine, sessionId, { target }) : base;
   if (wrapped && wrapped !== base) return wrapped;
   return `cd ${JSON.stringify(cwd)} && ${base}`;
 }
 
-// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings — rides the end of EVERY answer the AI
+// What `/resume` with no argument answers. A license whose credential stays with the gateway has no
+// terminal form: its command only prints why, and names no session. The thread's id is then given
+// by itself, because `/resume <id>` in another thread of the channel is the one way left to carry
+// that conversation somewhere else.
+export function resumeCommandReply(cmd, sessionId, engine) {
+  if (!cmd) return "No session in this thread yet — send a message first. To continue an existing session here, use `/resume <command or session id>`.";
+  if (!String(cmd).includes(String(sessionId))) {
+    return `🔒 This thread's session runs on ${engineDisplayName(engine)}, whose credential stays with the gateway, so it cannot be opened in a terminal. ` +
+      `Its id is \`${sessionId}\` — to continue it in another thread of this channel, send \`/clear\` here and \`/resume ${sessionId}\` there.`;
+  }
+  return `💻 Open this thread's session in a terminal on the gateway machine:\n\`\`\`${cmd}\`\`\`\n_Paste that line back as \`/resume <command>\` in this channel to continue the session from a thread._`;
+}
+
+// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard — rides the end of EVERY answer the AI
 // posts into Slack: a streamed or classic reply, an error, a stop, a scheduled/background/API/
 // recovery delivery, and the `/menu` card. It is one fixed set with visible labels, so a reply never
 // shows a partial or icon-only variant of it. The resume command is deliberately NOT here: it lives
-// in Channel Settings → Resume Session and `/resume`.
+// in Channel Settings → Diagnostics and `/resume`. Forking is deliberately not a button either:
+// a per-reply Fork could only replay Slack text into a fresh session (neither engine forks at an
+// earlier point), so branching stays the typed `/fork <message>`, which clones the engine session.
 //
 // Binding: a button carries the requester (`u`) when the post has one, and the handlers refuse a
-// different clicker. An automation post (schedule, background job, API run, restart recovery) has
+// different non-admin clicker. Admins open every menu button under their own identity.
+// Dashboard is viewer-specific and always opens the actual clicker's own Activity.
+// An automation post (schedule, background job, API run, restart recovery) has
 // no Slack requester, so its menu is UNBOUND (`u: ""`) and opens for whoever clicks. That grants
 // nothing: every open re-applies the clicker's own live channel authorization, and the modal it
 // opens is bound to that clicker.
@@ -76,13 +99,41 @@ export function settingsButton(channelId, threadTs, authorId = "", label = "⚙�
   };
 }
 
-// The fixed menu: always all three, in this order, or nothing (no channel to bind to).
+// Dashboard always opens the clicker's own Activity, independently of the reply's requester.
+export function dashboardButton(channelId, threadTs, authorId = "") {
+  if (!channelId) return null;
+  return {
+    type: "button",
+    action_id: REPLY_DASHBOARD_ACTION_ID,
+    text: { type: "plain_text", text: "📊 Dashboard", emoji: true },
+    accessibility_label: "Open your personal Activity page",
+    value: JSON.stringify({ o: "open", c: channelId, t: threadTs || "", u: authorId || "" }),
+  };
+}
+
+// Opens a voice call with this channel's agent, bound to this thread (slack/call-button.js). Like
+// Dashboard it is viewer-specific: the click mints the clicker's own private launch. Rendered only
+// while the gateway has voice calls configured, so the menu stays the fixed four otherwise.
+export function callButton(channelId, threadTs, authorId = "") {
+  if (!channelId) return null;
+  return {
+    type: "button",
+    action_id: REPLY_CALL_ACTION_ID,
+    text: { type: "plain_text", text: "📞 Call", emoji: true },
+    accessibility_label: "Start a voice call with the agent in this thread",
+    value: JSON.stringify({ o: "open", c: channelId, t: threadTs || "", u: authorId || "" }),
+  };
+}
+
+// The fixed menu, in this order, or nothing (no channel to bind to).
 export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
   if (!channel) return [];
   return [
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId),
+    dashboardButton(channel, threadTs, authorId),
+    ...(voiceCallsAvailable() ? [callButton(channel, threadTs, authorId)] : []),
   ];
 }
 
@@ -138,8 +189,8 @@ export function feedbackBlocks({ channel = "", threadTs = "", authorId = "" } = 
     elements: [{
       type: "feedback_buttons",
       action_id: REPLY_FEEDBACK_ACTION_ID,
-      positive_button: { text: { type: "plain_text", text: "👍", emoji: true }, accessibility_label: "Good answer", value: `up:${bound}` },
-      negative_button: { text: { type: "plain_text", text: "👎", emoji: true }, accessibility_label: "Bad answer", value: `down:${bound}` },
+      positive_button: { text: { type: "plain_text", text: "Mark as done (thread owner only)" }, accessibility_label: "Mark conversation as done (thread owner only)", value: `up:${bound}` },
+      negative_button: { text: { type: "plain_text", text: "Move to Later (thread owner only)" }, accessibility_label: "Move conversation to Later (thread owner only)", value: `down:${bound}` },
     }],
   }];
 }

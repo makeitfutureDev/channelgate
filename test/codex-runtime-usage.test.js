@@ -52,3 +52,29 @@ test("runtime reducer fails on exec/JSON failure without exposing stderr or cons
   }
   await assert.rejects(createCodexUsageReader({ runtime: {}, container: {} }).snapshot("root"), /runtime cannot inspect/);
 });
+
+test("runtime reducer names a safe failure category and exit facts without exposing stderr", async () => {
+  const { classifyUsageInspectionFailure, USAGE_INSPECTION_CATEGORIES } = await import("../src/runtimes/container/state.js");
+  const cases = [
+    [{ code: 1, stderr: "Error: ENOENT: no such file or directory, open '/home/agent/.codex/sessions/PRIVATE-SECRET.jsonl'" }, "missing-file"],
+    [{ code: 1, stderr: "Error: EACCES: permission denied, open 'PRIVATE-SECRET'" }, "permission-denied"],
+    [{ code: 1, stderr: "SqliteError: SQLITE_BUSY: database is locked PRIVATE-SECRET" }, "state-database"],
+    [{ code: 137, signal: "SIGKILL", stderr: "\n[timed out after 30000ms]" }, "timed-out"],
+    [{ code: 125, stderr: "Error: no such container PRIVATE-SECRET" }, "container-unavailable"],
+    [{ code: 2, stderr: "PRIVATE-SECRET" }, "unknown"],
+  ];
+  for (const [result, category] of cases) {
+    assert.ok(USAGE_INSPECTION_CATEGORIES.includes(category));
+    assert.equal(classifyUsageInspectionFailure(result), category);
+    const logged = [];
+    const state = createContainerState({ exec: { async runExec() { return result; } }, log: (entry) => logged.push(entry) });
+    await assert.rejects(state.inspectUsage({ container: { name: "fixture" } }, { source: "// reducer", args: {} }), (error) => {
+      assert.equal(error.message, `runtime usage inspection failed (exit ${result.code}${result.signal ? `, ${result.signal}` : ""}, ${category})`);
+      assert.deepEqual(error.details, { exitCode: result.code, signal: result.signal || null, category });
+      assert.ok(!error.message.includes("PRIVATE-SECRET"), "stderr never reaches the user-facing message");
+      return true;
+    });
+    assert.equal(logged.length, 1, "the daemon log keeps the first stderr line for the operator");
+    assert.ok(logged[0].includes(`fixture failed (exit ${result.code}`) && logged[0].includes(category));
+  }
+});

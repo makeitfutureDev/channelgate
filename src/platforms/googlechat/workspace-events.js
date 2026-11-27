@@ -7,9 +7,17 @@
 // so this manager reconciles on a timer instead of trusting expiration reminders (Google's own
 // advice: reminders may never arrive when the endpoint is broken).
 //
+// The same subscriptions also carry `message.v1.updated` — the only way a Chat app learns that a
+// message was edited (the edit trigger). Subscriptions created before that existed are PATCHed
+// (`updateMask=event_types`, documented as updatable) in place, never duplicated.
+//
 // The manager is stateless on purpose: every pass LISTS the app's live subscriptions, so a restart,
 // a crash mid-create or a second process converges instead of leaking duplicates.
 import { REACTION_EVENT_TYPES, REACTION_CREATED } from "./reactions.js";
+import { MESSAGE_UPDATED } from "./edits.js";
+
+// What every subscription this manager owns delivers. Batch variants arrive automatically.
+export const SUBSCRIPTION_EVENT_TYPES = [...REACTION_EVENT_TYPES, MESSAGE_UPDATED];
 
 const BASE = "https://workspaceevents.googleapis.com/v1";
 const TOPIC_RE = /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/topics\/[A-Za-z][A-Za-z0-9_.~+%-]{2,254}$/;
@@ -54,21 +62,26 @@ export function createWorkspaceEventsClient({ auth, fetchImpl = fetch } = {}) {
     create({ space, topic }) {
       return call("subscriptions", { method: "POST", body: {
         targetResource: targetFor(space),
-        eventTypes: REACTION_EVENT_TYPES,
+        eventTypes: SUBSCRIPTION_EVENT_TYPES,
         notificationEndpoint: { pubsubTopic: topic },
         payloadOptions: { includeResource: true },
       } });
     },
     // ttl 0s = the longest expiration Google allows for this subscription.
     renew(name) { return call(name, { method: "PATCH", query: { updateMask: "ttl" }, body: { ttl: "0s" } }); },
+    // The full desired list: event_types is a list field, so a patch replaces it.
+    setEventTypes(name) { return call(name, { method: "PATCH", query: { updateMask: "event_types" }, body: { eventTypes: SUBSCRIPTION_EVENT_TYPES } }); },
     reactivate(name) { return call(`${name}:reactivate`, { method: "POST", body: {} }); },
     remove(name) { return call(name, { method: "DELETE" }); },
   };
 }
 
+// Ownership is the reaction pair + topic + resource data, so subscriptions made before the edit
+// trigger existed are still adopted (and upgraded) rather than duplicated.
 const ours = (sub, topic) => sub?.notificationEndpoint?.pubsubTopic === topic
   && REACTION_EVENT_TYPES.every(type => (sub.eventTypes || []).includes(type))
   && sub.payloadOptions?.includeResource === true;
+const lacksTypes = sub => SUBSCRIPTION_EVENT_TYPES.some(type => !(sub.eventTypes || []).includes(type));
 const spaceOf = sub => String(sub?.targetResource || "").replace(/^\/\/chat\.googleapis\.com\//, "");
 
 export function createReactionSubscriptions({ client, listSpaces, topic, log = console, now = Date.now, intervalMs = INTERVAL_MS, onStatus = () => {} } = {}) {
@@ -89,7 +102,8 @@ export function createReactionSubscriptions({ client, listSpaces, topic, log = c
   async function pass() {
     const spaces = (await listSpaces()).map(space => space.name);
     const wanted = new Set(spaces);
-    const subscriptions = await client.list();
+    // A subscription that already carries every event type wins over an older duplicate.
+    const subscriptions = [...await client.list()].sort((a, b) => lacksTypes(a) - lacksTypes(b));
     const covered = new Map();
     const failures = [];
     for (const sub of subscriptions) {
@@ -106,10 +120,22 @@ export function createReactionSubscriptions({ client, listSpaces, topic, log = c
         // Reactivation keeps the old expiry, so a reactivated subscription is always renewed.
         if (state === "SUSPENDED" || !(left > RENEW_BELOW_MS)) await client.renew(sub.name);
         covered.set(space, sub.name);
+        if (lacksTypes(sub)) {
+          try { await client.setEventTypes(sub.name); }
+          catch (error) {
+            if (error?.status !== 400) throw error;
+            // Google refused the in-place change. Create the full subscription FIRST, then retire
+            // this one: if the create fails the old one keeps reactions working. Events delivered
+            // twice meanwhile carry the same identities, so the durable inbox suppresses them.
+            await client.create({ space, topic });
+            await client.remove(sub.name);
+          }
+        }
       } catch (error) {
         failures.push(`${space}: ${error?.message || error}`);
         // An expired or vanished subscription cannot be renewed; a fresh one replaces it below.
-        if (error?.status !== 404 && error?.status !== 400) covered.set(space, sub.name);
+        if (error?.status === 404 || error?.status === 400) { if (covered.get(space) === sub.name) covered.delete(space); }
+        else if (!covered.has(space)) covered.set(space, sub.name);
       }
     }
     for (const space of spaces) {

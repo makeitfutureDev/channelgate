@@ -11,7 +11,8 @@ test("admin UI exposes Personal and SDK Composio modes with a write-only SDK key
   assert.match(html, /value="sdk"/);
   assert.match(html, /id="set-composio-sdk-key"[^>]*type="password"/);
   assert.match(html, /id="clear-composio-sdk-key"/);
-  assert.match(html, /Switching modes never deletes saved personal, channel, or organization tokens/);
+  assert.match(html, /Switching modes never deletes saved personal or channel tokens/);
+  assert.doesNotMatch(html, /set-default-composio|ch-nodefaulttokens|Org-default tokens/);
 });
 
 test("admin UI loads masked SDK-key state and saves mode independently from credentials", () => {

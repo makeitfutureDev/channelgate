@@ -1,34 +1,43 @@
+import { THREAD_FORK_ACTION, executeThreadForkApproval } from "./gateway/thread-fork-approvals.js";
+import { runThreadForkBatch } from "./slack/thread-fork-batch.js";
+import { runApprovedThreadForks } from "./platforms/thread-fork-dispatch.js";
 // Entry point. Boots the gateway: load env, ensure the runtime root, start the admin web
 // server, and (if Slack tokens are present) start the Socket Mode gateway. Built up across
 // slices — Slice 1 wires the root + web server; Slack is wired in Slice 4.
 
-// Refuse to boot below the node:sqlite floor. The AUTHORITATIVE gate lives in src/start.js
-// (the real entry point): ESM hoisting evaluates this module's static imports before this
-// statement, so on a runtime without node:sqlite (< 22.5) the import graph explodes before this
-// check can run. It stays here as a second line for direct `node src/server.js` invocations on
-// 22.5–22.12, where the imports load but db/index.js suppresses the sqlite Experimental warning
-// — silently-running-anyway would be extra misleading there.
-const [major, minor] = process.versions.node.split(".").map(Number);
-if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`ChannelGate requires Node >= 22.13 (node:sqlite); running on ${process.versions.node}. Upgrade Node and restart.`);
+// Require the supported Node 24 baseline. The authoritative gate in src/start.js runs before
+// the import graph; this second gate also rejects direct server.js invocations on older Node
+// versions whose builtins happen to load successfully.
+const major = Number(process.versions.node.split(".")[0]);
+if (!Number.isInteger(major) || major < 24) {
+  console.error(`ChannelGate requires Node >= 24.0.0; running on ${process.versions.node}. Upgrade Node and restart.`);
   process.exit(1);
 }
 
-import { ensureRoot } from "./config/store.js";
+import { ensureRoot, listChannels } from "./config/store.js";
+import { forbiddenWorkDirReason } from "./gateway/workdir-boundary.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
-import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
+import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault, raiseLegacyPidsLimitDefault, getPublicUrl, getTrustProxy } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
+import { bootPostureWarnings } from "./web/boot-posture.js";
 import { createSlackManager } from "./slack/manager.js";
+import { createBotMembershipRecovery } from "./slack/bot-membership.js";
+import { abortRunsInChannel } from "./slack/message-pipeline.js";
+import { syncRestoredWorkspaces } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
+import { AgentMail, AgentMailError, setActiveAgentMail } from "./gateway/agent-mail.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
+import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
+import { requestSkillSwap } from "./gateway/skill-runtime.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { executeSecretHostApproval, SECRET_HOST_ACTION, setSecretHostApprovalRequester } from "./gateway/secret-host-approvals.js";
+import { createSecretHostContinuation } from "./gateway/secret-host-continuation.js";
 import { CONTROL_PLANE_ACTION, executeControlPlaneApproval, setControlPlaneInvoker } from "./gateway/control-plane-approvals.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./mcp/gateway-server.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
@@ -38,6 +47,7 @@ import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } f
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
 import { recoverApiRuns } from "./gateway/api-runs.js";
+import { startThreadDoneMarkerSync } from "./slack/thread-done-marker.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
@@ -45,6 +55,7 @@ import { startExternalUsageScan } from "./gateway/external-usage.js";
 import { startDriveSync, handleDriveSyncIpc } from "./gateway/drivesync.js";
 import { configDir } from "./config/paths.js";
 import { hardenRuntimeFiles, ensureAdminPasswordOnFirstBoot, isOperatorConfigured, assertRuntimeHardening } from "./config/harden.js";
+import { ensureAgentSshIdentity } from "./config/agent-ssh.js";
 import { acquireSingletonLock } from "./util/singleton.js";
 import { requestShutdown, restartExitCode } from "./gateway/shutdown.js";
 import { RestartCoordinator } from "./gateway/restart.js";
@@ -58,6 +69,16 @@ import { postNotice } from "./platforms/notify.js";
 import { startLicenseVerification } from "./ee/license.js";
 import { startUsageReporting } from "./ee/limits.js";
 import { startSystemHealth } from "./gateway/system-health.js";
+
+// One warn line per channel whose stored custom work folder the boundary refuses.
+async function auditStoredWorkDirs() {
+  for (const channel of await listChannels()) {
+    const stored = String(channel.meta?.workDir || "").trim();
+    if (!stored) continue;
+    const reason = forbiddenWorkDirReason(stored, { slug: channel.slug });
+    if (reason) console.warn(`[workdir] ${channel.slug}: stored work folder ${stored} is ${reason} — runs are refused until an admin changes it (set_channel_workdir / Settings → Working folder, or clear_channel_workdir)`);
+  }
+}
 
 installConsoleRedaction();
 
@@ -141,8 +162,13 @@ async function containerRuntimeHealth() {
 // stop its timers alongside the other runtime services.
 let claudeLoginWatch = null;
 let agentDirectoryRefresh = null;
+let membershipRecovery = null;
+// Boot work that had to wait for the first Slack membership verification (see boot below).
+let afterMembershipVerified = () => {};
+let egressRestoreWaiting = false;
 
 async function stopRuntimeServices(reason) {
+  membershipRecovery?.stop();
   agentDirectoryRefresh?.stop();
   agentDirectoryRefresh = null;
   try {
@@ -184,9 +210,29 @@ async function main() {
 
   const root = await ensureRoot();
   const lock = acquireSingletonLock(root);
+  // A custom work folder stored before the boundary existed (the home itself, the gateway root,
+  // another channel's folder, …) is refused at every spawn with the remedy; say so once here too,
+  // so the operator sees the list without waiting for someone's turn to fail. Never fatal.
+  await auditStoredWorkDirs().catch((e) => console.warn("[workdir] boot audit skipped:", e?.message || e));
   pruneTerminalApprovalRequests();
   pruneApprovalLinkTokens(); // spent/expired approval-link nonces
   applySettingsToEnv(); // UI-managed settings.json overrides .env
+  membershipRecovery = createBotMembershipRecovery({
+    slack,
+    onArchived: (row) => abortRunsInChannel(row.channelId, row.slug, "bot_removed"),
+    // Catch up ONLY the channels this verification restored. The routine five-minute pass must
+    // not rebuild every workspace; the catalog poller already converges unchanged folders cheaply.
+    onVerified: async (result) => {
+      await syncRestoredWorkspaces(result);
+      // Never awaited: a recovered turn is a whole model turn, and this pass must finish first.
+      // Never thrown either: a failure here must not read as a failed verification.
+      try { afterMembershipVerified(); } catch (e) { console.error("[gateway] post-verification work failed:", e?.message || e); }
+    },
+  });
+  slack.onDisconnected(() => membershipRecovery.invalidate());
+  slack.onConnected(() => membershipRecovery.reconcile());
+  // Before catalog boot can touch a workspace: persist the unknown state for MCP children too.
+  await membershipRecovery.invalidate();
   // Skills platform (src/gateway/skills): fill the local catalog from the bundled starter library
   // and the host's skill folders, and seed the built-in channel templates. Never fatal — a turn
   // runs without a catalog exactly as it did before, on host-folder copies.
@@ -197,6 +243,8 @@ async function main() {
   // relying on create-time modes.
   const { failed: hardenFailed } = hardenRuntimeFiles();
   assertRuntimeHardening({ failed: hardenFailed });
+  // The same outbound SSH identity is used by every channel, including direct-host sudo turns.
+  ensureAgentSshIdentity();
   // Host metrics belong to the daemon, never to an engine container. Sampling is asynchronous
   // and failure is reported on the admin page without holding up chat or startup.
   void Promise.resolve().then(() => startSystemHealth()).catch(() => console.error("[system-health] collector startup failed"));
@@ -227,6 +275,22 @@ async function main() {
     pinEgressSecretsStrictDefault({ configured: operatorConfigured });
   } catch (e) {
     console.warn(`[gateway] could not store the strict-secrets default (strict applies): ${e?.message || e}`);
+  }
+  // The container process limit's default rose from 1,024 to 4,096; an install that stored the old
+  // default (the Settings page saves it with every other container field) is moved once.
+  try {
+    const raised = raiseLegacyPidsLimitDefault();
+    if (raised) console.log(`[gateway] container process limit raised from the old default 1024 to ${raised} (Settings → Container runtime changes it)`);
+  } catch (e) {
+    console.warn(`[gateway] could not update the stored container process limit: ${e?.message || e}`);
+  }
+  // Once per install: a channel's own Codex account (the legacy channel sign-in) becomes an engine
+  // license limited to that channel, keeping its login. Never fatal; see the module.
+  try {
+    const { migrateChannelCodexAccounts } = await import("./gateway/channel-codex-migration.js");
+    await migrateChannelCodexAccounts();
+  } catch (e) {
+    console.warn(`[gateway] channel Codex accounts were not moved to licenses (they keep working as before): ${e?.message || e}`);
   }
   console.log(`[gateway] runtime root: ${root}`);
   console.log(`[gateway] singleton lock: ${lock.file}`);
@@ -292,7 +356,8 @@ async function main() {
     await startEgressService({ log: console });
     // Containers that kept running across the restart get their listener back now, not at their
     // channel's next turn (a recovered background job or an attached editor needs the network).
-    await bindRunningChannelEgress({ log: console });
+    const restored = await bindRunningChannelEgress({ log: console });
+    egressRestoreWaiting = restored.deferred > 0;
   } catch (error) {
     console.warn(`[egress] proxy unavailable (${error?.message || error}) — container runs in proxy mode will fail closed until it starts.`);
   }
@@ -310,10 +375,14 @@ async function main() {
   // job rows have been re-tracked, or the first API/approval-triggered job would rewrite bg_jobs
   // from a still-empty map and wipe every unrecovered row.
   backgroundJobs.armRecovery();
-  setDurableApprovalExecutor((record) => record.action?.kind === INSTRUCTION_ACTION
+  const secretHostContinuation = createSecretHostContinuation({ slack });
+  secretHostContinuation.start();
+  setDurableApprovalExecutor((record) => record.action?.kind === THREAD_FORK_ACTION
+    ? executeThreadForkApproval(record, { runBatch: saved => runApprovedThreadForks(saved, { runSlack: slackSaved => runThreadForkBatch(slackSaved, { slack }) }) })
+    : record.action?.kind === INSTRUCTION_ACTION
     ? executeInstructionApproval(record)
     : record.action?.kind === SECRET_HOST_ACTION
-      ? executeSecretHostApproval(record)
+      ? executeSecretHostApproval(record, { enqueueContinuation: (saved) => secretHostContinuation.enqueue(saved) })
       : record.action?.kind === CONTROL_PLANE_ACTION
         ? executeControlPlaneApproval(record)
         : backgroundJobs.startApproved(record));
@@ -342,14 +411,30 @@ async function main() {
       await postNotice(slack.getClient?.(), { conversationId: channelId, threadKey, text });
     },
   });
+  // Channel-to-channel agent mail: the daemon owns the gate, the target thread, the turn and the
+  // reply's return trip (gateway/agent-mail.js). A refusal is an answer, not an exception.
+  const agentMail = new AgentMail({ slack });
+  setActiveAgentMail(agentMail); // the Slack `ask #channel …` directive
+  const sendAgentMail = async (body) => {
+    try {
+      if (body?.action === "continue") return { ok: true, ...(await agentMail.requestContinue(body)) };
+      return { ok: true, ...(await agentMail.send(body)) };
+    } catch (error) {
+      if (error instanceof AgentMailError) return { ok: false, code: error.code, error: error.message };
+      throw error;
+    }
+  };
   Object.assign(daemonHandlers, {
     background: (body) => backgroundJobs.start(body),
     approval: (body) => requestApproval(slack, body),
     restart: (body) => restartCoordinator.request(body),
     drivesync: (body) => handleDriveSyncIpc(body),
     "agent-directory": (body) => searchAgentDirectory(body),
+    "agent-mail": sendAgentMail,
+    "code-channel": (body) => handleCodeChannelIpc(body, { slack }),
+    "skill-swap": (body) => requestSkillSwap(body),
   });
-  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
+  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth, sendAgentMail });
   const server = app.listen(PORT, HOST);
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);
@@ -361,6 +446,16 @@ async function main() {
   // without a password, so this says the admin surface is simply unusable until one exists.
   if (!getAdminPassword())
     console.warn("[gateway] WARNING: no admin password — every privileged admin route is refused until ADMIN_PASSWORD (or settings adminPassword) is set.");
+  // How the admin surface is configured, said once per boot: a cleartext or forgotten
+  // ADMIN_PASSWORD in the environment, and a tunnel or proxy nobody declared.
+  for (const warning of bootPostureWarnings({
+    envPassword: process.env.ADMIN_PASSWORD,
+    settingsPassword: getSettings().adminPassword,
+    publicUrl: getPublicUrl(),
+    bindHost: HOST,
+    trustProxy: getTrustProxy(),
+  }))
+    console.warn(`[gateway] WARNING: ${warning}`);
 
   // Snapshot any interactive turns that were mid-run when the daemon last stopped, BEFORE Slack
   // reconnects — any active_runs row present now belongs to the previous instance (only one gateway
@@ -368,6 +463,18 @@ async function main() {
   // arriving after reconnect get fresh rows and aren't mistaken for stale ones.
   const staleRuns = takeStaleRuns();
   const runRecovery = createRunRecovery(staleRuns, { slack });
+  // Both wait for Slack membership: a survivor in a Slack channel is replayed when its channel is
+  // verified, and the containers of Slack channels that kept running get their egress listener
+  // back then (the boot pass above ran before Slack connected and could only count them).
+  afterMembershipVerified = () => {
+    runRecovery.start().catch((e) => console.error("[gateway] run recover failed:", e?.message || e));
+    if (egressRestoreWaiting) {
+      egressRestoreWaiting = false;
+      bindRunningChannelEgress({ log: console })
+        .then((restored) => { egressRestoreWaiting = restored.deferred > 0; })
+        .catch((e) => console.warn(`[egress] could not restore running container listeners: ${e?.message || e}`));
+    }
+  };
 
   // License verification (src/ee/license.js). Deliberately started here and NOT awaited: the
   // ChannelGate platform is a remote HTTP service and the daemon must come up whether or not it
@@ -378,7 +485,10 @@ async function main() {
 
   // Connect Slack if tokens are configured (settings.json or .env). Can also be (re)connected
   // at runtime from the admin Settings page.
-  if (hasSlackConfig()) await slack.connect(resolveSlackConfig());
+  if (hasSlackConfig()) {
+    await slack.connect(resolveSlackConfig());
+    await membershipRecovery.reconcile();
+  }
   else console.log("[gateway] Slack tokens not set — set them in the admin Settings page (admin UI still available).");
 
   // The other surfaces, on the same terms: connect what is configured, and never let a bad
@@ -388,6 +498,9 @@ async function main() {
   // Recover background jobs that were in-flight when the daemon last stopped: re-attach to ones
   // still running, or post an "interrupted by restart" continuation for ones that already exited.
   await backgroundJobs.recover().catch((e) => console.error("[gateway] bg recover failed:", e?.message || e));
+  await agentMail.recover().then((r) => {
+    if (r.interrupted || r.redelivered) console.log(`[gateway] agent mail recovery: ${r.interrupted} interrupted, ${r.redelivered} replies redelivered`);
+  }).catch((e) => console.error("[gateway] agent mail recover failed:", e?.message || e));
 
   // Auto re-run interactive Slack turns that were interrupted mid-flight by the restart — resumes
   // the same thread/session and posts the answer. Runs after Slack is connected so it can post.
@@ -407,6 +520,7 @@ async function main() {
 
   // Opt-in no-response thread nudges (per-user preference).
   startNudgeSweep({ slack });
+  startThreadDoneMarkerSync({ slack });
 
   // Hourly watch on the Claude login the gateway authenticates with: it hard-expires every few
   // weeks and only a new interactive `claude` sign-in moves the date, so the three-day warning has

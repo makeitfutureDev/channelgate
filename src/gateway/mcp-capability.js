@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { KEY_PURPOSES, purposeKey } from "../util/purpose-keys.js";
 
 const VERSION = 2;
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -8,7 +9,9 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const ORIGINS = new Set(RUN_ORIGINS); // single source: engines/contract.js
 
 const encode = (value) => Buffer.from(value).toString("base64url");
-const sign = (payload, secret) => createHmac("sha256", secret).update(payload).digest("base64url");
+// `secret` is the daemon's master secret; the HMAC key is the run-capability key derived from it
+// (src/util/purpose-keys.js), so a capability tag can never be confused with any other signed kind.
+const sign = (payload, secret) => createHmac("sha256", purposeKey(secret, KEY_PURPOSES.RUN_CAPABILITY)).update(payload).digest("base64url");
 
 // `toolset` and `progressReport` are part of the SIGNED grant (v0.8): the gateway MCP server used
 // to read them from CG_TOOLSET / CG_PROGRESS_REPORT in its own environment, which only works when
@@ -39,7 +42,14 @@ function validRemoteMcps(claims) {
     claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
 }
 
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+// `scope` names the ONE socket service family a token opens. "gateway-tools" (the default) is the
+// run's control-plane grant; "composio-exec" is the narrow grant a container SCRIPT holds for the
+// Composio script relay (src/mcp/composio-exec.js) — it opens nothing else, and a gateway-tools
+// token does not open the relay. Verification requires the exact scope the caller asks for.
+export const CAPABILITY_SCOPES = Object.freeze(["gateway-tools", "composio-exec"]);
+
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, admissionThreadKey, settingsThreadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, scope = "gateway-tools", now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+  if (!CAPABILITY_SCOPES.includes(scope)) throw new Error("Invalid gateway capability scope");
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -54,6 +64,8 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     slug,
     authorId,
     threadKey,
+    ...(admissionThreadKey !== undefined ? { admissionThreadKey } : {}),
+    ...(settingsThreadKey !== undefined && settingsThreadKey !== threadKey ? { settingsThreadKey } : {}),
     ...(questionThreadKey !== undefined ? { questionThreadKey } : {}),
     ...(sudoSchedule === true ? { sudoSchedule: true } : {}),
     origin,
@@ -63,11 +75,13 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     progressReport: progressReport === true,
     composioSessions,
     ...(remoteMcps !== undefined ? { remoteMcps } : {}),
-    scope: "gateway-tools",
+    scope,
     iat: now,
     exp: now + ttl,
     jti: jti || randomUUID(),
   };
+  if (!validAdmissionThread(claims)) throw new Error("Invalid admission thread claim");
+  if (!validSettingsThread(claims)) throw new Error("Invalid settings thread claim");
   if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
   if (!validQuestionRouting(claims)) throw new Error("Invalid question routing claims");
   if (!validRemoteMcps(claims)) throw new Error("Invalid remote MCP grants");
@@ -80,6 +94,8 @@ function validComposioGrants(claims) {
   return Array.isArray(claims.composioSessions) && claims.composioSessions.length <= 2 &&
     claims.composioSessions.every((grant) => grant && typeof grant.url === "string" &&
       grant.url.length <= 2048 && ["user", "channel"].includes(grant.kind) &&
+      // The Composio user id the session acts as (optional; read by the script relay).
+      (grant.id === undefined || (typeof grant.id === "string" && grant.id.length > 0 && grant.id.length <= 400)) &&
       (grant.kind !== "user" || claims.principalTrusted === true));
 }
 
@@ -91,7 +107,7 @@ function validQuestionRouting(claims) {
     (claims.sudoSchedule === undefined || typeof claims.sudoSchedule === "boolean");
 }
 
-export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}) {
+export function verifyGatewayCapability(token, { secret, now = Date.now(), scope = "gateway-tools" } = {}) {
   if (!token || !secret) return { ok: false, reason: "missing capability or signing secret" };
   const [payload, signature, extra] = String(token).split(".");
   if (!payload || !signature || extra !== undefined) return { ok: false, reason: "malformed capability" };
@@ -106,12 +122,14 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   } catch {
     return { ok: false, reason: "invalid capability payload" };
   }
-  if (claims?.v !== VERSION || claims.aud !== "channelgate-mcp" || claims.scope !== "gateway-tools") {
+  if (claims?.v !== VERSION || claims.aud !== "channelgate-mcp" || claims.scope !== scope) {
     return { ok: false, reason: "unsupported capability" };
   }
   if (!claims.channelId || !claims.slug || !claims.authorId || !claims.threadKey || !ORIGINS.has(claims.origin) || typeof claims.principalTrusted !== "boolean") {
     return { ok: false, reason: "incomplete capability claims" };
   }
+  if (!validAdmissionThread(claims)) return { ok: false, reason: "invalid admission thread claim" };
+  if (!validSettingsThread(claims)) return { ok: false, reason: "invalid settings thread claim" };
   if (!validComposioGrants(claims)) return { ok: false, reason: "invalid Composio session grants" };
   if (!validQuestionRouting(claims)) return { ok: false, reason: "invalid question routing claims" };
   // Optional claims (see mint): validate the SHAPE when present so a tampered payload can't smuggle
@@ -135,3 +153,19 @@ export function mintedCapabilityClaims(token) {
 }
 
 export const GATEWAY_CAPABILITY_TTL_MS = DEFAULT_TTL_MS;
+
+// The thread whose own settings a background launch from this run resolves (thread-settings.js).
+// Present only when it differs from threadKey, and then only as the thread that launched this
+// run's synthetic `<thread>::…` key — a capability can never name an unrelated thread's settings.
+function validSettingsThread(claims) {
+  if (claims.settingsThreadKey === undefined) return true;
+  const value = claims.settingsThreadKey;
+  return typeof value === "string" && value.length > 0 && value.length <= 2048 && !/[\u0000-\u001f\u007f]/.test(value)
+    && typeof claims.threadKey === "string" && claims.threadKey.startsWith(`${value}::`);
+}
+
+// Billing metadata is optional for older capabilities and never changes tool authorization.
+function validAdmissionThread(claims) {
+  return claims.admissionThreadKey === undefined ||
+    (typeof claims.admissionThreadKey === "string" && claims.admissionThreadKey.length <= 2048);
+}

@@ -25,10 +25,10 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   // Every engine's resolver answers { servers, rejected }: an optional selection it cannot admit
   // safely is dropped here rather than ending the turn, and `rejectedMcps` is what the caller
   // reports in the thread so the drop is visible to the admin who has to fix the selection.
-  const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps, { channelId: engine === "codex" && target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }) || {};
+  const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps, { channelId: engine === "codex-channel" ? target.meta.channelId : "" }) || {};
   const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
   try {
-    const managed = requireAdapter(engine).mcpTransport === "none" ? {} : perplexityResearchMcp(target);
+    const managed = perplexityResearchMcp(target);
     return finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRuntime, fingerprintNow, identity });
   } catch (error) {
     // A payload the caller never receives must not leave its relay registration behind.
@@ -74,7 +74,7 @@ function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRunt
   // The same token also rides every socket-bridged entry (the SDK-mode Composio sessions and, on an
   // isolated target, the relayed remotes), so it is replaced wherever it appears. A relayed remote's
   // credential is NOT in the JSON any more (it is in the daemon's relay registry), so its URL +
-  // header digest is added instead: a rotated Composio/toolbox token must still retire the warm
+  // header digest is added instead: a rotated Composio/Make token must still retire the warm
   // process, exactly as it did when the token itself was part of the JSON.
   const fingerprintView = structuredClone(parsed);
   const stableCapability = JSON.stringify({
@@ -82,6 +82,8 @@ function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRunt
     slug: identity.slug || "",
     authorId: identity.authorId || "",
     threadKey: identity.threadKey || "",
+    admissionThreadKey: identity.admissionThreadKey ?? identity.threadKey ?? "",
+    settingsThreadKey: identity.settingsThreadKey ?? identity.threadKey ?? "",
     questionThreadKey: identity.questionThreadKey,
     sudoSchedule: identity.sudoSchedule === true,
     origin: identity.origin || "",

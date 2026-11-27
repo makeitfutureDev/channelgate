@@ -7,14 +7,23 @@ import path from "node:path";
 import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
-import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+import { stripDeadSettings } from "./dead-fields.js";
+import { ENGINE_IDS, adapterOr, harnessOf, isGatewayWideLicense, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
+import { licenseChannelOf, setBuiltinLicenseState } from "../engines/license-state.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
+import { readLicensePool } from "../engines/license-state.js";
+import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
+import { CONTAINER_DEFAULT_PIDS_LIMIT, CONTAINER_LEGACY_PIDS_LIMIT } from "../runtimes/container/pids-pressure.js";
+import { logoColor } from "./appearance.js";
+import { readPrivateMcpHosts } from "./private-mcp-hosts.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
+import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
 import { teamsReactionKey, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "../platforms/msteams/reactions.js";
 
@@ -25,18 +34,50 @@ const ENV_MAP = {
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   sessionKeepalive: "SESSION_KEEPALIVE",
   composioMcpUrl: "COMPOSIO_MCP_URL",
-  toolboxMcpUrl: "TOOLBOX_MCP_URL",
   publicUrl: "GATEWAY_PUBLIC_URL",
   platformUrl: "CHANNELGATE_PLATFORM_URL",
+  appleAppIds: "GATEWAY_APPLE_APP_IDS",
 };
 
 export function getSettings() {
+  let settings;
   try {
-    return JSON.parse(readFileSync(settingsFile(), "utf8"));
+    settings = stripDeadSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
   } catch {
     return {};
   }
+  syncEngineLicenses(settings);
+  return settings;
 }
+
+// The licenses an administrator added (`engineLicenses`) are engine adapters, registered live
+// (engines/registry.js syncLicenseAdapters). The daemon and the stdio MCP child both read this
+// file and either may write it, so the registry follows what was READ rather than what this
+// process last saved: every successful read compares the stored list with the one last applied and
+// re-registers only on a difference. A failed read (above) changes nothing — a half-written file
+// must never unregister a license mid-turn. The key is recorded BEFORE the sync because building
+// an adapter may itself read a setting.
+let syncedLicenseKey = "null";
+let syncedBuiltinKey = "";
+function syncEngineLicenses(settings) {
+  // What an administrator did to the licenses the gateway SHIPS with — the name of a harness's own
+  // sign-in, and the shipped licenses they removed — follows the same read, for the same reason.
+  const builtinKey = JSON.stringify([settings?.licenseNames ?? null, settings?.removedLicenses ?? null]);
+  if (builtinKey !== syncedBuiltinKey) {
+    syncedBuiltinKey = builtinKey;
+    setBuiltinLicenseState({ names: settings?.licenseNames, removed: settings?.removedLicenses });
+  }
+  const stored = settings?.engineLicenses;
+  const key = JSON.stringify(stored ?? null);
+  if (key === syncedLicenseKey) return;
+  syncedLicenseKey = key;
+  try {
+    syncLicenseAdapters(Array.isArray(stored) ? stored : []);
+  } catch (error) {
+    console.warn(`[licenses] the stored license list could not be applied; keeping the previous one: ${error?.message || error}`);
+  }
+}
+export function refreshEngineLicenses() { getSettings(); }
 
 // Operators commonly enter a tunnel hostname without a scheme. Browser-facing capabilities need
 // an absolute URL, so make that convenient spelling canonical at the settings boundary. Preserve
@@ -46,6 +87,13 @@ export function normalizePublicUrl(value) {
   if (!trimmed) return "";
   return /^[A-Za-z][A-Za-z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
+
+// Invalid hand-edited settings fall back to the original public branding.
+export function getLogoColor() { return logoColor(getSettings().logoColor); }
+
+// Admin-approved private destinations for custom MCP connections (src/config/private-mcp-hosts.js):
+// exact `host:port` entries, invalid ones dropped. Read live — the relay calls this on every dial.
+export function getPrivateMcpHosts() { return readPrivateMcpHosts(getSettings().privateMcpHosts); }
 
 // The stored settings' VERSION: a counter bumped by every saveSettings, so a reader can tell
 // whether the values it is holding are still the ones on disk. It lives in settings.json itself
@@ -89,12 +137,36 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    // A FUNCTION patch is computed from the settings read under this same lock, so a
+    // read-modify-write of one key (the license list) can never lose a concurrent save.
+    if (typeof patch === "function") patch = patch(current) || {};
+    // Retain existing governance on downgrade: never silently strip instructions or mandatory
+    // grants. New policies require Enterprise; explicit removal remains available to admins.
+    if (typeof patch.agentsInstructions === "string" && patch.agentsInstructions.trim()
+      && patch.agentsInstructions.trim() !== (typeof current.agentsInstructions === "string" ? current.agentsInstructions.trim() : "")) requireEnterpriseFeature("organizationInstructions");
+    if (Array.isArray(patch.accessGrants?.skills)) {
+      const existing = new Set((Array.isArray(current.accessGrants?.skills) ? current.accessGrants.skills : []).map(value => String(value).trim().toLowerCase()));
+      if (patch.accessGrants.skills.some(value => !existing.has(String(value).trim().toLowerCase()))) requireEnterpriseFeature("mandatoryOrgSkills");
+    }
+    if (patch.userAutoApprovalEnabled === true && current.userAutoApprovalEnabled !== true) requireEnterpriseFeature("companyDomainApproval");
+    for (const [key, value] of Object.entries(patch)) {
+      if (key.startsWith("driveSync") && value && JSON.stringify(value) !== JSON.stringify(current[key])) requireEnterpriseFeature("driveSync");
+    }
+    for (const [scope, template] of Object.entries(patch.dmTemplates || {})) {
+      if (template?.skillTemplate && template.skillTemplate !== current.dmTemplates?.[scope]?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+    }
+    if (patch.channelTemplate?.skillTemplate && patch.channelTemplate.skillTemplate !== current.channelTemplate?.skillTemplate) requireEnterpriseFeature("skillTemplates");
     const currentVersion = String(Number.isFinite(Number(current.settingsRev)) && Number(current.settingsRev) >= 0 ? Math.floor(Number(current.settingsRev)) : 0);
     if (expectVersion !== "" && String(expectVersion) !== currentVersion) throw new SettingsVersionConflict(currentVersion);
     const next = { ...current };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
-      next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
+      next[k] = k === "publicUrl" ? normalizePublicUrl(v)
+        : k === "composioSdkPolicy" ? normalizeComposioSdkPolicy(v) : v;
+    }
+    // A disable/re-enable or password rotation must never resurrect alternate-login proofs.
+    if (next.adminPasswordSlackEnabled !== current.adminPasswordSlackEnabled || next.adminPassword !== current.adminPassword) {
+      next.adminPasswordSlackVersion = (Number(current.adminPasswordSlackVersion) || 0) + 1;
     }
     // Persist every effective Teams activation change, even A → B → A between Graph
     // refreshes. The comparison and monotonic stamp share the settings write lock.
@@ -105,11 +177,14 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     }
     // Bumped LAST, so a patch can never set (or freeze) the version it is being checked against.
     next.settingsRev = Number(currentVersion) + 1;
-    // 0600: this file holds the Slack tokens, the org Composio/Skills/Toolbox tokens, the run-API
+    // 0600: this file holds the Slack tokens, the org Composio tokens, the run-API
     // key and the admin password.
-    writeSecretFile(settingsFile(), JSON.stringify(next, null, 2) + "\n");
+    writeSecretFile(settingsFile(), JSON.stringify(stripDeadSettings(next), null, 2) + "\n");
     db.exec("COMMIT");
-    return next;
+    // The writer sees its own license change at once: the caller that just added a license asks
+    // the registry about it on the next line, before anything has read the file again.
+    syncEngineLicenses(next);
+    return stripDeadSettings(next);
   } catch (e) {
     try {
       db.exec("ROLLBACK");
@@ -128,6 +203,11 @@ const ambientEnv = new Map(); // envName → original process.env value (undefin
 // Push stored settings into process.env (UI-managed values win over .env). Cleared settings
 // restore the ambient value from boot — or delete the variable if it never had one.
 export function applySettingsToEnv() {
+  // Boot also removes retired credentials from the settings file itself. Read failures retain
+  // the existing getSettings() fallback; a cleanup write failure must remain visible.
+  let stored;
+  try { stored = JSON.parse(readFileSync(settingsFile(), "utf8")); } catch { /* no readable settings */ }
+  if (stored && stripDeadSettings(stored) !== stored) saveSettings({});
   const s = getSettings();
   for (const [key, envName] of Object.entries(ENV_MAP)) {
     if (!ambientEnv.has(envName)) ambientEnv.set(envName, process.env[envName]);
@@ -202,6 +282,21 @@ export function googleChatServiceAccountEmail() {
   }
 }
 
+// The Google Cloud project the Chat app's service account belongs to (`project_id` in the stored
+// key; not a secret). Composio SDK mode names Google Chat identities under it: a Chat app is
+// configured in exactly one project, the key is required for every Google Chat connection, and a
+// project ID never changes — rotating the key inside the project keeps it.
+export function googleChatProjectId() {
+  const raw = resolveGoogleChatConfig().serviceAccountJson;
+  if (!raw) return "";
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return typeof parsed?.project_id === "string" ? parsed.project_id.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 export function hasGoogleChatConfig() {
   const c = resolveGoogleChatConfig();
   return Boolean(c.serviceAccountJson && c.subscription);
@@ -249,6 +344,28 @@ export function getPublicUrl() {
   return normalizePublicUrl(s.publicUrl || process.env.GATEWAY_PUBLIC_URL || "");
 }
 
+// Apple app identifiers (`<Team ID>.<bundle id>`) published at
+// `/.well-known/apple-app-site-association` so an iPhone app with the matching
+// `webcredentials:<public host>` entitlement may use this gateway's Activity passkeys. A list,
+// comma or newline separated, in settings (`appleAppIds`) or `GATEWAY_APPLE_APP_IDS`. Nothing
+// here is secret: Apple's CDN republishes the file. Unset → the endpoint answers 404.
+export const APPLE_APP_ID_PATTERN = /^[A-Z0-9]{10}\.[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/;
+export function parseAppleAppIds(value) {
+  const seen = new Set(), ids = [];
+  for (const raw of String(value || "").split(/[\s,]+/)) {
+    const id = raw.trim();
+    if (!id || seen.has(id)) continue;
+    if (!APPLE_APP_ID_PATTERN.test(id)) return null;
+    seen.add(id); ids.push(id);
+  }
+  return ids;
+}
+export function getAppleAppIds() {
+  const s = getSettings();
+  const configured = typeof s.appleAppIds === "string" && s.appleAppIds.trim() ? s.appleAppIds : process.env.GATEWAY_APPLE_APP_IDS || "";
+  return parseAppleAppIds(configured) || [];
+}
+
 // Link-based approvals: whether an approval card is ALSO delivered as signed, single-use URLs in
 // an ephemeral message to the person who raised it (src/web/approval-links.js).
 //   "auto"   (default) — links on a surface whose buttons the gateway does not drive (Teams,
@@ -260,6 +377,25 @@ export const APPROVAL_LINK_MODES = ["auto", "always", "off"];
 export function getApprovalLinks() {
   const v = getSettings().approvalLinks;
   return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
+}
+
+// Which forwarded-client header the login and approval-link backoff may believe. "" trusts
+// nothing (the socket address is the client); "cloudflare" reads `CF-Connecting-IP`, which
+// cloudflared overwrites on every request; "xff" reads the LAST hop of `X-Forwarded-For` — the one
+// the trusted proxy appended — never the first, which the client typed. The legacy truthy
+// CG_TRUST_PROXY=1 meant "there is a proxy" and maps onto "xff". Settings win over the env.
+export const TRUST_PROXY_MODES = ["", "cloudflare", "xff"];
+export function normalizeTrustProxy(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no" || v === "off" || v === "none") return "";
+  if (v === "cloudflare" || v === "cf") return "cloudflare";
+  if (v === "xff" || v === "x-forwarded-for" || v === "1" || v === "true" || v === "yes" || v === "on") return "xff";
+  return null; // not a mode
+}
+export function getTrustProxy() {
+  const s = getSettings();
+  if (typeof s.trustProxy === "string") return normalizeTrustProxy(s.trustProxy) ?? "";
+  return normalizeTrustProxy(process.env.CG_TRUST_PROXY) ?? "";
 }
 
 // Opt-in recipients of supplemental Slack button links. Missing/invalid legacy values fail closed.
@@ -293,17 +429,27 @@ export const ENGINES = ENGINE_IDS;
 // admin explicitly switched it on. Qwen is the first — it needs a QwenCloud key nobody has by
 // default, so inheriting "missing key means enabled" would put a harness in every picker whose
 // every turn fails, and would make `git pull` change which provider a deployment can reach.
+// A shipped license an administrator REMOVED (engine-licenses.js) is off whatever the map says,
+// and no fallback below can switch it back on.
 const engineIsOptIn = (id) => Boolean(adapterOr(id).optIn);
 export function isEngineEnabled(engine) {
   const id = String(engine || "");
   if (!ENGINES.includes(id)) return false;
+  if (isRemovedLicense(id)) return false;
   const map = getSettings().engineEnabled;
   if (!map || typeof map !== "object") return !engineIsOptIn(id);
-  const on = (e) => (engineIsOptIn(e) ? map[e] === true : map[e] !== false);
+  const on = (e) => {
+    if (isRemovedLicense(e)) return false;
+    if (engineIsOptIn(e)) return map[e] === true;
+    const inherited = adapterOr(e).enabledWith;
+    return map[e] === undefined && inherited ? map[inherited] !== false : map[e] !== false;
+  };
   // Never lock every harness out — but the rescue restores the DEFAULT harnesses only. An opt-in
   // engine must never be switched on by a fallback, and a deployment that deliberately runs ONLY
   // an opt-in harness must not have the others silently restored underneath it.
-  if (!ENGINES.some(on)) return !engineIsOptIn(id);
+  // A license limited to one conversation is not "something the gateway can run", so it neither
+  // prevents the rescue nor is touched by it: it stays exactly as its own switch says.
+  if (!ENGINES.some(e => isGatewayWideLicense(e) && on(e))) return licenseChannelOf(id) ? on(id) : !engineIsOptIn(id);
   return on(id);
 }
 export function getEnabledEngines() {
@@ -316,10 +462,17 @@ export function getEngineEnabledMap() {
 
 export function getEngine() {
   const v = getSettings().engine;
-  const configured = ENGINES.includes(v) ? v : "claude";
+  // A license limited to one conversation is never the gateway default, whatever is stored.
+  const configured = ENGINES.includes(v) && isGatewayWideLicense(v) ? v : "claude";
   // A disabled harness must not stay the gateway default just because it's the stored value —
   // resolve to the first enabled one instead of spawning a CLI the admin turned off.
-  return isEngineEnabled(configured) ? configured : getEnabledEngines()[0] || configured;
+  return isEngineEnabled(configured) ? configured : getEnabledEngines().find(isGatewayWideLicense) || configured;
+}
+
+// The licenses the gateway default may move to when the default license fails: "" (none), "any",
+// or a list of ids of the default's own harness (src/gateway/license-pool.js filters it live).
+export function getEnginePool() {
+  return readLicensePool(getSettings().enginePool);
 }
 
 // Gateway-wide default model, per engine. Used when a channel/DM/thread sets no model of its own,
@@ -329,26 +482,30 @@ export function getEngine() {
 export function getDefaultModel(engine) {
   const s = getSettings();
   // Per-engine default model, looked up by the adapter's settings key rather than a binary
-  // ternary that would silently hand a third engine Claude's default.
-  const v = s[adapterOr(engine).defaultModelKey];
-  return typeof v === "string" ? v.trim() : "";
+  // ternary that would silently hand a third engine Claude's default. A license with no default
+  // of its own inherits its harness's (Settings → Agent defaults), so a default is always a value.
+  const own = s[adapterOr(engine).defaultModelKey];
+  if (typeof own === "string" && own.trim()) return own.trim();
+  const harness = harnessOf(engine);
+  const inherited = harness && harness !== engine ? s[adapterOr(harness).defaultModelKey] : "";
+  return typeof inherited === "string" ? inherited.trim() : "";
+}
+
+// Stale or hand-edited values never reach a runner. A license without its own default effort
+// inherits its harness's, like the default model above.
+export function getDefaultEffort(engine) {
+  const adapter = adapterOr(engine);
+  const read = (key) => {
+    const raw = getSettings()[key];
+    const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    return adapter.efforts.includes(effort) ? effort : "";
+  };
+  const harness = harnessOf(engine);
+  return read(adapter.defaultEffortKey) || (harness && harness !== engine ? read(adapterOr(harness).defaultEffortKey) : "");
 }
 
 export function getModelShortcuts() {
-  return modelShortcutsFromSettings(getSettings());
-}
-
-// Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
-// Everyone reaching this gate has already passed the channel's normal authorization policy, so
-// "users" means every authorized channel user (approved members plus explicit guest grants).
-// DMs deliberately stay outside this policy: approved users can customize their own DM runtime.
-export const MODEL_CHANGE_ACCESS_MODES = ["admins", "users"];
-export function getModelChangeAccess() {
-  const v = getSettings().modelChangeAccess;
-  return MODEL_CHANGE_ACCESS_MODES.includes(v) ? v : "admins";
-}
-export function canChangeChannelRuntime(isAdminUser = false) {
-  return Boolean(isAdminUser) || getModelChangeAccess() === "users";
+  return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
 
 // Cross-engine failover: when the engine driving a turn fails with an authentication or
@@ -388,6 +545,20 @@ export function getWhisperEnabled() {
   return v === undefined ? true : Boolean(v);
 }
 
+// Global agent-run admission is independent of the number of running containers.
+export function getRunConcurrency() {
+  const s = getSettings();
+  const envTotal = Number.parseInt(process.env.MAX_CONCURRENT_RUNS ?? "", 10);
+  const envReserved = Number.parseInt(process.env.RESERVED_INTERACTIVE_RUNS ?? "", 10);
+  const maxConcurrentRuns = Number.isInteger(s.maxConcurrentRuns) && s.maxConcurrentRuns >= 1 && s.maxConcurrentRuns <= 500
+    ? s.maxConcurrentRuns : (Number.isFinite(envTotal) && envTotal > 0 ? envTotal : 8);
+  const configuredReserve = Number.isInteger(s.reservedInteractiveRuns) && s.reservedInteractiveRuns >= 0 && s.reservedInteractiveRuns <= 499
+    ? s.reservedInteractiveRuns : (Number.isFinite(envReserved) && envReserved >= 0 ? envReserved : 2);
+  // Always leave a background slot, including when the total is lowered on its own.
+  const reservedInteractiveRuns = Math.min(configuredReserve, maxConcurrentRuns - 1);
+  return { maxConcurrentRuns, reservedInteractiveRuns };
+}
+
 // ── Container runtime (v0.8) ──────────────────────────────────────────────────────────────────
 // Flat keys like every other setting (the secrets allowlist resolves top-level names). Read as one
 // snapshot by resolveRuntime() and carried on the RuntimeTarget — backend modules never import
@@ -406,7 +577,7 @@ export function getContainerRuntime() {
     image: typeof s.containerImage === "string" && s.containerImage.trim() ? s.containerImage.trim() : CONTAINER_DEFAULT_IMAGE,
     idleMinutes: settingInt(s.containerIdleMinutes, { min: 1, max: 1440, fallback: 10 }),
     maxRunning: settingInt(s.containerMaxRunning, { min: 1, max: 500, fallback: 8 }),
-    pidsLimit: settingInt(s.containerPidsLimit, { min: 64, max: 65536, fallback: 1024 }),
+    pidsLimit: settingInt(s.containerPidsLimit, { min: 64, max: 65536, fallback: CONTAINER_DEFAULT_PIDS_LIMIT }),
     memory: typeof s.containerMemory === "string" ? s.containerMemory.trim() : "",
     cpus: typeof s.containerCpus === "string" ? s.containerCpus.trim() : "",
     // Presence only — the value goes through getContainerClaudeOauthToken() at spawn time.
@@ -416,6 +587,9 @@ export function getContainerRuntime() {
     // Off by default: the confined work-folder-only admin channel is the product's posture; an
     // operator who wants an overseer channel that sees every agent and every repo switches it on.
     fullAccessHome: s.containerFullAccessHome === true,
+    // Additional allowlisted roots for working/additional folders (src/web/security.js
+    // allowedFsRoots validates each at read time; this is the stored list for the UI).
+    fsRoots: Array.isArray(s.fsRoots) ? s.fsRoots.map((v) => String(v || "").trim()).filter(Boolean) : [],
     // Container egress (src/gateway/egress/). "proxy" (the default): every channel container runs
     // with `--network none` and reaches the internet only through the daemon's per-channel egress
     // proxy, which swaps placeholder credentials for real ones on their declared hosts. "bridge" is
@@ -440,6 +614,19 @@ export function pinEgressSecretsStrictDefault({ configured, save = saveSettings,
   const value = !configured;
   save({ containerEgressSecretsStrict: value });
   return value;
+}
+// Boot (server.js), once per install: move a STORED old default process limit to the new one. The
+// admin Settings page saves every container field together, so any install that ever saved that
+// page has `containerPidsLimit: 1024` on disk without anybody having chosen it — and a stored
+// value beats the code default, which would leave exactly the installs that hit the limit on it.
+// Only the old default is touched (a deliberate 512 or 2048 stays), and only once: the revision
+// marker means an operator who sets 1,024 afterwards keeps it. → the new value, or null.
+export function raiseLegacyPidsLimitDefault({ save = saveSettings, read = getSettings } = {}) {
+  const s = read();
+  if (Number(s.containerPidsLimitRev) >= 2) return null;
+  const raise = Number.parseInt(s.containerPidsLimit, 10) === CONTAINER_LEGACY_PIDS_LIMIT;
+  save({ ...(raise ? { containerPidsLimit: CONTAINER_DEFAULT_PIDS_LIMIT } : {}), containerPidsLimitRev: 2 });
+  return raise ? CONTAINER_DEFAULT_PIDS_LIMIT : null;
 }
 // ── Anthropic-compatible providers (the Qwen harnesses — src/engines/qwen.js) ─────────────────
 // Gateway-level credentials, deliberately NOT per-channel environment secrets: `ANTHROPIC_*` is a
@@ -479,10 +666,47 @@ export function getPerplexityResearchConfig() {
 export function hasQwenApiKey(providerId) {
   return Boolean(getQwenConfig(providerId).apiKey);
 }
+
+// Voice calls (gateway/voice/): a browser call with a channel's agent, spoken through Google's
+// Gemini Live API. Off until an admin enables it AND stores a Gemini API key; `GEMINI_API_KEY` in
+// the environment is the bootstrap fallback for the key only. The key is write-only on listings
+// (has*/last4) and revealable only through /api/secrets/reveal (web/secrets.js).
+export const VOICE_CALL_MODELS = Object.freeze(["gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-12-2025"]);
+export const VOICE_CALL_VOICES = Object.freeze(["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]);
+// Google issues two shapes: the classic `AIza…` key and the newer `AQ.…` key, which carries a dot.
+// Accept printable URL-safe characters plus the dot; refuse whitespace, quotes and separators so a
+// pasted line can never smuggle a second query parameter into the Live API URL.
+export function isGeminiApiKey(value) {
+  return typeof value === "string" && value.length >= 20 && value.length <= 256 && /^[A-Za-z0-9._-]+$/.test(value);
+}
+export function getVoiceCallConfig() {
+  const s = getSettings();
+  const stored = typeof s.geminiApiKey === "string" ? s.geminiApiKey.trim() : "";
+  const env = typeof process.env.GEMINI_API_KEY === "string" ? process.env.GEMINI_API_KEY.trim() : "";
+  const apiKey = isGeminiApiKey(stored) ? stored : isGeminiApiKey(env) ? env : "";
+  return {
+    enabled: s.voiceCallsEnabled === true,
+    apiKey,
+    model: VOICE_CALL_MODELS.includes(s.voiceCallModel) ? s.voiceCallModel : VOICE_CALL_MODELS[0],
+    voice: VOICE_CALL_VOICES.includes(s.voiceCallVoice) ? s.voiceCallVoice : VOICE_CALL_VOICES[0],
+  };
+}
+// iPhone/APNs settings are private; listings expose presence only.
+export function getIosCallConfig() {
+  const s = getSettings();
+  return { enabled: s.iosCallsEnabled === true, teamId: String(s.apnsTeamId || ""),
+    keyId: String(s.apnsKeyId || ""), bundleId: String(s.apnsBundleId || "com.makeitfuture.channelgate"),
+    privateKey: String(s.apnsPrivateKey || "") };
+}
+export function voiceCallsAvailable() {
+  const c = getVoiceCallConfig();
+  return c.enabled && Boolean(c.apiKey);
+}
 // What the admin UI renders one card from, per provider. Presence and endpoint only — the key
 // itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
 export function qwenProviderSettings() {
-  return QWEN_PROVIDERS.map((entry) => {
+  // A removed provider has no card: there is nothing left to configure until it is restored.
+  return QWEN_PROVIDERS.filter((entry) => !isRemovedLicense(entry.id)).map((entry) => {
     const config = getQwenConfig(entry.id);
     return {
       id: entry.id,
@@ -493,12 +717,14 @@ export function qwenProviderSettings() {
       apiKeyField: entry.settings.apiKey,
       baseUrlField: entry.settings.baseUrl,
       defaultModelField: entry.defaultModelKey,
+      defaultEffortField: entry.defaultEffortKey,
       hasApiKey: Boolean(config.apiKey),
       apiKeyLast4: last4(config.apiKey),
       // The STORED endpoint, so an empty box means "still on the shipped default" rather than
       // silently re-saving a default the operator never chose.
       baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
       defaultModel: getDefaultModel(entry.id),
+      defaultEffort: getDefaultEffort(entry.id),
     };
   });
 }
@@ -568,6 +794,13 @@ export function getPublicFileLinksEnabled() {
   return Boolean(getSettings().publicFileLinksEnabled);
 }
 
+// IMAP/SMTP email accounts (gateway/email-accounts.js). OFF by default: an admin turns it on in
+// Settings before anyone sees the Email accounts sections, can connect a mailbox, or a run gets the
+// email tools. Stored accounts are kept while it is off and come back when it is switched on.
+export function getEmailAccountsEnabled() {
+  return getSettings().emailAccountsEnabled === true;
+}
+
 // Scheduled two-way Google Drive sync (see gateway/drivesync.js). Dormant unless enabled AND a
 // service-account key file is set AND rclone is installed. Auth is a Workspace service account; the
 // key file is a PATH (not a secret) and the subject is an email — neither is masked.
@@ -625,13 +858,18 @@ export function getCodexRatePer1MTokens() {
 // Per-model Codex $/1M-token rates for the cost ESTIMATE (input / cached-input / output).
 // Defaults verified against OpenAI's STANDARD API pricing table on 2026-09-13, and the GPT-6 Sol /
 // GPT-6 Luna rows on 2026-09-24 (their 2026-09-22 launch prices), and GPT-6.1 Sol on
-// 2026-10-22 (its 2026-09-29 launch price); admins can adjust
+// 2026-10-22 (its 2026-09-29 launch price), and GPT-6.1 Terra on
+// 2026-11-01 (its 2026-10-26 launch price), and GPT-6.2 Astra/Sol on
+// 2026-11-18 (their 2026-11-17 launch prices); admins can adjust
 // them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
 // Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
 // the model list itself is fixed and intentionally small.
 export const DEFAULT_CODEX_RATES = {
+  "gpt-6.2-astra": { input: 8, cachedInput: 0.4, output: 40 },
+  "gpt-6.2-sol": { input: 2, cachedInput: 0.1, output: 10 },
   "gpt-6-astra": { input: 10, cachedInput: 1, output: 50 },
   "gpt-6.1-sol": { input: 2, cachedInput: 0.1, output: 10 },
+  "gpt-6.1-terra": { input: 1, cachedInput: 0.05, output: 5 },
   "gpt-6-sol": { input: 2, cachedInput: 0.2, output: 10 },
   "gpt-6-luna": { input: 0.1, cachedInput: 0.01, output: 0.5 },
   "gpt-5.6-sol": { input: 4, cachedInput: 0.4, output: 20 },
@@ -681,6 +919,8 @@ export function getCodexModelRates() {
 // the rate is stored outright instead of derived. The 1M context window carries no premium on
 // 4.6-and-later models, so there is no long-context multiplier here.
 export const DEFAULT_CLAUDE_RATES = {
+  // platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2, verified 2026-11-12.
+  "claude-fable-5-2": { input: 8, cacheWrite5m: 10, cacheWrite1h: 16, cacheRead: 0.2, output: 40 },
   "claude-fable-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
   "claude-mythos-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
   "claude-fable-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },
@@ -852,16 +1092,8 @@ export function getComposioSdkApiKey() {
   return typeof v === "string" ? v.trim() : "";
 }
 
-// Org-level (gateway) default tokens. For shared Composio this follows the channel token; Toolbox
-// uses the full channel → user → org chain (see src/gateway/run.js). Write-only via the admin API
-// (masked on read), never logged.
-export function getDefaultComposioToken() {
-  const v = getSettings().defaultComposioToken;
-  return typeof v === "string" ? v : "";
-}
-export function getDefaultToolboxToken() {
-  const v = getSettings().defaultToolboxToken;
-  return typeof v === "string" ? v : "";
+export function getComposioSdkPolicy() {
+  return normalizeComposioSdkPolicy(getSettings().composioSdkPolicy);
 }
 
 // Skills platform (src/gateway/skills). A GitHub token for private skill repositories and API
@@ -1021,7 +1253,11 @@ export function applyChannelTemplate(meta) {
   if (meta?.isDM) return meta;
   // Templates store canonical flags, not a profile label. Removing the base record's explicit
   // "read" marker lets channelProfile() derive the selected profile from the copied flags.
-  return { ...meta, ...getChannelTemplate(), profile: undefined };
+  const template = getChannelTemplate();
+  // Retain the saved default while omitting its inactive Enterprise skill assignment for new
+  // Free channels. Otherwise the store would refuse ordinary channel registration on downgrade.
+  if (!enterpriseFeatureEnabled("skillTemplates")) template.skillTemplate = "";
+  return { ...meta, ...template, profile: undefined };
 }
 export function getDmTemplates() {
   const t = getSettings().dmTemplates || {};
@@ -1090,11 +1326,14 @@ export function settingsForApi() {
     },
     sessionKeepalive: s.sessionKeepalive ?? process.env.SESSION_KEEPALIVE ?? "10m",
     composioMode: getComposioMode(),
+    composioSdkPolicy: normalizeComposioSdkPolicy(s.composioSdkPolicy),
     hasComposioSdkApiKey: Boolean(getComposioSdkApiKey()),
     composioSdkApiKeyLast4: last4(getComposioSdkApiKey()),
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
-    toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    appleAppIds: getAppleAppIds().join(", "),
+    logoColor: getLogoColor(),
+    trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
     aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),
@@ -1103,12 +1342,6 @@ export function settingsForApi() {
     googleChatMentionReactions: getMentionReactions("googlechat"),
     trustedBotApps: getTrustedBotApps(),
     defaultChannelAccess: getDefaultChannelAccess(),
-    hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
-    defaultComposioTokenLast4: last4(getDefaultComposioToken()),
-    defaultComposioTokenLabel: s.defaultComposioTokenLabel || "",
-    hasDefaultToolboxToken: Boolean(getDefaultToolboxToken()),
-    defaultToolboxTokenLast4: last4(getDefaultToolboxToken()),
-    defaultToolboxTokenLabel: s.defaultToolboxTokenLabel || "",
     hasSkillsGithubToken: Boolean(getSkillsGithubToken()),
     skillsGithubTokenLast4: last4(getSkillsGithubToken()),
     hasSkillsPublishGithubToken: Boolean(getSkillsPublishGithubToken()),
@@ -1151,24 +1384,37 @@ export function settingsForApi() {
     },
     accessGrants: getOrgAccessGrants(),
     engine: getEngine(),
-    defaultClaudeModel: getDefaultModel("claude"),
-    defaultCodexModel: getDefaultModel("codex"),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultModelKey, getDefaultModel(id)])),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultEffortKey, getDefaultEffort(id)])),
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
+    terminalHarnesses: terminalHarnessSetup().filter((card) => !isRemovedLicense(card.id)),
     perplexityResearch: {
       enabled: perplexity.enabled,
       hasSessionToken: Boolean(perplexity.sessionToken),
     },
-    modelChangeAccess: getModelChangeAccess(),
+    iosCalls: { enabled: getIosCallConfig().enabled, teamId: getIosCallConfig().teamId, keyId: getIosCallConfig().keyId,
+      bundleId: getIosCallConfig().bundleId, hasPrivateKey: Boolean(getIosCallConfig().privateKey) },
+    voiceCalls: {
+      enabled: getVoiceCallConfig().enabled,
+      hasApiKey: Boolean(getVoiceCallConfig().apiKey),
+      apiKeyLast4: last4(getVoiceCallConfig().apiKey),
+      model: getVoiceCallConfig().model,
+      voice: getVoiceCallConfig().voice,
+      models: [...VOICE_CALL_MODELS],
+      voices: [...VOICE_CALL_VOICES],
+    },
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
+    enginePool: getEnginePool(),
     engineFallback: getEngineFallback(),
     engineFallbackMode: getEngineFallbackMode(),
     codexFallback: getEngineFallback(), // legacy key — same value, kept for older API clients
 
     showMessageCost: getShowMessageCost(),
     whisperEnabled: getWhisperEnabled(),
+    ...getRunConcurrency(),
     // Container runtime (v0.8). Non-secret values verbatim; the Claude token follows the same
     // write-only rule as every other credential here — has*/last4 only, fetched one at a time from
     // POST /api/secrets/reveal.
@@ -1183,6 +1429,8 @@ export function settingsForApi() {
         containerMemory: c.memory,
         containerCpus: c.cpus,
         containerFullAccessHome: c.fullAccessHome,
+        fsRoots: c.fsRoots,
+        privateMcpHosts: getPrivateMcpHosts(),
         containerEgressMode: c.egressMode,
         containerEgressSecretsStrict: c.egressSecretsStrict,
         hasContainerClaudeOauthToken: c.hasClaudeOauthToken,
@@ -1196,6 +1444,7 @@ export function settingsForApi() {
     memoryReviewModel: getMemoryReviewModel(),
     memoryReviewNotify: getMemoryReviewNotify(),
     publicFileLinksEnabled: getPublicFileLinksEnabled(),
+    emailAccountsEnabled: getEmailAccountsEnabled(),
     driveSyncEnabled: getDriveSyncEnabled(),
     driveSyncKeyFile: getDriveSyncKeyFile(),
     hasDriveSyncKeyJson: Boolean(getDriveSyncKeyJson()), // the raw key is NEVER returned to the client

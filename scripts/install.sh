@@ -38,13 +38,13 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 2
 fi
 
-# 1. Node.js >= 22.13 (node:sqlite is stable from 22.13) --------------------------
+# 1. Node.js >= 24.0.0 --------------------------
 if ! command -v node >/dev/null 2>&1; then
-  echo "❌ Node.js >= 22.13 is required. Install it (https://nodejs.org or your distribution's packages) and re-run."
+  echo "❌ Node.js >= 24.0.0 is required. Install it (https://nodejs.org or your distribution's packages) and re-run."
   exit 1
 fi
-if ! node -e 'const [maj, min] = process.versions.node.split(".").map(Number); process.exit(maj > 22 || (maj === 22 && min >= 13) ? 0 : 1)'; then
-  echo "❌ Node.js >= 22.13 required (found $(node -v)) — the gateway's SQLite store needs the built-in node:sqlite."
+if ! node -e 'const maj = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(maj) && maj >= 24 ? 0 : 1)'; then
+  echo "❌ Node.js >= 24.0.0 required (found $(node -v)) — install the current Node 24 LTS release before continuing."
   exit 1
 fi
 echo "✅ node $(node -v)"
@@ -134,6 +134,9 @@ fi
 cat <<EOT
   1) Create the Slack app from slack-app-manifest.json
        api.slack.com/apps → Create New App → From a manifest → paste the file → Create → Install.
+       Socket Mode: command URLs are placeholders; no command webhook is required.
+       Status uses /status-cg; choose engine/model/effort with /model.
+       Generate a separate app-level token with connections:write.
   2) Open the admin UI:  http://localhost:${PORT_SHOW}
        → Settings tab → paste the Slack Bot / App-Level / Signing tokens → Save & connect.
   3) Invite the bot to a channel (/invite) or DM it.

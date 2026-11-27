@@ -19,8 +19,6 @@ const READERS = {
     slackAppToken: (s) => s.slackAppToken,
     slackSigningSecret: (s) => s.slackSigningSecret,
     slackAdminUserToken: (s) => s.slackAdminUserToken,
-    defaultComposioToken: (s) => s.defaultComposioToken,
-    defaultToolboxToken: (s) => s.defaultToolboxToken,
     // Legacy shared Skills GitHub token (kept revealable for rollback/export only).
     skillsGithubToken: (s) => s.skillsGithubToken,
     skillsPublishGithubToken: (s) => s.skillsPublishGithubToken,
@@ -47,14 +45,14 @@ const READERS = {
     // guarantee should survive someone adding a field to the table without reading this file.
     qwenApiKey: (s) => s.qwenApiKey,
     qwenEuApiKey: (s) => s.qwenEuApiKey,
+    // The Gemini API key behind voice calls (gateway/voice/). Same terms as the provider keys above.
+    geminiApiKey: (s) => s.geminiApiKey,
   },
   user: {
     composioToken: (u) => u.composioToken,
-    toolboxToken: (u) => u.toolboxToken,
   },
   channel: {
     composioToken: (m) => m.composioToken,
-    toolboxToken: (m) => m.toolboxToken,
     makeToolboxKey: (m) => m.makeToolboxKey,
   },
 };

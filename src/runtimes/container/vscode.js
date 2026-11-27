@@ -4,6 +4,7 @@ import path from "node:path";
 import { createEditorLease } from "./editor-lease.js";
 import { resolveContainerClaudeToken } from "../../gateway/claude-token-relay.js";
 import { containerClaudeCredential } from "../../gateway/egress/grants.js";
+import { isChannelEngineApproved } from "../../gateway/channel-engines.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR } from "./image-paths.js";
 
 export const VSCODE_AUTH_DIR = "vscode";
@@ -55,7 +56,9 @@ function run(bin, args, { input = "", env = process.env, stdio = null } = {}) {
 //  • an SSH session (CG_SSH_USER set by sshd from the developer's key line, and that developer's
 //    prepared files present under `usersDir`): the developer's channel secrets are sourced, and
 //    Claude starts exactly like a chat turn — the channel lockdown, the per-session MCP payload
-//    and nothing else (gateway/ssh-session.js). The login is the access-only credentials file the
+//    and nothing else (gateway/ssh-session.js). In a channel set to an added Claude license the
+//    developer's claude-login.sh is sourced after the secrets: that license's directory and its
+//    placeholder, or the reason it could not be placed. Otherwise the login is the access-only credentials file the
 //    gateway wrote, so no token rides the environment and Claude shows the account itself.
 //  • an editor attach or any other shell: the relayed login from the token file — the channel's
 //    relay PLACEHOLDER when the egress proxy is the container's network (container-secrets P3),
@@ -71,8 +74,16 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
     `d=${quote(usersDir)}/"\${CG_SSH_USER:-}"`,
     'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/env" ] && [ -r "$d/mcp.json" ] && [ -r "$d/settings.json" ]; then',
     '  set -a; . "$d/env"; set +a',
+    // After the secrets, so another license never inherits a key or an endpoint from them.
+    '  if [ -r "$d/claude-login.sh" ]; then . "$d/claude-login.sh"; fi',
     '  note=""; [ -r "$d/session.md" ] && note="$d/session.md"',
     `  exec ${binary} --setting-sources "" --settings "$d/settings.json" --mcp-config "$d/mcp.json" --strict-mcp-config \${note:+--append-system-prompt-file "$note"} "$@"`,
+    "fi",
+    // A session whose tools were not prepared is still on the channel's license — or signed out
+    // with the reason — never on the gateway's own login below.
+    'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/claude-login.sh" ]; then',
+    '  . "$d/claude-login.sh"',
+    `  exec ${binary} "$@"`,
     "fi",
   ] : [];
   return [
@@ -89,6 +100,14 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
     // delegates to Anthropic; only the main provider runner bypasses this launcher.
     `if [ -r ${quote(loginEnvFile)} ]; then`,
     "  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CLAUDECODE",
+    "  unset CLAUDE_CODE_USE_BEDROCK AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_BEDROCK_BASE_URL ANTHROPIC_BEDROCK_REGION_PREFIX",
+    // …and the other two cloud routes a Claude license can set (engines/license-adapters.js
+    // claudeProviderEnv). Left behind, the routing flag survives while its token above is gone:
+    // the nested CLI would call the parent's cloud with no credential instead of Anthropic.
+    "  unset CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_SKIP_VERTEX_AUTH ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_VERTEX_BASE_URL CLOUD_ML_REGION",
+    "  unset CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_SKIP_FOUNDRY_AUTH ANTHROPIC_FOUNDRY_BASE_URL ANTHROPIC_FOUNDRY_RESOURCE ANTHROPIC_FOUNDRY_API_KEY ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "  unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+    `  CLAUDE_CONFIG_DIR=${quote(CONTAINER_CLAUDE_CONFIG_DIR)}; export CLAUDE_CONFIG_DIR`,
     `  set -a; . ${quote(loginEnvFile)}; set +a`,
     "fi",
     `if [ ! -r ${quote(loginEnvFile)} ] && [ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "\${ANTHROPIC_API_KEY:-}" ] && [ -z "\${ANTHROPIC_AUTH_TOKEN:-}" ] && [ -r ${quote(tokenFile)} ]; then`,
@@ -106,7 +125,10 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
 // same `-c mcp_servers.*` overrides a chat turn uses (codex-args.sh — credentials stay in the 0600
 // bundle their helpers read, never argv), and — when started from HOME, `/` or a parent of the
 // channel folder, where there is no project context — starts in the channel folder so its AGENTS.md
-// applies; anywhere else it stays put, so relative paths and `codex resume` keep their meaning. Anything else falls straight through to the pinned CLI.
+// applies; anywhere else it stays put, so relative paths and `codex resume` keep their meaning.
+// Which sign-in it is rides a file of its own (codex-login.sh — gateway/ssh-session.js): the
+// selected license's directory as CODEX_HOME unless the command named one, its file credential
+// store, and none of the OpenAI names a turn strips. Anything else falls straight through to the pinned CLI.
 export const CONTAINER_CODEX_BIN = "/usr/local/bin/codex";
 export function renderCodexWrapper({ usersDir, codexBin = CONTAINER_CODEX_BIN }) {
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -123,6 +145,10 @@ export function renderCodexWrapper({ usersDir, codexBin = CONTAINER_CODEX_BIN })
     '    if [ -n "$here" ]; then cd "$CG_WORKDIR" && printf \'codex: starting in the channel folder %s\\n\' "$CG_WORKDIR" >&2; fi',
     "  fi",
     "fi",
+    // After the secrets, so a sign-in never inherits an OpenAI key from them — and on its own: a
+    // session whose tools were not prepared is still on the channel's license, not on whatever an
+    // earlier one left in ~/.codex.
+    'if [ -n "${CG_SSH_USER:-}" ] && [ -r "$d/codex-login.sh" ]; then . "$d/codex-login.sh"; fi',
     `exec ${quote(codexBin)} "$@"`,
     "",
   ].join("\n");
@@ -184,9 +210,19 @@ export async function installVscodeClaudeRelay(target, cliBin, {
   return { source: relay.source, expiresAt: relay.expiresAt, tokenFile, relay };
 }
 
+// The wrapper alone, for an SSH session whose `claude` is NOT the gateway's own login (a channel
+// set to an added Claude license — gateway/ssh-session.js sshClaudeLicense): no token is resolved
+// and none is written; the session's claude-login.sh carries that license's placeholder instead.
+export async function installSshClaudeWrapper(target, cliBin, { runCommand = run, usersDir = sshUsersDirOf(target) } = {}) {
+  const wrapper = renderClaudeWrapper({ tokenFile: path.join(target.artifactDir, VSCODE_AUTH_DIR, "claude-token"), usersDir });
+  await runCommand(cliBin, ["exec", "-i", target.container.name, "sh", "-c", "umask 077; mkdir -p /home/agent/.local/bin; cat > /home/agent/.local/bin/claude; chmod 700 /home/agent/.local/bin/claude"], { input: wrapper });
+}
+
 export function clearVscodeClaudeRelay(target) {
   rmSync(path.join(target.artifactDir, VSCODE_AUTH_DIR, "claude-token"), { force: true });
 }
+
+export const VSCODE_CLAUDE_NOT_APPROVED = "Claude Code is not approved in this channel — claude in the editor terminal is not signed in.";
 
 export async function launchVscodeContainer(target, {
   cliBin,
@@ -202,16 +238,27 @@ export async function launchVscodeContainer(target, {
   let stopping = false;
   let refreshing = Promise.resolve();
   try {
-    const auth = await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand });
-    const refresh = () => {
-      refreshing = refreshing.then(async () => {
-        if (stopping) return;
-        try { await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand }); }
-        catch (error) { log.warn?.(`[vscode] Claude login refresh failed: ${error?.message || error}`); }
-      });
-    };
-    timer = setInterval(refresh, refreshMs);
-    timer.unref?.();
+    // The editor's `claude` is the gateway's own login, so a channel whose approved harnesses leave
+    // it out gets the wrapper alone: nothing is resolved, nothing is written, and the egress proxy
+    // would refuse the placeholder anyway (gateway/egress/grants.js gatewayClaudeApprovedIn).
+    const approved = isChannelEngineApproved(target?.meta || {}, "claude");
+    let auth = null;
+    if (approved) {
+      auth = await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand });
+      const refresh = () => {
+        refreshing = refreshing.then(async () => {
+          if (stopping) return;
+          try { await installVscodeClaudeRelay(target, cliBin, { resolveToken, runCommand }); }
+          catch (error) { log.warn?.(`[vscode] Claude login refresh failed: ${error?.message || error}`); }
+        });
+      };
+      timer = setInterval(refresh, refreshMs);
+      timer.unref?.();
+    } else {
+      clearVscodeClaudeRelay(target);
+      await installSshClaudeWrapper(target, cliBin, { runCommand });
+      log.warn?.(`[vscode] ${VSCODE_CLAUDE_NOT_APPROVED}`);
+    }
     const uri = vscodeAttachedContainerUri(target.container.name, target.workDir);
     await runCommand(codeBin, ["--wait", "--folder-uri", uri]);
     return { uri, auth };

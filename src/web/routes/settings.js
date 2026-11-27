@@ -1,3 +1,6 @@
+import { normalizePrivateMcpHosts } from "../../config/private-mcp-hosts.js";
+import { parsePushKey } from "../../gateway/voice/apns.ts";
+import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Settings + lifecycle admin routes: daemon settings (Slack tokens + options), on-demand
@@ -5,23 +8,32 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { hasComposioSdkEntitlement } from "../../ee/composio-entitlement.js";
+import { normalizeComposioSdkPolicy } from "../../config/composio-sdk-policy.js";
 import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../../ee/update-entitlement.js";
 import { Router } from "express";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { readdir } from "node:fs/promises";
+import { realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
+import { allowedFsRoot, allowedFsRoots, allowedRootFor, resolveWithinRoots, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
+import { getSkill, listSkills as listCatalogSkills } from "../../gateway/skills/catalog.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
 import { listChannels, getChannelsIndex } from "../../config/store.js";
-import { requireAdapter, modelBelongsToEngine } from "../../engines/registry.js";
+import { requireAdapter, modelBelongsToEngine, effortBelongsToModel, isLicenseListedModel } from "../../engines/registry.js";
 import {
   getAdminPassword,
+  getSettings,
+  getRunConcurrency,
   settingsForApi,
   saveSettings,
   isPerplexitySessionToken,
+  isGeminiApiKey, VOICE_CALL_MODELS, VOICE_CALL_VOICES,
   normalizePublicUrl,
+  parseAppleAppIds,
   applySettingsToEnv,
   resolveSlackConfig,
   hasSlackConfig,
@@ -32,9 +44,9 @@ import {
   getOrgAccessGrants,
   getChannelTemplate,
   APPROVAL_LINK_MODES,
+  normalizeTrustProxy,
   AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
-  MODEL_CHANGE_ACCESS_MODES,
   ENGINE_FALLBACK_MODES,
   DEFAULT_CODEX_RATES,
   DRIVE_SYNC_CONFLICTS,
@@ -49,6 +61,7 @@ import {
   CONTAINER_IMAGE_RE,
   CONTAINER_MEMORY_RE,
   CONTAINER_CPUS_RE,
+  getSettingsVersion,
 } from "../../config/settings.js";
 import { platformUiManifest } from "../../platforms/registry.js";
 import { isServiceAccountJson, syncAllNow, driveSyncStatusAll } from "../../gateway/drivesync.js";
@@ -58,21 +71,22 @@ import { isTopicName } from "../../platforms/googlechat/workspace-events.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
-import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS } from "../../config/model-shortcuts.js";
+import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS, effortShortcut } from "../../config/model-shortcuts.js";
 // Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
 // listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
 import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
 import { normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
-import { invalidateAllSessions, authEnabled } from "../auth.js";
+import { invalidateAllSessions, authEnabled, adminSession, requireRecentAdminAuth, passkeysConfigured } from "../auth.js";
 import { readSecret } from "../secrets.js";
 // The shared admin principal — one password, no personal identity behind an admin-UI action.
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { invalidModelOrEffort, cleanConversationTemplate, cleanDmTemplate, cleanAccessGrants } from "./helpers.js";
-import { engineUiManifest, refreshEngineModels } from "../../engines/registry.js";
+import { engineLabel, engineUiManifest, isGatewayWideLicense, isRemovedLicense, refreshEngineModels } from "../../engines/registry.js";
 // The Anthropic-compatible provider table — one settings card, one credential pair, per entry.
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
 import { gatewayCodexLoginStatus, startGatewayCodexLogin, cancelGatewayCodexLogin } from "../../gateway/channel-codex-login.js";
+import { normalizeLicensePool } from "../../gateway/license-pool.js";
 
 // The month the license ledger is keyed on — UTC, never the daemon's local zone (a deployment in
 // UTC+13 would otherwise roll its allowance a day early).
@@ -114,6 +128,14 @@ export function createSettingsRouter({
   // The ONE settings representation. The admin UI repaints from whatever a request returns —
   // the initial GET, the response to a successful save, or the 409 that refuses a stale one — so
   // all three must carry the same shape, or a repaint would blank the fields the other two omit.
+  // What a save made from a stale page gets back: the reason, and the CURRENT settings so the
+  // page can show what it now has instead of guessing.
+  const staleSettingsResponse = () => ({
+    error: "These settings changed elsewhere since this page loaded — nothing was saved. The latest values are shown; re-apply your change and save again.",
+    code: "settings_version_conflict",
+    stale: true,
+    ...settingsPayload(),
+  });
   const settingsPayload = (slackSnap = null) => ({
     ...settingsForApi(),
     engines: engineUiManifest(),
@@ -159,24 +181,33 @@ export function createSettingsRouter({
   });
 
   // Reveal ONE stored secret, on demand. Listing endpoints return has*/last4 only; this is the
-  // single way to see a value, and it costs a fresh password entry every time. All three outcomes
-  // — granted, wrong password, refused field — are audited with the requested NAMES (never the
-  // value) and the admin principal: the UI's sessions carry no personal identity, so "admin-ui" is
-  // who did it, and a row that left `author` empty read as if nobody had.
+  // single way to see a value. Full individual sessions require recent authentication;
+  // before first enrollment the bootstrap password remains the reauthentication credential.
+  // Audit the account and requested names, never the secret value or password.
   router.post("/secrets/reveal", async (req, res, next) => {
     // Destructured OUTSIDE the try: the catch below audits the REFUSED request, and it can only
     // name what was asked for if these are in scope there.
     const { scope = "", field = "", id = "", password = "" } = req.body ?? {};
+    const session = adminSession(req);
+    const accountId = session?.accountId;
+    const actor = accountId ? `admin:${accountId}` : ADMIN_UI_ACTOR;
+    const identity = session?.account?.userId ? { userId: session.account.userId } : {};
     try {
       // Re-authenticate even though a valid session got here: a borrowed session should not be
       // able to drain every credential silently. Skipped only when no password is configured at
       // all, in which case there is nothing to re-enter.
-      if (authEnabled() && !(await verifyPassword(String(password), getAdminPassword()))) {
-        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
-        return res.status(401).json({ error: "Wrong password" });
+      let enrolled = passkeysConfigured() || adminSession(req)?.method === 'password-slack';
+      let authorized = enrolled ? requireRecentAdminAuth(req) : !authEnabled() || await verifyPassword(String(password), getAdminPassword());
+      // The first enrollment may finish while scrypt yields. Its permanent mode change and
+      // session revocation apply to this request too, before any secret is returned.
+      if (passkeysConfigured() || adminSession(req)?.method === 'password-slack') { enrolled = true; authorized = requireRecentAdminAuth(req); }
+      if (!authorized) {
+        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, ...identity });
+        return res.status(enrolled ? 403 : 401).json({ error: enrolled ? "Verify your sign-in again before revealing a secret." : "Wrong password", ...(enrolled ? { code: "reauth_required" } : {}) });
       }
       const value = await readSecret({ scope, field, id: String(id) });
-      await logEvent("secret_revealed", { scope, field, id, actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
+      if (enrolled && !requireRecentAdminAuth(req)) return res.status(403).json({ error: "Verify your sign-in again before revealing a secret.", code: "reauth_required" });
+      await logEvent("secret_revealed", { scope, field, id, actor, author: actor, ...identity });
       res.json({ value });
     } catch (e) {
       // A REFUSED reveal is audited too. readSecret throws for anything off the allowlist, and
@@ -186,7 +217,7 @@ export function createSettingsRouter({
       // caller-supplied labels, never a stored value, and they are clipped so a padded request
       // body can't inflate the audit row.
       if (/unknown scope|not revealable|unknown user/.test(e.message)) {
-        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR, reason: e.message });
+        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, ...identity, reason: e.message });
         return res.status(400).json({ error: e.message });
       }
       next(e);
@@ -197,6 +228,11 @@ export function createSettingsRouter({
     try {
       await refreshEngineModels();
       const body = req.body ?? {};
+      // A page painted from older settings is told so BEFORE its values are judged: it may name a
+      // license deleted since, and "unknown engine" (400) would hide that the page is simply stale
+      // and can repaint itself. The save itself re-checks the version atomically below.
+      const pageVersion = typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
+      if (pageVersion !== "" && pageVersion !== getSettingsVersion()) return res.status(409).json(staleSettingsResponse());
       const patch = {};
       // Tokens are write-only: only overwrite when a non-empty value is provided.
       if (typeof body.slackBotToken === "string" && body.slackBotToken) patch.slackBotToken = body.slackBotToken.trim();
@@ -226,6 +262,51 @@ export function createSettingsRouter({
       if (Object.hasOwn(body, "clearPerplexitySessionToken")) {
         if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
         if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
+      }
+      if (Object.hasOwn(body, "iosCallsEnabled")) {
+        if (typeof body.iosCallsEnabled !== "boolean") return res.status(400).json({ error: "iosCallsEnabled must be a boolean" });
+        patch.iosCallsEnabled = body.iosCallsEnabled;
+      }
+      for (const field of ["apnsTeamId", "apnsKeyId"]) {
+        if (!Object.hasOwn(body, field)) continue;
+        if (typeof body[field] !== "string" || !/^[A-Z0-9]{10}$/.test(body[field])) return res.status(400).json({ error: `${field} must be a 10-character Apple identifier` });
+        patch[field] = body[field];
+      }
+      if (Object.hasOwn(body, "apnsBundleId")) {
+        if (typeof body.apnsBundleId !== "string" || body.apnsBundleId.length > 200 || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(body.apnsBundleId)) return res.status(400).json({ error: "Invalid APNs bundle ID" });
+        patch.apnsBundleId = body.apnsBundleId;
+      }
+      if (Object.hasOwn(body, "apnsPrivateKey")) {
+        if (typeof body.apnsPrivateKey !== "string") return res.status(400).json({ error: "APNs key must be text" });
+        if (body.apnsPrivateKey.trim()) {
+          try { parsePushKey(body.apnsPrivateKey.trim()); } catch { return res.status(400).json({ error: "Use a valid APNs P-256 .p8 key" }); }
+          patch.apnsPrivateKey = body.apnsPrivateKey.trim();
+        }
+      }
+      if (body.clearApnsPrivateKey === true) patch.apnsPrivateKey = "";
+      // ── Voice calls ──────────────────────────────────────────────────────────
+      // Optional and independent of the engines. An empty key box keeps the stored key; only an
+      // explicit clear removes it. Model and voice are validated against the closed lists.
+      if (Object.hasOwn(body, "voiceCallsEnabled")) {
+        if (typeof body.voiceCallsEnabled !== "boolean") return res.status(400).json({ error: "voiceCallsEnabled must be a boolean" });
+        patch.voiceCallsEnabled = body.voiceCallsEnabled;
+      }
+      if (Object.hasOwn(body, "geminiApiKey")) {
+        if (typeof body.geminiApiKey !== "string") return res.status(400).json({ error: "geminiApiKey must be a string" });
+        const key = body.geminiApiKey.trim();
+        if (key !== "") {
+          if (!isGeminiApiKey(key)) return res.status(400).json({ error: "Paste only the Gemini API key value (letters, digits, dots, - and _; 20 to 256 characters)" });
+          patch.geminiApiKey = key;
+        }
+      }
+      if (body.clearGeminiApiKey === true) patch.geminiApiKey = "";
+      if (Object.hasOwn(body, "voiceCallModel")) {
+        if (!VOICE_CALL_MODELS.includes(body.voiceCallModel)) return res.status(400).json({ error: `voiceCallModel must be one of: ${VOICE_CALL_MODELS.join(", ")}` });
+        patch.voiceCallModel = body.voiceCallModel;
+      }
+      if (Object.hasOwn(body, "voiceCallVoice")) {
+        if (!VOICE_CALL_VOICES.includes(body.voiceCallVoice)) return res.status(400).json({ error: `voiceCallVoice must be one of: ${VOICE_CALL_VOICES.join(", ")}` });
+        patch.voiceCallVoice = body.voiceCallVoice;
       }
       // ── Google Chat ──────────────────────────────────────────────────────────
       // The key is validated BEFORE it is stored: a pasted OAuth-client JSON or a truncated file
@@ -293,16 +374,35 @@ export function createSettingsRouter({
       }
       if (typeof body.sessionKeepalive === "string") patch.sessionKeepalive = body.sessionKeepalive.trim();
       // Mode selection and credentials are deliberately independent: changing the mode never
-      // clears either the existing personal/channel/org tokens or this organization SDK key.
+      // clears either the existing personal/channel tokens or this organization SDK key.
       if ((body.composioMode === "sdk" || (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim())) && !hasComposioSdkEntitlement()) {
         return res.status(403).json({ error: "Composio SDK (Beta) requires an active Enterprise license" });
       }
       if (typeof body.composioMode === "string" && COMPOSIO_MODES.includes(body.composioMode)) patch.composioMode = body.composioMode;
       if (typeof body.composioSdkApiKey === "string" && body.composioSdkApiKey.trim()) patch.composioSdkApiKey = body.composioSdkApiKey.trim();
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
+      if (Object.hasOwn(body, "composioSdkPolicy")) {
+        try { patch.composioSdkPolicy = normalizeComposioSdkPolicy(body.composioSdkPolicy); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
-      if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
+      if (Object.hasOwn(body, "logoColor")) {
+        const color = normalizeLogoColor(body.logoColor);
+        if (!color) return res.status(400).json({ error: "Logo color must be a six-digit hex color, such as #ff642f" });
+        patch.logoColor = color;
+      }
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
+      if (typeof body.appleAppIds === "string") {
+        const ids = parseAppleAppIds(body.appleAppIds);
+        if (!ids) return res.status(400).json({ error: "Each Apple app identifier must be <Team ID>.<bundle id>, such as ABCDE12345.com.example.app" });
+        patch.appleAppIds = ids.join(", ");
+      }
+      // Which proxy header the login/approval backoff may believe: "" / cloudflare / xff.
+      if (typeof body.trustProxy === "string") {
+        const mode = normalizeTrustProxy(body.trustProxy);
+        if (mode === null) return res.status(400).json({ error: "Behind a reverse proxy must be one of: none, cloudflare, xff" });
+        patch.trustProxy = mode;
+      }
       // Link-based approvals: auto (default) / always / off. See src/web/approval-links.js.
       if (typeof body.approvalLinks === "string" && APPROVAL_LINK_MODES.includes(body.approvalLinks)) patch.approvalLinks = body.approvalLinks;
       if (body.aiTestingUsers !== undefined) {
@@ -327,16 +427,6 @@ export function createSettingsRouter({
         const arr = Array.isArray(body.trustedBotApps) ? body.trustedBotApps : String(body.trustedBotApps).split(/[\s,]+/);
         patch.trustedBotApps = arr.map((s) => String(s).trim()).filter(Boolean);
       }
-      // Org-default Composio / Skills tokens (write-only; the final fallback when channel + user
-      // have none). Set on a non-empty value; clear explicitly with the *Clear flags.
-      if (typeof body.defaultComposioToken === "string" && body.defaultComposioToken) patch.defaultComposioToken = body.defaultComposioToken.trim();
-      if (body.clearDefaultComposioToken === true) patch.defaultComposioToken = "";
-      if (typeof body.defaultToolboxToken === "string" && body.defaultToolboxToken) patch.defaultToolboxToken = body.defaultToolboxToken.trim();
-      if (body.clearDefaultToolboxToken === true) patch.defaultToolboxToken = "";
-      // Owner labels (who the shared org-default token authenticates as). Not secret — a plain
-      // string that always round-trips; an empty string clears it.
-      if (typeof body.defaultComposioTokenLabel === "string") patch.defaultComposioTokenLabel = body.defaultComposioTokenLabel.trim();
-      if (typeof body.defaultToolboxTokenLabel === "string") patch.defaultToolboxTokenLabel = body.defaultToolboxTokenLabel.trim();
       // Legacy shared GitHub credential stays readable for rollback compatibility, but source
       // sync no longer consumes it. New source credentials live on each source row.
       if (typeof body.skillsGithubToken === "string" && body.skillsGithubToken.trim()) patch.skillsGithubToken = body.skillsGithubToken.trim();
@@ -371,11 +461,14 @@ export function createSettingsRouter({
       // run — that state has no valid interpretation, so it fails loudly here rather than silently
       // failing open at read time.
       if (body.engineEnabled && typeof body.engineEnabled === "object" && !Array.isArray(body.engineEnabled)) {
+        // A license an administrator removed stays off: only Restore (routes/licenses.js) brings it
+        // back, never a switch in a stale or hand-written save.
         const next = Object.fromEntries(ENGINES.map((id) => [
           id,
-          typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
+          isRemovedLicense(id) ? false : typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
         ]));
-        if (!ENGINES.some((id) => next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
+        // Something every conversation can run on: a license limited to one conversation is not that.
+        if (!ENGINES.some((id) => isGatewayWideLicense(id) && next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
         patch.engineEnabled = next;
       }
       if (typeof body.engine === "string" && ENGINES.includes(body.engine)) {
@@ -383,9 +476,18 @@ export function createSettingsRouter({
         // engine against the state being written, not the state on disk.
         const enabledAfter = patch.engineEnabled ? patch.engineEnabled[body.engine] : isEngineEnabled(body.engine);
         if (!enabledAfter) return res.status(400).json({ error: `engine "${body.engine}" is disabled — enable it or pick another default` });
+        // The gateway default is what every conversation without a pick of its own runs on.
+        if (!isGatewayWideLicense(body.engine)) return res.status(400).json({ error: `${engineLabel(body.engine)} is limited to one conversation and cannot be the gateway default — pick it in that conversation's settings instead` });
         patch.engine = body.engine;
       }
-      if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
+      // The gateway default's license pool: validated beside the default license being written,
+      // and dropped when that license changes without a new pool (it was chosen for the old one).
+      if (Object.hasOwn(body, "enginePool")) {
+        try { patch.enginePool = normalizeLicensePool(body.enginePool, patch.engine || getEngine()); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+        const limited = Array.isArray(patch.enginePool) ? patch.enginePool.find((id) => !isGatewayWideLicense(id)) : "";
+        if (limited) return res.status(400).json({ error: `${engineLabel(limited)} is limited to one conversation and cannot be part of the gateway default` });
+      } else if (patch.engine && patch.engine !== getEngine()) patch.enginePool = "";
       if (body.modelShortcuts !== undefined) {
         const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)
           ? Object.entries(body.modelShortcuts) : null;
@@ -394,7 +496,8 @@ export function createSettingsRouter({
         for (const [rawName, target] of entries) {
           const name = rawName.toLowerCase();
           if (!MODEL_SHORTCUT_NAME_RE.test(name) || Object.hasOwn(shortcuts, name)) return res.status(400).json({ error: `invalid or duplicate model shortcut "${rawName}"` });
-          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !isValidModel(target.model) || !modelBelongsToEngine(target.model, target.engine))
+          if (effortShortcut(name)) return res.status(400).json({ error: `model shortcut "${rawName}" is reserved for effort (:low, :mid, :medium, :high)` });
+          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !(isValidModel(target.model) || isLicenseListedModel(target.model, target.engine)) || !modelBelongsToEngine(target.model, target.engine))
             return res.status(400).json({ error: `invalid model target for shortcut "${rawName}"` });
           shortcuts[name] = { engine: target.engine, model: target.model };
         }
@@ -408,12 +511,29 @@ export function createSettingsRouter({
         const key = requireAdapter(id).defaultModelKey;
         if (typeof body[key] !== "string") continue;
         const v = body[key].trim();
-        if (v && !isValidModel(v)) return res.status(400).json({ error: `unrecognized model "${v}"` });
+        // A license's own listed model (a custom server's vocabulary) is admitted by its list.
+        if (v && !isValidModel(v) && !isLicenseListedModel(v, id)) return res.status(400).json({ error: `unrecognized model "${v}"` });
         // …and that it belongs to THIS harness. The shape check alone would accept a QwenCloud
         // image/audio model as a Qwen default, or a Codex id as Claude's — either one breaks every
         // defaulted run in the deployment.
         if (v && !modelBelongsToEngine(v, id)) return res.status(400).json({ error: `model "${v}" is not a ${requireAdapter(id).label} model` });
         patch[key] = v;
+      }
+      // Validate the resulting model/effort pair together before any settings are written.
+      const currentSettings = getSettings();
+      for (const id of ENGINES) {
+        const adapter = requireAdapter(id);
+        const key = adapter.defaultEffortKey;
+        if (body[key] !== undefined) {
+          if (typeof body[key] !== "string") return res.status(400).json({ error: `${key} must be a string` });
+          patch[key] = body[key].trim().toLowerCase();
+        }
+        if (patch[key] === undefined && patch[adapter.defaultModelKey] === undefined) continue;
+        const effort = patch[key] ?? currentSettings[key] ?? "";
+        const model = patch[adapter.defaultModelKey] ?? currentSettings[adapter.defaultModelKey] ?? "";
+        if (effort && !effortBelongsToModel(effort, id, model)) {
+          return res.status(400).json({ error: `effort "${effort}" is not supported by the selected ${adapter.label} model` });
+        }
       }
       // Cross-engine failover. `codexFallback` is the pre-rename key an older UI still sends; both
       // write the canonical one so the two can never disagree on disk.
@@ -422,6 +542,19 @@ export function createSettingsRouter({
       if (typeof body.engineFallbackMode === "string" && ENGINE_FALLBACK_MODES.includes(body.engineFallbackMode)) patch.engineFallbackMode = body.engineFallbackMode;
       if (typeof body.showMessageCost === "boolean") patch.showMessageCost = body.showMessageCost;
       if (typeof body.whisperEnabled === "boolean") patch.whisperEnabled = body.whisperEnabled;
+      // Strict integer inputs: blank, boolean and null must never silently change admission.
+      for (const [key, min, max] of [["maxConcurrentRuns", 1, 500], ["reservedInteractiveRuns", 0, 499]]) {
+        if (body[key] === undefined) continue;
+        const n = body[key];
+        if (!Number.isInteger(n) || n < min || n > max) return res.status(400).json({ error: `${key} must be an integer between ${min} and ${max}` });
+        patch[key] = n;
+      }
+      if (patch.reservedInteractiveRuns !== undefined && patch.reservedInteractiveRuns >= (patch.maxConcurrentRuns ?? getRunConcurrency().maxConcurrentRuns)) {
+        return res.status(400).json({ error: "reservedInteractiveRuns must be less than maxConcurrentRuns so background work can run" });
+      }
+      if (patch.maxConcurrentRuns !== undefined && patch.reservedInteractiveRuns === undefined) {
+        patch.reservedInteractiveRuns = Math.min(getRunConcurrency().reservedInteractiveRuns, patch.maxConcurrentRuns - 1);
+      }
       // ── Container runtime ───────────────────────────────────────────────────
       // The three free-text values (image, memory, cpus) are argv tokens for the container CLI, so
       // they are pattern-checked here rather than sanitized later — a rejected save is the only
@@ -455,6 +588,39 @@ export function createSettingsRouter({
       // configure, because the grant is the daemon user's own home and nothing else; an admin
       // API caller cannot turn this into "mount an arbitrary host path".
       if (typeof body.containerFullAccessHome === "boolean") patch.containerFullAccessHome = body.containerFullAccessHome;
+      // Additional allowed roots for working and additional folders (src/web/security.js
+      // allowedFsRoots): absolute, existing directories only, none of the daemon's own trees. A
+      // bad entry refuses the whole save rather than being silently dropped.
+      if (body.fsRoots !== undefined) {
+        if (!Array.isArray(body.fsRoots)) return res.status(400).json({ error: "fsRoots must be an array of absolute directory paths" });
+        const roots = [];
+        for (const raw of body.fsRoots) {
+          const value = String(raw || "").trim();
+          if (!value) continue;
+          if (!path.isAbsolute(value)) return res.status(400).json({ error: `fsRoots: ${value} is not an absolute path` });
+          let real;
+          try {
+            real = realpathSync(value);
+            if (!statSync(real).isDirectory()) throw new Error("not a directory");
+          } catch {
+            return res.status(400).json({ error: `fsRoots: ${value} is not an existing directory` });
+          }
+          const forbidden = forbiddenWorkDirReason(real, { channels: [] });
+          if (forbidden && !/another conversation|workspace root|platform folder/.test(forbidden)) return res.status(400).json({ error: `fsRoots refused: ${real} is ${forbidden}` });
+          if (!roots.includes(real)) roots.push(real);
+        }
+        patch.fsRoots = roots;
+      }
+      // Approved PRIVATE destinations for custom MCP connections (src/config/private-mcp-hosts.js):
+      // exact host:port entries whose address is a private LAN one. A bad entry refuses the whole
+      // save rather than being silently dropped.
+      if (body.privateMcpHosts !== undefined) {
+        try {
+          patch.privateMcpHosts = normalizePrivateMcpHosts(body.privateMcpHosts);
+        } catch (error) {
+          return res.status(400).json({ error: `privateMcpHosts: ${error.message}` });
+        }
+      }
       // Container egress: the proxy (default) or the legacy open bridge. A closed set — anything
       // else is refused rather than stored and read back as "proxy".
       if (body.containerEgressMode !== undefined) {
@@ -471,6 +637,9 @@ export function createSettingsRouter({
       // not a literal pair — a provider added there would otherwise get a settings card in the UI
       // whose key and endpoint silently never saved.
       for (const entry of QWEN_PROVIDERS) {
+        // A removed provider stores nothing: a page loaded before the removal must not put a key
+        // back under a license nobody can see or switch on.
+        if (isRemovedLicense(entry.id)) continue;
         const { apiKey: keyField, baseUrl: urlField } = entry.settings;
         if (typeof body[keyField] === "string") patch[keyField] = body[keyField].trim();
         if (body[`clear${keyField[0].toUpperCase()}${keyField.slice(1)}`] === true) patch[keyField] = "";
@@ -495,6 +664,7 @@ export function createSettingsRouter({
       if (typeof body.memoryReviewNotify === "boolean") patch.memoryReviewNotify = body.memoryReviewNotify;
       // Scheduled Google Drive sync. Key file / subject are plain strings (a path + an email, not
       // secrets); interval floors at 1 minute; conflict policy is an enum.
+      if (typeof body.emailAccountsEnabled === "boolean") patch.emailAccountsEnabled = body.emailAccountsEnabled;
       if (typeof body.publicFileLinksEnabled === "boolean") patch.publicFileLinksEnabled = body.publicFileLinksEnabled;
       if (typeof body.driveSyncEnabled === "boolean") patch.driveSyncEnabled = body.driveSyncEnabled;
       if (typeof body.driveSyncKeyFile === "string") patch.driveSyncKeyFile = body.driveSyncKeyFile.trim();
@@ -587,6 +757,7 @@ export function createSettingsRouter({
       const setPassword = typeof body.adminPassword === "string" && body.adminPassword.length > 0;
       const clearPassword = body.clearAdminPassword === true;
       const passwordChanged = setPassword || clearPassword;
+      if (passwordChanged && passkeysConfigured()) return res.status(409).json({ error: "Password login is disabled. Manage individual accounts and passkeys in Admin access." });
       const passwordBefore = getAdminPassword();
       if (setPassword && clearPassword) return res.status(400).json({ error: "Choose either a new password or password removal." });
       if (passwordChanged) {
@@ -628,26 +799,38 @@ export function createSettingsRouter({
         if (patch.dmTemplates) for (const name of ["user", "admin"])
           await assertNewMcpSelections("claude", patch.dmTemplates[name].allowedMcps, getDmTemplates()[name].allowedMcps);
       } catch (error) { return res.status(400).json({ error: error.message }); }
+      // A personal skill belongs to its author's own tier: none of these shared tiers may newly
+      // grant one (grants stored before this check are left alone).
+      {
+        const foreign = [
+          ...(patch.accessGrants ? newForeignPersonalSkillGrants(patch.accessGrants.skills, getOrgAccessGrants().skills, { lookupSkill: getSkill }) : []),
+          ...(patch.channelTemplate ? newForeignPersonalSkillGrants(patch.channelTemplate.skills, getChannelTemplate().skills, { lookupSkill: getSkill }) : []),
+          ...(patch.dmTemplates ? ["user", "admin"].flatMap((name) => newForeignPersonalSkillGrants(patch.dmTemplates[name].skills, getDmTemplates()[name].skills, { lookupSkill: getSkill })) : []),
+        ];
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError([...new Set(foreign)], { tier: "shared" }) });
+      }
       // Compare-and-swap when the client echoed the version it loaded: a save that would otherwise
       // revert somebody else's change (another admin, the skills sync, a license write, the
       // first-boot password upgrade) is refused rather than applied. A client that sends no
       // version — an older UI, a script, an integration — is merged in as before.
       const expectVersion =
         typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
-      if (passwordChanged && getAdminPassword() !== passwordBefore) return res.status(409).json({ error: "The admin password changed. Authenticate again before retrying." });
+      if (passwordChanged && (passkeysConfigured() || getAdminPassword() !== passwordBefore)) return res.status(409).json({ error: "Admin authentication changed. Authenticate again before retrying." });
+      if (patch.publicUrl !== undefined && normalizePublicUrl(patch.publicUrl) !== normalizePublicUrl(getSettings().publicUrl) && passkeysConfigured() && !requireRecentAdminAuth(req)) {
+        return res.status(403).json({ error: "Verify your passkey before changing the gateway URL.", code: "reauth_required" });
+      }
       try {
         saveSettings(patch, { expectVersion });
       } catch (e) {
         if (e?.code !== "settings_version_conflict") throw e;
         // Hand back the CURRENT settings so the page can show what it now has instead of guessing.
-        return res.status(409).json({
-          error: "These settings changed elsewhere since this page loaded — nothing was saved. The latest values are shown; re-apply your change and save again.",
-          code: "settings_version_conflict",
-          stale: true,
-          ...settingsPayload(),
-        });
+        return res.status(409).json(staleSettingsResponse());
       }
       applySettingsToEnv();
+      if (patch.maxConcurrentRuns !== undefined || patch.reservedInteractiveRuns !== undefined) {
+        const { refreshRunSlots } = await import("../../gateway/run.js");
+        refreshRunSlots();
+      }
       if (passwordChanged) invalidateAllSessions();
       if (licenseKeyChanged) {
         const { onLicenseKeyChanged } = await import("../../ee/license.js");
@@ -834,9 +1017,10 @@ export function createSettingsRouter({
   // symlinks can't step outside it.
   router.get("/fs/list", async (req, res) => {
     try {
-      const root = allowedFsRoot();
-      const dir = resolveWithinRoot(root, req.query.path ? String(req.query.path) : root);
-      if (!dir) return res.status(400).json({ error: `path is outside the allowed root (${root})` });
+      const roots = allowedFsRoots();
+      const dir = resolveWithinRoots(req.query.path ? String(req.query.path) : roots[0], roots);
+      if (!dir) return res.status(400).json({ error: `path is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")})` });
+      const root = allowedRootFor(dir, roots);
       const entries = await readdir(dir, { withFileTypes: true });
       const dirs = entries
         .filter((e) => e.isDirectory() || e.isSymbolicLink())
@@ -845,7 +1029,9 @@ export function createSettingsRouter({
       const parent = path.dirname(dir);
       const parentOk = parent !== dir && pathWithin(root, parent);
       const assignedConversations = workspaceAssignmentsAtPath(await listChannels(), dir);
-      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), assignedConversations });
+      // The other allowed roots are offered at the primary root so the picker can reach them.
+      const otherRoots = dir === roots[0] ? roots.slice(1) : [];
+      res.json({ path: dir, parent: parentOk ? parent : null, dirs, home: os.homedir(), roots, otherRoots, assignedConversations });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }
@@ -854,7 +1040,14 @@ export function createSettingsRouter({
   // ── Reference data for the UI ───────────────────────────────────────────────
   router.get("/skills", async (_req, res, next) => {
     try {
-      res.json({ skills: await listAvailableSkills() });
+      // `skills` stays the list every shared picker offers (organization grants, conversation and
+      // DM templates, channel skills); personal skills are listed apart with their author, so the
+      // Users editor offers a person only their OWN personal skills and can flag a stored grant of
+      // someone else's (src/gateway/access-grants.js skips those at run time).
+      const personal = listCatalogSkills().filter((skill) => skill.visibility === "personal" && !skill.deleted)
+        .map((skill) => ({ slug: skill.slug, createdBy: skill.createdBy || "" }));
+      const personalKeys = new Set(personal.map((skill) => skill.slug.toLowerCase()));
+      res.json({ skills: (await listAvailableSkills()).filter((name) => !personalKeys.has(name.toLowerCase())), personalSkills: personal });
     } catch (e) {
       next(e);
     }
@@ -862,12 +1055,12 @@ export function createSettingsRouter({
 
   // Optional capabilities available to the requested engine. Claude uses `claude mcp list`;
   // Codex uses its active app-server inventory so product-injected app families are included.
-  // Gateway/Composio/Skills/Toolbox built-ins are excluded from this per-channel picker.
+  // Gateway/Composio/Make built-ins are excluded from this per-channel picker.
   router.get("/mcp/available", async (req, res, next) => {
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
       let channelId = "";
-      if (engine === "codex" && req.query.channelId) {
+      if (requireAdapter(engine).channelScoped && req.query.channelId) {
         const id = String(req.query.channelId);
         const entry = (await getChannelsIndex())[id];
         if (!entry) return res.status(404).json({ error: "Channel not found" });
@@ -904,7 +1097,7 @@ export function createSettingsRouter({
       try {
         vars = patchOrgEnv({ set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: ORG_SECRET_ACTOR });
       } catch (e) {
-        return res.status(400).json({ error: e.message });
+        return res.status(e.statusCode || 400).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
       }
       // Name only. The audit trail must never carry what was set.
       logEvent("org_env_set", { name, actor: ORG_SECRET_ACTOR });

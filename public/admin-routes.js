@@ -5,11 +5,13 @@ export const ADMIN_VIEWS = Object.freeze({
   channels: Object.freeze({ path: "/conversations", title: "Conversations" }),
   users: Object.freeze({ path: "/users", title: "Users" }),
   schedules: Object.freeze({ path: "/automations", title: "Automations" }),
+  roi: Object.freeze({ path: "/roi", title: "ROI" }),
   audit: Object.freeze({ path: "/activity", title: "Activity" }),
   skills: Object.freeze({ path: "/skills", title: "Skills" }),
   api: Object.freeze({ path: "/api-docs", title: "HTTP run API" }),
   settings: Object.freeze({ path: "/settings", title: "Settings" }),
   "system-health": Object.freeze({ path: "/system-health", title: "System health" }),
+  subscriptions: Object.freeze({ path: "/subscriptions", title: "Subscriptions" }),
 });
 
 export const ADMIN_VIEW_PATHS = Object.freeze(Object.values(ADMIN_VIEWS).map(({ path }) => path));

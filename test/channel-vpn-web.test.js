@@ -21,6 +21,8 @@ const app = express();
 app.use(express.json());
 app.post("/api/login", handleLogin);
 app.use(noPasswordLockdown, authMiddleware);
+// Keep the real session gate while supplying the focused fixture's linked admin identity.
+app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
 app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
 app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
 app.get("/api/channels/:channelId/members", (_req, res) => res.json({ members: [] }));

@@ -16,10 +16,12 @@ const css = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8
 const BOX = ["background:", "border:", "border-radius:", "padding:"];
 
 function ruleFor(selector) {
-  // Selector at the start of a rule, up to its closing brace. Escaped for a literal match.
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, "m").exec(css);
-  return match ? match[1] : "";
+  // A selector may share declarations with another control. Match the complete selector in
+  // the comma-separated list, never an ancestor-scoped suffix such as `.drawer .tok-label`.
+  for (const [, selectors, declarations] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/^([^{}]+)\{([^}]*)\}/gm)) {
+    if (selectors.split(",").some((candidate) => candidate.trim() === selector)) return declarations;
+  }
+  return "";
 }
 
 for (const selector of [".tok-label", ".secret-add input"]) {

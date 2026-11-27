@@ -21,11 +21,13 @@ const EXPECTED = {
   channels: "/conversations",
   users: "/users",
   schedules: "/automations",
+  roi: "/roi",
   audit: "/activity",
   skills: "/skills",
   api: "/api-docs",
   settings: "/settings",
   "system-health": "/system-health",
+  subscriptions: "/subscriptions",
 };
 
 test("every admin view has a canonical path and round-trips from it", () => {
@@ -60,7 +62,7 @@ test("MCP checklists show Claude and Codex together while persisting separate gr
   assert.match(app, /\/api\/mcp\/available\?engine=\$\{encodeURIComponent\(engine\)\}/);
   assert.match(app, /for \(const engine of \["claude", "codex"\]\)/);
   assert.match(app, /data-mcp-engine/);
-  assert.match(app, /loading Claude and Codex MCP lists/);
+  assert.match(app, /loading MCP lists/);
   assert.match(app, /allowedCodexMcps/);
   assert.match(app, /captureMcpSelection/);
   assert.match(app, /paintAllMcpBoxes/);
@@ -69,9 +71,9 @@ test("MCP checklists show Claude and Codex together while persisting separate gr
 test("admin capability labels state the effective network boundary", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(app, /approved-domain network/);
-  assert.match(app, /\["claude", "codex"\]/);
   assert.match(app, /unrestricted network/);
-  assert.match(app, /String\(m\.engine \|\| "claude"\)/);
+  // The switch belongs to the channel's container: no harness makes the label say otherwise.
+  assert.doesNotMatch(app, /network unsupported/);
 });
 
 test("channel, DM, and group detail paths round-trip to selection keys", () => {

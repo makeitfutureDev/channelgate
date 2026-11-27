@@ -107,3 +107,52 @@ test("enabled provider cannot become default without its own key and endpoint; c
   settings.saveSettings({ engine: "claude" });
   clearAll();
 });
+
+
+test("gateway effort defaults validate each resulting model/effort pair atomically", async () => {
+  const { ENGINE_IDS, requireAdapter, effortsForModel } = await import("../src/engines/registry.js");
+  for (const id of ENGINE_IDS) {
+    const adapter = requireAdapter(id);
+    const key = adapter.defaultEffortKey;
+    const model = adapter.models[0]?.value || "";
+    const effort = effortsForModel(id, model)[0];
+    const saved = await put({ [adapter.defaultModelKey]: model, [key]: `  ${effort.toUpperCase()}  ` });
+    assert.equal(settings.getDefaultEffort(id), effort);
+    assert.equal(saved[key], effort);
+    await put({ [key]: 42 }, 400);
+    await put({ [key]: "unsupported", [adapter.defaultModelKey]: "" }, 400);
+    assert.equal(settings.getDefaultEffort(id), effort, "rejected requests do not modify either setting");
+    assert.equal(settings.getDefaultModel(id), model);
+    await put({ [key]: "" });
+    assert.equal(settings.getDefaultEffort(id), "");
+  }
+  // Codex's expanded reasoning levels cannot leak into a Claude default.
+  await put({ defaultClaudeEffort: "ultra" }, 400);
+});
+
+
+test("effort validation follows the selected model, including a model-only change", async () => {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { refreshEngineModels } = await import("../src/engines/registry.js");
+  const { gatewayRoot } = await import("../src/config/paths.js");
+  const bin = path.join(gatewayRoot(), "discovery-fixture-bin");
+  mkdirSync(bin, { recursive: true });
+  const catalog = { models: [
+    { slug: "gpt-effort-wide", visibility: "list", supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] },
+    { slug: "gpt-effort-narrow", visibility: "list", supported_reasoning_levels: [{ effort: "low" }] },
+  ] };
+  writeFileSync(path.join(bin, "codex"), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(catalog))});\n`, { mode: 0o700 });
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    await refreshEngineModels("codex", { force: true });
+  } finally { process.env.PATH = originalPath; }
+  await put({ defaultCodexModel: "gpt-effort-wide", defaultCodexEffort: "high" });
+  await put({ defaultCodexModel: "gpt-effort-narrow" }, 400);
+  assert.equal(settings.getDefaultModel("codex"), "gpt-effort-wide");
+  await put({ defaultCodexModel: "gpt-effort-narrow", defaultCodexEffort: "high" }, 400);
+  await put({ defaultCodexModel: "gpt-effort-narrow", defaultCodexEffort: "low" });
+  assert.equal(settings.getDefaultModel("codex"), "gpt-effort-narrow");
+  assert.equal(settings.getDefaultEffort("codex"), "low");
+});

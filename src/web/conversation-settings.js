@@ -11,6 +11,7 @@ import { listChannelEnv } from '../config/channel-env.js';
 import { listUserEnv, listOrgEnv } from '../config/scoped-env.js';
 import { getUser } from '../config/store.js';
 import { listEmailAccounts } from '../gateway/email-accounts.js';
+import { getEmailAccountsEnabled } from '../config/settings.js';
 import { listUserEmailAccounts } from '../gateway/email-account-store.js';
 
 export const CONVERSATION_SETTINGS_GRANT_TTL_MS = 10 * 60_000;
@@ -143,11 +144,11 @@ async function page(session, ctx) {
   const personal = await getUser(ctx.ownerId);
   const connection = (label, configured, action, key) => `<li class="row"><div class="row-main"><strong>${label}</strong><span class="badge${configured ? ' on' : ''}">${configured ? 'Configured' : 'Not configured'}</span></div>${configured ? rowAction(session, action, `<input type="hidden" name="connection" value="${key}">`, 'Disconnect') : ''}</li>`;
   const connections = `<section><h2>Channel connections</h2><p class="lead">Shared by everyone in this conversation. Leave a field blank to keep what is stored.</p>`
-    + list([connection('Composio', ctx.meta.composioToken, 'settings.connections.remove', 'composio'), connection('Toolbox', ctx.meta.toolboxToken, 'settings.connections.remove', 'toolbox'), connection('Make MCP', ctx.meta.makeToolboxUrl && ctx.meta.makeToolboxKey, 'settings.connections.remove', 'make')])
-    + fold('Set or rotate channel tokens', form(session, 'settings.connections.save', input('composioToken', 'Composio token', { password: true }) + input('composioTokenLabel', 'Composio account label') + input('toolboxToken', 'Toolbox token', { password: true, wide: true }) + input('makeToolboxUrl', 'Make MCP server URL') + input('makeToolboxKey', 'Make MCP token', { password: true }), 'Save connections'))
+    + list([connection('Composio', ctx.meta.composioToken, 'settings.connections.remove', 'composio'), connection('Make MCP', ctx.meta.makeToolboxUrl && ctx.meta.makeToolboxKey, 'settings.connections.remove', 'make')])
+    + fold('Set or rotate channel tokens', form(session, 'settings.connections.save', input('composioToken', 'Composio token', { password: true }) + input('composioTokenLabel', 'Composio account label') + input('makeToolboxUrl', 'Make MCP server URL') + input('makeToolboxKey', 'Make MCP token', { password: true }), 'Save connections'))
     + `</section><section><h2>My connections</h2><p class="lead">Used only for your own requests. Leave a field blank to keep what is stored.</p>`
-    + list([connection('Composio', personal?.composioToken, 'settings.personal.remove', 'composio'), connection('Toolbox', personal?.toolboxToken, 'settings.personal.remove', 'toolbox')])
-    + fold('Set or rotate my tokens', form(session, 'settings.personal.save', input('personalComposioToken', 'Personal Composio token', { password: true }) + input('personalToolboxToken', 'Personal Toolbox token', { password: true }), 'Save my connections')) + '</section>';
+    + list([connection('Composio', personal?.composioToken, 'settings.personal.remove', 'composio')])
+    + fold('Set or rotate my tokens', form(session, 'settings.personal.save', input('personalComposioToken', 'Personal Composio token', { password: true }), 'Save my connections')) + '</section>';
   // Email accounts: masked rows only (the list shape carries no password) and inputs that are
   // never prefilled, so no mailbox password is ever part of a rendered attribute.
   const accounts = [
@@ -161,7 +162,7 @@ async function page(session, ctx) {
       + '<fieldset><legend>Incoming · IMAP</legend>' + input('imapHost', 'Server') + input('imapPort', 'Port', { placeholder: '993' }) + input('imapUser', 'User') + input('imapPassword', 'Password', { password: true }) + '</fieldset>'
       + '<fieldset><legend>Outgoing · SMTP</legend>' + input('smtpHost', 'Server') + input('smtpPort', 'Port', { placeholder: '587' }) + input('smtpUser', 'User', { placeholder: 'Same as IMAP' }) + input('smtpPassword', 'Password', { password: true, placeholder: 'Same as IMAP' }) + '</fieldset>', 'Save email account')) + '</section>';
   const notice = session.notice ? `<p role="status" class="notice${session.notice.startsWith('Not saved') ? ' bad' : ''}">${escapeHtml(session.notice)}</p>` : '';
-  return `<header><h1>Private settings <span class="slug">${escapeHtml(ctx.entry.slug)}</span></h1><p class="sub">Values stay hidden. Leave token fields blank to keep their stored values.</p></header>${notice}${variables}${connections}${emailAccounts}<footer>This window expires after 30 minutes. Close it when finished.</footer>`;
+  return `<header><h1>Private settings <span class="slug">${escapeHtml(ctx.entry.slug)}</span></h1><p class="sub">Values stay hidden. Leave token fields blank to keep their stored values.</p></header>${notice}${variables}${connections}${getEmailAccountsEnabled() ? emailAccounts : ''}<footer>This window expires after 30 minutes. Close it when finished.</footer>`;
 }
 
 const ALLOWED_ACTIONS = new Set(['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove']);

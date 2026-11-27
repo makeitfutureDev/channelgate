@@ -58,6 +58,10 @@ const noop = () => {};
 export const SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 export const MAX_LOOKUPS_PER_CHANNEL = 16;
 export const RESPONSE_HEADER_TIMEOUT_MS = 60_000;
+// Rides on every CONNECT 200: `raw` (a declared host:port, bytes piped as-is) or `inspect` (TLS is
+// terminated here, so only TLS works). src/mcp/egress-connect.js keeps its own copy of the name:
+// it is staged into the image on its own and may import node built-ins only.
+export const TUNNEL_MODE_HEADER = "X-ChannelGate-Tunnel";
 // Refusals that are about load or time, not policy, get their own status codes.
 const REFUSAL_STATUS = { "too-many-lookups": 503, "dns-timeout": 504 };
 const statusFor = (category) => REFUSAL_STATUS[category] || 403;
@@ -563,7 +567,9 @@ export function createEgressProxy({
       socket.end(rawResponse(403, "Forbidden", "invalid-destination", "No certificate can be issued for this destination."));
       return false;
     }
-    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    // The tunnel-mode header tells cg-egress-connect this is an inspected (TLS-only) tunnel, so a
+    // raw protocol to an undeclared host:port gets a reason instead of a silent drop.
+    socket.write(`HTTP/1.1 200 Connection Established\r\n${TUNNEL_MODE_HEADER}: inspect\r\n\r\n`);
     if (head.length) socket.unshift(head);
     // The certificate always names the CONNECT host: that is the destination policy approved and
     // the one the upstream connection is pinned to, whatever SNI the client sends.
@@ -607,7 +613,7 @@ export function createEgressProxy({
     });
     upstream.once("connect", () => {
       status = 200;
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      socket.write(`HTTP/1.1 200 Connection Established\r\n${TUNNEL_MODE_HEADER}: raw\r\n\r\n`);
       if (head.length) { bytesUp += head.length; upstream.write(head); }
       socket.on("data", (chunk) => { bytesUp += chunk.length; });
       upstream.on("data", (chunk) => { bytesDown += chunk.length; });

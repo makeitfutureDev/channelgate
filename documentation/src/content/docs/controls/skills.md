@@ -253,7 +253,7 @@ Inspect review proposals.
 | --- | --- | --- |
 | `status` | No | `pending` (default), `approved`, `rejected`, or `all`. |
 
-**Authority and scope:** Administrator.
+**Authority and scope:** Administrator (every proposal), or a member of a conversation (the edit and feedback proposals for that conversation's own channel skills).
 
 **Result:** Proposal IDs, kind, author, conversation, state, file paths and notes.
 
@@ -269,7 +269,7 @@ Approve or reject a proposal.
 | `decision` | Yes | `approve` or `reject`. |
 | `note` | No | Decision note; default empty. |
 
-**Authority and scope:** Organization administrator; the shared control-plane approval policy applies to mutations.
+**Authority and scope:** Organization administrator for any proposal; the shared control-plane approval policy applies to an approval. A member of the conversation that owns a channel skill decides `change` and `feedback` proposals for it from that conversation, with no approval card, when the gateway can write the skill. Organization skills, read-only sources, promotion, deletion and template proposals stay with administrators.
 
 **Result:** Decision and resulting revision, local pin, promotion, deletion, template assignment or publication result.
 
@@ -460,3 +460,31 @@ Synchronize configured sources now.
 ## Related guides
 
 [Skill discovery](/docs/features/skill-discovery), [grants](/docs/features/skill-grants), [authoring](/docs/features/skill-authoring), [sources](/docs/features/skill-synchronization), and [usage](/docs/features/skill-usage).
+
+## use_skill
+
+**Required:** `name` (exact skill name/slug from its `SKILL.md`).
+
+**Scope and result:** Evaluates a skill's preferred engine/model when the agent starts following a skill that requests this call. The result directs the agent to continue, stop so the same session resumes on the preferred model, or delegate to a background agent on another engine. Follow the returned direction literally.
+
+**Restrictions:** Not for merely reading or comparing skills. Uses this live conversation and thread. Without live context or an available skill-swap service, the agent continues on its current model. Conversation swapping policy and the user's model pin still apply.
+
+## create_my_skill_token
+
+**Required:** `name` (string label, such as `work laptop`).
+
+**Scope and result:** Creates a personal token for the skill catalog's MCP endpoint and returns its value once with client connection instructions. It acts as the requester: organization skills, skills of channels that admit them, and their personal skills. Read, proposal, and edit rights follow the same access rules; library export is unavailable.
+
+**Restrictions:** Requires an approved person acting from their own message, never an HTTP API run. At most five active tokens per person. Copy the value securely; it cannot be shown again.
+
+## list_my_skill_tokens
+
+**Inputs:** None.
+
+**Scope and result:** Lists the approved requester's personal skill catalog token IDs, names, prefixes, creation/last-use dates, and revoked status. Never returns token values.
+
+## revoke_my_skill_token
+
+**Required:** `id` (integer from `list_my_skill_tokens`).
+
+**Scope and result:** Revokes one of the approved requester's own personal skill catalog tokens. Revocation takes effect on the token's next request. Cannot revoke another person's token.

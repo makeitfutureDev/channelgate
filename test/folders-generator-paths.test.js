@@ -3,7 +3,7 @@
 // skill listing / host-folder grant fallback (listAvailableSkills, skillSourceDirs, enableSkills).
 // These are the functions the 2026-09-04 skills-catalog change added or reshaped in folders.js;
 // without them the security-coverage ratchet for the settings generator falls below its floor.
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -16,7 +16,7 @@ ensureTestEnv();
 process.env.CG_FS_ROOT = os.homedir();
 
 const [
-  { effectiveWorkDir, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
+  { effectiveWorkDir, createWorkDirResolver, updateChannelInstructions, listAvailableSkills, skillSourceDirs, enableSkills, splitGatewayBlock, gatewayInstructionsBlock, channelSwitchesNote },
   { workspaceFolder, cleanWorkspaceFolder },
   { allowedFsRoot },
 ] = await Promise.all([
@@ -30,6 +30,87 @@ const [
 const fixtureParent = path.join(allowedFsRoot(), "ChannelGate Testing");
 mkdirSync(fixtureParent, { recursive: true, mode: 0o700 });
 const fixtureRoot = trackTempDir(mkdtempSync(path.join(fixtureParent, "folders-generator-")));
+
+test("a snapshot work-folder resolver decides exactly what effectiveWorkDir decides", () => {
+  const project = mkdtempSync(path.join(fixtureRoot, "cg-resolver-"));
+  const origin = workspaceFolder("resolver-origin", "slack");
+  mkdirSync(origin, { recursive: true });
+  const outside = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-resolver-escape-")));
+  const cases = [
+    ["resolver-a", {}],
+    ["resolver-a", { platform: "msteams" }],
+    ["resolver-a", { cleanMode: true }],
+    ["resolver-a", { cleanMode: true, workDir: project }],
+    ["resolver-a", { workDir: project }],
+    ["resolver-b", { workDir: project }],
+    ["resolver-a", { workDir: ` ${project} ` }],
+    ["resolver-a", { workDir: path.join(project, "gone") }],
+    ["resolver-a", { workDir: outside }],
+    ["resolver-a", { workDir: os.homedir() }],
+    ["resolver-a", { workDir: "relative/path" }],
+    // An origin's default folder is honoured only for the conversation that names that origin.
+    ["resolver-code", { workDir: origin }],
+    ["resolver-code", { workDir: origin, workspaceOwnerSlug: "resolver-origin" }],
+    ["resolver-code", { workDir: origin, codeChannel: { originSlug: "resolver-origin" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-origin", platform: "slack" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-origin", platform: "msteams" } }],
+    ["resolver-code", { workDir: origin, workspaceOrigin: { slug: "resolver-other", platform: "slack" } }],
+    ["resolver-code", { workDir: origin, workspaceOwnerSlug: "resolver-origin", workspaceLink: { platform: "msteams" } }],
+  ];
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const resolve = createWorkDirResolver();
+    // Asked twice and in both orders: an earlier answer must never leak into a different question.
+    for (const [slug, meta] of [...cases, ...cases.toReversed()]) {
+      assert.equal(resolve(slug, meta), effectiveWorkDir(slug, meta), `${slug} ${JSON.stringify(meta)}`);
+    }
+    assert.equal(resolve("resolver-default"), effectiveWorkDir("resolver-default"));
+  } finally {
+    console.warn = original;
+  }
+});
+
+test("a work-folder resolver belongs to one snapshot: the next one observes changed directories and roots", () => {
+  const slug = "resolver-fresh";
+  const project = path.join(mkdtempSync(path.join(fixtureRoot, "cg-resolver-fresh-")), "later");
+  const first = createWorkDirResolver();
+  assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined), "not there yet: the default folder");
+  mkdirSync(project);
+  assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined), "one snapshot keeps one answer");
+  assert.equal(createWorkDirResolver()(slug, { workDir: project }), project, "the next snapshot sees the directory");
+
+  // The daemon-owned trees are observed per snapshot too: a folder that has become the gateway
+  // runtime root is refused by the next resolver, not waved through from an earlier look.
+  const previousGatewayRoot = process.env.CHANNELGATE_DIR;
+  const quiet = console.warn;
+  console.warn = () => {};
+  process.env.CHANNELGATE_DIR = project;
+  try {
+    assert.equal(first(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(createWorkDirResolver()(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: project }), workspaceFolder(slug, undefined));
+  } finally {
+    process.env.CHANNELGATE_DIR = previousGatewayRoot;
+    console.warn = quiet;
+  }
+  assert.equal(createWorkDirResolver()(slug, { workDir: project }), project);
+
+  // Narrowing the allowlisted root takes effect for the next snapshot, like effectiveWorkDir.
+  const held = createWorkDirResolver();
+  assert.equal(held(slug, { workDir: project }), project);
+  const previousRoot = process.env.CG_FS_ROOT;
+  const original = console.warn;
+  console.warn = () => {};
+  process.env.CG_FS_ROOT = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-resolver-root-")));
+  try {
+    assert.equal(createWorkDirResolver()(slug, { workDir: project }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: project }), workspaceFolder(slug, undefined));
+  } finally {
+    process.env.CG_FS_ROOT = previousRoot;
+    console.warn = original;
+  }
+});
 
 test("effectiveWorkDir: clean mode, a contained custom workDir, and an escaping one", () => {
   const slug = "workdir-probe";
@@ -50,10 +131,14 @@ test("effectiveWorkDir: clean mode, a contained custom workDir, and an escaping 
   console.warn = (msg) => warnings.push(String(msg));
   try {
     assert.equal(effectiveWorkDir(slug, { workDir: outside }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: outside }), workspaceFolder(slug, undefined));
   } finally {
     console.warn = original;
   }
   assert.ok(warnings.some((w) => w.includes("escapes the allowed root")), "the escape is logged, not silent");
+  // Every channel listing resolves every channel through here: the warning is once per channel
+  // and value, not once per lookup.
+  assert.equal(warnings.filter((w) => w.includes("escapes the allowed root")).length, 1, "a stale workDir is reported once, not on every lookup");
   assert.equal(effectiveWorkDir(slug, { workDir: "relative/path" }), workspaceFolder(slug, undefined));
 });
 
@@ -160,6 +245,81 @@ test("a custom project folder gets a real CLAUDE.md with AGENTS.md mirrored, and
   assert.equal(existsSync(path.join(skillsDir, "hand-made")), false, "unselected local skills are archived outside discovery");
 });
 
+// ── A repository work folder: the gateway-assembled CLAUDE.md ─────────────────
+// On 2026-11-20 a whole-file "replace" of a repository channel's instructions overwrote the
+// tracked 746-line AGENTS.md with two bullets, because the channel's rules lived as an uncommitted
+// tail of that tracked file. A repository folder whose CLAUDE.md is untracked now gets an
+// untracked, git-excluded CLAUDE.md the gateway assembles (guide + AGENTS.local.md + the channel's
+// own section) and an AGENTS.override.md link for Codex; the tracked AGENTS.md is never written.
+const { execFileSync } = await import("node:child_process");
+const gitIn = (cwd, ...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
+function repoFixture(prefix, { trackClaudeLink = false } = {}) {
+  const repo = mkdtempSync(path.join(fixtureRoot, prefix));
+  gitIn(repo, "init", "-q");
+  writeFileSync(path.join(repo, "AGENTS.md"), "# Project guide\n\nAlways run the tests.\n");
+  if (trackClaudeLink) symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md"));
+  gitIn(repo, "add", "-A");
+  gitIn(repo, "commit", "-q", "-m", "init");
+  return repo;
+}
+const { symlinkSync } = await import("node:fs");
+
+test("a repository folder gets an untracked assembled CLAUDE.md; the tracked guide is never written", async () => {
+  const { ensureChannelFolder, splitProjectBlock } = await import("../src/gateway/folders.js");
+  const repo = repoFixture("cg-repo-");
+  writeFileSync(path.join(repo, "AGENTS.local.md"), "# Private\n\nPush as the deploy account.\n");
+  symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md")); // the old mirror link, untracked
+  const slug = "repo-project-probe";
+  const meta = { name: "Repo project", workDir: repo, allowedMcps: [] };
+  await ensureChannelFolder(slug, meta);
+
+  const claude = path.join(repo, "CLAUDE.md");
+  const guideBefore = readFileSync(path.join(repo, "AGENTS.md"), "utf8");
+  assert.equal(lstatSync(claude).isFile(), true, "CLAUDE.md is now a real, gateway-assembled file");
+  let content = readFileSync(claude, "utf8");
+  assert.equal(splitProjectBlock(content).found, true);
+  assert.match(content, /Always run the tests\./, "carries the tracked guide");
+  assert.match(content, /Push as the deploy account\./, "and the private AGENTS.local.md");
+  assert.equal(readlinkSync(path.join(repo, "AGENTS.override.md")), "CLAUDE.md", "Codex reads the same file");
+  assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8"), /^\/CLAUDE\.md$/m);
+  assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8"), /^\/AGENTS\.override\.md$/m);
+
+  await updateChannelInstructions(slug, meta, { text: "- Rule one." });
+  await updateChannelInstructions(slug, meta, { text: "- Rule two." });
+  content = readFileSync(claude, "utf8");
+  assert.match(content, /<!-- PROJECT-INSTRUCTIONS:END -->\n\n- Rule one\.\n\n- Rule two\.\n$/);
+  await updateChannelInstructions(slug, meta, { text: "- Only rule.", replace: true });
+  content = readFileSync(claude, "utf8");
+  assert.equal(splitProjectBlock(content).found, true, "replace keeps the project block");
+  assert.match(content, /Always run the tests\./);
+  assert.doesNotMatch(content, /Rule one/);
+  assert.match(content, /- Only rule\.\n$/);
+  assert.equal(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), guideBefore, "the tracked guide is untouched");
+  const status = gitIn(repo, "status", "--porcelain");
+  assert.doesNotMatch(status, /CLAUDE\.md|AGENTS\.override\.md|AGENTS\.md$/m, "the assembled files stay out of git status and the guide is unmodified");
+
+  // A landed change to the guide is picked up on the next run; the channel's rules survive it.
+  writeFileSync(path.join(repo, "AGENTS.md"), "# Project guide\n\nAlways run the FULL tests.\n");
+  await ensureChannelFolder(slug, meta);
+  content = readFileSync(claude, "utf8");
+  assert.match(content, /Always run the FULL tests\./);
+  assert.match(content, /- Only rule\.\n$/);
+});
+
+test("a repository that tracks CLAUDE.md keeps its own files, and its tracked guide refuses a whole-file replace", async () => {
+  const { ensureChannelFolder } = await import("../src/gateway/folders.js");
+  const repo = repoFixture("cg-repo-tracked-", { trackClaudeLink: true });
+  const slug = "repo-tracked-probe";
+  const meta = { name: "Repo tracked", workDir: repo, allowedMcps: [] };
+  await ensureChannelFolder(slug, meta);
+  assert.equal(lstatSync(path.join(repo, "CLAUDE.md")).isSymbolicLink(), true, "the project's tracked link is left alone");
+  assert.equal(existsSync(path.join(repo, "AGENTS.override.md")), false);
+  await assert.rejects(updateChannelInstructions(slug, meta, { text: "- Wipe it.", replace: true }), /can only be appended/);
+  assert.equal(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), "# Project guide\n\nAlways run the tests.\n", "the guide survives");
+  await updateChannelInstructions(slug, meta, { text: "- Appended rule." });
+  assert.match(readFileSync(path.join(repo, "AGENTS.md"), "utf8"), /Always run the tests\.\n\n- Appended rule\.\n$/, "append still works there");
+});
+
 // ── What the ENGINE is told about its own channel ─────────────────────────────
 // Live QA (both engines): asked whether it was allowed on the network, a run answered that
 // "nothing in my system context, channel instructions, or session config mentions it either way"
@@ -182,9 +342,6 @@ test("the managed block states this conversation's mode and network switch, in b
   assert.match(on, /Auto: \*\*on\*\*/);
   assert.match(on, /Network: \*\*on\*\*/);
   assert.doesNotMatch(on, /NOT meant to use the internet/);
-
-  // An engine that cannot run with the network on is told that, not promised the switch.
-  assert.match(channelSwitchesNote({ allowNetwork: true, engine: "opencode" }), /cannot run with the network on/);
 
   // And it actually rides the block every channel folder receives — clean mode included, since a
   // lean channel still has to know what it may do.
@@ -292,3 +449,91 @@ test("the managed block carries the hard rules a run must never get wrong", () =
   }
   assert.ok(worst <= 4120, `worst-case managed block is ${worst} bytes — it may shrink, never grow`);
 });
+
+// Security audit batch 5: the host-folder fallback used to copy with `dereference: true`, so a
+// symlink INSIDE a skill folder copied any host file it pointed at into a channel folder (which
+// the channel's container reads). The skill folder itself may still be a link into a store; a link
+// inside it is followed only while its real target stays inside that skill's own real root.
+test("host-folder skill copies follow only symlinks that stay inside the skill's real root", async (t) => {
+  const { readSkillDirectory } = await import("../src/gateway/skills/import-folder.js");
+  const base = trackTempDir(mkdtempSync(path.join(os.tmpdir(), "cg-skill-links-")));
+  const store = path.join(base, "available_skills");
+  const real = path.join(store, "linked-host-skill");
+  mkdirSync(path.join(real, "references"), { recursive: true });
+  writeFileSync(path.join(real, "SKILL.md"), "---\nname: linked-host-skill\ndescription: d\n---\n# Linked\n");
+  writeFileSync(path.join(real, "references", "guide.md"), "inside");
+  writeFileSync(path.join(real, "run.sh"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+  // Legitimate: links that stay inside the skill (a file, a directory, a loop back to the root).
+  symlinkSync("references/guide.md", path.join(real, "alias.md"));
+  symlinkSync("references", path.join(real, "refs"));
+  symlinkSync(".", path.join(real, "self"));
+  // Hostile: a host secret, a sibling skill in the same store, a parent escape and a dangling link.
+  const secret = path.join(base, "host-secret.txt");
+  writeFileSync(secret, "TOP-SECRET-HOST-FILE");
+  mkdirSync(path.join(store, "sibling"), { recursive: true });
+  writeFileSync(path.join(store, "sibling", "private.md"), "SIBLING-ONLY");
+  symlinkSync(secret, path.join(real, "leak.txt"));
+  symlinkSync(path.join(base), path.join(real, "references", "up"));
+  symlinkSync("../sibling/private.md", path.join(real, "borrowed.md"));
+  symlinkSync(path.join(base, "nowhere"), path.join(real, "dangling.md"));
+  const sources = path.join(base, "sources");
+  mkdirSync(sources);
+  symlinkSync(real, path.join(sources, "linked-host-skill")); // the skill folder itself is a link
+
+  const previous = process.env.GATEWAY_SKILL_SOURCES;
+  process.env.GATEWAY_SKILL_SOURCES = sources;
+  t.after(() => { if (previous === undefined) delete process.env.GATEWAY_SKILL_SOURCES; else process.env.GATEWAY_SKILL_SOURCES = previous; });
+  const warnings = [];
+  const warn = t.mock.method(console, "warn", (...args) => { warnings.push(args.join(" ")); });
+
+  const hostile = ["leak.txt", "borrowed.md", "dangling.md", "references/up"];
+  const check = (dir, label) => {
+    assert.equal(readFileSync(path.join(dir, "SKILL.md"), "utf8").includes("# Linked"), true, `${label}: the linked skill folder is copied`);
+    assert.equal(readFileSync(path.join(dir, "alias.md"), "utf8"), "inside", `${label}: an internal file link is followed`);
+    assert.equal(readFileSync(path.join(dir, "refs", "guide.md"), "utf8"), "inside", `${label}: an internal directory link is followed`);
+    for (const rel of hostile) assert.equal(existsSync(path.join(dir, rel)), false, `${label}: ${rel} is not copied`);
+  };
+
+  // Non-authoritative fallback (cp replacement).
+  const skillsDir = path.join(base, "chan", ".claude", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  const result = await enableSkills(skillsDir, ["linked-host-skill"]);
+  assert.ok(result.enabled.includes("linked-host-skill"));
+  const dest = path.join(skillsDir, "linked-host-skill");
+  check(dest, "fallback");
+  assert.equal(lstatSync(path.join(dest, "run.sh")).mode & 0o111, 0o111, "the executable bit is kept");
+  assert.equal(lstatSync(path.join(dest, "alias.md")).isSymbolicLink(), false, "copies are real files");
+  for (const rel of hostile) assert.ok(warnings.some((w) => w.includes(rel) && w.includes("skipped symlink")), `a warning names ${rel}`);
+  const copied = JSON.stringify(readdirRecursive(dest));
+  assert.doesNotMatch(copied, /host-secret/);
+
+  // Authoritative fallback (bundle read through readSkillDirectory).
+  const authDir = path.join(base, "chan-auth", ".claude", "skills");
+  mkdirSync(authDir, { recursive: true });
+  const auth = await enableSkills(authDir, ["linked-host-skill"], { authoritative: true, backupDir: path.join(base, "backups") });
+  assert.ok(auth.enabled.includes("linked-host-skill"));
+  check(path.join(authDir, "linked-host-skill"), "authoritative");
+
+  // The catalog import read (folder sources) applies the same rule.
+  const skipped = [];
+  const files = await readSkillDirectory(path.join(sources, "linked-host-skill"), { onSkip: (rel) => skipped.push(rel) });
+  const paths = files.map((f) => f.path);
+  for (const rel of hostile) assert.equal(paths.includes(rel), false, `import skips ${rel}`);
+  assert.deepEqual(skipped.sort(), [...hostile, "refs/up"].sort(), "the escape is skipped on every path that reaches it");
+  assert.ok(paths.includes("alias.md") && paths.includes("refs/guide.md"));
+  assert.equal(files.some((f) => String(f.content).includes("TOP-SECRET") || String(f.content).includes("SIBLING-ONLY")), false);
+  warn.mock.restore();
+});
+
+function readdirRecursive(dir, prefix = "") {
+  const out = [];
+  for (const entry of readdirSyncTyped(dir)) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    out.push(rel);
+    if (entry.isDirectory()) out.push(...readdirRecursive(path.join(dir, entry.name), rel));
+  }
+  return out;
+}
+function readdirSyncTyped(dir) {
+  return readdirSync(dir, { withFileTypes: true });
+}

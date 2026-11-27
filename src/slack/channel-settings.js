@@ -1,3 +1,7 @@
+import { engineLabel, harnessOf } from "../engines/registry.js";
+import { LICENSE_POOL_ANY, harnessLabel } from "../engines/license-state.js";
+import { ALSO_USE_LABEL, LICENSE_HELP_TEXT, clipLabel } from "./license-controls.js";
+import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
@@ -5,6 +9,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCESS_USER_LISTS, accessSettingsSnapshot } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
+import { getEmailAccountsEnabled } from "../config/settings.js";
 import { nextCronRun } from "../util/cron.js";
 import { daemonTimeZone, zonedStamp } from "../util/timezone.js";
 import { composioInventoryBlocks } from "./composio-inventory-view.js";
@@ -30,9 +35,7 @@ export const CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID = "cg_channel_settings_thr
 export const CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID = "cg_channel_settings_thread_reset";
 export const CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID = "cg_channel_settings_connections_edit";
 export const CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID = "cg_channel_settings_connections_form";
-export const CHANNEL_SETTINGS_FALLBACK_ACTION_ID = "cg_channel_settings_connections_fallback";
 export const CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID = "cg_channel_settings_clear_composio";
-export const CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID = "cg_channel_settings_clear_toolbox";
 export const CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID = "cg_channel_settings_clear_make";
 export const CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID = "cg_channel_settings_cloud_manage";
 // Custom MCP servers (src/gateway/custom-mcps.js) on the MCPs page: one pushed form adds or updates
@@ -44,7 +47,10 @@ export const CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID = "cg_channel_settings
 export const CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID = "cg_channel_settings_custom_mcp_form";
 export const CUSTOM_MCP_NAME_BLOCK_ID = "cg_custom_mcp_name";
 export const CUSTOM_MCP_URL_BLOCK_ID = "cg_custom_mcp_url";
+export const CUSTOM_MCP_AUTH_BLOCK_ID = "cg_custom_mcp_auth";
 export const CUSTOM_MCP_TOKEN_BLOCK_ID = "cg_custom_mcp_token";
+export const CUSTOM_MCP_HEADERS_BLOCK_ID = "cg_custom_mcp_headers";
+export const CUSTOM_MCP_QUERY_BLOCK_ID = "cg_custom_mcp_query";
 const CUSTOM_MCP_INPUT_ACTION_ID = "value";
 export const CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX = "cg_channel_settings_cloud_engine_";
 export const CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX = "cg_channel_settings_cloud_toggle_";
@@ -66,6 +72,7 @@ export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_r
 // THIS channel's rows by the handler, so a stale or forged id can never touch another channel's.
 export const CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID = "cg_channel_settings_automation_toggle";
 export const CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID = "cg_channel_settings_automation_delete";
+export const CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID = "cg_channel_settings_api_token_revoke";
 // The redesigned pages' controls (2026-10): inline forms, the variable and schedule ⋯ menus, the
 // in-place confirmations, the Access member ticks, and the in-place pickers.
 export const CHANNEL_SETTINGS_ROOT_CALLBACK_ID = "cg_channel_settings_modal";
@@ -80,7 +87,6 @@ export const CHANNEL_SETTINGS_MEMBER_ACTION_ID = "cg_channel_settings_member";
 export const ACCESS_MEMBER_BLOCK_PREFIX = "cg_member_";
 export const CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID = "cg_channel_settings_member_clear";
 export const CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID = "cg_channel_settings_member_find";
-export const CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID = "cg_channel_settings_fallback_toggle";
 export const CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX = "cg_channel_settings_cloud_select_";
 export const CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_skills_select";
 export const CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_my_skills_select";
@@ -89,10 +95,11 @@ export const CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID = "cg_channel_settings_dm_flags
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
 // The pages the modal offers, in the order the page dropdown lists them (2026-10 redesign): what
 // the agent is (Agent), who uses it (Access), what it reaches (MCP, Variables, Skills), what runs
-// unattended (Schedules), and everything personal to the viewer (You). LEGACY_TABS lands a view
-// or button from before the redesign on the page that now owns its controls.
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "you"]);
-const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "agent", secrets: "variables", automations: "schedules" });
+// unattended (Schedules), how to reach this thread's session from a terminal (Diagnostics), and
+// everything personal to the viewer (You). LEGACY_TABS lands a view or button from before the
+// redesign on the page that now owns its controls.
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "api", "diagnostics", "you"]);
+const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "diagnostics", secrets: "variables", automations: "schedules", tokens: "api" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -113,12 +120,24 @@ export const RUNTIME_SELECT_ACTION_IDS = Object.freeze({
 });
 export const RUNTIME_SCOPES = Object.freeze(Object.keys(RUNTIME_SELECT_ACTION_IDS));
 export const RUNTIME_FIELDS = Object.freeze(["engine", "model", "effort"]);
+// The license step of a scope's row (src/gateway/license-pool.js). The "engine" dropdown names the
+// HARNESS; these two exist only while that harness has more than one license this conversation
+// can use: "License" (Any license, or one of them) and "If it fails, also use" (more of them).
+export const RUNTIME_LICENSE_ACTION_IDS = Object.freeze({
+  channel: Object.freeze({ license: "cg_channel_settings_runtime_license", also: "cg_channel_settings_runtime_also" }),
+  thread: Object.freeze({ license: "cg_channel_settings_thread_license", also: "cg_channel_settings_thread_also" }),
+});
+export const RUNTIME_LICENSE_FIELDS = Object.freeze(["license", "also"]);
 
 // Which scope and field a dispatched dropdown writes, or null when the action isn't one of them.
+// `field` is one of RUNTIME_FIELDS, or "license" / "also" for the license step.
 export function runtimeSelectTarget(actionId) {
   for (const scope of RUNTIME_SCOPES) {
     for (const field of RUNTIME_FIELDS) {
       if (RUNTIME_SELECT_ACTION_IDS[scope][field] === actionId) return { scope, field };
+    }
+    for (const field of RUNTIME_LICENSE_FIELDS) {
+      if (RUNTIME_LICENSE_ACTION_IDS[scope][field] === actionId) return { scope, field };
     }
   }
   return null;
@@ -127,8 +146,6 @@ export const CONNECTION_COMPOSIO_BLOCK_ID = "settings_composio_token";
 export const CONNECTION_COMPOSIO_ACTION_ID = "cg_channel_settings_composio_token";
 export const CONNECTION_COMPOSIO_LABEL_BLOCK_ID = "settings_composio_label";
 export const CONNECTION_COMPOSIO_LABEL_ACTION_ID = "cg_channel_settings_composio_label";
-export const CONNECTION_TOOLBOX_BLOCK_ID = "settings_toolbox_token";
-export const CONNECTION_TOOLBOX_ACTION_ID = "cg_channel_settings_toolbox_token";
 export const CONNECTION_MAKE_URL_BLOCK_ID = "settings_make_url";
 export const CONNECTION_MAKE_URL_ACTION_ID = "cg_channel_settings_make_url";
 export const CONNECTION_MAKE_KEY_BLOCK_ID = "settings_make_key";
@@ -389,6 +406,8 @@ const TAB_LABELS = Object.freeze({
   variables: "Variables",
   skills: "Skills",
   schedules: "Schedules",
+  api: "API tokens",
+  diagnostics: "Diagnostics",
   you: "You",
 });
 
@@ -427,9 +446,9 @@ function pageNav(state, active, { isDM = false } = {}) {
 export const SETTINGS_FIELD_ACTION_ID = "v";
 // Write-only fields: their block ids rotate after a refused save, they are never refilled into a
 // reopened form and never echoed in an error or a notice.
-export const SETTINGS_SECRET_FIELDS = Object.freeze(["token", "value", "imapPassword", "smtpPassword"]);
+export const SETTINGS_SECRET_FIELDS = Object.freeze(["token", "value", "imapPassword", "smtpPassword", "headers", "queryParams"]);
 // The fields a reopened form may be refilled with — every field a form reads, minus the secrets.
-export const SETTINGS_DRAFT_FIELDS = Object.freeze(["label", "url", "name", "hosts", "address", "displayName", "imapHost", "imapPort", "imapUser", "smtpHost", "smtpPort", "smtpUser"]);
+export const SETTINGS_DRAFT_FIELDS = Object.freeze(["label", "url", "name", "authType", "hosts", "address", "displayName", "imapHost", "imapPort", "imapUser", "smtpHost", "smtpPort", "smtpUser"]);
 export function settingsFieldBlockId(form, field, secretId = "") {
   // Slack preserves typed values when both input identities survive views.update. A refused
   // async save rotates only write-only inputs; labels, URLs and other draft fields stay put.
@@ -467,17 +486,15 @@ export function settingsFormSpec(key, snapshot = {}) {
       ],
     };
   }
-  if (kind === "toolbox" && (scope === "c" || scope === "p")) {
-    const saved = scope === "c" ? c.toolboxChannel?.configured : my.toolbox?.configured;
-    return { key, title: scope === "c" ? "Toolbox token for this channel" : "Your Toolbox token", removable: Boolean(saved), fields: [{ name: "token", label: "Token", placeholder: "Bearer token, stored write-only" }] };
-  }
   if (kind === "cm-add" && (scope === "c" || scope === "p")) {
     return {
       key, title: "New custom MCP server", removable: false,
       fields: [
         { name: "name", label: "Name", placeholder: "e.g. linear", maxLength: 32, hint: `Tools appear as ${scope === "c" ? "custom" : "my"}-<name>` },
         { name: "url", label: "Server URL", placeholder: "https://mcp.example.com/mcp", maxLength: 2048 },
-        { name: "token", label: "Bearer token", placeholder: "Stored write-only" },
+        customMcpAuthField(),
+        { name: "token", label: "Token or consumer key", optional: true, placeholder: "Not needed for custom authentication" },
+        ...customMcpExtraFields(),
       ],
     };
   }
@@ -489,7 +506,9 @@ export function settingsFormSpec(key, snapshot = {}) {
       key, title: entry.serverName, removable: true,
       fields: [
         { name: "url", label: "Server URL", initial: entry.url, maxLength: 2048 },
-        token("Bearer token", true),
+        customMcpAuthField(entry.authType || "bearer"),
+        token("Token or consumer key", true),
+        ...customMcpExtraFields(entry),
       ],
     };
   }
@@ -515,6 +534,12 @@ export function settingsFormSpec(key, snapshot = {}) {
         { name: "secret", label: "Secret", type: "checkbox", optional: true, initial: true, option: "Programs see a stand-in; the real value only goes to allowed servers" },
         { name: "hosts", label: "Allowed servers", optional: true, placeholder: "Optional — api.example.com, *.example.com", maxLength: 500 },
       ],
+    };
+  }
+  if (kind === "tok-add" && scope === "c") {
+    return {
+      key, title: "New API token", removable: false,
+      fields: [{ name: "name", label: "Name", placeholder: "e.g. Make.com invoice flow", maxLength: 80, hint: "Runs it starts act as you, in this conversation only" }],
     };
   }
   if ((kind === "var-val" || kind === "var-hosts") && FORM_SCOPES[scope] && name) {
@@ -559,16 +584,41 @@ function emailAccountFields({ scope, entry = null } = {}) {
   ];
 }
 
+// Blank preserves the whole saved collection; [] explicitly clears it. Supplied rows
+// replace the collection, and name= keeps that saved row's value. Values never enter drafts.
+export function parseCustomMcpPairs(text, label) {
+  const source = String(text || "");
+  if (!source.trim()) return undefined;
+  if (source.trim() === "[]") return [];
+  return source.split(/\r?\n/).filter((line) => line.trim()).map((line) => {
+    const separator = line.indexOf("=");
+    if (separator < 1) throw new Error(`${label} must use one name=value per line.`);
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1);
+    return { name, ...(value ? { value } : {}) };
+  });
+}
+function customMcpExtraFields(entry = {}) {
+  return ["headers", "queryParams"].map((name) => ({
+    name, label: name === "headers" ? "Headers (one name=value per line)" : "Query parameters (one name=value per line)",
+    optional: true, multiline: true, placeholder: "Blank keeps saved entries; [] clears all",
+    hint: `Write-only. Include all names to keep; name= preserves its value. Saved: ${(entry[name] || []).map((row) => row.name).join(", ") || "none"}`.slice(0, 1000),
+  }));
+}
+function customMcpAuthField(initial = "bearer") {
+  return { name: "authType", label: "Authentication type", type: "select", initial, options: [option("Bearer token", "bearer"), option("Composio consumer key", "composio"), option("Custom headers and query parameters", "custom")] };
+}
+
 // The values a submitted form carries, by field name, read from the root view's state.
 export function readSettingsForm(view = {}, key, secretId = "") {
   const values = view?.state?.values || {};
   const out = {};
-  for (const field of ["label", "token", "url", "name", "value", "hosts", "secret", "address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "smtpHost", "smtpPort", "smtpUser", "smtpPassword"]) {
+  for (const field of ["label", "token", "url", "name", "authType", "headers", "queryParams", "value", "hosts", "secret", "address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "smtpHost", "smtpPort", "smtpUser", "smtpPassword"]) {
     const entry = values[settingsFieldBlockId(key, field, secretId)]?.[SETTINGS_FIELD_ACTION_ID];
     if (!entry) continue;
     out[field] = field === "secret"
       ? (entry.selected_options || []).some((choice) => choice?.value === "secret")
-      : String(entry.value || "").trim();
+      : ["headers", "queryParams"].includes(field) ? String(entry.value || "") : String((field === "authType" ? entry.selected_option?.value : entry.value) || "").trim();
   }
   return out;
 }
@@ -583,6 +633,15 @@ function formBlocks(spec, state) {
   for (const raw of spec.fields) {
     const field = Object.hasOwn(draft, raw.name) && !SETTINGS_SECRET_FIELDS.includes(raw.name) ? { ...raw, initial: draft[raw.name] } : raw;
     const blockId = settingsFieldBlockId(spec.key, field.name, state.formSecretId);
+    if (field.type === "select") {
+      blocks.push({
+        type: "input", block_id: blockId, optional: Boolean(field.optional), label: plain(field.label),
+        element: { type: "static_select", action_id: SETTINGS_FIELD_ACTION_ID, options: field.options,
+          initial_option: field.options.find((entry) => entry.value === field.initial) || field.options[0] },
+      });
+      if (error && error.field === field.name) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
+      continue;
+    }
     if (field.type === "checkbox") {
       const choice = option(field.label, "secret", field.option || "");
       blocks.push({
@@ -595,6 +654,7 @@ function formBlocks(spec, state) {
       type: "input", block_id: blockId, optional: Boolean(field.optional), label: plain(field.label),
       element: {
         type: "plain_text_input", action_id: SETTINGS_FIELD_ACTION_ID, max_length: field.maxLength || 3000,
+        ...(field.multiline ? { multiline: true } : {}),
         ...(field.placeholder ? { placeholder: plain(field.placeholder) } : {}),
         ...(field.initial ? { initial_value: String(field.initial) } : {}),
       },
@@ -648,51 +708,85 @@ const context = (text) => ({ type: "context", elements: [mrkdwn(text)] });
 const masked = (value = {}) => (value.configured ? (value.last4 ? inlineCode(`••${value.last4}`) : "`••••`") : "");
 
 // ── Agent ────────────────────────────────────────────────────────────────────────────────────
-// Engine, model and effort as one row of dropdowns per scope (an actions block), the thread's
+// Harness, model and effort as one row of dropdowns per scope (an actions block), the thread's
 // first when Settings was opened from one; then the mode and its options in the same style.
-function runtimeRow(scope, data = {}, state, { editable = true, codexLocked = false, reset = false } = {}) {
+// `data.values.engine` is the stored LICENSE id; the first dropdown shows its harness and offers
+// harnesses (`data.options.engines`). `data.license` — present only when that harness has more
+// than one license usable here — adds the License dropdown to the row and, for a specific license,
+// the "also use" multi-select under it. `data.selection` is the stored selection in words.
+const RUNTIME_PLACEHOLDERS = Object.freeze({ engine: "harness", model: "model", effort: "effort" });
+function runtimeRow(scope, data = {}, state, { reset = false } = {}) {
   const ids = RUNTIME_SELECT_ACTION_IDS[scope];
   const values = data.values || {};
   const inherited = data.inherited || {};
   const lists = { engine: data.options?.engines || [], model: data.options?.models || [], effort: data.options?.efforts || [] };
-  const fields = RUNTIME_FIELDS.filter((field) => !(codexLocked && field === "engine"));
-  if (!editable) {
-    return [context(fields.map((field) => values[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
-  }
-  const elements = fields.map((field) => {
+  // The harness the stored license belongs to. An id no adapter answers to any more stays as it is,
+  // so the row still shows what is stored instead of silently reading as the default.
+  const shown = { ...values, engine: values.engine ? harnessOf(values.engine) || values.engine : "" };
+  const select = (field) => {
     const options = [{ label: inherited[field] ? `${inherited[field]} (default)` : "Default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]];
-    const known = options.some((entry) => entry.value === values[field]);
-    const list = (known || !values[field] ? options : [...options, { label: String(values[field]), value: values[field] }]).slice(0, 100).map((entry) => option(entry.label, entry.value));
+    const known = options.some((entry) => entry.value === shown[field]);
+    const unknown = { label: field === "engine" ? harnessLabel(shown[field]) || String(shown[field]) : String(shown[field]), value: shown[field] };
+    const list = (known || !shown[field] ? options : [...options, unknown]).slice(0, 100).map((entry) => option(entry.label, entry.value));
     return {
       type: "static_select",
       action_id: ids[field],
-      placeholder: plain(field),
+      placeholder: plain(RUNTIME_PLACEHOLDERS[field]),
       options: list,
-      initial_option: selected(list, values[field] || SETTINGS_DEFAULT_VALUE),
+      initial_option: selected(list, shown[field] || SETTINGS_DEFAULT_VALUE),
     };
-  });
+  };
+  const license = values.engine && data.license?.options?.length ? data.license : null;
+  const licenseIds = RUNTIME_LICENSE_ACTION_IDS[scope];
+  const licenseSelect = () => {
+    const list = license.options.slice(0, 100).map((entry) => option(entry.label, entry.value));
+    return { type: "static_select", action_id: licenseIds.license, placeholder: plain("license"), options: list, initial_option: selected(list, license.selected) };
+  };
+  const elements = [select("engine"), ...(license ? [licenseSelect()] : []), select("model"), select("effort")];
   if (reset) elements.push(button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Use channel default", state, "thread_reset"));
-  return [{ type: "actions", block_id: `cg_runtime_${scope}`, elements }];
+  const rows = [{ type: "actions", block_id: `cg_runtime_${scope}`, elements }];
+  if (!license) return rows;
+  // More licenses to move to — only beside a specific license ("Any license" already means all of
+  // them). A multi-select is not a valid `actions` element, so it rides as a section accessory.
+  const others = (license.others || []).slice(0, 100).map((entry) => option(entry.label, entry.value));
+  if (license.selected !== LICENSE_POOL_ANY && others.length) {
+    const initial = others.filter((entry) => (license.also || []).includes(entry.value));
+    // The block id names the license the list sits beside: after the first license changes this
+    // is a new block for Slack, so it shows the stored list rather than what was ticked before.
+    rows.push({
+      type: "section", block_id: `cg_runtime_${scope}_also_${license.selected}`.slice(0, 255), text: mrkdwn(`*${ALSO_USE_LABEL}*`),
+      accessory: {
+        type: "multi_static_select", action_id: licenseIds.also, placeholder: plain("No other license"), options: others,
+        // Slack refuses the whole view when `initial_options` is an empty list.
+        ...(initial.length ? { initial_options: initial } : {}),
+      },
+    });
+  }
+  rows.push(context(LICENSE_HELP_TEXT));
+  return rows;
 }
 
 const MODE_LABELS = Object.freeze({ read: "Read-only", worker: "Worker", admin: "Admin" });
-const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet" });
+const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet", skillRuntimeSwap: "Skill model swap" });
 
 function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = false } = {}) {
   const mode = snapshot.mode || {};
   const current = channelMode(mode);
   const dm = Boolean(snapshot.isDM);
-  const flags = dm ? ["autoMode", "cleanMode"] : ["autoMode", "cleanMode", "allowNetwork"];
+  const flags = dm ? ["autoMode", "cleanMode", "skillRuntimeSwap"] : ["autoMode", "cleanMode", "allowNetwork", "skillRuntimeSwap"];
   if (!dm && !canEditAccess) {
     const on = flags.filter((flag) => mode[flag]).map((flag) => FLAG_LABELS[flag]);
     return [context(`*Mode* · ${MODE_LABELS[current] || modeLabel(mode)}${on.length ? ` · ${on.join(" · ")}` : ""}`), context("🔒 Managers and admins change the mode.")];
   }
-  const modes = ["read", "worker", ...(dm ? (canEnableAdmin || current === "admin" ? ["admin"] : []) : ["admin"])];
+  // "Admin" is offered only to someone who may enable it (an organization admin) or when it is
+  // already the current mode, so a manager's view shows the truth and can still leave Admin.
+  const modes = ["read", "worker", ...(canEnableAdmin || current === "admin" ? ["admin"] : [])];
   const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
-  const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
+  const skillRoutingEnabled = enterpriseFeatureEnabled("skillModelRouting");
+  const flagOptions = flags.filter(flag => flag !== "skillRuntimeSwap" || skillRoutingEnabled || mode.skillRuntimeSwap).map((flag) => option(FLAG_LABELS[flag] + (flag === "skillRuntimeSwap" && !skillRoutingEnabled ? " (Enterprise required; turn off to clear)" : ""), flag));
   const chosen = flagOptions.filter((entry) => mode[entry.value]);
   return [
-    context("*Mode*"),
+    context("*Mode*" + (!skillRoutingEnabled ? " · Skill model swap requires Enterprise" : "")),
     { type: "actions", block_id: "cg_mode_row", elements: [{
       type: "static_select",
       action_id: dm ? CHANNEL_SETTINGS_DM_MODE_ACTION_ID : `${ACCESS_FIELD_PREFIX}mode`,
@@ -725,8 +819,12 @@ function harnessRows(runtime, opts) {
   const summary = policy == null ? "All harnesses" : labels.join(", ") || "No available harnesses";
   const heading = context(`*Approved harnesses · Enterprise* · ${escapeMrkdwn(summary)}`);
   if (!opts.canApproveHarnesses) return [heading];
-  const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...(runtime.harnessOptions || []).map((o) => option(o.label, o.value))];
   const selectedValues = policy == null ? [SETTINGS_DEFAULT_VALUE] : policy;
+  // Slack caps a select at 100 options. Licenses are added by admins without a ceiling this view
+  // controls, so the approved entries are kept first when the list has to be cut.
+  const offered = runtime.harnessOptions || [];
+  const kept = offered.length > 99 ? [...offered.filter((o) => selectedValues.includes(o.value)), ...offered.filter((o) => !selectedValues.includes(o.value))].slice(0, 99) : offered;
+  const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...kept.map((o) => option(o.label, o.value))];
   // Slack refuses the whole view (`invalid_arguments`) when `initial_options` is an empty list, so
   // a policy that is empty or names only engines this build no longer offers starts unselected.
   const initial = options.filter((o) => selectedValues.includes(o.value));
@@ -747,30 +845,66 @@ function agentPage(snapshot, state, opts) {
   const runtime = snapshot.runtime || {};
   const scopes = runtime.scopes || {};
   const thread = scopes.thread || null;
-  const editable = opts.canEditRuntime !== false;
   const locked = Boolean(runtime.channelLogin);
   const vpn = snapshot.vpn;
-  const resume = snapshot.resume || {};
   return [
     ...(locked ? [context(`*Codex* · this channel's own login · ${escapeMrkdwn(runtime.channelLoginStatus || "checking…")}`)] : []),
     ...(thread ? [
       context(`*This thread*${thread.pinned ? " · 📌 pinned" : ""}`),
-      ...runtimeRow("thread", thread, state, { editable, codexLocked: locked, reset: editable && thread.pinned }),
-      ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin an engine._`)] : []),
+      ...runtimeRow("thread", thread, state, { reset: thread.pinned }),
+      ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin a harness._`)] : []),
     ] : []),
     context("*Channel default*"),
-    ...runtimeRow("channel", scopes.channel, state, { editable, codexLocked: locked }),
-    ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
+    ...runtimeRow("channel", scopes.channel, state),
     ...harnessRows(runtime, opts),
     { type: "divider" },
-    ...modeRows(snapshot, state, opts),
+    ...(snapshot.workspaceLink ? [context("Mode, Auto, Lean and network follow the source conversation.")] : modeRows(snapshot, state, opts)),
     // No service provisioned: one line, no controls. A provisioned one (or one still being read —
     // `vpn` absent until the hydration pass fills it in) gets its state and controls.
-    ...(vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
-    ...(resume.inThread && resume.command ? [
-      { type: "divider" },
-      { type: "section", text: mrkdwn(`*Resume in a terminal*\n\`\`\`${escapeMrkdwn(resume.command)}\`\`\``) },
+    ...(snapshot.workspaceLink ? [] : vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
+  ];
+}
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────────────────────
+// How to reach THIS thread's engine session from a terminal. Both CLIs hide a headless session
+// from their own pickers (Claude's `/resume` skips `claude -p` sessions; Codex lists its
+// non-interactive ones only with `--include-non-interactive`), so a developer who attaches to the
+// channel's container and opens the picker sees nothing from Slack. The page gives the two
+// commands that DO work, each labelled with where it runs: the gateway machine (the backend's
+// `exec` wrapper, admin-oriented) and a shell already inside the container (SSH, or VS Code
+// attached to it). Everything is read from the session at render time, like the old Resume
+// Session page it replaces, and escaped like every other value in this modal.
+const PICKER_NOTE = "The native pickers do not list sessions started from chat: Claude's `/resume` skips `claude -p` sessions, and Codex shows them only with `codex resume --include-non-interactive`. Resume by id with the commands above.";
+
+function diagnosticsPage(snapshot) {
+  const resume = snapshot.resume || {};
+  if (!resume.inThread) return [header("Resume this thread"), context("Open Settings from a reply inside a thread to see how to resume its session in a terminal.")];
+  if (!resume.sessionId) return [header("Resume this thread"), context("This thread has no session yet. Send it a message first, then open Diagnostics again.")];
+  const scope = resume.runtimeScope ? ` · ${escapeMrkdwn(resume.runtimeScope)} runtime` : "";
+  const facts = [
+    header("Resume this thread"),
+    context(`*Engine* ${escapeMrkdwn(resume.engine || "unknown")} · *Session* ${inlineCode(resume.sessionId)}${scope}`),
+    context(`*Folder* ${inlineCode(resume.workDir || "—")}`),
+  ];
+  const shell = resume.shellCommand || "";
+  const host = resume.hostCommand || "";
+  // An admin session viewed by a non-admin resolves to no command at all: the facts stay, and the
+  // page says why rather than handing out a line that would fail in their own container lane.
+  if (!shell && !host) return [...facts, context("🔒 This session belongs to the channel's administrator runtime. Ask an admin for its resume command.")];
+  return [
+    ...facts,
+    { type: "divider" },
+    ...(host ? [
+      { type: "section", text: mrkdwn(`*On the gateway machine*\n\`\`\`${escapeMrkdwn(host)}\`\`\``) },
+      context("Run it in a terminal on the gateway host as the gateway's own user. It opens the channel's container and resumes the session inside it."),
     ] : []),
+    ...(shell ? [
+      { type: "section", text: mrkdwn(`*${host ? "Inside the container" : "In a terminal"}*\n\`\`\`${escapeMrkdwn(shell)}\`\`\``) },
+      context(host
+        ? "Run it from a shell that is already inside this channel's container: an SSH session into the channel, or VS Code attached to it."
+        : "Run it in a terminal on the gateway machine as the gateway's own user."),
+    ] : []),
+    context(PICKER_NOTE),
   ];
 }
 
@@ -849,7 +983,7 @@ function connectionRows(snapshot, state, scope, opts) {
   } else {
     const saved = scope === "c" ? c.composioChannel : my.composio;
     const labelText = scope === "c" ? c.composioTokenLabel : my.composioLabel;
-    const status = saved?.configured ? `${masked(saved)}${labelText ? ` · ${escapeMrkdwn(labelText)}` : ""}` : scope === "c" && !c.noDefaultTokens && c.composioOrg?.configured ? "_uses the organization account_" : "_not connected_";
+    const status = saved?.configured ? `${masked(saved)}${labelText ? ` · ${escapeMrkdwn(labelText)}` : ""}` : "_not connected_";
     const form = `composio:${scope}`;
     blocks.push(...withForm(editableRow(`*${scope === "c" ? "Shared account" : "Your account"}* ${inlineCode(scope === "c" ? "composio-agent" : "composio-user")}\n${status}`, form, state, { connected: Boolean(saved?.configured) }), form, snapshot, state));
   }
@@ -863,27 +997,13 @@ function connectionRows(snapshot, state, scope, opts) {
     const status = c.makeToolboxUrl ? `${escapeMrkdwn(String(c.makeToolboxUrl).replace(/^https:\/\//, ""))} ${masked(c.makeToolboxKey)}` : "_not connected_";
     blocks.push(...withForm(editableRow(`${inlineCode("make-toolbox")}\n${status}`, "make:c", state, { connected: Boolean(c.makeToolboxUrl) }), "make:c", snapshot, state));
   }
-  // Toolbox — one server for the whole gateway (Settings → Integrations), a token per scope.
-  blocks.push(header("Toolbox"));
-  const toolbox = scope === "c" ? c.toolboxChannel : my.toolbox;
-  const toolboxStatus = toolbox?.configured
-    ? `${masked(toolbox)} · ${scope === "c" ? "this channel's token" : "your token"}`
-    : scope === "c" ? (c.noDefaultTokens ? "_not set · organization token refused here_" : c.toolboxOrg?.configured ? "_each person's own token, else the organization's_" : "_each person's own token_") : "_not set_";
-  const server = c.toolboxUrl ? ` · ${escapeMrkdwn(String(c.toolboxUrl).replace(/^https:\/\//, ""))}` : "";
-  blocks.push(...withForm(editableRow(`${inlineCode("makeitfuture-toolbox")}${server}\n${toolboxStatus}`, `toolbox:${scope}`, state, { connected: Boolean(toolbox?.configured) }), `toolbox:${scope}`, snapshot, state));
-  if (scope === "c") {
-    const fallback = option("Fall back to organization tokens", "fallback");
-    blocks.push({ type: "actions", block_id: "cg_connections_fallback", elements: [{
-      type: "checkboxes", action_id: CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, options: [fallback], ...(c.noDefaultTokens ? {} : { initial_options: [fallback] }),
-    }] });
-  }
   // Custom MCP
   blocks.push(header("Custom MCP"));
   const list = (scope === "c" ? snapshot.customMcps?.channel : snapshot.customMcps?.personal) || [];
   const editable = scope === "p" || Boolean(opts.canManageCustomMcp);
   for (const entry of list) {
     const form = `cm:${scope}:${entry.name}`;
-    const row = editableRow(`${inlineCode(entry.serverName)} ${escapeMrkdwn(String(entry.url || "").replace(/^https:\/\//, "").slice(0, 200))} ${inlineCode(`••${entry.tokenLast4 || ""}`)}`, form, state, { editable });
+    const row = editableRow(`${inlineCode(entry.serverName)} ${escapeMrkdwn(String(entry.url || "").replace(/^https:\/\//, "").slice(0, 200))} ${inlineCode(`••${entry.tokenLast4 || ""}`)} · ${entry.authType === "custom" ? "Custom headers and query parameters" : entry.authType === "composio" ? "Composio consumer key" : "Bearer token"}${["headers", "queryParams"].map((group) => (entry[group] || []).length ? ` · ${group === "headers" ? "Headers" : "Query"}: ${(entry[group] || []).length} set` : "").join("")}`, form, state, { editable });
     blocks.push(...withForm(row, form, snapshot, state));
   }
   const addKey = `cm-add:${scope}`;
@@ -892,6 +1012,7 @@ function connectionRows(snapshot, state, scope, opts) {
   else blocks.push(context(list.length ? "🔒 Managers change these. Add your own under *You*." : "_None._ Managers add them here; add your own under *You*."));
   // Email accounts — masked rows (name, address, servers); passwords never reach the snapshot.
   // The conversation's follow the custom MCP gate (a manager's call); a person's own are theirs.
+  if (!getEmailAccountsEnabled()) return blocks;
   blocks.push(header("Email accounts"));
   const accounts = (scope === "c" ? snapshot.emailAccounts?.channel : snapshot.emailAccounts?.personal) || [];
   const canEditEmail = scope === "p" || Boolean(opts.canManageCustomMcp);
@@ -911,9 +1032,9 @@ function connectionRows(snapshot, state, scope, opts) {
 function cloudRows(snapshot) {
   const cloud = snapshot.cloudMcp || {};
   const blocks = [header("Cloud MCP")];
-  for (const engine of ["claude", "codex"]) {
+  for (const engine of Object.keys(cloud)) {
     const data = cloud[engine] || {};
-    blocks.push(context(`*${engine === "claude" ? "Claude" : "Codex"}*`));
+    blocks.push(context(`*${engineLabel(engine)}*`));
     if (!data.ready) {
       blocks.push(context("_Loading the catalog… switch pages to refresh._"));
       continue;
@@ -995,7 +1116,7 @@ function variableRows(snapshot, state, letter, { editable = false } = {}) {
 function variablesPage(snapshot, state, opts) {
   return [
     header(`Channel · ${(snapshot.secrets || []).length}`),
-    ...variableRows(snapshot, state, "c", { editable: Boolean(opts.canEditSecrets) }),
+    ...variableRows(snapshot, state, "c", { editable: !snapshot.workspaceLink && Boolean(opts.canEditSecrets) }),
     header(`Organization · ${(snapshot.orgSecrets || []).length}`),
     ...variableRows(snapshot, state, "o", { editable: Boolean(opts.canEditOrgSecrets) }),
     ...(opts.canEditOrgSecrets ? [] : [context("🔒 Admins manage organization variables.")]),
@@ -1020,7 +1141,10 @@ function skillsPage(snapshot, state) {
   const direct = new Set((skills.additional || []).map((value) => String(value).toLowerCase()));
   const fromTemplate = (skills.channel || []).filter((value) => !direct.has(String(value).toLowerCase()));
   const org = skills.organization || [];
-  const short = (list) => `${list.slice(0, 6).map(inlineCode).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const models = skills.models || {};
+  const named = (value) => `${inlineCode(value)}${models[String(value).toLowerCase()] ? ` _(${escapeMrkdwn(models[String(value).toLowerCase()])})_` : ""}`;
+  const short = (list) => `${list.slice(0, 6).map(named).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const preferring = [...direct].filter((value) => models[value]);
   return [
     templates.length
       ? selectRow({
@@ -1031,8 +1155,12 @@ function skillsPage(snapshot, state) {
       : fieldBlock("Template", "_none defined_"),
     context(`*Channel skills* · ${direct.size}`),
     ...skillPicker(CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, snapshot.skillPicker, "Add a skill…"),
+    ...(preferring.length ? [context(`Preferred models: ${preferring.slice(0, 8).map(named).join(" ")}`)] : []),
     ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
     ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
+    ...((skills.notLoaded || []).length
+      ? [context(`⚠️ Not loaded: ${skills.notLoaded.map((entry) => `\`${escapeMrkdwn(entry.name)}\`${entry.tier === "organization" ? " (organization)" : ""}`).join(", ")} — a personal skill loads only for its author. Remove it here, or ask the author to make it an organization skill.`)]
+      : []),
   ];
 }
 
@@ -1063,6 +1191,42 @@ function scheduleRows(snapshot, state) {
   return blocks;
 }
 
+// ── API tokens ───────────────────────────────────────────────────────────────────────────────
+// This conversation's HTTP run API tokens (src/gateway/api-tokens.js): the viewer's own, or every
+// one for a channel manager or an admin. Names and last four only; a new value appears once, in the
+// notice of the save that minted it, and is never rebuilt into a later view.
+export const API_TOKEN_LIST_LIMIT = 20;
+const tokenDate = (iso) => (iso ? String(iso).slice(0, 10) : "");
+
+function apiTokensPage(snapshot, state) {
+  const data = snapshot.apiTokens || {};
+  const active = (data.tokens || []).filter((token) => !token.revoked);
+  const blocks = [context(
+    "A token lets an automation (Make.com, a script, a CI job) start runs *in this conversation* over the HTTP run API. "
+    + "Runs act as the person who created it, with their current access, and stop working when it is revoked or they lose access here.",
+  )];
+  blocks.push(header(`${data.manager ? "Tokens here" : "Your tokens"} · ${active.length}`));
+  for (const token of active.slice(0, API_TOKEN_LIST_LIMIT)) {
+    const mine = token.createdBy === state.ownerId;
+    const owner = mine ? "you" : `<@${escapeMrkdwn(token.createdBy)}>`;
+    const text = `*${escapeMrkdwn(token.name)}* ${inlineCode(`${token.prefix}…${token.last4}`)}\n`
+      + `Created by ${owner} ${tokenDate(token.createdAt)} · ${token.lastUsedAt ? `last used ${tokenDate(token.lastUsedAt)}` : "never used"}`;
+    blocks.push({ type: "section", text: mrkdwn(text), accessory: button(CHANNEL_SETTINGS_API_TOKEN_REVOKE_ACTION_ID, "Revoke", state, "api_token_revoke", { id: token.id }, {
+      style: "danger",
+      confirm: destructiveConfirm("Revoke this token?", `*${escapeMrkdwn(token.name)}* stops working immediately. Automations using it get 401.`, "Revoke"),
+    }) });
+  }
+  if (!active.length) blocks.push(context(data.manager ? "_No tokens in this conversation._" : "_You have no tokens here._"));
+  if (active.length > API_TOKEN_LIST_LIMIT) blocks.push(context(`${active.length - API_TOKEN_LIST_LIMIT} more — the dashboard's Settings → API tokens lists them all.`));
+  const addKey = "tok-add:c";
+  if (state.form === addKey) blocks.push(...withForm([], addKey, snapshot, state));
+  else blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ New token", state, "form_open", { f: addKey })] });
+  blocks.push(context(data.manager
+    ? "You see every token of this conversation because you manage it."
+    : "You see your own tokens. Channel managers and admins see all of them."));
+  return blocks;
+}
+
 // ── You ──────────────────────────────────────────────────────────────────────────────────────
 function youPage(snapshot, state, opts) {
   return [
@@ -1072,6 +1236,9 @@ function youPage(snapshot, state, opts) {
     ...variableRows(snapshot, state, "p", { editable: true }),
     header("Skills"),
     ...skillPicker(CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, snapshot.mySkillPicker, "Add a skill for your runs…"),
+    ...((snapshot.mySkillPicker?.foreign || []).length
+      ? [context(`⚠️ Not loaded: ${snapshot.mySkillPicker.foreign.map((slug) => `\`${escapeMrkdwn(slug)}\``).join(", ")} — another person's personal skill. Only its author can use it; ask them to make it an organization skill. Your next skill change here removes it.`)]
+      : []),
   ];
 }
 
@@ -1079,7 +1246,6 @@ const MAX_VIEW_BLOCKS = 100;
 
 export function buildChannelSettingsView(snapshot = {}, state = {}, {
   tab = state.tab,
-  canEditRuntime = true,
   canApproveHarnesses = false,
   canEnableAdmin = false,
   canEditSecrets = false,
@@ -1095,13 +1261,16 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   const pages = settingsPages({ isDM: snapshot.isDM });
   const wanted = normalizeTab(tab);
   const active = pages.includes(wanted) ? wanted : pages[0];
-  const opts = { canApproveHarnesses, canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
-  const content = {
+  const opts = { canApproveHarnesses, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
+  const content = snapshot.workspaceLink && ["access", "mcp", "skills"].includes(active)
+    ? [context("These shared settings are managed in the source conversation. Your personal settings remain under You.")]
+    : {
     agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
-    skills: skillsPage, schedules: scheduleRows, you: youPage,
+    skills: skillsPage, schedules: scheduleRows, api: apiTokensPage, diagnostics: diagnosticsPage, you: youPage,
   }[active](snapshot, state, opts);
   let blocks = [
     pageNav(state, active, { isDM: snapshot.isDM }),
+    ...(snapshot.workspaceLink ? [context(`↔ Shared setup linked to *${escapeMrkdwn(snapshot.workspaceLink.name)}*. Edit skills, memory, access, connectors, secrets, mode and network in the source conversation. Harness, model and effort remain independent.`)] : []),
     ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
     { type: "divider" },
     ...content,
@@ -1120,7 +1289,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
 
 function option(label, value, description = "") {
   return {
-    text: plain(String(label).slice(0, 75)),
+    text: plain(clipLabel(label)),
     value: String(value).slice(0, 150),
     ...(description ? { description: plain(String(description).slice(0, 75)) } : {}),
   };
@@ -1218,7 +1387,6 @@ export function buildConnectionsEditorView(connections = {}, state = {}, { chann
       { type: "context", elements: [mrkdwn(`Update write-only credentials for *#${escapeMrkdwn(channelName || "this channel")}*. Saved values are never prefilled or shown again.`)] },
       optionalTextInput({ blockId: CONNECTION_COMPOSIO_BLOCK_ID, actionId: CONNECTION_COMPOSIO_ACTION_ID, label: "Composio channel token", placeholder: "Leave blank to keep the saved token", hint: modeHint }),
       optionalTextInput({ blockId: CONNECTION_COMPOSIO_LABEL_BLOCK_ID, actionId: CONNECTION_COMPOSIO_LABEL_ACTION_ID, label: "Composio label", placeholder: "Whose account? e.g. Team account", initialValue: connections.composioTokenLabel || "", hint: "An optional name to identify this account. Clear this field to remove the label; the token stays unchanged." }),
-      optionalTextInput({ blockId: CONNECTION_TOOLBOX_BLOCK_ID, actionId: CONNECTION_TOOLBOX_ACTION_ID, label: "Toolbox token", placeholder: "Leave blank to keep the saved token", hint: "Used by the shared makeitfuture-toolbox connection." }),
       optionalTextInput({ blockId: CONNECTION_MAKE_URL_BLOCK_ID, actionId: CONNECTION_MAKE_URL_ACTION_ID, label: "Make MCP server URL", placeholder: "https://eu1.make.celonis.com/mcp/server/…", initialValue: connections.makeToolboxUrl || "", maxLength: 500, hint: "Leave unchanged to keep it; use Disconnect Make MCP in the main tab to remove it." }),
       optionalTextInput({ blockId: CONNECTION_MAKE_KEY_BLOCK_ID, actionId: CONNECTION_MAKE_KEY_ACTION_ID, label: "Make MCP token", placeholder: "Leave blank to keep the saved token", hint: "A URL and token are both required before Make MCP is active." }),
     ],
@@ -1255,16 +1423,28 @@ export function buildCustomMcpEditorView(state = {}, { scope = "user", channelNa
         block_id: CUSTOM_MCP_URL_BLOCK_ID,
         label: plain("Server URL"),
         element: { type: "plain_text_input", action_id: CUSTOM_MCP_INPUT_ACTION_ID, placeholder: plain("https://mcp.example.com/mcp"), max_length: 2048 },
-        hint: plain("HTTPS, on a public address."),
+        hint: plain("HTTPS, on a public address. Put query parameters in the separate field below."),
+      },
+      {
+        type: "input", block_id: CUSTOM_MCP_AUTH_BLOCK_ID, optional: true, label: plain("Authentication type"),
+        element: { type: "static_select", action_id: CUSTOM_MCP_INPUT_ACTION_ID,
+          options: [option("Keep current (Bearer for new)", "preserve"), option("Bearer token", "bearer"), option("Composio consumer key", "composio"), option("Custom headers and query parameters", "custom")],
+          initial_option: option("Keep current (Bearer for new)", "preserve") },
+        hint: plain("Composio sends x-consumer-api-key. Leave unchanged to preserve an existing server's authentication."),
       },
       optionalTextInput({
         blockId: CUSTOM_MCP_TOKEN_BLOCK_ID,
         actionId: CUSTOM_MCP_INPUT_ACTION_ID,
-        label: "Bearer token",
-        placeholder: "Required for a new server",
+        label: "Token or consumer key",
+        placeholder: "Not needed for custom authentication",
         maxLength: 3000,
         hint: "Stored write-only and never shown again. Leave blank when updating an existing server to keep its token.",
       }),
+      ...customMcpExtraFields().map((field) => ({
+        type: "input", optional: true, block_id: field.name === "headers" ? CUSTOM_MCP_HEADERS_BLOCK_ID : CUSTOM_MCP_QUERY_BLOCK_ID,
+        label: plain(field.label), hint: plain(field.hint),
+        element: { type: "plain_text_input", action_id: CUSTOM_MCP_INPUT_ACTION_ID, multiline: true, max_length: 3000, placeholder: plain(field.placeholder) },
+      })),
     ],
   };
 }
@@ -1287,8 +1467,11 @@ export function buildCustomMcpStatusView(state, { scope, message, retry = false 
 
 export function readCustomMcpForm(view = {}) {
   const values = view?.state?.values || {};
-  const text = (blockId) => String(values[blockId]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.value || "").trim();
-  return { name: text(CUSTOM_MCP_NAME_BLOCK_ID), url: text(CUSTOM_MCP_URL_BLOCK_ID), token: text(CUSTOM_MCP_TOKEN_BLOCK_ID) };
+  const text = (blockId) => { const value = String(values[blockId]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.value || ""); return [CUSTOM_MCP_HEADERS_BLOCK_ID, CUSTOM_MCP_QUERY_BLOCK_ID].includes(blockId) ? value : value.trim(); };
+  const authType = values[CUSTOM_MCP_AUTH_BLOCK_ID]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.selected_option?.value;
+  return { name: text(CUSTOM_MCP_NAME_BLOCK_ID), url: text(CUSTOM_MCP_URL_BLOCK_ID), token: text(CUSTOM_MCP_TOKEN_BLOCK_ID), ...(authType && authType !== "preserve" ? { authType } : {}),
+    ...(text(CUSTOM_MCP_HEADERS_BLOCK_ID) ? { headers: parseCustomMcpPairs(text(CUSTOM_MCP_HEADERS_BLOCK_ID), "Headers") } : {}),
+    ...(text(CUSTOM_MCP_QUERY_BLOCK_ID) ? { queryParams: parseCustomMcpPairs(text(CUSTOM_MCP_QUERY_BLOCK_ID), "Query parameters") } : {}) };
 }
 
 export function readConnectionsForm(view = {}) {
@@ -1299,7 +1482,6 @@ export function readConnectionsForm(view = {}) {
     ...(Object.hasOwn(values, CONNECTION_COMPOSIO_LABEL_BLOCK_ID)
       ? { composioTokenLabel: textValue(CONNECTION_COMPOSIO_LABEL_BLOCK_ID, CONNECTION_COMPOSIO_LABEL_ACTION_ID) }
       : {}),
-    toolboxToken: textValue(CONNECTION_TOOLBOX_BLOCK_ID, CONNECTION_TOOLBOX_ACTION_ID),
     makeToolboxUrl: textValue(CONNECTION_MAKE_URL_BLOCK_ID, CONNECTION_MAKE_URL_ACTION_ID),
     makeToolboxKey: textValue(CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_KEY_ACTION_ID),
   };
@@ -1313,6 +1495,7 @@ export function buildCatalogManagerView(items = [], state = {}, {
   kind = "skills",
   channelName = "",
   engine = "",
+  engines = ["claude", "codex"],
   page = 0,
   notice = "",
 } = {}) {
@@ -1326,7 +1509,7 @@ export function buildCatalogManagerView(items = [], state = {}, {
   if (isMcp) {
     blocks.push({
       type: "actions",
-      elements: ["claude", "codex"].map((id) => button(`${CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX}${id}`, id === "claude" ? "Claude" : "Codex", state, "cloud_engine", { e: id }, id === engine ? { style: "primary" } : {})),
+      elements: engines.map((id) => button(`${CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX}${id}`, engineLabel(id), state, "cloud_engine", { e: id }, id === engine ? { style: "primary" } : {})),
     });
   }
   if (!shown.length) blocks.push({ type: "section", text: mrkdwn("_No available items._") });

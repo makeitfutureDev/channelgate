@@ -5,10 +5,24 @@
 // keep their async signatures so callers are unchanged.
 import { randomUUID } from "node:crypto";
 import { getDb } from "../db/index.js";
+import { isRetiredEngineId } from "../engines/retired.js";
+import { isLicenseShapedId } from "../engines/license-state.js";
+import { isEngineId } from "../engines/registry.js";
 
+// A row stamped by a RETIRED harness (engines/retired.js), or by a LICENSE an administrator has
+// since deleted, holds a session id nothing can open any more. Every reader that NAMES or RESUMES
+// a session treats it as "no live session", so no surface prints a resume command, offers a fork
+// or checks a harness policy for an engine that is gone — a deleted license's stamp reaching the
+// approval gate in run.js refused every later turn of the thread as "not an approved harness".
+// Only resolveSession still reports the stamp: run.js needs it to move the thread onto a current
+// harness in a fresh session with the chat transcript replayed (decideThreadEngine), and
+// hasThreadSession still counts the row, because the bot HAS been in that thread.
+// Asked live on every read: licenses are added and removed while the daemon runs.
+const isGoneEngine = (engine) => isRetiredEngineId(engine) || (isLicenseShapedId(engine) && !isEngineId(engine));
 function get(slug, threadKey) {
-  const row = getDb().prepare("SELECT session_id FROM sessions WHERE slug = ? AND thread_key = ?").get(slug, threadKey);
-  return row ? row.session_id : null;
+  const row = getDb().prepare("SELECT session_id, engine FROM sessions WHERE slug = ? AND thread_key = ?").get(slug, threadKey);
+  if (!row) return null;
+  return isGoneEngine(row.engine) ? "" : row.session_id;
 }
 
 // ── /clear generation guard ───────────────────────────────────────────────────────────────────
@@ -97,7 +111,7 @@ export async function getSession(slug, threadKey) {
 // default) and replay the thread context, since run.js will mint a fresh, blind session.
 export async function getSessionEngine(slug, threadKey) {
   const row = getRow(slug, threadKey);
-  return row && row.session_id ? row.engine || "" : "";
+  return row && row.session_id && !isGoneEngine(row.engine) ? row.engine || "" : "";
 }
 
 // The runtime environment a thread's LIVE session last ran in, parsed from the row's JSON stamp
@@ -106,7 +120,7 @@ export async function getSessionEngine(slug, threadKey) {
 // form. Never throws on a malformed value: a status line must not be the thing that fails.
 export async function getSessionRuntime(slug, threadKey) {
   const row = getRow(slug, threadKey);
-  if (!row || !row.session_id || !row.runtime) return null;
+  if (!row || !row.session_id || !row.runtime || isGoneEngine(row.engine)) return null;
   try {
     const parsed = JSON.parse(row.runtime);
     return parsed && typeof parsed === "object" ? parsed : null;

@@ -8,7 +8,7 @@ ensureTestEnv();
 
 const [
   { buildSettings, ensureChannelFolder },
-  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, toolboxUrl, injectedRemoteAllowMatches },
+  { composioRef, composioUserRef, makeToolboxRef, GATEWAY_TOOL_NAMES, gatewayToolRefs, composioUrl, injectedRemoteAllowMatches },
   { channelSettingsFile, channelAdminSettingsFile, gatewayRoot },
 ] = await Promise.all([
   import("../src/gateway/folders.js"),
@@ -248,7 +248,7 @@ test("gateway MCP permission list tracks registered gateway tools", () => {
   // Tool registrations live in the per-group modules under src/mcp/tools/ (registered by the
   // gateway-server.js entry). Group order differs from the flat pre-split file, so compare the
   // registered names as a sorted list — same set, no duplicates, nothing lost.
-  const toolModules = ["schedules.js", "background.js", "channel-admin.js", "channel-database.js", "tokens.js", "slack-native.js", "teams-native.js", "skills.js", "questions.js", "ssh-access.js", "agent-directory.js", "email.js"];
+  const toolModules = ["schedules.js", "background.js", "channel-admin.js", "channel-database.js", "tokens.js", "slack-native.js", "teams-native.js", "skills.js", "questions.js", "ssh-access.js", "agent-directory.js", "email.js", "code-channels.js", "thread-forks.js", "conversation-history.js"];
   const source = toolModules
     .map((file) => readFileSync(new URL(`../src/mcp/tools/${file}`, import.meta.url), "utf8"))
     .join("\n");
@@ -286,7 +286,7 @@ test("the lockdown admits the injected remote servers by URL next to a picked gl
   const picked = { name: "aioutreach", namespace: "mcp__aioutreach", match: { serverUrl: "https://mcp.example.test/aioutreach" } };
   const settings = await buildSettings({ _slug: "claude-remote-allow", cleanMode: false, allowedMcps: [picked], makeToolboxUrl: "https://hook.eu2.make.com/mcp/example" });
   const urls = settings.allowedMcpServers.filter((m) => m.serverUrl).map((m) => m.serverUrl);
-  for (const url of [composioUrl(), toolboxUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
+  for (const url of [composioUrl(), "https://hook.eu2.make.com/mcp/example", picked.match.serverUrl]) {
     assert.ok(urls.includes(url), `missing serverUrl entry for ${url}`);
   }
   assert.ok(settings.allowedMcpServers.some((m) => m.serverName === composioRef().name));

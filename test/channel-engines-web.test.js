@@ -41,7 +41,7 @@ test("admin channel API validates policy atomically, audits it, and preserves it
   assert.ok(readEvents({ limit: 20 }).some(e => e.event === "channel_meta_changed" && e.changes?.approvedEngines?.to?.includes("claude")));
   assert.equal((await put(url, { engine: "codex" })).status, 403);
   const login = await fetch(base + `/channels/${id}/codex-login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ method: "device" }) });
-  assert.equal(login.status, 403, "refuse dedicated Codex login before starting authentication");
+  assert.equal(login.status, 404, "the channel's own Codex sign-in route is retired (a channel account is a license limited to it)");
   testLicenseEnv({ tier: "free" });
   assert.equal((await put(url, { approvedEngines: null })).status, 403);
   assert.equal((await put(url, { approvedEngines: ["claude", "codex"] })).status, 403);
@@ -56,7 +56,9 @@ test("DM API enforces the same Enterprise approvals and selected harness", async
   const entry = await fixture(id, true);
   const url = `/dms/${id}`;
   assert.equal((await put(url, { approvedEngines: ["claude"] })).status, 200);
-  assert.equal((await put(url, { codexAuthSource: "channel" })).status, 403);
+  // The legacy channel Codex account cannot be entered any more: the request is ignored.
+  assert.equal((await put(url, { codexAuthSource: "channel" })).status, 200);
+  assert.equal((await getChannelMeta(entry.slug)).codexAuthSource, "gateway");
   testLicenseEnv({ tier: "free" });
   const denied = await put(url, { approvedEngines: null });
   assert.equal(denied.status, 403);

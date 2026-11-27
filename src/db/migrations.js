@@ -10,6 +10,7 @@
 // need no migration; the columns pulled out alongside the blob exist only so the hot queries
 // (filter by channel, enabled, etc.) are indexable. The two dashboard tables (usage, events) use
 // fully typed columns + indexes because they're aggregated by day/week/month/channel/user.
+import { repairClaudeCumulativeCost } from "./claude-session-usage.js";
 
 import { ensureMemoryFtsTable } from "./fts.js";
 
@@ -1041,6 +1042,535 @@ export const migrations = [
         CREATE UNIQUE INDEX idx_question_requests_one_pending ON question_requests(
           channel_id, author_id, COALESCE(NULLIF(json_extract(data, '$.sessionThreadKey'), ''), thread_key)
         ) WHERE status = 'pending';
+      `);
+    },
+  },
+  {
+    // Dashboard identities are independent of chat users. Credential IDs are globally unique.
+    version: 36,
+    up(db) {
+      db.exec(`
+        CREATE TABLE admin_accounts (
+          id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+          user_handle TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
+          auth_version INTEGER NOT NULL DEFAULT 1, bootstrap_allowed INTEGER NOT NULL DEFAULT 0,
+          created_ms INTEGER NOT NULL
+        );
+        CREATE TABLE admin_passkeys (
+          id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          public_key BLOB NOT NULL, counter INTEGER NOT NULL, transports TEXT NOT NULL,
+          device_type TEXT NOT NULL, backed_up INTEGER NOT NULL, name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL, last_used_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_admin_passkeys_account ON admin_passkeys(account_id);
+        CREATE TABLE admin_enrollment_tokens (
+          digest TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          auth_version INTEGER NOT NULL, expires_ms INTEGER NOT NULL
+        );
+        CREATE INDEX idx_admin_enrollment_expiry ON admin_enrollment_tokens(expires_ms);
+      `);
+    },
+  },
+  {
+    // Link dashboard credential containers only after proof of the stable platform user ID.
+    // Historical names/emails are not ownership evidence. Pending legacy invites are revoked.
+    version: 37,
+    up(db) {
+      db.exec(`
+        ALTER TABLE admin_accounts ADD COLUMN user_id TEXT;
+        CREATE UNIQUE INDEX idx_admin_accounts_user ON admin_accounts(user_id) WHERE user_id IS NOT NULL;
+        CREATE TABLE admin_identity_links (
+          id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL, auth_version INTEGER NOT NULL, session_digest TEXT NOT NULL,
+          code_digest TEXT NOT NULL, expires_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_admin_identity_links_user ON admin_identity_links(user_id);
+        CREATE INDEX idx_admin_identity_links_expiry ON admin_identity_links(expires_ms);
+        DELETE FROM admin_enrollment_tokens;
+        UPDATE admin_accounts SET auth_version = auth_version + 1;
+      `);
+    },
+  },
+  {
+    // Track real thread admissions from this version onward; historical runs cannot reliably
+    // reconstruct their thread identity, so no synthetic backfill is created.
+    version: 38,
+    up(db) {
+      db.exec(`
+        CREATE TABLE license_thread_usage (
+          month TEXT NOT NULL, channel_id TEXT NOT NULL, thread_key TEXT NOT NULL,
+          first_ts TEXT NOT NULL,
+          PRIMARY KEY (month, channel_id, thread_key)
+        );
+      `);
+    },
+  },
+  {
+    // Channel-level user tokens for the HTTP run API (src/gateway/api-tokens.js): a token belongs
+    // to ONE conversation and ONE person; a run it starts acts as that person, with their live
+    // rank. Only the sha256 of the value is stored. The organization-wide run API key stays as a
+    // deprecated fallback in settings.
+    version: 39,
+    up(db) {
+      db.exec(`
+        CREATE TABLE api_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          token_prefix TEXT NOT NULL DEFAULT '',
+          last4 TEXT NOT NULL DEFAULT '',
+          channel_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL DEFAULT '',
+          revoked_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_api_tokens_channel ON api_tokens(channel_id);
+        CREATE INDEX idx_api_tokens_creator ON api_tokens(created_by);
+      `);
+    },
+  },
+  {
+    // Skill catalog access tokens get a KIND: 'catalog' (admin-minted, the library for other
+    // systems and peer gateways — never personal skills) or 'user' (minted by a person for
+    // themselves; resolves to that person's live reach: organization, their channels, their own
+    // personal skills). Existing rows are catalog tokens.
+    version: 40,
+    up(db) {
+      db.exec(`
+        ALTER TABLE skill_access_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'catalog';
+        ALTER TABLE skill_access_tokens ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_skill_access_tokens_owner ON skill_access_tokens(owner_id);
+      `);
+    },
+  },
+  {
+    // Claude Code's terminal result reports the provider SESSION's cumulative cost and per-model
+    // usage (CLI ≥ 2.1.277 restores a resumed session's earlier spend), so every resumed turn was
+    // charged its thread's whole history again. Keep the raw cumulative beside each row, and
+    // re-difference the rows recorded since the image first pinned a cumulative-reporting CLI
+    // (2.1.281, 2026-09-24) — lossless: the original figure survives in the new column.
+    version: 41,
+    up(db) {
+      db.exec(`
+        ALTER TABLE usage ADD COLUMN provider_cost_cumulative REAL;
+        ALTER TABLE usage ADD COLUMN provider_model_usage TEXT NOT NULL DEFAULT '';
+      `);
+      repairClaudeCumulativeCost(db, { since: "2026-09-24T00:00:00.000Z" });
+    },
+  },
+  {
+    // Old pins have no reliable provenance; preserve them as intentional.
+    version: 42,
+    up(db) {
+      db.exec("ALTER TABLE skills ADD COLUMN pin_reason TEXT NOT NULL DEFAULT 'manual'");
+    },
+  },
+  {
+    // Channel-to-channel agent mail (src/gateway/agent-mail.js): one row per message a channel's
+    // agent sent to another channel's agent, from the send until its reply landed back in the
+    // asking thread. Durable so a daemon restart can tell both threads what happened instead of
+    // losing the exchange. `data` carries the message, the reply and the delivery facts; the typed
+    // columns are what the guards (in-flight per pair, per-hour counts) and the audit queries read.
+    version: 43,
+    up(db) {
+      db.exec(`
+        CREATE TABLE agent_messages (
+          id TEXT PRIMARY KEY,
+          from_channel_id TEXT NOT NULL,
+          from_slug TEXT NOT NULL,
+          from_thread_key TEXT NOT NULL,
+          requested_by TEXT NOT NULL,
+          to_channel_id TEXT NOT NULL,
+          to_slug TEXT NOT NULL,
+          to_thread_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          updated_ms INTEGER NOT NULL,
+          data TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX idx_agent_messages_pair ON agent_messages(from_thread_key, to_channel_id, created_ms);
+        CREATE INDEX idx_agent_messages_source ON agent_messages(from_channel_id, created_ms);
+        CREATE INDEX idx_agent_messages_status ON agent_messages(status);
+      `);
+    },
+  },
+  {
+    version: 44,
+    up(db) {
+      db.exec(`
+        CREATE TABLE slack_threads (
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          starter_id TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          updated_ms INTEGER NOT NULL,
+          done_ms INTEGER NOT NULL DEFAULT 0,
+          root_done INTEGER NOT NULL DEFAULT 0,
+          root_reaction_ms INTEGER NOT NULL DEFAULT 0,
+          checked_ms INTEGER NOT NULL DEFAULT 0,
+          error_ms INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (channel_id, thread_ts)
+        );
+        CREATE INDEX idx_slack_threads_starter ON slack_threads(starter_id, updated_ms DESC);
+      `);
+    },
+  },
+  {
+    version: 45,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN last_message_ms INTEGER NOT NULL DEFAULT 0");
+      // v44 wrote negative overrides for ordinary prompts as well as Reopen. The corrected
+      // completion policy must stop those old prompt markers from defeating existing checks.
+      db.exec("UPDATE slack_threads SET done_ms=0 WHERE done_ms < 0");
+    },
+  },
+  {
+    version: 46,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN agent_engaged INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    version: 47,
+    up(db) {
+      // Keep Slack's explicit session title separate from the root-message preview so passive
+      // discovery cannot undo a rename. The watermark rejects retried/out-of-order events.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN session_title TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN session_title_ts REAL NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    version: 48,
+    up(db) {
+      // Identify our display-only root check so it cannot sustain its own completion evidence.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN completion_mirror_user TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN completion_marker_retry_ms INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    version: 49,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN later_ms INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    version: 50,
+    up(db) {
+      // Remember a possibly installed bot clock before the Slack write, including across crashes.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN later_marker INTEGER NOT NULL DEFAULT 0");
+      // Repair threads postponed before the root clock shipped, once through the bounded worker.
+      db.exec("UPDATE slack_threads SET completion_marker_retry_ms=1 WHERE later_ms>0");
+    },
+  },
+  {
+    version: 51,
+    up(db) {
+      // Activity credentials never share administrator accounts or sessions.
+      db.exec(`
+        CREATE TABLE activity_accounts (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          UNIQUE(owner_id, team_id, origin)
+        );
+        CREATE TABLE activity_passkeys (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL REFERENCES activity_accounts(id) ON DELETE CASCADE,
+          public_key BLOB NOT NULL,
+          counter INTEGER NOT NULL,
+          transports TEXT NOT NULL DEFAULT '[]',
+          name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          last_used_ms INTEGER
+        );
+        CREATE INDEX idx_activity_passkeys_account ON activity_passkeys(account_id);
+      `);
+    },
+  },
+  {
+    version: 52,
+    up(db) {
+      // Existing people keep the automatic reply mention; future users explicitly default off.
+      const update = db.prepare("UPDATE users SET data = ? WHERE user_id = ?");
+      for (const row of db.prepare("SELECT user_id, data FROM users").all()) {
+        let record;
+        try { record = JSON.parse(row.data); } catch { continue; }
+        if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+        if (typeof record.replyMentions === "boolean") continue;
+        update.run(JSON.stringify({ ...record, replyMentions: true }), row.user_id);
+      }
+    },
+  },
+  {
+    version: 53,
+    up(db) {
+      // Dedicated-account channels previously forced every Codex selection to their account.
+      // Preserve that account for saved defaults/pins without keeping the channel-wide lock.
+      for (const row of db.prepare("SELECT slug, data FROM channel_meta").all()) {
+        let meta;
+        try { meta = JSON.parse(row.data); } catch { continue; }
+        if (meta?.codexAuthSource !== "channel") continue;
+        meta.engine = "codex-channel";
+        meta.codexChannelLegacyHistory = true;
+        if (Array.isArray(meta.approvedEngines)) meta.approvedEngines = meta.approvedEngines.map(id => id === "codex" ? "codex-channel" : id);
+        if (meta.allowedCodexMcps && !meta.allowedChannelCodexMcps) meta.allowedChannelCodexMcps = meta.allowedCodexMcps;
+        db.prepare("UPDATE channel_meta SET data=? WHERE slug=?").run(JSON.stringify(meta), row.slug);
+        db.prepare("UPDATE sessions SET engine='codex-channel' WHERE slug=? AND engine='codex'").run(row.slug);
+        db.prepare("UPDATE thread_overrides SET value='codex-channel' WHERE slug=? AND kind='engine' AND value='codex'").run(row.slug);
+        for (const schedule of db.prepare("SELECT id, data FROM schedules WHERE channel_id=?").all(meta.channelId || "")) {
+          let data;
+          try { data = JSON.parse(schedule.data); } catch { continue; }
+          if (data?.engine !== "codex") continue;
+          db.prepare("UPDATE schedules SET data=? WHERE id=?").run(JSON.stringify({ ...data, engine: "codex-channel" }), schedule.id);
+        }
+      }
+    },
+  },
+  {
+    version: 54,
+    up(db) {
+      // Only the admitted /fork creation path records ownership of a bot-authored root.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN fork_source_ts TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN fork_bot_user_id TEXT NOT NULL DEFAULT ''");
+    },
+  },
+  {
+    version: 55,
+    up(db) {
+      db.exec(`
+        CREATE TABLE voice_calls (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          started_ms INTEGER NOT NULL,
+          ended_ms INTEGER NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          cost_usd REAL NOT NULL,
+          model TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          threads TEXT NOT NULL
+        );
+        CREATE INDEX idx_voice_calls_owner ON voice_calls(owner_id, team_id, started_ms DESC, id DESC);
+      `);
+    },
+  },
+  {
+    version: 56,
+    up(db) {
+      // Visibility belongs to each participant; starter_id remains the completion authority.
+      db.exec(`
+        CREATE TABLE slack_thread_participants (
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          hidden_ms INTEGER NOT NULL DEFAULT 0,
+          last_own_message_ts TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY(channel_id, thread_ts, user_id),
+          FOREIGN KEY(channel_id, thread_ts) REFERENCES slack_threads(channel_id, thread_ts) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_slack_thread_participants_user ON slack_thread_participants(user_id, channel_id, thread_ts);
+        INSERT INTO slack_thread_participants(channel_id,thread_ts,user_id,last_own_message_ts)
+          SELECT channel_id,thread_ts,starter_id,thread_ts FROM slack_threads WHERE starter_id!='';
+      `);
+    },
+  },
+  {
+    version: 57,
+    up(db) {
+      // Only a successfully created voice-call root can attribute its bot message to a caller.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN voice_bot_user_id TEXT NOT NULL DEFAULT ''");
+    },
+  },
+  {
+    // Activity sessions survive a gateway restart. Only the sha256 of the cookie secret is kept;
+    // a passkey session lives 30 days, a Slack-link or admin hand-off session 12 hours.
+    version: 58,
+    up(db) {
+      db.exec(`
+        CREATE TABLE activity_sessions (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          credential_id TEXT NOT NULL DEFAULT '',
+          admin_auth TEXT NOT NULL DEFAULT '',
+          cookie_hash TEXT NOT NULL,
+          csrf TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_activity_sessions_owner ON activity_sessions(owner_id, created_at);
+        CREATE INDEX idx_activity_sessions_expiry ON activity_sessions(expires_at);
+      `);
+    },
+  },
+  {
+    version: 59,
+    up(db) {
+      // Automatic completion dismissal is personal and separate from an explicit Hide.
+      db.exec(`
+        ALTER TABLE slack_thread_participants ADD COLUMN dismissed_ms INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE slack_threads ADD COLUMN completion_reopened_ms INTEGER NOT NULL DEFAULT 0;
+        UPDATE slack_threads SET completion_reopened_ms=ABS(done_ms) WHERE done_ms<0;
+        UPDATE slack_thread_participants SET dismissed_ms=COALESCE((
+          SELECT done_ms FROM slack_threads t
+          WHERE t.channel_id=slack_thread_participants.channel_id
+            AND t.thread_ts=slack_thread_participants.thread_ts
+            AND t.starter_id=slack_thread_participants.user_id AND t.done_ms>0
+        ),0);
+      `);
+    },
+  },
+  {
+    version: 60,
+    up(db) {
+      // Non-Slack Activity uses canonical session keys, never native reply addresses.
+      db.exec(`
+        CREATE TABLE platform_threads (
+          channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, platform TEXT NOT NULL,
+          slug TEXT NOT NULL, starter_id TEXT NOT NULL, title TEXT NOT NULL,
+          updated_ms INTEGER NOT NULL, last_message_ms INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'idle', done_ms INTEGER NOT NULL DEFAULT 0,
+          later_ms INTEGER NOT NULL DEFAULT 0, error_ms INTEGER NOT NULL DEFAULT 0,
+          completion_reopened_ms INTEGER NOT NULL DEFAULT 0,
+          source_url TEXT NOT NULL DEFAULT '', agent_engaged INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY(channel_id,thread_ts)
+        );
+        CREATE TABLE platform_thread_participants (
+          channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, user_id TEXT NOT NULL,
+          hidden_ms INTEGER NOT NULL DEFAULT 0, dismissed_ms INTEGER NOT NULL DEFAULT 0,
+          last_own_message_ms INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY(channel_id,thread_ts,user_id),
+          FOREIGN KEY(channel_id,thread_ts) REFERENCES platform_threads(channel_id,thread_ts) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_platform_thread_participants_user ON platform_thread_participants(user_id,channel_id,thread_ts);
+        CREATE TABLE platform_thread_messages (
+          channel_id TEXT NOT NULL, message_id TEXT NOT NULL, thread_ts TEXT NOT NULL,
+          message_ms INTEGER NOT NULL,
+          PRIMARY KEY(channel_id,message_id),
+          FOREIGN KEY(channel_id,thread_ts) REFERENCES platform_threads(channel_id,thread_ts) ON DELETE CASCADE
+        );
+      `);
+    },
+  },
+  {
+    version: 61,
+    up(db) {
+      // Old reaction-only completion has no actor timestamp. Reconcile it once per person;
+      // already dismissed or reopened work must never be archived by that old check again.
+      db.exec(`
+        ALTER TABLE slack_thread_participants ADD COLUMN historical_completion_checked INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE slack_threads ADD COLUMN historical_completion_marker_user TEXT NOT NULL DEFAULT '';
+        UPDATE slack_thread_participants AS p SET historical_completion_checked=0
+        WHERE EXISTS (
+          SELECT 1 FROM slack_threads t WHERE t.channel_id=p.channel_id AND t.thread_ts=p.thread_ts
+            AND (t.done_ms>0 OR (t.root_done=1 AND (t.done_ms>=0 OR t.root_reaction_ms>ABS(t.done_ms))))
+        );
+        UPDATE slack_thread_participants AS p SET dismissed_ms=MAX(dismissed_ms,COALESCE((
+          SELECT f.done_ms FROM followup_done f JOIN slack_threads t
+            ON f.thread_key=t.channel_id || '::' || t.thread_ts
+          WHERE t.channel_id=p.channel_id AND t.thread_ts=p.thread_ts AND f.user_id=p.user_id
+            AND (t.done_ms>0 OR (t.root_done=1 AND (t.done_ms>=0 OR t.root_reaction_ms>ABS(t.done_ms))))
+            AND f.done_ms>t.completion_reopened_ms
+            AND f.done_ms>CAST(CAST(p.last_own_message_ts AS REAL)*1000 AS INTEGER)
+        ),0));
+        UPDATE slack_thread_participants SET historical_completion_checked=1
+        WHERE dismissed_ms>0 OR EXISTS (
+          SELECT 1 FROM followup_done f WHERE f.user_id=slack_thread_participants.user_id
+            AND f.thread_key=slack_thread_participants.channel_id || '::' || slack_thread_participants.thread_ts
+        ) OR EXISTS (
+          SELECT 1 FROM slack_threads t
+          WHERE t.channel_id=slack_thread_participants.channel_id
+            AND t.thread_ts=slack_thread_participants.thread_ts
+            AND (t.completion_reopened_ms>0 OR t.done_ms<0)
+        );
+      `);
+    },
+  },
+  {
+    version: 62,
+    up(db) {
+      db.exec(`
+        CREATE TABLE user_devices (
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, token TEXT NOT NULL,
+          bundle_id TEXT NOT NULL, environment TEXT NOT NULL, name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL, last_seen_ms INTEGER NOT NULL,
+          UNIQUE(token,bundle_id,environment)
+        );
+        CREATE INDEX idx_user_devices_owner ON user_devices(owner_id);
+        CREATE TABLE incoming_calls (
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL, token_hash TEXT NOT NULL, title TEXT NOT NULL,
+          status TEXT NOT NULL, created_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL,
+          call_id TEXT NOT NULL DEFAULT '', notified INTEGER NOT NULL DEFAULT 0, notice_claim_ms INTEGER NOT NULL DEFAULT 0, ring_ms INTEGER NOT NULL
+        );
+        CREATE INDEX idx_incoming_calls_owner ON incoming_calls(owner_id, created_ms);
+      `);
+    },
+  },
+  {
+    version: 63,
+    up(db) {
+      // Retire the built-in Toolbox credentials in persisted records. Keep this field list
+      // fixed: future retirements append migrations rather than changing history.
+      for (const [table, idColumn] of [["users", "user_id"], ["channel_meta", "slug"]]) {
+        const save = db.prepare(`UPDATE ${table} SET data = ? WHERE ${idColumn} = ?`);
+        for (const row of db.prepare(`SELECT ${idColumn} AS id, data FROM ${table}`).all()) {
+          let record;
+          try { record = JSON.parse(row.data); } catch { continue; }
+          if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+          if (!["toolboxToken", "toolboxTokenLabel"].some(key => Object.hasOwn(record, key))) continue;
+          delete record.toolboxToken;
+          delete record.toolboxTokenLabel;
+          save.run(JSON.stringify(record), row.id);
+        }
+      }
+    },
+  },
+  {
+    // Admin dashboard sessions survive a gateway restart. Only the sha256 of the cookie token is
+    // kept; every use still re-checks the account, its auth version and the sign-in method.
+    version: 64,
+    up(db) {
+      db.exec(`
+        CREATE TABLE admin_sessions (
+          token_hash TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          auth_version INTEGER NOT NULL,
+          bootstrap INTEGER NOT NULL DEFAULT 0,
+          method TEXT NOT NULL,
+          password_fingerprint TEXT NOT NULL DEFAULT '',
+          password_slack_version INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          last_seen_at INTEGER NOT NULL,
+          authenticated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_admin_sessions_created ON admin_sessions(created_at);
+      `);
+    },
+  },
+  {
+    // ROI inputs that have no row of their own to live on (src/gateway/roi.js): an API source
+    // (kind 'api', its conversation + source id), a skill (kind 'skill', the slug) and the
+    // gateway's default hourly rate (kind 'default'). A schedule keeps its ROI on its own record.
+    version: 65,
+    up(db) {
+      db.exec(`
+        CREATE TABLE roi_assignments (
+          kind          TEXT NOT NULL,
+          channel_id    TEXT NOT NULL DEFAULT '',
+          ref           TEXT NOT NULL,
+          minutes_saved REAL NOT NULL DEFAULT 0,
+          hourly_rate   REAL NOT NULL DEFAULT 0,
+          updated_at    INTEGER NOT NULL,
+          updated_by    TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (kind, channel_id, ref)
+        );
       `);
     },
   },

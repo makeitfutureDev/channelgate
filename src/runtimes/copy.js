@@ -86,8 +86,9 @@ export function walkFiles(root, prefix = "") {
 export function expandCarryEntry(entry, { sep = path.sep } = {}) {
   const rel = String(entry?.rel || "");
   const depth = carrySegments(rel).length;
+  const ifMissing = entry?.ifMissing === true;
   if (!hasWildcard(rel)) {
-    return existsSync(entry.from) ? [{ from: entry.from, to: entry.to, kind: entry.kind }] : [];
+    return existsSync(entry.from) ? [{ from: entry.from, to: entry.to, kind: entry.kind, ifMissing }] : [];
   }
   const [fromRoot] = splitCarryPath(entry.from, depth, sep);
   const [toRoot] = splitCarryPath(entry.to, depth, sep);
@@ -114,7 +115,7 @@ export function expandCarryEntry(entry, { sep = path.sep } = {}) {
     .filter((abs) => existsSync(abs))
     .map((abs) => {
       const [, tail] = splitCarryPath(abs, depth, sep);
-      return { from: abs, to: path.join(toRoot, tail), kind: entry.kind };
+      return { from: abs, to: path.join(toRoot, tail), kind: entry.kind, ifMissing };
     });
 }
 
@@ -124,9 +125,13 @@ export function expandCarryEntries(entries = []) {
   return out;
 }
 
-// Copy one already-expanded pair. Returns how many FILES it wrote.
-export function copyCarryPair({ from, to, kind }) {
+// Copy one already-expanded pair. Returns how many FILES it wrote. `ifMissing` is the one
+// exception to overwrite: a file the destination ALREADY has is left alone — the lineage sources a
+// forked session depends on (session-carry.js) may be live on the receiving side, and a rollout is
+// append-only, so the copy there already holds the prefix the fork points into.
+export function copyCarryPair({ from, to, kind, ifMissing = false }) {
   if (!existsSync(from)) return 0;
+  if (ifMissing && kind !== "dir" && existsSync(to)) return 0;
   if (kind === "dir") {
     if (!statSync(from).isDirectory()) return 0;
     mkdirSync(to, { recursive: true });

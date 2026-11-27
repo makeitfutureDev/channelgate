@@ -2,14 +2,13 @@
 // containment, constant-time password compare, which client a per-IP limiter counts against,
 // per-IP login backoff, and the MCP `match` shape-check. Kept as small standalone functions (unit-tested in test/web-security.test.js) —
 // the Express wiring lives in auth.js / app.js / routes/admin.js.
-import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import { classifyAddress } from "./ip-policy.js";
 export { classifyAddress } from "./ip-policy.js";
-import { getSettings } from "../config/settings.js";
+import { getSettings, getTrustProxy } from "../config/settings.js";
 
 // ── Bind address ────────────────────────────────────────────────────────────────
 // The address the admin web server listens on. Loopback by default — LAN exposure must be a
@@ -150,48 +149,11 @@ export async function assertPublicHttpUrl(value, opts = {}) {
   return (await resolvePublicHttpUrl(value, opts)).url;
 }
 
-// ── Admin password hashing ──────────────────────────────────────────────────────
-// The admin password used to sit in settings.json in cleartext, so anyone who could read that
-// file (or any endpoint that echoes it) had the credential itself rather than a verifier. Stored
-// as scrypt now: "scrypt$<saltB64>$<hashB64>". Async so a login never blocks the event loop the
-// Slack side is using.
-const SCRYPT = { N: 16_384, r: 8, p: 1, keylen: 32 };
-const SCRYPT_PREFIX = "scrypt$";
-
-const scryptAsync = (pw, salt) =>
-  new Promise((resolve, reject) => {
-    crypto.scrypt(pw, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p }, (err, key) => (err ? reject(err) : resolve(key)));
-  });
-
-export function isHashedPassword(stored) {
-  return typeof stored === "string" && stored.startsWith(SCRYPT_PREFIX);
-}
-
-export async function hashPassword(pw) {
-  const salt = crypto.randomBytes(16);
-  const key = await scryptAsync(String(pw), salt);
-  return `${SCRYPT_PREFIX}${salt.toString("base64")}$${key.toString("base64")}`;
-}
-
-// Verify against either format. A stored value that isn't a scrypt string is a legacy cleartext
-// password — still accepted (so an existing install keeps working) and compared in constant time;
-// callers upgrade it to a hash on the next successful login.
-export async function verifyPassword(pw, stored) {
-  if (!pw || !stored) return false;
-  if (!isHashedPassword(stored)) return timingSafeEqualStr(String(pw), String(stored));
-
-  const [, saltB64, hashB64] = String(stored).split("$");
-  if (!saltB64 || !hashB64) return false;
-  try {
-    const key = await scryptAsync(String(pw), Buffer.from(saltB64, "base64"));
-    const expected = Buffer.from(hashB64, "base64");
-    // Both are fixed-length scrypt outputs, so a length mismatch means a malformed record, not a
-    // guess of the wrong length — no timing signal to protect there.
-    return key.length === expected.length && crypto.timingSafeEqual(key, expected);
-  } catch {
-    return false;
-  }
-}
+// ── Admin password hashing + constant-time compare ──────────────────────────────
+// Implemented in the dependency-free leaf ./password-hash.js (scrypt "scrypt$<salt>$<hash>", the
+// legacy cleartext fallback, the digest-based compare) and re-exported here, so the web layer
+// keeps one import site while the hash helper script and the boot posture check stay light.
+export { timingSafeEqualStr, isHashedPassword, hashPassword, verifyPassword } from "./password-hash.js";
 
 // ── Allowlisted filesystem root ─────────────────────────────────────────────────
 // The one root the admin API may browse (`/api/fs/list`) and point a channel's workDir at.
@@ -205,6 +167,44 @@ export function allowedFsRoot() {
   } catch {
     return path.resolve(root);
   }
+}
+
+// Additional allowlisted roots (UI-managed `fsRoots`, Settings → Container runtime): host
+// directories OUTSIDE the primary root — a mounted file server under /mnt, a shared /srv/projects
+// — that an admin may point a channel's working folder or an additional folder at. Each entry is
+// an absolute, existing directory, realpath'd like the primary root; anything else is dropped
+// here rather than trusted. The primary root always comes first.
+export function allowedFsRoots() {
+  const primary = allowedFsRoot();
+  const s = getSettings();
+  const extras = Array.isArray(s.fsRoots) ? s.fsRoots : [];
+  const out = [primary];
+  for (const raw of extras) {
+    const value = String(raw || "").trim();
+    if (!value || !path.isAbsolute(value)) continue;
+    let real;
+    try {
+      real = realpathSync(value);
+    } catch {
+      continue;
+    }
+    if (!out.includes(real)) out.push(real);
+  }
+  return out;
+}
+
+// Which allowed root contains `target` (already resolved), or "" when none does.
+export function allowedRootFor(target, roots = allowedFsRoots()) {
+  return roots.find((root) => pathWithin(root, target)) || "";
+}
+
+// resolveWithinRoot over every allowed root: the real path when it sits inside ANY of them.
+export function resolveWithinRoots(candidate, roots = allowedFsRoots()) {
+  for (const root of roots) {
+    const real = resolveWithinRoot(root, candidate);
+    if (real) return real;
+  }
+  return null;
 }
 
 // Is `target` equal to or inside `root`? Pure prefix logic via path.relative — separator-aware,
@@ -229,42 +229,29 @@ export function resolveWithinRoot(root, candidate) {
   return pathWithin(root, real) ? real : null;
 }
 
-// ── Constant-time compare ───────────────────────────────────────────────────────
-// Compare via fixed-size SHA-256 digests: timingSafeEqual needs equal-length inputs, and a raw
-// length pre-check would leak when a guess matches the secret's length. Digests never do.
-export function timingSafeEqualStr(a, b) {
-  const da = crypto.createHash("sha256").update(String(a)).digest();
-  const db = crypto.createHash("sha256").update(String(b)).digest();
-  return crypto.timingSafeEqual(da, db);
-}
-
 // ── Which client is a per-IP limiter counting? ──────────────────────────────────
 // The daemon binds loopback and is reached from the internet through a tunnel or reverse proxy on
 // this same host (cloudflared, nginx), so EVERY public caller arrives on a 127.0.0.1 socket and
 // `req.ip` says so. Keying a backoff on that address puts the whole internet in ONE bucket: a
-// handful of bad approval tokens from anywhere locks out every legitimate approval link, and one
-// attacker's failed logins locks out the admin. That is not a per-IP limiter, it is a kill switch
-// anybody can pull.
+// handful of bad approval tokens from anywhere delays every legitimate approval link, and one
+// attacker's failed logins delay the admin.
 //
-// The forwarding headers carry the real client, and they are trustworthy exactly when the socket
-// itself is loopback: only the proxy in front and other processes on this host can open one, and
-// both are already inside the trust boundary. From a NON-loopback socket the header is whatever
-// the client typed, so it is ignored — unless the operator declares a trusted proxy elsewhere on
-// the network with CG_TRUST_PROXY.
-//
-// `CF-Connecting-IP` is preferred over `X-Forwarded-For`: Cloudflare's edge OVERWRITES it with the
-// connecting address, while the first XFF hop is client-supplied whenever the proxy appends rather
-// than replaces (so a caller through the tunnel can rotate it to shed its own backoff — an evasion,
-// never a way to attribute failures to someone else's bucket, since a spoofed value only ever
-// lengthens that caller's own runway).
+// The forwarding headers carry the real client, but a header is only as trustworthy as whoever
+// wrote it. A loopback socket proves nothing about that: the proxy opens one, and so does every
+// other process on the host and every tunnel, and whatever a proxy does not overwrite is passed
+// through exactly as the client typed it. Believing a header because the socket was loopback let
+// a caller choose a fresh bucket per request (unlimited guessing) or charge its failures to
+// somebody else's address. So a header is believed only when the operator DECLARED which proxy
+// sets it (`trustProxy`, see clientKey below), and only the part that proxy itself wrote.
 //
 // Only a syntactically valid address is honoured; anything else falls back to the socket, which
 // also caps what a header can put in the limiter's map.
 //
-// This is deliberately a helper rather than Express's app-wide `trust proxy`: it fixes the two
-// call sites that key on an address (this file's login backoff via auth.js, and the approval-link
-// router) without also re-pointing `req.secure` / `req.protocol` / `req.hostname` at
-// client-supplied headers, and Express's setting knows nothing about `CF-Connecting-IP`.
+// This is deliberately a helper rather than Express's app-wide `trust proxy`: it fixes the call
+// sites that key on an address (the login backoff via auth.js, the approval-link router, the
+// passkey and skills-token limiters) without also re-pointing `req.secure` / `req.protocol` /
+// `req.hostname` at client-supplied headers, and Express's setting knows nothing about
+// `CF-Connecting-IP`.
 const MAX_ADDRESS_LEN = 64;
 
 function normalizeAddress(value) {
@@ -277,14 +264,24 @@ function normalizeAddress(value) {
   return isIP(host) ? host.toLowerCase() : "";
 }
 
-export function clientKey(req) {
+// The identity a per-client limiter buckets on. A forwarded-client header is believed ONLY when
+// the operator declared which proxy sets it (Settings → Connection → "Behind a reverse proxy",
+// `trustProxy` / CG_TRUST_PROXY): "cloudflare" reads CF-Connecting-IP (cloudflared overwrites it
+// on every request); "xff" reads the LAST hop of X-Forwarded-For, the one the proxy appended —
+// the FIRST hop is whatever the client typed. With nothing declared the socket address is the
+// client, whatever headers arrive: a loopback socket is NOT evidence of a proxy (any process on
+// the host, or any tunnel, opens one), and trusting it let a caller pick a fresh backoff bucket
+// per request by writing its own header.
+export function clientKey(req, mode = getTrustProxy()) {
   const socketIp = String(req?.socket?.remoteAddress || "");
   const fallback = socketIp || String(req?.ip || "") || "unknown";
-  if (!isLoopbackHost(socketIp) && !process.env.CG_TRUST_PROXY) return fallback;
   const headers = req?.headers || {};
-  const forwarded =
-    normalizeAddress(headers["cf-connecting-ip"]) || normalizeAddress(String(headers["x-forwarded-for"] || "").split(",")[0]);
-  return forwarded || fallback;
+  if (mode === "cloudflare") return normalizeAddress(headers["cf-connecting-ip"]) || fallback;
+  if (mode === "xff") {
+    const hops = String(headers["x-forwarded-for"] || "").split(",").map((hop) => hop.trim()).filter(Boolean);
+    return (hops.length ? normalizeAddress(hops[hops.length - 1]) : "") || fallback;
+  }
+  return fallback;
 }
 
 // ── Login backoff ───────────────────────────────────────────────────────────────
@@ -293,25 +290,45 @@ export function clientKey(req) {
 // a TTL sweep — state resets on restart, like the admin session set. `now` is injectable for tests.
 // The caller decides what an "IP" is; both callers use clientKey() above, so the bucket is the real
 // client rather than the loopback proxy hop every remote request shares.
-export function createLoginLimiter({ freeAttempts = 3, baseDelayMs = 2_000, maxDelayMs = 300_000, ttlMs = 3_600_000 } = {}) {
+//
+// A second, key-independent bound: once `globalMaxFailures` failures land within `globalWindowMs`
+// across ALL keys, every attempt waits `maxDelayMs` until the window drains. Per-key buckets stop
+// one client guessing fast; this stops a caller that can mint a fresh bucket per request (a
+// botnet, or a forged header where a proxy is misdeclared) from turning that into unlimited
+// online guessing — and bounds the scrypt work an unauthenticated caller can make the daemon do.
+export function createLoginLimiter({
+  freeAttempts = 3, baseDelayMs = 2_000, maxDelayMs = 300_000, ttlMs = 3_600_000,
+  globalMaxFailures = 50, globalWindowMs = 600_000,
+} = {}) {
   const perIp = new Map(); // ip → { fails, last }
+  const recent = []; // timestamps of every failure inside the global window, oldest first
   const prune = (now) => {
     for (const [ip, e] of perIp) if (now - e.last > ttlMs) perIp.delete(ip);
+    while (recent.length && now - recent[0] >= globalWindowMs) recent.shift();
   };
   return {
     // Milliseconds this IP must still wait before its next attempt (0 = allowed now).
     retryAfterMs(ip, now = Date.now()) {
       prune(now);
+      let wait = 0;
+      if (globalMaxFailures > 0 && recent.length >= globalMaxFailures) {
+        // Hold until enough of the window has drained for the count to drop back under the cap,
+        // never longer than the per-key maximum delay.
+        const releaseAt = recent[recent.length - globalMaxFailures] + globalWindowMs;
+        wait = Math.min(maxDelayMs, Math.max(0, releaseAt - now));
+      }
       const e = perIp.get(ip);
-      if (!e || e.fails < freeAttempts) return 0;
+      if (!e || e.fails < freeAttempts) return wait;
       const delay = Math.min(baseDelayMs * 2 ** (e.fails - freeAttempts), maxDelayMs);
-      return Math.max(0, e.last + delay - now);
+      return Math.max(wait, e.last + delay - now);
     },
     recordFailure(ip, now = Date.now()) {
       const e = perIp.get(ip) ?? { fails: 0, last: now };
       e.fails += 1;
       e.last = now;
       perIp.set(ip, e);
+      recent.push(now);
+      if (recent.length > Math.max(globalMaxFailures, 1) * 4) recent.splice(0, recent.length - Math.max(globalMaxFailures, 1) * 4);
     },
     recordSuccess(ip) {
       perIp.delete(ip);

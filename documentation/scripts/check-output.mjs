@@ -17,9 +17,13 @@ for (const slug of pages) {
   assert.ok(html.includes(`href="https://channelgate.dev${route}"`), `Missing canonical: ${route}`);
   assert.ok(html.includes('starlight'), `Missing Starlight layout: ${route}`);
   assert.ok(html.includes('aria-label="Main"'), `Missing persistent sidebar: ${route}`);
+  assert.ok(html.includes('href="/docs/favicon.svg"'), `Missing docs favicon link: ${route}`);
   assert.equal([...html.matchAll(/<h1(?:\s|>)/g)].length, 1, `Expected one page heading: ${route}`);
   htmlByPath.set(route, html);
 }
+// Starlight emits this link by default, but does not provide the public asset.
+const favicon = await readFile(resolve(dist, 'favicon.svg'), 'utf8');
+assert.match(favicon, /<svg\b[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
 let internalLinks = 0;
 for (const [route, html] of htmlByPath) {
   for (const [, href] of html.matchAll(/<a\b[^>]*\bhref="([^"]+)"/g)) {

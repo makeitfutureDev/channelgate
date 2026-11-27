@@ -26,3 +26,21 @@ you need to look someone up (their exact display name, or a person in another ch
 `composio-user` (the requester's Slack) or `composio-agent` (your own Slack) following the identity
 rules in `SKILL.md` → “Tool identities”. Otherwise write plain `@Name` and let the gateway
 resolve it.
+
+## Automatic reply mentions
+
+Automatic requester tags follow the person's **Mention me in replies** setting. New users start
+off; existing users retain on until they opt out. Users can toggle this in Slack App Home →
+**Help & settings**, or ask you to use `set_my_reply_mentions` with `enabled: true` or `false`.
+The tool changes only the authenticated requester and persists across conversations; it is a
+personal setting, not a channel instruction or memory fact. Admins can also change it in Users.
+Direct messages never add an automatic tag. Explicit @Name mentions in an answer still work.
+
+## Starting on voice clips without a mention (Slack)
+
+A person who turns on **Start on voice clips in agent threads** (off by default) can reply with a
+voice clip in a Slack thread where you answered last, and you start without an @mention or 🤖.
+It never applies to top-level channel messages, to a clip whose text mentions someone, or to a
+thread where another agent spoke after you. Users toggle it in Slack App Home → **Help &
+settings**, on the Activity dashboard → Settings, or by asking you to use
+`set_my_voice_auto_start` with `enabled: true` or `false` (it changes only the requester).

@@ -24,11 +24,11 @@ backend.prepareTarget = (base) => {
 await useFakeRuntime(backend);
 const { setUser, upsertChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
-const { setThreadModel, setThreadClean } = await import("../src/gateway/thread-engine.js");
+const { setThreadModel, setThreadEffort, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { runMessage } = await import("../src/gateway/run.js");
 
 async function fixture(name, engine, model, extra = {}) {
-  saveSettings({ engine, defaultClaudeModel: "sonnet", defaultCodexModel: "gpt-5.6-sol", engineFallback: true,
+  saveSettings({ defaultClaudeEffort: "", defaultCodexEffort: "", engine, defaultClaudeModel: "sonnet", defaultCodexModel: "gpt-5.6-sol", engineFallback: true,
     engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0, composioMode: "personal", containerFullAccessHome: false });
   const authorId = `U_${name}`;
   const channelId = `C_${name}`;
@@ -249,7 +249,7 @@ test("clean runs retain only safe runtime facts, and an unspecified model stays 
   await runMessage({ ...context, text: "Tell me what is inspectable." });
   const [call] = attempts(start);
   assert.ok(call);
-  assert.deepEqual(metadata(call), { engine: "codex", configured_model: null, configured_effort: null, session: "fresh" });
+  assert.deepEqual(metadata(call), { engine: "codex", configured_model: null, configured_effort: "medium", session: "fresh" });
   const prompt = call.args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
   assert.doesNotMatch(prompt, /Channel memory|Composio identities|Current personal skill grants/);
   assert.match(prompt, /null means.*not exposed/i);
@@ -277,8 +277,8 @@ test("cross-engine fallback and its model retry use their own engine, model, eff
   assert.equal(calls.length, 3);
   for (const call of calls) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
   assert.deepEqual(metadata(calls[0]), { engine: "claude", configured_model: "sonnet", configured_effort: "high", session: "fresh" });
-  assert.deepEqual(metadata(calls[1]), { engine: "codex", configured_model: "gpt-5.6", configured_effort: null, session: "fresh" });
-  assert.deepEqual(metadata(calls[2]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: null, session: "fresh" });
+  assert.deepEqual(metadata(calls[1]), { engine: "codex", configured_model: "gpt-5.6", configured_effort: "medium", session: "fresh" });
+  assert.deepEqual(metadata(calls[2]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: "medium", session: "fresh" });
   const followupStart = backend.calls.spawn.length;
   await runMessage({ ...context, text: "CODEX_STUB_REJECT_MODEL" });
   const followup = attempts(followupStart);
@@ -310,3 +310,88 @@ test("a lost resumed session gets fresh metadata when the gateway heals it", asy
   assert.equal(metadata(calls[0]).session, "fresh");
   assert.ok(calls[0].args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
 });
+
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: default effort reaches fresh/resumed flags and respects every override layer`, async () => {
+    const context = await fixture(`DEFAULT_EFFORT_${engine}`, engine, "", { effort: "" });
+    const key = engine === "claude" ? "defaultClaudeEffort" : "defaultCodexEffort";
+    saveSettings({ [key]: "low" });
+    const start = backend.calls.spawn.length;
+    const results = [];
+    results.push(await runMessage({ ...context, text: "Report your configured effort." }));
+    saveSettings({ [key]: "high" });
+    results.push(await runMessage({ ...context, text: "And now?" }));
+    await patchChannelMeta(context.entry.slug, { effort: "medium" });
+    results.push(await runMessage({ ...context, text: "Use the channel setting." }));
+    await setThreadEffort(context.entry.slug, context.threadKey, "low");
+    results.push(await runMessage({ ...context, text: "Use the thread setting." }));
+    results.push(await runMessage({ ...context, text: "Use this request setting.", overrides: { effort: "high" } }));
+    await setThreadEffort(context.entry.slug, context.threadKey, "");
+    await patchChannelMeta(context.entry.slug, { effort: "" });
+    saveSettings({ [key]: "" });
+    results.push(await runMessage({ ...context, text: "Nothing chosen: the harness fallback effort." }));
+    const calls = attempts(start);
+    assert.equal(calls.length, 6);
+    // With nothing chosen anywhere the run still gets a concrete effort (fallbackEffortFor), passed
+    // as a flag, so every status names the effort the run really has.
+    const expected = ["low", "high", "medium", "low", "high", engine === "claude" ? "high" : "medium"];
+    assert.deepEqual(calls.map((call) => metadata(call).configured_effort), expected);
+    assert.deepEqual(results.map((result) => result.effort || null), expected, "reply results retain each attempt effort");
+    for (let i = 0; i < calls.length; i++) {
+      const call = calls[i];
+      if (engine === "claude") {
+        assert.equal(call.args.includes("--effort"), Boolean(expected[i]));
+        if (expected[i]) assert.equal(call.args[call.args.indexOf("--effort") + 1], expected[i]);
+      } else {
+        const flag = call.args.find((arg) => String(arg).startsWith("model_reasoning_effort="));
+        assert.equal(flag, expected[i] ? `model_reasoning_effort="${expected[i]}"` : undefined);
+      }
+    }
+    assert.equal(metadata(calls[1]).session, "resumed");
+  });
+}
+
+test("failover and its model retry use the destination harness default effort", async () => {
+  const context = await fixture("DEFAULT_EFFORT_FAILOVER", "claude", "gpt-5.6", { effort: "medium", cleanMode: true });
+  saveSettings({ defaultClaudeEffort: "low", defaultCodexEffort: "xhigh" });
+  const start = backend.calls.spawn.length;
+  const result = await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE CODEX_STUB_REJECT_MODEL" });
+  const calls = attempts(start);
+  assert.deepEqual(calls.map((call) => metadata(call).configured_effort), ["medium", "xhigh", "xhigh"]);
+  assert.equal(result.effort, "xhigh", "footer uses the fallback attempt effort");
+});
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: nullable effort inherits the thread while an empty snapshot clears it`, async () => {
+    const model = engine === "claude" ? "sonnet" : "gpt-5.6-sol";
+    const context = await fixture(`NULLABLE_EFFORT_${engine}`, engine, model, { effort: "low" });
+    await setThreadEffort(context.entry.slug, context.threadKey, "high");
+    // API admission leaves optional keys undefined in memory; persistence drops those keys.
+    // Queued shortcuts intentionally store an empty string to bypass a later thread pin.
+    const apiOverrides = { model, engine: undefined, effort: undefined, mode: undefined };
+    const cases = [
+      [{ model }, "high"],
+      [apiOverrides, "high"],
+      [JSON.parse(JSON.stringify(apiOverrides)), "high"],
+      [{ model, effort: null }, "high"],
+      [{ model, effort: "" }, "low"],
+      [JSON.parse(JSON.stringify({ model, effort: "" })), "low"],
+      [{ model, effort: "medium" }, "medium"],
+    ];
+    const start = backend.calls.spawn.length;
+    const results = [];
+    for (const [overrides] of cases) {
+      results.push(await runMessage({ ...context, text: "Report the configured effort.", overrides }));
+    }
+    const calls = attempts(start);
+    assert.equal(calls.length, cases.length);
+    const expected = cases.map(([, effort]) => effort);
+    assert.deepEqual(calls.map((call) => metadata(call).configured_effort), expected);
+    assert.deepEqual(results.map((result) => result.effort), expected);
+    calls.forEach((call, i) => {
+      if (engine === "claude") assert.equal(call.args[call.args.indexOf("--effort") + 1], expected[i]);
+      else assert.ok(call.args.includes(`model_reasoning_effort="${expected[i]}"`));
+    });
+  });
+}

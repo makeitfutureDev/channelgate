@@ -14,7 +14,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 for (const engine of ["claude", "codex"]) {
   test(`Teams ${engine} tags the authenticated requester once after channel/group answers and skips DMs`, async () => {
     const userId = `29:requester-${engine}`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     for (const kind of ["channel", "group", "dm"]) {
       for (const [failEdit, content] of [[false, "Answer."], [true, "Answer."], [false, "Answer line.\n".repeat(1000)], [true, "Answer line.\n".repeat(1000)]]) {
         const wire = [];
@@ -70,7 +70,8 @@ for (const engine of ["claude", "codex"]) {
     await setUser(`details-${engine}`, { approved: true });
     saveSettings({ showMessageCost: false });
     const result = { content: "Answer.", engine, model: engine === "claude" ? "opus[1m]" : "gpt-6.1-sol", durationMs: 77000,
-      usage: { input_tokens: 920200, output_tokens: 2000 }, costUSD: 0.31, runtime: { image: "channelgate/runtime:latest" } };
+      usage: { input_tokens: 920200, output_tokens: 2000 }, contextTokens: 120_000, contextWindow: 1_000_000,
+      costUSD: 0.31, runtime: { image: "channelgate/runtime:latest" } };
     for (const failEdit of [false, true]) {
       const sent = []; const edited = [];
       const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
@@ -95,7 +96,8 @@ for (const engine of ["claude", "codex"]) {
       assert.equal(stats.size, "Small");
       assert.equal(stats.isSubtle, true);
       assert.equal(stats.wrap, true);
-      assert.match(stats.text, /77s · 920\.2k\/2k/);
+      assert.match(stats.text, /ctx: 120k \/ 1M, 12%$/);
+      assert.doesNotMatch(stats.text, /77s|920\.2k/);
       assert.doesNotMatch(stats.text, /channelgate\/runtime:latest/);
       assert.doesNotMatch(stats.text, /\$/);
       assert.equal(sent.length, failEdit ? 2 : 1);
@@ -122,7 +124,7 @@ test("Google Chat progress exposes current model and app names, coalesces bursts
   progress.event({ kind: "tool_result", name: "mcp__composio-agent__GMAIL_FETCH_EMAILS", status: "failed", result: "secret-output" });
   t.mock.timers.tick(3000); await flush();
   assert.equal(edits.length, 3);
-  assert.match(edits[2].text, /gpt-6\.1-sol · Error in composio-agent · GMAIL_FETCH_EMAILS/);
+  assert.match(edits[2].text, /gpt-6\.1-sol \(medium\) · Error in composio-agent · GMAIL_FETCH_EMAILS/);
   assert.doesNotMatch(edits[2].text, /secret/);
   progress.event({ kind: "thinking", summary: "secret-reasoning" });
   t.mock.timers.tick(60000); await flush(); assert.equal(edits.length, 3, "only one write in flight");
@@ -139,10 +141,12 @@ test("Google Chat quiet progress keeps the model, heartbeat and aliased subagent
   const edits = [];
   const progress = createConversationProgress({ adapter: platformOr("googlechat"), message: { rawConversationId: "wire" }, placeholder: { messageId: "123" }, connector: { edit: async (body) => edits.push(body) } });
   progress.runtime({ engine: "codex" }); await flush();
+  progress.event({ kind: "runtime_model", model: "gpt-6.1-sol" });
   progress.event({ kind: "agent_activity", id: "a", aliasIds: ["b"], status: "running" });
   progress.event({ kind: "agent_activity", id: "b", status: "running" });
   t.mock.timers.tick(30000); await flush();
-  assert.match(edits.at(-1).text, /Codex CLI default/);
+  assert.match(edits.at(-1).text, /gpt-6\.1-sol/);
+  assert.doesNotMatch(edits.at(-1).text, /default/);
   assert.match(edits.at(-1).text, /30s elapsed.*1 subagent\(s\) running\. Still connected/);
   progress.event({ kind: "agent_activity", id: "b", status: "completed" });
   t.mock.timers.tick(3000); await flush();
@@ -153,7 +157,7 @@ test("Google Chat quiet progress keeps the model, heartbeat and aliased subagent
 for (const engine of ["claude", "codex"]) {
   test(`Teams ${engine} leaves only answer, requester and footer after a failed placeholder edit`, async () => {
     const userId = `29:clean-${engine}`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     const visible = new Map(); const calls = []; let sequence = 0;
     const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
       listMembers: async () => [],
@@ -233,7 +237,7 @@ function googleWire({ failPatch = false } = {}) {
 for (const engine of ["claude", "codex"]) {
   test(`Google Chat ${engine} removes the working line when the final edit fails`, async () => {
     const userId = `clean-${engine}@example.com`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     const wire = googleWire({ failPatch: true });
     await createIngest({ connector: wire.connector, log: { error() {} }, run: async () => {
       assert.match([...wire.visible.values()][0].text, /Agent is working/);

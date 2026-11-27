@@ -3,6 +3,9 @@ title: Environment secrets
 description: Provide scoped CLI credentials without pasting them into chat.
 ---
 
+**Enterprise availability.** Organization environment variables require an effective Enterprise license and are excluded from new runtime environments after expiry. Channel and personal environment variables remain available in other tiers with their normal precedence and isolation.
+
+
 Environment secrets make credentials available to permitted tools during a run. They are separate from Composio connected accounts and separate from the gateway's engine authentication settings.
 
 ## Choose the right scope

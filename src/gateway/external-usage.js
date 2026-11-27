@@ -451,18 +451,43 @@ function knownFiles(db, scope, scopeKey, engine) {
 // side that owns the rootless HOME volume does the reading and the two can never drift. Mirrors
 // createCodexUsageReader; the Claude reducer needs its module text the same way.
 let claudeReducerSource;
+
+// A freshly prepared target describes the next container, while hourly usage may inspect an
+// older, still-running one. Only its actual engine-history mount makes the two role views one
+// accounting scope. The function is self-contained because it also runs inside that container.
+export function hasSharedHistoryMount(mountInfo, stateDir, engine) {
+  if (!stateDir || !["claude", "codex"].includes(engine)) return false;
+  const target = `${String(stateDir).replace(/\/+$/, "")}/${engine === "codex" ? "sessions" : "projects"}`;
+  const unescape = (value) => String(value || "").replace(/\\(040|011|012|134)/g, (_match, octal) => String.fromCharCode(parseInt(octal, 8)));
+  return String(mountInfo || "").split("\n").some((line) => {
+    const fields = line.split(" ");
+    return fields.length > 6 && unescape(fields[4]) === target;
+  });
+}
+
+function containerScanSource(source, reducer, engine) {
+  // Reducer template strings may contain a literal NUL separator, which cannot travel in argv.
+  // Escaping it preserves the JavaScript value while keeping this direct exec argument valid.
+  return `${source.replaceAll("\0", "\\u0000")}
+const cgExternalArgs = JSON.parse(process.argv[1]);
+const cgExternalMounts = await (await import("node:fs/promises")).readFile("/proc/self/mountinfo", "utf8");
+const cgExternalShared = (${hasSharedHistoryMount.toString()})(cgExternalMounts, cgExternalArgs.stateDir, ${JSON.stringify(engine)});
+const cgExternalScan = await ${reducer}({ ...cgExternalArgs, known: cgExternalShared ? cgExternalArgs.sharedKnown : cgExternalArgs.known });
+process.stdout.write(JSON.stringify({ ...cgExternalScan, sharedHistory: cgExternalShared }));`;
+}
+
 async function scanInContainer(target, engine, args) {
   if (typeof target?.runtime?.inspectUsage !== "function") throw new Error("runtime cannot inspect usage");
   if (engine === "codex") {
     const source = await readFile(new URL("../engines/codex-usage.js", import.meta.url), "utf8");
     return target.runtime.inspectUsage(target, {
-      source: `${source}\nprocess.stdout.write(JSON.stringify(await reduceCodexUsage(JSON.parse(process.argv[1]))));`,
+      source: containerScanSource(source, "reduceCodexUsage", engine),
       args: { ...args, operation: "external", stateDir: target.container?.codexHome || "" },
     });
   }
   claudeReducerSource ||= readFile(new URL("./claude-usage.js", import.meta.url), "utf8");
   return target.runtime.inspectUsage(target, {
-    source: `${await claudeReducerSource}\nprocess.stdout.write(JSON.stringify(await reduceClaudeUsage(JSON.parse(process.argv[1]))));`,
+    source: containerScanSource(await claudeReducerSource, "reduceClaudeUsage", engine),
     args: { ...args, operation: "scan", stateDir: target.container?.claudeConfigDir || "" },
   });
 }
@@ -478,7 +503,12 @@ async function scanOneScope({ scope, scopeKey, target = null, stateDirs, index, 
     const stateDir = stateDirs[engine];
     if (!stateDir && !target) continue;
     const known = knownFiles(db, scope, scopeKey, engine);
-    const args = { known, skipSessions: skip, limit, sinceMs };
+    const canonicalKey = scope === "container" ? String(target?.slug || scopeKey.replace(/:project-v2$/, "")) : scopeKey;
+    // The inline reducer chooses between these maps using the mounted view it really sees.
+    // Passing canonical bookmarks as `known` based only on the new plan could skip a different,
+    // still-private legacy transcript that happens to use the same session id.
+    const sharedKnown = scope === "container" ? knownFiles(db, scope, canonicalKey, engine) : {};
+    const args = { known, sharedKnown, skipSessions: skip, limit, sinceMs };
     try {
       const scan = target
         ? await scanInContainer(target, engine, args)
@@ -486,6 +516,8 @@ async function scanOneScope({ scope, scopeKey, target = null, stateDirs, index, 
           ? await scanClaudeState(stateDir, args)
           : await scanCodexState(stateDir, args);
       const sessions = Array.isArray(scan?.sessions) ? scan.sessions : [];
+      const shared = scope === "container" && scan?.sharedHistory === true;
+      const writeKey = shared ? canonicalKey : scopeKey;
       // One atomic unit per scope+engine: a scan writes a few hundred rows, and a partially applied
       // batch would leave bookmarks ahead of the rows they claim were recorded — the next pass would
       // then skip work it never actually persisted.
@@ -498,7 +530,25 @@ async function scanOneScope({ scope, scopeKey, target = null, stateDirs, index, 
       db.exec("SAVEPOINT cg_external_scope");
       let saved;
       try {
-        saved = saveScopeSessions(db, { scope, scopeKey, engine, sessions, index, knownIds, sinceMs, now });
+        saved = saveScopeSessions(db, { scope, scopeKey: writeKey, engine, sessions, index, knownIds, sinceMs, now });
+        if (shared) {
+          // Older builds charged a project's copy under :project-v2. Remove only ids actually
+          // observed in this shared view and now represented by its canonical bookmark. Other
+          // historical/private sessions and every host row retain their original accounting.
+          const duplicates = new Set([
+            ...sessions.map((session) => String(session.sessionId || "")),
+            ...(Array.isArray(scan?.unchanged) ? scan.unchanged.map(String) : []),
+          ]);
+          const deleteDuplicate = db.prepare(`DELETE FROM external_usage WHERE scope = 'container' AND scope_key = ? AND engine = ? AND session_id = ?
+            AND EXISTS (SELECT 1 FROM external_usage_files WHERE scope = 'container' AND scope_key = ? AND engine = ? AND session_id = ?)`);
+          const deleteDuplicateBookmark = db.prepare(`DELETE FROM external_usage_files WHERE scope = 'container' AND scope_key = ? AND engine = ? AND session_id = ?
+            AND EXISTS (SELECT 1 FROM external_usage_files WHERE scope = 'container' AND scope_key = ? AND engine = ? AND session_id = ?)`);
+          for (const id of duplicates) {
+            if (!id) continue;
+            deleteDuplicate.run(`${canonicalKey}:project-v2`, engine, id, canonicalKey, engine, id);
+            deleteDuplicateBookmark.run(`${canonicalKey}:project-v2`, engine, id, canonicalKey, engine, id);
+          }
+        }
         db.exec("RELEASE cg_external_scope");
       } catch (error) {
         try {
@@ -513,6 +563,7 @@ async function scanOneScope({ scope, scopeKey, target = null, stateDirs, index, 
         skipped: scan?.skipped?.length || 0,
         total: scan?.total || 0,
         truncated: Boolean(scan?.truncated),
+        ...(shared ? { scopeKey: writeKey, sharedHistory: true } : {}),
         ...saved,
       };
     } catch (error) {

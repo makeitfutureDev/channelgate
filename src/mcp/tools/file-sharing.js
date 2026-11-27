@@ -16,7 +16,7 @@
 // uploads, HubSpot and the rest of the Composio surface in one step.
 import { z } from "zod";
 
-import { effectiveWorkDir } from "../../gateway/folders.js";
+import { channelFileRoot } from "../../gateway/channel-file-root.js";
 import { openConfinedFile } from "../../gateway/confined-file.js";
 import { stageFileForComposio, COMPOSIO_STAGE_MAX_BYTES, COMPOSIO_WORKBENCH_STAGE_MAX_BYTES } from "../../gateway/composio-files.js";
 import { composioUrl } from "../../gateway/mcp-catalog.js";
@@ -32,13 +32,13 @@ import {
   UPLOAD_LINK_MAX_DOWNLOADS,
 } from "../../gateway/public-file-links.js";
 import { getComposioToken } from "../../config/store.js";
-import { getDefaultComposioToken, getPublicFileLinksEnabled, getPublicUrl } from "../../config/settings.js";
+import { getPublicFileLinksEnabled, getPublicUrl } from "../../config/settings.js";
 import { formatBytes } from "../../util/bounded-bytes.js";
 import { logEvent } from "../../util/logger.js";
 import { platformOfConversation } from "../../platforms/ids.js";
 
 function workspaceFor(slug, meta) {
-  return effectiveWorkDir(slug, { ...(meta || {}), _slug: slug });
+  return channelFileRoot(slug, meta);
 }
 
 function clean(error) {
@@ -59,16 +59,14 @@ export function describeDuration(minutes) {
  * Reuses the ONE definition of the identity precedence — `resolveComposioConnections` in run.js,
  * imported lazily so the MCP server does not pull the run orchestrator into every stdio child
  * that never stages a file. The rules it enforces matter here exactly as much as they do when the
- * MCP config is built: a DM has no shared identity, and `composio-agent` falls back to the org
- * default only when the channel has no key of its own.
+ * MCP config is built: a DM has no shared identity, and `composio-agent` is the channel's own key
+ * only — there is no organization default.
  */
 export async function resolveComposioKey({ identity, authorId, meta }) {
   const { resolveComposioConnections } = await import("../../gateway/run.js");
   const resolved = resolveComposioConnections({
     userToken: await getComposioToken(authorId),
     channelToken: meta?.composioToken || "",
-    defaultToken: getDefaultComposioToken(),
-    noOrg: Boolean(meta?.noOrg),
     isDM: Boolean(meta?.isDM || meta?.type === "im"),
   });
   const side = identity === "user" ? resolved.user : resolved.shared;
@@ -118,7 +116,7 @@ export function register(server, ctx) {
             `No Composio API key is available for \`composio-${identity}\` in this conversation (${source}). ` +
             (identity === "user"
               ? "Set yours with set_my_composio_token, then try again."
-              : "An admin sets the channel or organization Composio token in Settings.") +
+              : "An admin sets this channel's Composio token in its Settings.") +
             "\n\nNote: Composio SDK sessions (Enterprise) do not expose a plain key, so staging is unavailable on those.",
           );
         }
@@ -131,7 +129,9 @@ export function register(server, ctx) {
         // blaming the user's key.
         let opened;
         try {
-          opened = await openConfinedFile(workspaceFor(slug, meta), relative);
+          // The requester's own Composio account is the destination: lenient export policy (hidden
+          // and credential-shaped files never leave; a report or MEMORY.md may).
+          opened = await openConfinedFile(workspaceFor(slug, meta), relative, { protectedNames: "lenient" });
         } catch (error) {
           return text(`Staging refused: ${clean(error)}`);
         }

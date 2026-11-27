@@ -17,6 +17,7 @@ import {
   scrubStagingText,
   stageFileForComposio,
   toolkitFromToolSlug,
+  verifyStoredFile,
 } from "../src/gateway/composio-files.js";
 import { guessMimeType } from "../src/util/mime.js";
 
@@ -187,13 +188,27 @@ test("unknown extensions fall back to octet-stream rather than guessing", () => 
 // ── Consumer keys (`ck_…`, the hosted MCP's credential): staged through the MCP workbench ─────
 
 // A fake Composio MCP endpoint: answers initialize, swallows the notification, and executes the
-// staging code's two shapes (append a base64 chunk / verify + mint a key) against an in-memory
-// sandbox, the way the real workbench's stdout reports them. `sse` answers as server-sent events
-// with a server-to-client ping (it has an id AND a method) ahead of the real answer.
-function fakeWorkbench({ failWith = "", corrupt = false, sse = false, isError = false, rpcError = false, httpStatus = 0, echoKeyInError = false } = {}) {
+// staging code's two shapes (append a base64 chunk / verify + upload) against an in-memory
+// sandbox, the way the real workbench's stdout reports them, then serves the verification GET of
+// the uploaded object's download URL. `sse` answers as server-sent events with a server-to-client
+// ping (it has an id AND a method) ahead of the real answer. `noHelper` plays a workbench without
+// `upload_local_file` (the mount fallback: a key, no URL); `uploadError` is the helper's own
+// error; `verifyStatus` / `storedBytes` shape the verification GET's answer.
+function fakeWorkbench({ failWith = "", corrupt = false, sse = false, isError = false, rpcError = false, httpStatus = 0, echoKeyInError = false, noHelper = false, uploadError = "", verifyStatus = 206, storedBytes = null } = {}) {
   const calls = [];
   const files = new Map();
+  const uploaded = new Map();
   const fetchImpl = async (url, init) => {
+    if (init.method === "GET") {
+      calls.push({ url, method: "GET", headers: init.headers, redirect: init.redirect });
+      const object = uploaded.get(url);
+      if (!object || verifyStatus === 404) return { ok: false, status: 404, headers: { get: () => null }, text: async () => "NoSuchKey", body: { cancel: async () => {} } };
+      const size = storedBytes ?? object.length;
+      const headers = verifyStatus === 206
+        ? { "content-range": `bytes 0-0/${size}`, "content-length": "1" }
+        : { "content-length": String(size) };
+      return { ok: true, status: verifyStatus, headers: { get: (h) => headers[h.toLowerCase()] ?? null }, body: { cancel: async () => {} } };
+    }
     if (init.method === "DELETE") {
       calls.push({ url, method: "DELETE", headers: init.headers });
       return { ok: true, status: 200, headers: { get: () => null }, text: async () => "" };
@@ -227,12 +242,25 @@ function fakeWorkbench({ failWith = "", corrupt = false, sse = false, isError = 
       let data = files.get(target) || Buffer.alloc(0);
       if (corrupt) data = data.subarray(1);
       const md5 = createHash("md5").update(data).digest("hex");
-      stdout = `CGSTAGE${JSON.stringify({ md5, bytes: data.length, s3key: `wb/${path.basename(target)}` })}\n`;
+      // The real cell uploads only when the md5 matched; the fake mirrors that so a corrupt
+      // transfer never "uploads".
+      const matched = code.includes(`'${md5}'`);
+      const s3key = `session_scope/ok_x/pr_y/trs_z/files/${path.basename(target)}`;
+      let report;
+      if (!matched) report = { md5, bytes: data.length, s3key: null, url: null, error: "", route: "upload" };
+      else if (uploadError) report = { md5, bytes: data.length, s3key: null, url: null, error: uploadError, route: "upload" };
+      else if (noHelper) report = { md5, bytes: data.length, s3key, url: null, error: "", route: "mount" };
+      else {
+        const url = `https://backend.example.test/api/v3/sl/${path.basename(target)}`;
+        uploaded.set(url, data);
+        report = { md5, bytes: data.length, s3key, url, error: "", route: "upload" };
+      }
+      stdout = `CGSTAGE${JSON.stringify(report)}\n`;
     }
     return answer(JSON.stringify({ data: { stdout, error: "" }, successful: true }));
   };
   const toolCalls = () => calls.filter((call) => call.rpc?.method === "tools/call");
-  return { calls, files, fetchImpl, toolCalls };
+  return { calls, files, uploaded, fetchImpl, toolCalls };
 }
 
 const MCP = "https://mcp.example.test/mcp";
@@ -244,21 +272,80 @@ test("a consumer key stages through the MCP workbench in chunks, in ONE session,
   const wb = fakeWorkbench();
   const staged = await stage({ absolutePath: file, workbenchChunkBytes: 8, fetchImpl: wb.fetchImpl });
   assert.equal(staged.route, "workbench");
-  assert.deepEqual(staged.file, { name: "report.pdf", mimetype: guessMimeType("report.pdf"), s3key: "wb/report.pdf" });
-  assert.ok(wb.calls.every((call) => call.url === MCP && call.headers["x-consumer-api-key"] === "ck_consumer"));
+  assert.deepEqual(staged.file, { name: "report.pdf", mimetype: guessMimeType("report.pdf"), s3key: "session_scope/ok_x/pr_y/trs_z/files/report.pdf" });
+  const mcpCalls = wb.calls.filter((call) => call.method !== "GET");
+  assert.ok(mcpCalls.every((call) => call.url === MCP && call.headers["x-consumer-api-key"] === "ck_consumer"));
   // Every request after initialize carries the session the server minted: the sandbox only keeps
   // the appended chunks for the life of that one session.
-  const afterInit = wb.calls.slice(1);
+  const afterInit = mcpCalls.slice(1);
   assert.ok(afterInit.length >= 5 && afterInit.every((call) => call.headers["mcp-session-id"] === "wb-session"), "the session id is sent back on every later request");
   const codes = wb.toolCalls().map((call) => call.rpc.params.arguments.code_to_execute);
-  assert.equal(codes.length, 4, "three chunks plus the verification call");
+  assert.equal(codes.length, 4, "three chunks plus the verify-and-upload call");
   assert.match(codes[0], /'wb'/);
   assert.ok(codes.slice(1, 3).every((code) => /'ab'/.test(code)), "later chunks append");
   assert.deepEqual([...wb.files.values()][0], contents, "the sandbox holds exactly the file's bytes");
-  assert.match(codes[3], /get_mount_file_s3_key/);
-  // The session is ended; the sandbox copy is not deleted (it IS the s3key's storage).
+  // The chunks are assembled under the sandbox's own /tmp, never on the s3fs mount, and the final
+  // cell uploads with the workbench's checked helper; the mount key is only the fallback.
+  assert.ok(codes.every((code) => /open\('\/tmp\/channelgate-stage\//.test(code)), "never written under /mnt/files");
+  assert.match(codes[3], /upload_local_file\('\/tmp\/channelgate-stage\//);
+  assert.match(codes[3], /'upload_local_file' in globals\(\)/);
+  assert.match(codes[3], /get_mount_file_s3_key/, "the mount route remains the fallback");
+  assert.match(codes[3], /shutil\.rmtree/, "the temporary copy is removed; the s3key names the uploaded object");
+  // The uploaded object was then PROVEN retrievable with a one-byte ranged GET, before the key was
+  // returned — and the session is ended last.
+  const verify = wb.calls.find((call) => call.method === "GET");
+  assert.ok(verify, "the download URL was fetched");
+  assert.equal(verify.url, "https://backend.example.test/api/v3/sl/report.pdf");
+  assert.equal(verify.headers.Range, "bytes=0-0");
+  assert.equal(verify.redirect, "follow", "the helper's URL is a redirect to the presigned object");
+  assert.ok(!verify.headers["x-consumer-api-key"], "the key is not sent to storage");
   assert.equal(wb.calls.at(-1).method, "DELETE");
-  assert.ok(!codes.some((code) => /os\.remove|unlink|rmtree/.test(code)));
+});
+
+test("a key is never returned for an object storage cannot serve", async (t) => {
+  const file = await scratchFile(t, "invoice.pdf", "%PDF-1.4 invoice");
+  // The failure this exists for: the upload "succeeded" but a GET of the object is a 404 — exactly
+  // what Drive, Gmail and Slack would then hit. The tool must fail, naming the status.
+  const missing = fakeWorkbench({ verifyStatus: 404 });
+  await assert.rejects(stage({ absolutePath: file, fetchImpl: missing.fetchImpl }), /cannot be retrieved \(HTTP 404\)/);
+  // The stored object is a different size than what was staged.
+  const short = fakeWorkbench({ storedBytes: 3 });
+  await assert.rejects(stage({ absolutePath: file, fetchImpl: short.fetchImpl }), /stored file is 3 bytes, not the 16 staged/);
+  // A server that ignores Range and answers 200 with the right Content-Length passes.
+  const whole = fakeWorkbench({ verifyStatus: 200 });
+  const staged = await stage({ absolutePath: file, fetchImpl: whole.fetchImpl });
+  assert.equal(staged.file.s3key, "session_scope/ok_x/pr_y/trs_z/files/invoice.pdf");
+  // The helper's own error is surfaced as the staging error, and no key is handed out.
+  const refused = fakeWorkbench({ uploadError: "Failed to upload to S3. Status: 403, Response: AccessDenied" });
+  await assert.rejects(stage({ absolutePath: file, fetchImpl: refused.fetchImpl }), /could not upload the file: Failed to upload to S3\. Status: 403/);
+  // A verification that cannot even be attempted is a failure too, with no key.
+  const unreachable = fakeWorkbench();
+  const dropping = async (url, init) => {
+    if (init.method === "GET") throw new Error("ECONNRESET");
+    return unreachable.fetchImpl(url, init);
+  };
+  await assert.rejects(stage({ absolutePath: file, fetchImpl: dropping }), /could not be verified in Composio storage: ECONNRESET/);
+});
+
+test("a workbench without the upload helper falls back to the mount key, unverified", async (t) => {
+  const file = await scratchFile(t, "legacy.txt", "legacy bytes");
+  const wb = fakeWorkbench({ noHelper: true });
+  const staged = await stage({ absolutePath: file, fetchImpl: wb.fetchImpl });
+  assert.equal(staged.file.s3key, "session_scope/ok_x/pr_y/trs_z/files/legacy.txt");
+  assert.ok(!wb.calls.some((call) => call.method === "GET"), "no download URL, so nothing to verify");
+});
+
+test("verifyStoredFile accepts an empty object on any 2xx and reads the ranged total", async () => {
+  const seen = [];
+  const serve = (status, headers = {}) => async (url, init) => {
+    seen.push(init);
+    return { ok: status < 300, status, headers: { get: (h) => headers[h.toLowerCase()] ?? null }, body: { cancel: async () => {} } };
+  };
+  await verifyStoredFile({ url: "https://x.test/a", bytes: 0, fetchImpl: serve(200) });
+  assert.deepEqual(seen[0].headers, {}, "an empty file is not ranged");
+  await verifyStoredFile({ url: "https://x.test/a", bytes: 10, fetchImpl: serve(206, { "content-range": "bytes 0-0/10" }) });
+  await assert.rejects(verifyStoredFile({ url: "https://x.test/a", bytes: 10, fetchImpl: serve(206, { "content-range": "bytes 0-0/11" }) }), /is 11 bytes, not the 10 staged/);
+  await assert.rejects(verifyStoredFile({ url: "https://x.test/a", bytes: 10, fetchImpl: serve(403) }), /HTTP 403/);
 });
 
 test("zero-length files and exact chunk multiples both reassemble exactly", async (t) => {
@@ -276,7 +363,7 @@ test("server-sent events are parsed, and a server ping is never taken for the an
   const file = await scratchFile(t, "sse.txt", "hello");
   const wb = fakeWorkbench({ sse: true });
   const staged = await stage({ absolutePath: file, fetchImpl: wb.fetchImpl });
-  assert.equal(staged.file.s3key, "wb/sse.txt");
+  assert.equal(staged.file.s3key, "session_scope/ok_x/pr_y/trs_z/files/sse.txt");
 });
 
 test("the bytes come from the proven descriptor, even if the path is swapped for a symlink", async (t) => {
@@ -330,7 +417,7 @@ test("every workbench failure mode is an error, and none carries the key", async
   const file = await scratchFile(t, "data.csv", "a,b\n1,2\n");
   const cases = [
     [{ corrupt: true }, /incomplete; nothing was staged/],
-    [{ failWith: "PermissionError: /mnt/files is read-only", echoKeyInError: true }, /PermissionError/],
+    [{ failWith: "PermissionError: /tmp is read-only", echoKeyInError: true }, /PermissionError/],
     [{ isError: true }, /upstream tool exploded/],
     [{ rpcError: true }, /tool unavailable/],
     [{ httpStatus: 500, echoKeyInError: true }, /HTTP 500/],

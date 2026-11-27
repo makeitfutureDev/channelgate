@@ -3,7 +3,7 @@
 export const SLACK_MENTION_RE = /<@([A-Z0-9]+)(?:\|[^>]+)?>/g;
 const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt", "stop it", "please stop", "stop please", "nevermind", "never mind"]);
 const PENDING_WORDS = new Set(["pending", "my followups", "my follow-ups", "followups", "follow-ups"]);
-const SLASH_COMMANDS = new Set(["help", "menu", "clear", "fork", "context", "model", "effort", "engine", "compact", "update", "mode", "sudo", "pending", "followups", "resume", "delete", "files"]);
+const SLASH_COMMANDS = new Set(["help", "menu", "clear", "fork", "context", "model", "harnesses", "effort", "engine", "compact", "update", "mode", "sudo", "pending", "followups", "resume", "delete", "files"]);
 
 function normalizedControlText(text, punctuation = /[!.…]+$/) {
   return (text || "").trim().toLowerCase().replace(punctuation, "").replace(/\s+/g, " ");
@@ -25,6 +25,19 @@ export function parseSlashCommand(text) {
   const cmd = parts[0].toLowerCase();
   if (!SLASH_COMMANDS.has(cmd)) return null;
   return { cmd, arg: parts.slice(1).join(" ").trim() };
+}
+
+// Unlike generic controls, sudo carries a free-form prompt whose whitespace is significant.
+// Reserve off/status for controls; `on` may optionally precede the prompt.
+export function parseSudoCommand(text) {
+  const match = /^\/sudo(?:\s+([\s\S]*))?$/i.exec((text || "").trim());
+  if (!match) return null;
+  const rest = (match[1] || "").trim();
+  const control = /^(on|off|status)(?:\s+([\s\S]*))?$/i.exec(rest);
+  if (!control) return { action: "on", task: rest };
+  const action = control[1].toLowerCase();
+  const task = (control[2] || "").trim();
+  return { action, task, ...(action !== "on" && task ? { invalid: true } : {}) };
 }
 
 export function parseNextCommand(text) {

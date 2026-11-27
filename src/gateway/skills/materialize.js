@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getSkill, skillBundle } from "./catalog.js";
 import { normalizeSkillFiles, SkillFileError } from "./files.js";
+import { withSkillRuntimeHeader } from "../skill-runtime.js";
 import { archiveWorkspaceEntry, directoryPath, openWorkspaceDirectory, openChildDirectory } from "./workspace-backup.js";
 
 // Shared with folders.js (the same marker the pre-catalog copies used, so an existing channel's
@@ -228,7 +229,10 @@ export async function materializeSkill(skillsDir, name, { lookup = getSkill, bun
   const skill = lookup(name);
   if (!skill) return { state: "unknown", slug: String(name) };
   if (skill.deleted) return { state: "removed", slug: skill.slug };
-  const input = bundleFor(skill);
+  // A skill that declares a preferred model carries the one-line `use_skill` instruction in its
+  // materialized SKILL.md (skill-runtime.js). Applied to the bundle BEFORE validation so the
+  // on-disk comparison and the write see the same bytes; the catalog's stored revision is untouched.
+  const input = withSkillRuntimeHeader(skill, bundleFor(skill));
   if (!input) return { state: "staged", slug: skill.slug };
   validateSlug(skill.slug);
   const bundle = validateBundle(input);

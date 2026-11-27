@@ -15,6 +15,7 @@ export const EVENT_LABELS = Object.freeze({
   channels_access_reset: "All channel access reset",
   users_nudges_reset: "All user reminders reset",
   user_nudges_changed: "User reminder preference changed",
+  user_reply_mentions_changed: "User reply mention preference changed",
   channels_runtime_reset: "All channel runtimes reset",
   secret_revealed: "Secret revealed",
   secret_reveal_denied: "Secret reveal refused (wrong password)",

@@ -28,6 +28,7 @@ const { patchChannelEnv } = await import("../src/config/channel-env.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { containerBackend } = await import("../src/runtimes/container/index.js");
 const { getDb } = await import("../src/db/index.js");
+const { getSettings, saveSettings } = await import("../src/config/settings.js");
 
 const SETTINGS = { cli: "auto", image: "channelgate/runtime:latest", idleMinutes: 10, maxRunning: 8, pidsLimit: 1024, memory: "", cpus: "", hasClaudeOauthToken: true, egressMode: "proxy", egressSecretsStrict: false };
 const CHANNEL = "C_EGSVC";
@@ -272,10 +273,44 @@ test("policyFor reads the channel's CURRENT meta: off blocks non-engine hosts on
   assert.equal(on.status, 200, "flipped on: the very next request goes through");
 });
 
-test("raw passthrough: github.com:22 always, plus each declared raw host on 22/5432/6543", () => {
-  assert.deepEqual(service.rawPassthroughFor({ egressRawHosts: ["db.example.com", "not a host"] }), [
+for (const template of ["user", "admin"]) {
+  test(`DM ${template} template policy governs real requests and updates without a container restart`, async () => {
+    const previous = getSettings().dmTemplates;
+    const dmId = `D_EGSVC_${template}`;
+    const dm = await upsertChannelEntry(dmId, { name: dmId, type: "im", isDM: true, platform: "slack" });
+    await patchChannelMeta(dm.slug, () => ({ ...defaultChannelMeta({ channelId: dmId, name: dmId, type: "im", isDM: true }), template, allowNetwork: false }));
+    const dmBound = await service.ensureChannelEgress(await targetFor(dmId, dm.slug));
+    const setTemplateNetwork = (allowNetwork) => saveSettings({ dmTemplates: { ...previous, [template]: { ...previous?.[template], allowNetwork } } });
+    try {
+      setTemplateNetwork(true);
+      assert.equal((await service.egressPolicyFor({ slug: dm.slug })).mode, "on");
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "inherited ON overrides the stale saved OFF");
+      assert.equal((await getChannelMeta(dm.slug)).allowNetwork, false, "template resolution does not rewrite saved policy");
+
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, allowNetwork: true }));
+      setTemplateNetwork(false);
+      const off = await request({ socketPath: dmBound.socketPath });
+      assert.equal(off.connect, 403);
+      assert.match(off.body, /network-off/, "live template OFF overrides a stale saved ON");
+
+      setTemplateNetwork(true);
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "same listener sees a live template update");
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, template: "custom", allowNetwork: false }));
+      assert.equal((await request({ socketPath: dmBound.socketPath })).connect, 403, "custom DM keeps its own OFF");
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, template: "custom", allowNetwork: true }));
+      setTemplateNetwork(false);
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "custom DM keeps its own ON");
+    } finally {
+      saveSettings({ dmTemplates: previous });
+    }
+  });
+}
+
+test("raw passthrough: legacy hosts use 22/5432/6543 and a scoped SQL host uses only 1433", () => {
+  assert.deepEqual(service.rawPassthroughFor({ egressRawHosts: ["db.example.com", "sql.example.com:1433", "not a host"] }), [
     { host: "github.com", port: 22 },
     { host: "db.example.com", port: 22 }, { host: "db.example.com", port: 5432 }, { host: "db.example.com", port: 6543 },
+    { host: "sql.example.com", port: 1433 },
   ]);
 });
 
@@ -443,7 +478,7 @@ test("boot: every RUNNING proxy-mode container gets its listener back before its
     resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: SETTINGS }),
     log: { log() {}, warn() {} },
   });
-  assert.deepEqual(out, { bound: 1, failed: 0 });
+  assert.deepEqual(out, { bound: 1, failed: 0, deferred: 0 });
   const restored = service.egressStatus().channels.find((c) => c.slug === recovered.slug);
   assert.equal(restored.listening, true);
   assert.equal(restored.channelId, "C_EGSVC_BOOT");
@@ -453,7 +488,32 @@ test("boot: every RUNNING proxy-mode container gets its listener back before its
     resolveTarget: async (slug, meta) => resolveRuntime(slug, meta, { settings: { ...SETTINGS, egressMode: "bridge" } }),
     log: { log() {}, warn() {} },
   });
-  assert.deepEqual(legacy, { bound: 0, failed: 0 });
+  assert.deepEqual(legacy, { bound: 0, failed: 0, deferred: 0 });
+
+  // Before Slack connects every Slack channel is unverified and the resolver refuses it. That is a
+  // listener still to restore once membership is verified, not a failure to warn about per channel.
+  await service.closeChannelEgress(recoveredTarget);
+  const lines = [];
+  const quiet = { log: (line) => lines.push(`log ${line}`), warn: (line) => lines.push(`warn ${line}`) };
+  let verified = false;
+  const gated = async (slug, meta) => {
+    if (!verified) throw Object.assign(new Error("Slack channel membership has not been verified."), { code: "channel_membership_unverified" });
+    return resolveRuntime(slug, meta, { settings: SETTINGS });
+  };
+  const containers = async () => [{ slug: recovered.slug, platform: "slack", state: "running" }];
+  const waiting = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: gated, log: quiet });
+  assert.deepEqual(waiting, { bound: 0, failed: 0, deferred: 1 });
+  assert.equal(lines.filter((line) => line.startsWith("warn")).length, 0);
+  assert.match(lines.join("\n"), /restored 0 running container listener\(s\), 1 waiting for Slack membership verification/);
+  assert.equal(service.egressStatus().channels.some((c) => c.slug === recovered.slug && c.listening), false);
+  verified = true;
+  const after = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: gated, log: quiet });
+  assert.deepEqual(after, { bound: 1, failed: 0, deferred: 0 });
+  assert.equal(service.egressStatus().channels.find((c) => c.slug === recovered.slug).listening, true);
+  // Any other refusal is still a named failure.
+  const broken = await service.bindRunningChannelEgress({ listContainers: containers, resolveTarget: async () => { throw new Error("boom"); }, log: quiet });
+  assert.deepEqual(broken, { bound: 0, failed: 1, deferred: 0 });
+  assert.ok(lines.some((line) => line.startsWith("warn") && line.includes("boom")));
 });
 
 test("a removed secret's placeholder is revoked by the config-change listener", async () => {

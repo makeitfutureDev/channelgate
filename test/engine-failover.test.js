@@ -17,7 +17,7 @@ const {
   saveSettings, getEngine, getEngineFallback, isEngineEnabled, getEnabledEngines,
   getEngineEnabledMap, settingsForApi,
 } = await import("../src/config/settings.js");
-const { engineSwitchHint, engineIdAlternation } = await import("../src/slack/message-pipeline.js");
+const { engineSwitchHint, engineIdAlternation, engineIdOfWord } = await import("../src/slack/message-pipeline.js");
 
 const LIVE_LIMIT_MESSAGE =
   "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 20th, 2026 6:35 AM.";
@@ -87,7 +87,7 @@ test("a plain-text turn.failed capacity error is a transient provider failure", 
 test("either harness is the other's failover target", () => {
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"]);
-  assert.deepEqual(fallbackTargets("opencode"), [], "the read-only engine is not a failover source");
+  assert.deepEqual(fallbackTargets("qwen"), [], "a provider harness is not a failover source");
 });
 
 test("replay safety is judged against the engine that actually ran the turn", () => {
@@ -129,22 +129,22 @@ test("engines are enabled by default and the map round-trips through settings", 
   assert.equal(isEngineEnabled("qwen"), false, "an opt-in harness is not enabled by a missing key");
   assert.equal(isEngineEnabled("qwen-eu"), false, "and so is every other provider harness in the table");
 
-  saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
+  saveSettings({ engineEnabled: { claude: true, codex: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, qwen: false, "qwen-eu": false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-channel": false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 
 test("a stored map that disables every harness fails open instead of bricking the gateway", () => {
-  saveSettings({ engineEnabled: { claude: false, codex: false, opencode: false } });
-  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "opencode"]);
+  saveSettings({ engineEnabled: { claude: false, codex: false } });
+  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "codex-channel"]);
 });
 
 test("the gateway default engine resolves past a disabled harness", () => {
-  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: false, opencode: false } });
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: false } });
   assert.equal(getEngine(), "claude", "a disabled harness must not stay the default just because it is the stored value");
-  saveSettings({ engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engineEnabled: { claude: true, codex: true } });
   assert.equal(getEngine(), "codex");
 });
 
@@ -170,13 +170,23 @@ test("an engine id that is a prefix of another still selects the harness the use
   // win over `qwen-eu`, so "qwen-eu ship it" would run on the other provider's account — and leave
   // "eu" glued to the front of the prompt.
   const anchored = (text, ids) => new RegExp(`^(${engineIdAlternation(ids)})\\b[\\s:,.;\u2013\u2014-]*([\\s\\S]*)$`, "i").exec(text);
-  const ids = ["claude", "codex", "qwen", "qwen-eu", "opencode"];
+  const ids = ["claude", "codex", "qwen", "qwen-eu", "codex-eu"];
   const eu = anchored("qwen-eu ship it", ids);
   assert.equal(eu[1], "qwen-eu");
   assert.equal(eu[2], "ship it", "the id is consumed whole — no fragment is left in the prompt");
   assert.equal(anchored("qwen ship it", ids)[1], "qwen", "the shorter id still matches on its own");
   assert.equal(anchored("claude: hi", ids)[1], "claude");
   assert.equal(anchored("please use qwen-eu", ids), null, "an anchored match still means the message STARTS with the id");
+
+  // An id marked as spoken is also matched with spaces for its hyphen, and read back as the id.
+  const spoken = (text) => new RegExp(`^(${engineIdAlternation(ids, { spoken: (id) => id === "codex-eu" })})\\b[\\s:,.;\u2013\u2014-]*([\\s\\S]*)$`, "i").exec(text);
+  const said = spoken("Codex  EU review the diff");
+  assert.equal(engineIdOfWord(said[1]), "codex-eu");
+  assert.equal(said[2], "review the diff");
+  assert.equal(engineIdOfWord(spoken("codex-eu: hi")[1]), "codex-eu");
+  assert.equal(engineIdOfWord(spoken("codex europe is large")[1]), "codex", "a longer word is not the license");
+  assert.equal(engineIdOfWord(spoken("codex\neu rules")[1]), "codex", "a line break ends the harness word");
+  assert.equal(engineIdOfWord(spoken("qwen eu ship it")[1]), "qwen", "only the ids marked as spoken");
 });
 
 test("an uncovered limit failure tells the user how to switch harness by hand", () => {

@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { requireAdapter } from "../engines/registry.js";
 import { processFailureMessage } from "../util/process-outcome.js";
 import { codexNoTelemetryArgs } from "../engines/codex-telemetry.js";
-import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
+import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-paths.js";
 
 const cache = new Map(); // engine + Codex login source -> { ts, data }
 const refreshing = new Map(); // same key -> in-flight refresh promise
@@ -20,7 +20,7 @@ const TTL_MS = 5 * 60 * 1000; // `claude mcp list` health-checks every server (~
 const CODEX_DISCOVERY_TIMEOUT_MS = 20_000;
 const CODEX_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const CODEX_MAX_PAGES = 20;
-const BUILTIN_SERVER_NAMES = new Set(["gateway", "composio", "composio-user", "makeitfuture-toolbox", "make-toolbox"]);
+const BUILTIN_SERVER_NAMES = new Set(["gateway", "composio", "composio-user", "make-toolbox"]);
 const SAFE_CODEX_APP_ID = /^[a-zA-Z0-9_-]{1,120}$/;
 const CODEX_GROUP_LABELS = {
   boost_space: "Boost.space",
@@ -102,7 +102,7 @@ export function selectionFieldForEngine(engine) {
 
 export function persistedSelectionForEngine(engine, entry) {
   if (!entry || typeof entry !== "object" || entry.selectable === false) return null;
-  if (engine !== "codex") {
+  if ((requireAdapter(engine).modelFamily || engine) !== "codex") {
     if (!entry.name || !entry.match || !entry.namespace) return null;
     return { name: entry.name, match: entry.match, namespace: entry.namespace };
   }
@@ -243,6 +243,10 @@ export async function listCodexRuntimeMcps({
   maxMessageBytes = CODEX_MAX_MESSAGE_BYTES,
   failClosed = true,
 } = {}) {
+  if (channelId) {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   let child;
   let timer;
   let buffer = "";
@@ -429,6 +433,10 @@ function refresh(engine, channelId = "") {
 // immediately and refresh in the background when stale (stale-while-revalidate). Only the very
 // first call (cold cache) waits — and the admin UI loads this off the page's critical path.
 export async function listEngineMcps(engine = "claude", { channelId = "" } = {}) {
+  if (engine === "codex" && channelId) {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
   const hit = cache.get(key);
   if (hit) {

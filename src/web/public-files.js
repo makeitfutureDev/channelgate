@@ -22,7 +22,7 @@
 // shared deliverable has no business in a search index.
 import express from "express";
 
-import { effectiveWorkDir } from "../gateway/folders.js";
+import { channelFileRoot } from "../gateway/channel-file-root.js";
 import { openConfinedFile } from "../gateway/confined-file.js";
 import { claimPublicFileDownload, hashPublicFileToken } from "../gateway/public-file-links.js";
 import { getChannelMeta } from "../config/store.js";
@@ -59,7 +59,7 @@ function baseHeaders(link, stat) {
 async function defaultResolveRoot(link) {
   const meta = await getChannelMeta(link.slug);
   if (!meta) throw new Error("channel is gone");
-  return effectiveWorkDir(link.slug, { ...meta, _slug: link.slug });
+  return channelFileRoot(link.slug, meta);
 }
 
 export function createPublicFileRouter({

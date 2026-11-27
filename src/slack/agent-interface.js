@@ -3,6 +3,7 @@
 // feedback controls, and the ack-only URL buttons inside composed replies and data-table rows.
 // Kept out of app.js so the handlers can be exercised without the whole Bolt wiring.
 import { logEvent } from "../util/logger.js";
+import { renameSlackThread } from "../gateway/slack-threads.js";
 import { stoppedSessionTarget } from "./agent-sessions.js";
 import { REPLY_FEEDBACK_ACTION_ID, parseFeedbackValue } from "./footer.js";
 import { TABLE_ROW_ACTION_ID } from "./tables.js";
@@ -16,6 +17,9 @@ export function registerAgentInterfaceHandlers(app, {
   authorizedControlEntry,
   stopRunsInChannel,
   setAssistantStatus,
+  isCodeChannel = async () => false,
+  onPositiveFeedback = null,
+  onNegativeFeedback = null,
 } = {}) {
   // Native Stop: Slack halts the in-progress streams itself (`streaming_message_ts`) and tells us
   // which thread's session the user stopped. The stop is scoped to that one thread and passes the
@@ -26,15 +30,19 @@ export function registerAgentInterfaceHandlers(app, {
     try {
       const target = stoppedSessionTarget(event);
       if (!target || target.user === botUserId) return;
+      // No thread means a code channel's one session: the press stops everything running there.
+      // Anywhere else a thread-less stop names no session the gateway drives, so it is ignored.
+      const channelWide = !target.threadTs;
+      if (channelWide && !(await isCodeChannel(target.channel))) return;
       const eventKey = body?.event_id || `agent-stop:${target.channel}:${target.threadTs}:${event?.event_ts || ""}`;
       if (seenEvents && !seenEvents.add(eventKey)) return;
       const entry = await authorizedControlEntry(target.channel, target.user);
       let stopped = 0;
-      if (entry) stopped = await stopRunsInChannel(client, target.channel, entry.slug, target.user, target.threadTs);
+      if (entry) stopped = await stopRunsInChannel(client, target.channel, entry.slug, target.user, channelWide ? null : target.threadTs);
       // A stopped run clears its own session. An authorized press that found nothing running
       // (a stale session) still has to move it off `processing`, or the loading UX stays up for
       // an hour. An unauthorized press changes nothing: the run it could not stop goes on.
-      if (entry && !stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "");
+      if (entry && !stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "", [], { channelSession: channelWide });
       void logEvent("agent_session_stopped", {
         channel: target.channel,
         threadKey: target.threadTs,
@@ -49,12 +57,13 @@ export function registerAgentInterfaceHandlers(app, {
     }
   });
 
-  // A user renamed the session from Slack's own UI. Nothing to apply (titles are Slack-owned);
-  // recorded so the thread's history explains the new name.
+  // Mirror Slack's session title into Activity using the existing local invalidation path.
+  // No history reads or engine work: passive root refreshes preserve this explicit title.
   app.event("agent_session_title_changed", async ({ event }) => {
     const channel = String(event?.channel || "");
     const threadTs = String(event?.thread_ts || "");
     if (!channel || !threadTs) return;
+    renameSlackThread({ channelId: channel, threadTs, title: event?.title, eventTs: event?.event_ts });
     void logEvent("agent_session_renamed", {
       channel,
       threadKey: threadTs,
@@ -81,12 +90,18 @@ export function registerAgentInterfaceHandlers(app, {
         verdict: parsed.verdict,
         requester: parsed.authorId,
       });
+      if (parsed.verdict === "up" && typeof onPositiveFeedback === "function") {
+        await onPositiveFeedback({ client, body, parsed });
+      }
+      const postponed = parsed.verdict === "down" && typeof onNegativeFeedback === "function"
+        ? await onNegativeFeedback({ client, body, parsed }) : false;
       if (parsed.verdict === "down" && channel && user && typeof client?.chat?.postEphemeral === "function") {
         await client.chat.postEphemeral({
           channel,
           user,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          text: "Thanks for the 👎 — reply in this thread with what was off and I'll fix it.",
+          text: postponed ? "🕒 Moved to Later. Resume it from My Activity when you’re ready. Running work continues."
+            : "Thanks for the 👎 — reply in this thread with what was off and I'll fix it.",
         }).catch(() => {});
       }
     } catch (e) {

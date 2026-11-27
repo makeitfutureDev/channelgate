@@ -19,7 +19,7 @@ function reset(tier = "free") {
   else testLicenseEnv({ tier });
 }
 const rejected = { code: "license_registration_limit", statusCode: 403 };
-async function fill(n = 20) {
+async function fill(n = 10) {
   for (let i = 0; i < n; i++) {
     await upsertChannelEntry(`C${i}`, { name: `channel-${i}`, isDM: i === 0 });
     await setUser(`U${i}`, { approved: i % 2 === 0, isAdmin: i === 0 });
@@ -27,14 +27,19 @@ async function fill(n = 20) {
 }
 
 test("signed legacy null or omitted capacity fields cannot exceed Registered caps", () => {
-  for (const fields of [{}, { channels: null, users: null }, { channels: 200, users: 200 }]) {
+  for (const fields of [{}, { channels: null, users: null }, { channels: 100, users: 100 }]) {
     reset();
     testLicenseEnv({ tier: "free", limits: fields });
-    assert.equal(getEffectiveLimits().channels, 20);
-    assert.equal(getEffectiveLimits().users, 20);
+    assert.equal(getEffectiveLimits().channels, 10);
+    assert.equal(getEffectiveLimits().users, 10);
     assert.equal(getLicenseStatus().features.channelHarnessPolicy, false);
   }
   assert.equal(normalizeLimits({ channels: 10, users: 3 }, "free").channels, 10);
+  for (const conversations of [undefined, null, 200, -1, "100"]) {
+    assert.equal(normalizeLimits({ conversations }, "free").conversations, 100);
+  }
+  assert.equal(normalizeLimits({ conversations: 25 }, "free").conversations, 25);
+  assert.equal(normalizeLimits({ conversations: null }, "enterprise").conversations, null);
   reset("enterprise");
   assert.equal(getEffectiveLimits().channels, null);
   assert.equal(getEffectiveLimits().users, null);
@@ -42,7 +47,7 @@ test("signed legacy null or omitted capacity fields cannot exceed Registered cap
 });
 
 for (const tier of ["free", "none"]) {
-  test(`${tier}: the twentieth channel/user succeeds, twenty-first fails, existing updates work`, async () => {
+  test(`${tier}: the tenth channel/user succeeds, eleventh fails, existing updates work`, async () => {
     reset(tier);
     await fill();
     await assert.rejects(upsertChannelEntry("C21"), rejected);
@@ -51,9 +56,9 @@ for (const tier of ["free", "none"]) {
     await setUser("U0", { name: "updated" });
     await upsertChannelEntry("C0", { name: "updated" });
     assert.equal((await getUser("U0")).name, "updated");
-    assert.equal(Object.keys(await getChannelsIndex()).length, 20);
+    assert.equal(Object.keys(await getChannelsIndex()).length, 10);
     assert.equal(await getUser("U21"), null);
-    assert.equal(getEffectiveLimits().conversations, tier === "none" ? 1 : null);
+    assert.equal(getEffectiveLimits().conversations, tier === "none" ? 1 : 100);
   });
 }
 
@@ -85,12 +90,12 @@ function registerInChild(id) {
 
 test("two processes racing the last slots cannot exceed either cap", async () => {
   reset();
-  await fill(19);
+  await fill(9);
   const results = (await Promise.all([registerInChild("race-a"), registerInChild("race-b")])).flat();
   assert.equal(results.filter(x => x === "ok").length, 2);
   assert.equal(results.filter(x => x === "license_registration_limit").length, 2);
-  assert.equal(Object.keys(await getChannelsIndex()).length, 20);
-  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM users").get().n, 20);
+  assert.equal(Object.keys(await getChannelsIndex()).length, 10);
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM users").get().n, 10);
 });
 
 test("admin user creation and synthetic API conversation creation return clear JSON 403", async t => {
@@ -109,7 +114,7 @@ test("admin user creation and synthetic API conversation creation return clear J
     assert.equal(response.status, 403);
     const result = await response.json();
     assert.equal(result.code, "license_registration_limit");
-    assert.match(result.error, /limit of 20/);
+    assert.match(result.error, /limit of 10/);
   }
 });
 
@@ -124,13 +129,13 @@ test("Slack, Teams and Google Chat surface channel refusal before any run", asyn
     chat: { postMessage: async message => { posted.push(message); } },
   });
   assert.equal(posted.length, 1);
-  assert.match(posted[0].text, /limit of 20 registered channels/);
+  assert.match(posted[0].text, /limit of 10 registered channels/);
   const { createIngest } = await import("../src/platforms/ingest.js");
   for (const platform of ["googlechat", "msteams"]) {
     const replies = [];
     const ingest = createIngest({ connector: { platform, post: async message => { replies.push(message); } }, run: () => assert.fail("must not spawn") });
     const result = await ingest({ platform, conversationId: `${platform}:new`, rawConversationId: "new", isDM: true, kind: "dm", userId: "U0", text: "hello", attachments: [] });
     assert.equal(result.skipped, "license_registration_limit");
-    assert.match(replies[0].text, /limit of 20 registered channels/);
+    assert.match(replies[0].text, /limit of 10 registered channels/);
   }
 });

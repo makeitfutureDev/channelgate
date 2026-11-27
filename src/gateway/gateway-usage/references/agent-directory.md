@@ -34,6 +34,10 @@ Do not copy a directory into a shared skill, organization reference, memory topi
 artifact: the next reader may have a different audience. Re-query for each task. Recommending a
 channel does not authorize posting there, delegating, granting access, inviting people/the bot,
 or transferring the user's messages or files. Those actions require their own authorization.
+The one sanctioned way to ASK that agent something is `send_agent_message`
+(`references/agent-mail.md`), gated on the requester's OWN membership and access, re-checked
+live, plus their approval click. The directory's audience rule does not apply to it: a channel
+hidden here may still be messaged when the user names it.
 
 ## Describe this channel's agent
 

@@ -26,6 +26,38 @@ private database from the agent container. A provider profile outside the import
 contract, a different protocol, or a database requiring unsupported TLS settings
 calls for Option 2 or an operator handoff; never weaken validation to make it fit.
 
+## Public SSH from an ordinary channel container
+
+Use this gateway's shared keypair at `~/.ssh/channelgate/id_ed25519` (public file `.pub`).
+When asked for the agent's SSH public key for another server, return that `.pub` line exactly;
+every channel mounts the same identity read-only. Never generate another key or fall back to an
+old channel key when asked for the gateway key. Report a missing mount. The shared private key
+is intentionally readable by container shell users; never print or upload it. Other HOME files,
+local SSH keys and known_hosts remain channel-specific. Host `/sudo` runs use the shared key path
+stated in their resolved runtime preamble.
+
+For an exact public SSH hostname or IPv4/IPv6 address not yet in this channel's `egressRawHosts`, use
+`allow_channel_ssh_host` with the actual SSH `port` (22 when unspecified). The gateway posts a durable card that any currently authorized
+channel member with write access may approve; neither admin rights nor `/sudo` are needed.
+The card persists across restarts and is never auto-approved. End the turn while it is pending.
+Once approved, retry with `-i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes` and
+`-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.
+An explicit `port` opens only that exact host:port; the card and saved action name it.
+For a custom port, for example 32921, pass `port: 32921` and retry SSH with `-p 32921`.
+Omitting `port` preserves the legacy TCP ports 22, 5432 and 6543 and cannot open a custom port.
+Network must remain on and private/loopback/metadata addresses remain blocked. Approval
+adds no SSH key, secret host grant, private route, or open network.
+
+For one exact PRIVATE or LOOPBACK `host:port` (LAN SSH/SFTP or FTP server, NAS, internal API,
+an MCP server on the gateway host), use `allow_channel_private_host({host, port})`. The gateway
+pins the single address the host resolves to now; the durable card shows it and only an
+organization admin can approve. The proxy then tunnels to that address only and refuses as soon
+as DNS points anywhere else. Reach the gateway host's own loopback as
+`host.channelgate.internal:<port>`, never 127.0.0.1. Metadata, link-local and the gateway's
+admin port are never approvable; passive FTP needs each data port approved (prefer SFTP).
+`revoke_channel_private_host` removes an entry. Use the isolated VPN when a whole private
+network, rather than a few exact ports, is needed.
+
 ## Option 2: Agent procedure — VPN or SSH tunnel access
 
 Use this when a task needs a private network or database and the supported

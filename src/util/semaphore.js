@@ -17,15 +17,16 @@ function abortError() {
 }
 
 export function createSemaphore(max = 1) {
-  const cap = Math.max(1, Math.floor(Number(max) || 1));
+  let cap = Math.max(1, Math.floor(Number(max) || 1));
   let active = 0;
   const waiters = []; // { grant, cancel }
 
   // Hand the next queued waiter a slot if one is free.
   const dispatch = () => {
-    if (active >= cap || waiters.length === 0) return;
-    active++;
-    waiters.shift().grant();
+    while (active < cap && waiters.length > 0) {
+      active++;
+      waiters.shift().grant();
+    }
   };
 
   const makeRelease = () => {
@@ -83,6 +84,11 @@ export function createSemaphore(max = 1) {
         if (signal && onAbort) signal.removeEventListener("abort", onAbort);
       }
       return makeRelease();
+    },
+    // Existing holders finish normally when capacity shrinks; queued callers keep their order.
+    resize(max) {
+      cap = Math.max(1, Math.floor(Number(max) || 1));
+      dispatch();
     },
     get active() {
       return active;

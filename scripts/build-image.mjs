@@ -14,8 +14,10 @@
 //  2. **A minimal in-container bundle.** The engines spawn three daemon-side helpers during a run
 //     (the Codex secret-env bridge, the Composio SDK bridge, the Claude Stop hook). Inside a
 //     container those cannot come from the checkout — the checkout is never mounted — so their
-//     IMPORT CLOSURE is resolved here and only those files are staged into /opt/channelgate.
+//     IMPORT CLOSURE is resolved (src/runtimes/container/image-bundle.js) and only those files are
+//     staged into /opt/channelgate.
 import { expectedImageBuild } from "../src/runtimes/container/image.js";
+import { BUNDLE_ENTRIES, VERBATIM_HELPERS, resolveBundleClosure } from "../src/runtimes/container/image-bundle.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -25,40 +27,16 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const containersDir = path.join(repoRoot, "containers");
 
-// The engine-spawned helpers that must exist inside the image. Anything they import comes along.
-const BUNDLE_ENTRIES = [
-  "src/mcp/secret-env-bridge.js", // Codex: bundle → env → exec the real MCP command
-  "src/gateway/hooks/stop-subagents.mjs", // the Claude Stop hook
-];
-
-// The container-side half of the gateway control MCP, copied VERBATIM from the daemon-side
-// reference implementation so the two halves of the socket protocol can never drift. It is staged
-// as bin/cg-mcp-bridge.mjs: the engines are handed `node <that path>` (Codex reaches it through
-// secret-env-bridge, which re-execs process.execPath), and .mjs makes it load as an ES module
-// wherever it sits, independent of any package.json. Composio SDK mode is a second service on the
-// same socket, so this one file serves both.
-const SOCKET_BRIDGE_SOURCE = "src/mcp/socket-bridge.js";
-const SOCKET_BRIDGE_DEST = "bin/cg-mcp-bridge.mjs";
-// The container-side half of the egress proxy (container-secrets P2), staged the same way: a
-// verbatim, dependency-free copy that cg-init starts under CG_EGRESS=proxy.
-const EGRESS_FORWARDER_SOURCE = "src/mcp/egress-forwarder.js";
-const EGRESS_FORWARDER_DEST = "bin/cg-egress.mjs";
-// The SSH ProxyCommand helper (container-secrets P3), staged the same way; containers/bin/
-// cg-egress-connect is its POSIX shim.
-const EGRESS_CONNECT_SOURCE = "src/mcp/egress-connect.js";
-const EGRESS_CONNECT_DEST = "bin/cg-egress-connect.mjs";
+// What gets staged besides containers/ — the engine-spawned helpers whose import closure is
+// bundled, and the verbatim bridges copied into bin/ — is declared once in
+// src/runtimes/container/image-bundle.js, which the daemon also digests into the `cg.image.bundle`
+// label it compares, so a staged file can never move without the image reading as stale.
 
 // Packages the bundle needs that no `import` statement names. Empty since container-secrets P4
 // retired remote-secret-bridge (the only helper that resolved mcp-remote with createRequire):
 // header-bearing remote MCPs are relayed by the daemon, so no bundled helper bridges one. The image
 // still installs the pinned mcp-remote globally (containers/Containerfile) as a tool.
 const BUNDLE_EXTRA_PACKAGES = [];
-
-const IMPORT_PATTERNS = [
-  /(?:^|[\n;])\s*(?:import|export)\s[^;]*?from\s*["']([^"']+)["']/g,
-  /(?:^|[\n;])\s*import\s*["']([^"']+)["']/g,
-  /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-];
 
 function parseArgs(argv) {
   const out = { cli: process.env.CG_CONTAINER_CLI || "auto", tag: "channelgate/runtime", noCache: false, keepContext: false };
@@ -72,40 +50,6 @@ function parseArgs(argv) {
     else throw new Error(`unknown option ${arg}`);
   }
   return out;
-}
-
-// Resolve the transitive closure of relative imports, and collect the bare package names so the
-// bundle's package.json declares exactly what it needs and nothing else.
-function resolveClosure(entries) {
-  const files = new Set();
-  const packages = new Set();
-  const queue = [...entries];
-  while (queue.length) {
-    const rel = queue.shift();
-    if (files.has(rel)) continue;
-    const abs = path.join(repoRoot, rel);
-    if (!existsSync(abs)) throw new Error(`bundle entry ${rel} does not exist`);
-    files.add(rel);
-    const source = readFileSync(abs, "utf8");
-    for (const pattern of IMPORT_PATTERNS) {
-      pattern.lastIndex = 0;
-      let match;
-      while ((match = pattern.exec(source))) {
-        const spec = match[1];
-        if (spec.startsWith("node:")) continue;
-        if (!spec.startsWith(".")) {
-          packages.add(spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0]);
-          continue;
-        }
-        const next = path.relative(repoRoot, path.resolve(path.dirname(abs), spec));
-        if (!existsSync(path.join(repoRoot, next))) {
-          throw new Error(`${rel} imports "${spec}", which does not resolve to a file — the bundler only follows explicit relative paths`);
-        }
-        queue.push(next);
-      }
-    }
-  }
-  return { files: [...files].sort(), packages: [...packages].sort() };
 }
 
 function installedVersion(name) {
@@ -123,15 +67,11 @@ function stageContext({ closure }) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "cg-image-"));
   cpSync(path.join(containersDir, "Containerfile"), path.join(dir, "Containerfile"));
   cpSync(path.join(containersDir, "bin"), path.join(dir, "bin"), { recursive: true });
-  const bridge = path.join(repoRoot, SOCKET_BRIDGE_SOURCE);
-  if (!existsSync(bridge)) throw new Error(`${SOCKET_BRIDGE_SOURCE} is missing — the container half of the gateway MCP cannot be staged`);
-  cpSync(bridge, path.join(dir, SOCKET_BRIDGE_DEST));
-  const forwarder = path.join(repoRoot, EGRESS_FORWARDER_SOURCE);
-  if (!existsSync(forwarder)) throw new Error(`${EGRESS_FORWARDER_SOURCE} is missing — the container half of the egress proxy cannot be staged`);
-  cpSync(forwarder, path.join(dir, EGRESS_FORWARDER_DEST));
-  const connect = path.join(repoRoot, EGRESS_CONNECT_SOURCE);
-  if (!existsSync(connect)) throw new Error(`${EGRESS_CONNECT_SOURCE} is missing — the SSH ProxyCommand helper cannot be staged`);
-  cpSync(connect, path.join(dir, EGRESS_CONNECT_DEST));
+  for (const helper of VERBATIM_HELPERS) {
+    const source = path.join(repoRoot, helper.source);
+    if (!existsSync(source)) throw new Error(`${helper.source} is missing — ${helper.role} cannot be staged`);
+    cpSync(source, path.join(dir, helper.dest));
+  }
   const bundleDir = path.join(dir, "bundle");
   for (const rel of closure.files) {
     // Strip the leading `src/` so /opt/channelgate mirrors src/ — every relative import inside the
@@ -185,8 +125,11 @@ function main() {
     throw new Error("refusing to build the channel image as root — build it as the user the gateway daemon runs as, so the image's agent uid matches");
   }
 
-  const closure = resolveClosure(BUNDLE_ENTRIES);
+  const closure = resolveBundleClosure(repoRoot, BUNDLE_ENTRIES);
   const staged = stageContext({ closure });
+  // Computed by the SAME function the daemon calls, over the same checkout, so the labels are
+  // exactly what an up-to-date daemon expects.
+  const desired = expectedImageBuild(repoRoot);
   const bin = resolveCliBin(options.cli);
 
   const args = [
@@ -199,6 +142,7 @@ function main() {
     "--build-arg", `CLAUDE_VERSION=${npmPins["@anthropic-ai/claude-code"]}`,
     "--build-arg", `CODEX_VERSION=${npmPins["@openai/codex"]}`,
     "--build-arg", `MCP_REMOTE_VERSION=${npmPins["mcp-remote"]}`,
+    "--build-arg", `MAKE_CLI_VERSION=${npmPins["@makehq/cli"]}`,
     "--build-arg", `VERCEL_VERSION=${npmPins.vercel}`,
     "--build-arg", `SUPABASE_VERSION=${npmPins.supabase}`,
     "--build-arg", `PLAYWRIGHT_VERSION=${npmPins.playwright}`,
@@ -210,7 +154,8 @@ function main() {
     "--build-arg", `PERPLEXITY_VERSION=${versions.python?.["perplexity-web-mcp-cli"]}`,
     "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,
     "--build-arg", `IMAGE_SPEC_VERSION=${specVersion}`,
-    "--build-arg", `IMAGE_BUILD_DIGEST=${expectedImageBuild(repoRoot).digest}`,
+    "--build-arg", `IMAGE_BUILD_DIGEST=${desired.digest}`,
+    "--build-arg", `IMAGE_BUNDLE_DIGEST=${desired.bundleDigest}`,
     "--build-arg", `IMAGE_TOOLCHAIN=${JSON.stringify(npmPins)}`,
   ];
   if (options.noCache) args.push("--no-cache");

@@ -1,4 +1,5 @@
 import { api } from "./admin-api.js";
+import { freshAdminAuth } from "./admin-access.js";
 
 export const escapeHtml = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -94,13 +95,24 @@ async function askRevealPassword() {
 
 export function revealSecret(scope, field, id = "") {
   return async () => {
-    const password = await askRevealPassword();
-    if (!password) return "";
+    const identity = await api("/api/auth/me");
+    let password = "";
+    if (identity.bootstrap) {
+      password = await askRevealPassword();
+      if (!password) return "";
+    } else {
+      await freshAdminAuth();
+    }
     try {
       const { value } = await api("/api/secrets/reveal", { method: "POST", body: JSON.stringify({ scope, field, id, password }) });
       return value || "";
     } catch (error) {
       if (/password/i.test(error.message)) { revealPassword = ""; revealPasswordAt = 0; }
+      if (error.code === "reauth_required") {
+        await freshAdminAuth({ force: true });
+        const { value } = await api("/api/secrets/reveal", { method: "POST", body: JSON.stringify({ scope, field, id }) });
+        return value || "";
+      }
       throw error;
     }
   };

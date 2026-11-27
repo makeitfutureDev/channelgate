@@ -1,7 +1,7 @@
 // A turn in a proxy-mode container (src/gateway/run.js + src/gateway/egress/grants.js): the engine
 // receives PLACEHOLDERS for every ruled secret and for the relayed Claude login, the raw value only
 // for an unruled secret, the prompt says which is which, the turn is live work while it runs, and
-// the output redactor still covers every REAL value.
+// the output redactor covers hidden values while readable configuration remains shareable.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -101,3 +101,42 @@ test("strict (the new-install default): an unruled secret is withheld from the c
   assert.ok(!JSON.stringify(call.env).includes(REAL_RAW));
   assert.match(promptOf(call), /Withheld by the gateway's strict egress setting[^\n]*\["RAW_THING_PASSWORD"\]/);
 });
+
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: readable URLs survive runMessage streaming and final output`, async () => {
+    saveSettings({ engine, defaultClaudeModel: "sonnet", defaultCodexModel: "gpt-5.6-sol", engineFallback: false,
+      engineEnabled: { claude: true, codex: true }, agentMemory: false, memoryReviewEvery: 0,
+      composioMode: "personal", containerClaudeOauthToken: SETUP_TOKEN, containerEgressSecretsStrict: false });
+    const channelId = `C_VISIBLE_${engine}`;
+    const authorId = `U_VISIBLE_${engine}`;
+    await setUser(authorId, { name: "Visibility fixture", approved: true });
+    const channel = await upsertChannelEntry(channelId, { name: `visible-${engine}`, type: "channel" });
+    const url = "https://public.example.test";
+    const secret = "hidden-output-fixture-123";
+    await saveChannelMeta(channel.slug, { channelId, type: "channel", engine, memory: false,
+      env: { MAKE_BASE_URL: { provider: "local", value: url },
+        VISIBLE_API_KEY: { provider: "local", value: "visible-output-fixture-123", exposure: "readable" },
+        HIDDEN_API_KEY: { provider: "local", value: secret, exposure: "hidden" } } });
+    const text = `[Execution](${url}/logs/example) visible-output-fixture-123 ${secret}`;
+    const events = engine === "claude" ? [
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } },
+      { type: "result", subtype: "success", result: text, session_id: "visible-fixture", usage: { input_tokens: 1, output_tokens: 1 } },
+    ] : [
+      { type: "thread.started", thread_id: "visible-fixture" },
+      { type: "item.completed", item: { id: "answer", type: "agent_message", text } },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ];
+    const spawn = backend.spawn;
+    backend.spawn = (target, spec) => spawn(target, { ...spec, cmd: process.execPath,
+      args: ["-e", `for(const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event))`] });
+    let streamed = "";
+    try {
+      const result = await runMessage({ channelId, authorId, threadKey: `visible-${engine}`, origin: "slack_foreground",
+        preferCold: true, text: "Return the fixture URL and values", onDelta: (chunk) => { streamed += chunk; } });
+      const expected = text.replace(secret, "[REDACTED]");
+      assert.equal(result.content, expected);
+      assert.equal(streamed, expected);
+    } finally { backend.spawn = spawn; }
+  });
+}

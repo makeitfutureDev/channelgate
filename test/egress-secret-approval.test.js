@@ -218,6 +218,18 @@ test("executing an approval records the server on the secret itself — for an a
   // A card for an OLDER version of the secret (deleted and re-created, or re-set) blesses nothing.
   const stale = await approvals.executeSecretHostApproval({ ...record("U_APPR_ADMIN"), action: { ...action, entrySetAt: 1 } });
   assert.match(stale.error, /changed after this approval was requested/);
+  let wakeups = 0;
+  const queue = (saved) => { wakeups++; assert.equal(saved.action.authorId, "U_APPR_MEMBER"); return true; };
+  const withSource = { ...action, authorId: "U_APPR_MEMBER", threadKey: "1790000000.000100" };
+  const denied = await approvals.executeSecretHostApproval({ ...record("U_APPR_MEMBER"), action: withSource }, { enqueueContinuation: queue });
+  assert.equal(denied.ok, false);
+  assert.equal(wakeups, 0);
+  const resumed = await approvals.executeSecretHostApproval({ ...record("U_APPR_ADMIN"), action: withSource }, { enqueueContinuation: queue });
+  assert.equal(wakeups, 1);
+  assert.match(resumed.message, /continue automatically/);
+  const queueFailed = await approvals.executeSecretHostApproval({ ...record("U_APPR_ADMIN"), action: withSource }, { enqueueContinuation: () => { throw new Error("full"); } });
+  assert.equal(queueFailed.ok, true, "the approved host remains saved even when wakeup fails");
+  assert.match(queueFailed.message, /could not be queued/);
   const ok = await approvals.executeSecretHostApproval(record("U_APPR_ADMIN"));
   assert.equal(ok.ok, true, ok.error);
   assert.deepEqual(scoped.getOrgEnv().PAY_API_TOKEN.approvedHosts, ["api.pay.example"]);

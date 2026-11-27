@@ -27,6 +27,11 @@ export function createFakeRuntimeBackend({
   credentialError = null,
   ensureUpError = null,
   ensureUpDelayMs = 0,
+  // Extra facts merged into what ensureUp returns (e.g. `{ reclaimed: { current, max } }`: the
+  // real backend restarted a container that had run out of process slots).
+  ensureUpResult = null,
+  // What the optional inspectProcessLimit answers after an engine died; null = not declared.
+  processLimit = null,
   helpers = {},
   // An egress plan (src/runtimes/container/egress-hook.js) to stamp on every target: what the real
   // backend carries when the daemon's egress proxy is the container's network.
@@ -83,15 +88,15 @@ export function createFakeRuntimeBackend({
       };
     },
 
-    async ensureUp(target, { announce } = {}) {
-      calls.ensureUp.push({ seq: ++seq, slug: target.slug, spawnsBefore: calls.spawn.length });
+    async ensureUp(target, { announce, reclaimProcesses = false } = {}) {
+      calls.ensureUp.push({ seq: ++seq, slug: target.slug, spawnsBefore: calls.spawn.length, reclaimProcesses });
       if (ensureUpError) throw new Error(ensureUpError);
       if (ensureUpDelayMs) {
         announce?.("Warming up the channel container…");
         calls.announced.push("Warming up the channel container…");
         await new Promise((resolve) => setTimeout(resolve, ensureUpDelayMs));
       }
-      return { created: calls.ensureUp.length === 1, started: true, warmupMs: ensureUpDelayMs };
+      return { created: calls.ensureUp.length === 1, started: true, warmupMs: ensureUpDelayMs, ...(ensureUpResult || {}) };
     },
 
     spawn(target, spec) {
@@ -192,6 +197,7 @@ export function createFakeRuntimeBackend({
   };
 
   if (credentialError) backend.credentialError = credentialError;
+  if (processLimit) backend.inspectProcessLimit = async () => (typeof processLimit === "function" ? processLimit() : processLimit);
   validateRuntimeBackend(backend);
   return backend;
 }

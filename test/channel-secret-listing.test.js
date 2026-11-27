@@ -85,7 +85,7 @@ test("no channel read returns a retired integration's stored token", async () =>
 
 test("a DM's meta is masked by the same masker as a channel's", async () => {
   // The DM listing used to carry its own copy of the masking shape, which had drifted: it masked
-  // Composio and Toolbox but neither the Make toolbox key nor anything dead.
+  // Composio but neither the Make toolbox key nor anything dead.
   const entry = await upsertChannelEntry("D_DEADFIELD", { name: "dm-dead-field", type: "im", isDM: true });
   await saveChannelMeta(
     entry.slug,

@@ -17,7 +17,7 @@ const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 
-const SECTIONS = ["connection", "agent", "templates", "integrations", "license", "access", "system"];
+const SECTIONS = ["connection", "appearance", "agent", "engine-licenses", "templates", "integrations", "license", "access", "admin-access", "system"];
 
 // ── The pure matcher ─────────────────────────────────────────────────────────────
 test("query normalization folds the typography the admin markup actually uses", () => {
@@ -36,7 +36,7 @@ test("a card is searched together with its section's title and description", () 
 const INDEX = [
   { id: "connection-0", section: "connection", sectionTitle: "Connection", sectionDesc: "Slack credentials", title: "Slack credentials (Socket Mode)", text: "Bot User OAuth Token xoxb App-Level Token" },
   { id: "connection-1", section: "connection", sectionTitle: "Connection", sectionDesc: "Slack credentials", title: "Public URL", text: "the daemon’s externally-reachable base URL" },
-  { id: "integrations-0", section: "integrations", sectionTitle: "Integrations", sectionDesc: "Composio endpoints", title: "MCP server URLs", text: "Composio Skills Toolbox" },
+  { id: "integrations-0", section: "integrations", sectionTitle: "Integrations", sectionDesc: "Composio endpoints", title: "MCP server URLs", text: "Composio" },
   { id: "system-0", section: "system", sectionTitle: "System", sectionDesc: "danger zone", title: "Danger zone", text: "restart daemon disconnect slack" },
 ];
 
@@ -188,7 +188,10 @@ test("real settings text is searchable: representative queries land in the right
   assert.ok(sectionsFor("container runtime").includes("access"));
   assert.ok(sectionsFor("trusted bot apps").includes("access"));
   assert.ok(sectionsFor("license").includes("license"));
-  assert.ok(sectionsFor("admin password").includes("system"));
+  // The engine licenses and the product license are two sections, and both answer to the word.
+  assert.ok(sectionsFor("license").includes("engine-licenses"));
+  assert.ok(sectionsFor("engine licenses").includes("engine-licenses"));
+  assert.ok(sectionsFor("passkeys").includes("admin-access"));
 
   // Secrets are never part of the index: only the input's markup is, never a typed/stored value.
   assert.ok(!index.some((entry) => /xoxb-[a-z0-9]{6,}/i.test(entry.text)));

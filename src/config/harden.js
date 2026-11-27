@@ -1,6 +1,6 @@
 // Filesystem permissions for the runtime secrets.
 //
-// ~/.channelgate holds Slack tokens, every user's personal Composio/Skills/Toolbox token, the
+// ~/.channelgate holds Slack tokens, every user's personal Composio token, the
 // run-API key and the admin password. Those files were created with the default umask (0644 —
 // world-readable), so any other account on the host could read the lot. The daemon already gets
 // this right for internal-auth.json and drive-sa.json; this module makes it uniform.

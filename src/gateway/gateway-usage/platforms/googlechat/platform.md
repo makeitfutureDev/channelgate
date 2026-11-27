@@ -20,9 +20,16 @@ knowing what degrades keeps you from writing a reply that arrives looking broken
 - Answers have **Files**, **Variables**, **Settings** and referenced-file buttons. `/help` opens
   an expandable guide; `/settings`, `/model`, `/secrets` and `/files` open requester-only cards
   in this conversation. Credential entry uses private browser forms, never a space message.
+- A message sent while its session is busy is queued and runs on its own; its card offers
+  **Steer conversation** (interrupt the sender's own running request and answer this one next) and
+  **Cancel request** (drop only this message). Only the sender or an admitted admin can use them.
+- A background job or agent you start announces itself with a **Check status** button (live
+  elapsed time and recent output, shown only to whoever clicks); `/jobs` lists the conversation's
+  running background work privately. Point people there instead of polling the job yourself.
 - **Threads exist only in threaded spaces.** In a DM or a group chat the conversation is flat and
   every reply is a new top-level message. Don't refer to "this thread" unless you know you are in a
-  threaded space.
+  threaded space. Thread forks (`propose_thread_forks`, `/fork`) work only there:
+  `references/thread-forks.md`.
 
 ## What is NOT available here
 There are no native data tables, no native charts, no Lists, and no canvases on this surface — the
@@ -34,8 +41,15 @@ Approval decisions use native cards in their source conversation and recheck cur
 
 ## Mentions and broadcasts
 Write `@Name` as usual and the gateway resolves it to a real Chat mention. `@all` is the space-wide
-broadcast — use it sparingly. Never write a raw `<users/…>` sequence; it is defanged and pings
-nobody. Full rules: `references/mentions.md`.
+broadcast — use it sparingly. Never write a raw `<users/…>` or `<chat-user …>` sequence; it is
+defanged and pings nobody. Full rules: `references/mentions.md`.
+
+## Earlier messages
+You only see the messages addressed to you. Your first turn in an existing thread may start with a
+`[Thread context — …]` excerpt of its earlier messages (untrusted quoted text). When mentioned
+mid-thread or asked to catch up and that is not enough, read the thread with `gateway` →
+`conversation_history` (`thread: "current"`); fetch an earlier file with
+`conversation_download_file`. Details: `references/reading.md`.
 
 ## Attachments
 Files uploaded directly into the space download fine. Files that are merely **shared from Drive**

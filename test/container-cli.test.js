@@ -2,7 +2,8 @@
 // backend builds. Everything runs against the fake CLI — no test may call a real container binary.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { statSync, readFileSync } from "node:fs";
+import { statSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { createFakeCli } from "./container-fake-cli.js";
 import { ensureTestEnv, tempDir } from "./helpers.js";
@@ -12,7 +13,7 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 process.env.CG_WORKSPACE_DIR ||= tempDir("cg-ws-");
 ensureTestEnv();
 
-const { createContainerCli } = await import("../src/runtimes/container/cli.js");
+const { createContainerCli, LIMITS_PROBE_SCRIPT } = await import("../src/runtimes/container/cli.js");
 const { createContainerImage } = await import("../src/runtimes/container/image.js");
 const { buildCreateArgs } = await import("../src/runtimes/container/lifecycle.js");
 const { buildExecArgs, renderEnvFile, createContainerExec, envFileDir } = await import("../src/runtimes/container/exec.js");
@@ -319,5 +320,58 @@ test("stop / rm / inspect argv, and resumeCommand wraps the engine's own command
     );
   } finally {
     __resetContainerRuntime();
+  }
+});
+
+test("limits probe is offline and cannot pull an image or invoke rootless networking", async () => {
+  for (const kind of ["podman", "docker"]) {
+    const fake = createFakeCli({ kind, available: [kind] });
+    await createContainerCli({ exec: fake.exec }).probe({ ...SETTINGS, cli: kind }, { image: SETTINGS.image });
+    const trial = fake.find("run").find((args) => args.includes("--cpus"));
+    assert.equal(trial[trial.indexOf("--network") + 1], "none");
+    assert.equal(trial[trial.indexOf("--pull") + 1], "never");
+  }
+});
+
+for (const [stderr, pattern, code = 125] of [
+  ["cgroup controllers not delegated", /not delegated/],
+  ["crun: write /sys/fs/cgroup/example/cgroup.procs: Permission denied", /not delegated/],
+  ["Error: runtime image not known", /image is missing/],
+  ["Failed to mount empty tmpfs for pivot_root()", /mount namespace failed/],
+  ["storage failed with private operator data", /container probe failed/],
+  ["timed out", /probe timed out/, 124],
+  ["CG_LIMITS_UNENFORCED", /not enforced/, 78],
+  ["", /no kernel verification/, 0],
+]) {
+  test(`limits probe diagnoses ${pattern.source} without logging raw CLI output`, async () => {
+    const fake = createFakeCli({ routes: [{ match: (args) => args[1] === "run" && args.includes("--cpus"), result: { code, stderr } }] });
+    const logs = [];
+    const caps = await createContainerCli({ exec: fake.exec, log: (line) => logs.push(line) }).probe(SETTINGS, { image: SETTINGS.image });
+    assert.equal(caps.cgroupLimits, false);
+    assert.match(caps.reason, pattern);
+    assert.ok(logs.some((line) => pattern.test(line)));
+    assert.ok(!logs.join("\n").includes("private operator data"));
+    if (!/not delegated/.test(pattern.source)) assert.doesNotMatch(caps.reason, /not delegated/);
+  });
+}
+
+
+test("limits verification reads kernel values, rejecting accepted but unenforced flags", () => {
+  const root = tempDir("cg-kernel-limits-");
+  const base = path.join(root, "sys");
+  mkdirSync(base);
+  const files = { "cgroup.controllers": "cpu memory pids", "memory.max": "134217728", "cpu.max": "100000 100000", "pids.max": "64" };
+  for (const [name, value] of Object.entries(files)) writeFileSync(path.join(base, name), value + "\n");
+  writeFileSync(path.join(root, "proc"), "0::/\n");
+  const script = LIMITS_PROBE_SCRIPT.replaceAll("/sys/fs/cgroup", base).replaceAll("/proc/self/cgroup", path.join(root, "proc"));
+  const run = () => spawnSync("/bin/sh", ["-c", script], { encoding: "utf8" });
+  assert.equal(run().status, 0);
+  assert.equal(run().stdout.trim(), "CG_LIMITS_VERIFIED");
+  for (const [name, unverified] of [["memory.max", "max"], ["cpu.max", "max 100000"], ["cpu.max", "50000 100000"], ["pids.max", "max"]]) {
+    writeFileSync(path.join(base, name), unverified + "\n");
+    const result = run();
+    assert.equal(result.status, 78, name + " must be enforced, not just accepted by the CLI");
+    assert.match(result.stderr, /CG_LIMITS_UNENFORCED/);
+    writeFileSync(path.join(base, name), files[name] + "\n");
   }
 });

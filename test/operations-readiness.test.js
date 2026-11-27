@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -155,6 +156,10 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.ok(systemd.indexOf('scripts/service-path-preflight.mjs') < systemd.indexOf('useradd --system'));
   assert.match(systemd, /Relocate the checkout to \/opt\/channelgate/);
   assert.match(systemd, /ProtectSystem=strict/);
+  // With cgroupfs the channel containers live in the unit's own control group: any KillMode that
+  // reaches the group SIGKILLs them (and the conmon that records the exit) on every restart.
+  assert.match(systemd, /^KillMode=process$/m);
+  assert.doesNotMatch(systemd, /^KillMode=(mixed|control-group)$/m);
   // The engines spawn by bare name: the unit must carry an explicit PATH with the resolved CLI
   // dirs (systemd's default PATH won't have nvm/user-prefix installs) and the credential env
   // file for the login-less service account. HOME must exist for os.homedir()-derived state.
@@ -179,11 +184,19 @@ test("service packages pin dedicated identities and hardened runtime boundaries"
   assert.match(uninstall, /systemctl --user "\$@"/);
   assert.match(uninstall, /needs root/);
   assert.doesNotMatch(uninstall, /userdel|rm -rf/);
+  // KillMode=process leaves the containers up when the unit stops, so removing it stops them —
+  // as the unit's own account, by the ownership label, and before the unit file is gone.
+  assert.match(uninstall, /podman ps -q --filter label=cg\.install/);
+  assert.match(uninstall, /runuser -u "\$account"/);
+  assert.ok(uninstall.indexOf('stop_unit_containers "$SYSTEM_DIR/$unit"') < uninstall.indexOf('rm -f "$SYSTEM_DIR/$unit"'));
+  assert.ok(uninstall.indexOf('systemctl disable --now "$unit"') < uninstall.indexOf('stop_unit_containers "$SYSTEM_DIR/$unit"'));
+  assert.doesNotMatch(uninstall, /podman (rm|volume)/);
   // The npm aliases point at the systemd scripts and nothing else; the launchd ones are gone.
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   assert.equal(pkg.scripts["service:install"], "bash scripts/install-systemd.sh");
   assert.equal(pkg.scripts["service:uninstall"], "bash scripts/uninstall-systemd.sh");
-  assert.deepEqual(Object.keys(pkg.scripts).filter((name) => name.startsWith("service:")).sort(), ["service:install", "service:uninstall"]);
+  assert.equal(pkg.scripts["service:repair"], "bash scripts/repair-service-unit.sh");
+  assert.deepEqual(Object.keys(pkg.scripts).filter((name) => name.startsWith("service:")).sort(), ["service:install", "service:repair", "service:uninstall"]);
   assert.doesNotMatch(JSON.stringify(pkg.scripts), /launchd/);
 });
 
@@ -195,7 +208,7 @@ test("the service entry point gates the Node version before any src module is im
   assert.doesNotMatch(entry, /^\s*import\s+[^(]/m, "src/start.js must not use a static import");
   assert.doesNotMatch(entry, /^\s*(?:export|require\()/m);
   assert.match(entry, /process\.versions\.node/);
-  assert.match(entry, /major === 22 && minor < 13/);
+  assert.match(entry, /major < 24/);
   assert.match(entry, /await import\("\.\/server\.js"\)/);
   // Everything that launches the daemon must exec the gate, not the server directly.
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
@@ -247,4 +260,28 @@ test("every operations shell script parses", () => {
   const scripts = readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".sh"));
   assert.ok(scripts.length > 0);
   for (const name of scripts) execFileSync("bash", ["-n", path.join(root, "scripts", name)], { stdio: "pipe" });
+});
+
+
+test("startup rejects older Node before imports and accepts the Node 24 baseline", () => {
+  const entry = readFileSync(path.join(root, "src/start.js"), "utf8");
+  const gate = entry.slice(0, entry.indexOf('const { platformRefusal }'));
+  for (const version of ["20.19.0", "22.23.3", "23.11.0", "24.0.0", "24.22.2", "26.0.0"]) {
+    const errors = [];
+    const refused = new Error("refused");
+    const context = {
+      process: { versions: { node: version }, exit(code) { assert.equal(code, 1); throw refused; } },
+      console: { error(message) { errors.push(message); } },
+    };
+    if (Number(version.split(".")[0]) < 24) {
+      assert.throws(() => runInNewContext(gate, context), (error) => error === refused);
+      assert.deepEqual(errors, [`ChannelGate requires Node >= 24.0.0; running on ${version}. Upgrade Node and restart.`]);
+    } else {
+      runInNewContext(gate, context);
+      assert.deepEqual(errors, []);
+    }
+  }
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(pkg.engines.node, ">=24.0.0");
+  assert.equal(readFileSync(path.join(root, ".nvmrc"), "utf8").trim(), "24");
 });

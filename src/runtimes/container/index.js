@@ -18,6 +18,10 @@ import { createContainerReaper } from "./reaper.js";
 import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
 import { egressPlanFor } from "./egress-hook.js";
+import { adapterFor } from "../../engines/registry.js";
+import { channelHistoryRoot } from "./history.js";
+import { CONTAINER_DEFAULT_PIDS_LIMIT } from "./pids-pressure.js";
+import { createServiceUnitInspector } from "./service-unit.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
 export { containerFingerprint } from "./lifecycle.js";
@@ -30,6 +34,19 @@ const log = (message) => logFn(message);
 
 let context = null;
 let bootSettings = null;
+// Whether a stop of the daemon's own systemd unit takes the containers with it (service-unit.js).
+let serviceUnit = createServiceUnitInspector();
+async function serviceUnitFacts(caps, containers = []) {
+  try {
+    const facts = await serviceUnit.inspect({
+      cgroupManager: caps?.cgroupManager || "",
+      containerPids: containers.filter((entry) => entry.status === "running").map((entry) => entry.pid),
+    });
+    return { unit: facts.unit, scope: facts.scope, killMode: facts.killMode, killsContainers: facts.killsContainers, advice: facts.advice };
+  } catch {
+    return { unit: "", scope: "", killMode: "", killsContainers: false, advice: "" };
+  }
+}
 
 function buildContext({ exec = undefined, now = undefined, pollMs = undefined, sweepMs = undefined } = {}) {
   const holder = {};
@@ -58,6 +75,7 @@ function runtime() {
 // the daemon.
 export function __setContainerRuntime(options = {}) {
   if (options.log) logFn = options.log;
+  if (options.serviceUnit) serviceUnit = options.serviceUnit;
   context = buildContext(options);
   return context;
 }
@@ -68,6 +86,7 @@ export function __resetContainerRuntime() {
   context = null;
   bootSettings = null;
   logFn = (message) => console.log(message);
+  serviceUnit = createServiceUnitInspector();
 }
 
 export const containerBackend = Object.freeze({
@@ -106,6 +125,9 @@ export const containerBackend = Object.freeze({
     const container = {
       name,
       homeVolume: homeVolumeName(base),
+      // Conversation files are channel-owned; HOME still isolates credentials and configuration.
+      sharedHistory: true,
+      historyRoot: channelHistoryRoot(base),
       // The persistent /tmp and /var/tmp volumes, keyed by mount kind (lifecycle.js).
       tmpVolumes: tmpVolumeNames(base),
       // Host volume location for legacy adoption discovery only. Usage reads inside the
@@ -124,7 +146,7 @@ export const containerBackend = Object.freeze({
       uidStrategy: "user", // settled from the CLI probe
       credentialMode: intendedCredentialModes(settings, { egressActive: egress.active === true }),
       limits: {
-        pidsLimit: Number(settings.pidsLimit) || 1024,
+        pidsLimit: Number(settings.pidsLimit) || CONTAINER_DEFAULT_PIDS_LIMIT,
         memory: String(settings.memory || ""),
         cpus: String(settings.cpus || ""),
       },
@@ -140,6 +162,14 @@ export const containerBackend = Object.freeze({
       // the target instead of keeping a second copy of the same strings.
       ...containerImagePaths(),
     };
+    const selectedAdapter = adapterFor(base.meta?.engine);
+    // The shared Codex home, kept beside the selected engine's own: a turn that moves to another
+    // license of the channel's pool must not run in the first license's directory (run.js
+    // targetForEngine).
+    container.baseCodexHome = container.codexHome;
+    const selectedState = selectedAdapter?.cli === "codex" ? selectedAdapter.sessionState : null;
+    const selectedDir = typeof selectedState?.containerDir === "function" ? selectedState.containerDir(container) : container[selectedState?.containerDirKey || ""];
+    if (selectedDir) container.codexHome = selectedDir;
     const target = {
       ...base,
       backend: "container",
@@ -280,6 +310,17 @@ export const containerBackend = Object.freeze({
     return runtime().state.inspectUsage(target, request);
   },
 
+  async inspectResources(target, request) {
+    return runtime().state.inspectResources(target, request);
+  },
+
+  // Was the process limit why an engine process just died? Read from the host (pids-pressure.js):
+  // the in-container probe above needs a process slot, which is the one thing a full container
+  // does not have.
+  async inspectProcessLimit(target) {
+    return runtime().lifecycle.processLimitStatus(target);
+  },
+
   async inspectState(target, request) {
     return runtime().state.inspectState(target, request);
   },
@@ -294,7 +335,7 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
   if (logger) logFn = logger;
   bootSettings = settings || null;
   const r = runtime();
-  const status = { cli: null, image: null, reconciled: null };
+  const status = { cli: null, image: null, reconciled: null, service: null };
   try {
     status.cli = await r.cli.probe(settings || {}, { image: settings?.image, force: true });
   } catch (error) {
@@ -304,7 +345,7 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
     log(`[container] no usable container CLI — ${status.cli.reason}`);
     return status;
   }
-  log(`[container] ${status.cli.kind} ${status.cli.version}${status.cli.rootless ? " (rootless)" : ""} via ${status.cli.bin}, uid strategy ${status.cli.uidStrategy}${status.cli.cgroupLimits ? "" : ", cgroup limits unavailable"}`);
+  log(`[container] ${status.cli.kind} ${status.cli.version}${status.cli.rootless ? " (rootless)" : ""} via ${status.cli.bin}, uid strategy ${status.cli.uidStrategy}${status.cli.cgroupLimits ? "" : ", resource limits not verified"}`);
   try {
     status.image = await r.image.inspect(status.cli, settings || {}, { force: true });
     if (!status.image.present) log(`[container] WARNING: ${status.image.reason}`);
@@ -324,6 +365,10 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
     log(`[container] boot reconcile failed: ${error?.message || error}`);
     status.reconciled = { ok: false, reason: String(error?.message || error) };
   }
+  // Said once per boot, where an operator reads why containers keep being recreated: the daemon
+  // cannot change its own unit, so it names the host command that does.
+  status.service = await serviceUnitFacts(status.cli, (status.reconciled?.containers || []).filter((entry) => !status.reconciled?.dead?.includes(entry.name)));
+  if (status.service.advice) log(`[container] WARNING: ${status.service.advice}`);
   r.reaper.startTimer();
   return status;
 }
@@ -422,6 +467,7 @@ export async function containerRuntimeStatus(settings = bootSettings) {
     }));
     out.running = out.containers.filter((entry) => entry.state === "running").length;
     out.awaitingImage = out.containers.filter((entry) => entry.awaitingImage).length;
+    out.service = await serviceUnitFacts(caps, listed);
   } catch (error) {
     out.cli.reason = out.cli.reason || String(error?.message || error);
   }

@@ -28,7 +28,7 @@ Omit `channel` for the headless `api` workspace. Supply a Slack channel ID, slug
 
 Set an `idempotencyKey` per logical request. Retries with that key within 15 minutes reuse the original job and return `200` instead of launching another run. At most 25 API jobs may be in flight; additional starts receive `429`.
 
-Optional fields select engine/model/effort, provide a file or public file URL, and name a completion webhook. Downloaded attachments are bounded at 500 MB per file. Inline files must also fit within the API’s 30 MB JSON request-body limit, including encoding overhead.
+Optional fields select the harness, licenses, model, and effort, provide a file or public file URL, and name a completion webhook. `harness` names the [license](/docs/features/engine-licenses) the run starts on, and `licenses` is `"any"` or a list of further license IDs of the same harness that the run may move to when that license cannot answer. `licenses` requires `harness`; a request that names licenses of the other harness, or `licenses` alone, is refused with `400`. Downloaded attachments are bounded at 500 MB per file. Inline files must also fit within the API’s 30 MB JSON request-body limit, including encoding overhead.
 
 The request's `author` is attribution only. It does not unlock anyone's personal accounts or `/sudo`; API runs use shared conversation accounts. Interrupted runs are not automatically replayed after a restart. Job records are retained for seven days, so store required results in your own system.
 

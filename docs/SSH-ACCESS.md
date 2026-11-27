@@ -1,8 +1,53 @@
 # SSH access to channel containers
 
+## Shared outbound SSH key
+
+For agents connecting **to other servers**, every channel on one gateway shares one Ed25519
+identity. The daemon creates it once under `<gateway-root>/config/agent-ssh/` and mounts only
+that directory, read-only, at `/home/agent/.ssh/channelgate`. Other HOME files and existing local
+SSH keys, configuration and known_hosts remain separate. Project/admin containers, scheduled and
+background runs use the same key; recreated containers retain it. A `/sudo` host run uses the
+same host-side identity, whose path is supplied in its runtime preamble.
+
+Ask an agent in any channel for its public key, or read:
+
+```sh
+cat ~/.ssh/channelgate/id_ed25519.pub
+```
+
+Add that single line to the intended remote account's `~/.ssh/authorized_keys`. Then connect with
+the normal SSH client (substitute the authorized account and server):
+
+```sh
+ssh -i ~/.ssh/channelgate/id_ed25519 -o IdentitiesOnly=yes \
+  -o BatchMode=yes -o ConnectTimeout=15 \
+  -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p' user@server.example.com
+```
+
+Keep SSH host-key verification enabled. This key does not approve a destination or enable the
+channel's Network switch; existing per-channel egress approvals still apply. It is distinct from
+developers' personal keys for SSH **into** ChannelGate described below. Separate gateway
+installations generate separate identities; this is not one vendor-wide private key.
+
+The shared private key is intentionally readable by anyone with shell access in an agent
+container. A read-only mount prevents modifying the central pair, not copying it. Never paste,
+upload or log the private key. Grant the public key only the remote account access intended for
+all authorized channels. Existing per-channel keys are retained for migration; agents return the
+shared `.pub` file by default and do not generate replacements.
+
+The first upgraded run recreates old containers to add the new mount using the existing lease
+drain rules. No container-image rebuild is needed for this host-side bind mount. Startup and
+container preparation validate the pair; incomplete, corrupt or linked files fail closed instead
+of silently rotating the key. Preserve `config/agent-ssh/` when moving or restoring a gateway;
+`npm run backup` includes it in the encrypted config backup. Losing the entire directory requires
+restoring it from backup to retain access already configured on servers.
+
+## Developer access into channel containers
+
 Developers can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards —
-inside a channel's own container, the same box the assistant works in, without any account on
-the gateway host and without any container ever listening on a port. One key per person,
+inside the channel container selected for their current role, matching their own ordinary chat
+turns, without any account on the gateway host and without any container ever listening on a
+port. One key per person,
 registered once from chat; users enable their own access per channel without manager or admin
 approval; the container stays up for as long as a session is open.
 
@@ -105,9 +150,55 @@ machine settings — merge-only, and never over a value you set yourself.
 
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
-`/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
-Codex uses the channel's selected login (a proxy placeholder in proxy mode, a host file mount in
-legacy bridge mode), and `codex` in a session gets what a chat turn's Codex gets:
+`/home/agent` for their runtime scope (installed tools, `gh`/`vercel`/`supabase` logins, Claude and
+Codex history). Current organization admins use the admin container and legacy HOME (`cg-…`);
+members and guests use the separate project container and HOME (`cgp2-…`). The work folder is
+shared, and Claude/Codex conversation files are shared across both roles. CLI logins, settings,
+MCP payloads and native background-job databases stay separate. "Show SSH access" names the
+requester's scope. SSH rechecks roles while connected; a scope change disconnects the session
+before preparing more credentials, and reconnecting selects the current scope. The existing
+Admin-mode + `containerFullAccessHome` refusal still applies to everyone.
+
+The shared transcript directories live under `~/ChannelGate/.runtime-history/<installId>/<platform>/<slug>/`
+(or beside the configured runtime artifact root). Both containers mount them into
+`/home/agent/.claude/projects`, `.codex/sessions` and
+`.codex/archived_sessions`. They contain no login files, file-backup snapshots or native SQLite job state.
+The first use copies legacy project history additively, after project writers finish, without
+changing the original HOME. Divergent files or unsafe links stop migration without overwriting.
+Legacy admin history remains in its original HOME for a reviewed import: older versions could
+copy host `/sudo` transcripts there, so it cannot safely be published wholesale.
+`codex` in a session is the channel's **selected Codex license**, in that license's own directory
+in the channel's HOME — the same account a chat turn of that channel runs on:
+
+- the license the channel is set to (its own engine, else the gateway default) when that is a
+  Codex license the channel may use: the gateway's own sign-in, Codex EU, an added ChatGPT
+  sign-in, the channel's own account, or an API-key / cloud-provider / custom-server license;
+- in a channel that runs on Claude Code, the channel's Codex sign-in instead: the gateway's own
+  when the channel's Approved harnesses admit it, else the first admitted sign-in license, else —
+  when no sign-in is admitted — the first admitted API-key or cloud license (what typing `codex`
+  in chat picks there);
+- when the channel may use no Codex license, or the selected one could not be placed (not signed
+  in on the host, the egress proxy not this container's network), `codex` is **not signed in** and
+  says so on start (`codex: …`). It is never replaced by another account's.
+
+A sign-in is the access-only relay file a turn writes (a proxy placeholder, no refresh token; in
+the legacy bridge mode the gateway's own sign-in is the mounted host file and the dedicated ones
+are unavailable, as in a turn). An **API-key, cloud-provider or custom-server license** has no
+sign-in file: the wrapper starts `codex` with that license's provider settings and with the
+channel's *placeholder* for its key, which the gateway's egress proxy swaps for the real key on
+that license's own server only, and only while the channel has live work — your open session
+counts. The key itself never enters the container, so such a license needs the egress proxy (it
+is refused by name in the legacy bridge mode). `OPENAI_*` names and the provider's own SDK names
+(`AWS_*` on Bedrock, the Google names on Vertex) from your secrets are dropped for that `codex`,
+as they are for a turn. A license that serves only the models it lists starts on the channel's
+model when the license lists it, else on the license's default, else on its first listed model;
+`-m` on your command line still wins. The session's shell carries no `CODEX_HOME`: the `codex` wrapper
+names the selected license's directory itself, so a `CODEX_HOME` you type — the footer's Resume
+command names its session's directory — wins. A program that starts the pinned CLI directly
+(`/usr/local/bin/codex`), bypassing the wrapper, reads `~/.codex`. The session stays on the
+selected license: it does not move to another license of a pool the way a turn does.
+
+`codex` in a session also gets what a chat turn's Codex gets:
 the gateway tools, your own Composio accounts as `composio-user`, the channel's as
 `composio-agent`, the channel's selected MCP servers and your channel secrets. Started from your
 home, `/` or a parent of the channel folder it moves into the channel folder so its `AGENTS.md`
@@ -135,7 +226,7 @@ session gets:
 - **The same MCP servers a turn gets:** the gateway's control tools (memory, schedules, skills,
   channel settings, the bot's Slack tools; not the background-job, progress and approval-card
   tools, which speak into a thread a session does not have), `composio-user` for YOUR connected
-  accounts, `composio-agent` for the channel's, the toolboxes and the channel's selected catalog
+  accounts, `composio-agent` for the channel's, the Make connection and the channel's selected catalog
   servers — and nothing else (`--strict-mcp-config`): the operator's own claude.ai connectors
   are not loaded.
 - **The run environment:** the organization's, your own and the channel's secrets, by the names a
@@ -146,12 +237,41 @@ session gets:
   account" with the operator's organization and email, `/usage` shows the plan's windows, and the
   default model is the plan's. It is the operator's login (the same one every turn uses): your
   session's usage counts against it. Claude reads the login from an access-only file the daemon
-  writes and refreshes; it holds no refresh token and is removed when the channel's last session
+  writes and refreshes; it holds no refresh token and is removed when the container's last session
   ends. Behind the egress proxy its access token is the channel's relay placeholder (the plan,
   expiry and rate tier beside it are the real login's — they are facts, not secrets), so the file
-  is useless outside the container. `claude -r <session id>` resumes a thread's own session.
+  is useless outside the container. `claude -r <session id>` resumes a native session stored in
+  the shared channel history, including ordinary conversations created by the other role.
+  Host `/sudo` history stays separate; it is never copied back into shared channel history.
+- **Unless the channel is set to another Claude license.** When the channel's own license (or,
+  for a channel that names none, the gateway default) is a Claude license an admin added — a
+  second Claude sign-in, a custom server, an Anthropic API key, a Bedrock/Vertex/Foundry route —
+  and the channel may use it, `claude` in a session is THAT license, as the channel's turns are:
+  it runs in the license's own directory (`~/.cg-licenses/<id>`), with the provider settings a
+  turn gets and the channel's placeholder as its credential. Nothing of that license is written
+  into the box — no login file, no key, no token — so `/status` shows a token from the
+  environment ("Claude API") rather than a plan, and Claude Code may ask once whether to use
+  the key it finds in the environment. Keys, endpoints and cloud settings your shell or secrets
+  carry are dropped first, exactly as for a turn on that license. A license with its own model
+  list starts on the channel's model when the license lists it, else its first; your own
+  `--model` wins. It needs the egress proxy (only the proxy can turn the placeholder into the
+  credential) and, for a sign-in, a signed-in license: when it cannot be placed `claude` prints
+  why and is signed out in that license's directory — the gateway's own login never stands in.
+  Every other channel — one on the gateway's Claude login, a Codex channel, a channel on a
+  shipped provider harness — keeps the gateway's own login above, unchanged.
+- **Unless the channel does not approve it.** The gateway's own login is the license `claude`. In
+  a channel whose Approved harnesses leave it out, a session never gets it: `claude` there is an
+  added Claude license the channel may use (a sign-in before a keyed one, placed as above), and
+  when there is none it prints `claude: no Claude license is usable in this channel — claude in
+  this session is not signed in` and starts signed out. The access-only login file, the account
+  record and the editor token an earlier session left are removed, and the egress proxy refuses
+  the gateway's login for that channel whatever is still lying around. Approve Claude again and
+  the next refresh (or reconnect) restores it. Signing in to your own Anthropic account inside
+  the container is your own account, not a gateway license, and is not affected.
 
-Codex over SSH uses the same selected login as a channel turn. "show SSH access" in the
+Codex over SSH uses the same selected license as a channel turn (above); the `ssh_session_start`
+event records it as `codexLicense`, with `codexProblem` when it is not signed in — and Claude's as
+`claudeLicense` (`claude` for the gateway's own login, empty when the channel may use none), with `claudeProblem`. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
 host, a channel whose Composio session is unavailable — the attach still succeeds and the daemon
 log names the part.
@@ -187,7 +307,8 @@ egress proxy (image spec 1.6.0). An SSH session is inside that container, so the
   container, which has no route: `ssh -L 5432:db.example.com:5432 acme-app` fails. Forwards to
   container-local ports (`ssh -L 3000:localhost:3000 acme-app`) and every `-R` forward are
   unchanged. Reach an external database through the channel's VPN/database helper, or ask an admin
-  to declare its host as a raw host (`egressRawHosts`, ports 22/5432/6543) and connect from inside.
+  to approve its exact host and SSH port using `allow_channel_ssh_host` and connect from inside
+  using `cg-egress-connect` as the SSH ProxyCommand (and `-p` for a custom port).
 - **Outbound SSH goes through a helper.** `git clone git@github.com:org/repo.git` works in a
   session as is: `GIT_SSH_COMMAND` runs `ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect
   %h %p'`, which asks the proxy for a raw tunnel. The proxy allows one only to `github.com:22` and
@@ -204,7 +325,7 @@ egress proxy (image spec 1.6.0). An SSH session is inside that container, so the
   client downloads the server and copies it in over the session.
 - **The editor token file.** `<artifacts>/vscode/claude-token` (read by the `claude` wrapper
   outside an SSH session, e.g. a `podman exec` shell or an operator's `npm run vscode` window) holds
-  the same relay placeholder, and is removed when the channel's last session ends as well as when
+  the same relay placeholder, and is removed when the container's last session ends as well as when
   the `npm run vscode` launcher exits. An open `npm run vscode` window counts as live work for the
   channel's own and organization secrets and the Claude login, never for anyone's personal ones.
 
@@ -270,8 +391,8 @@ ended); `show_channel_ssh` lists the live ones.
 | `/var/lib/channelgate-ssh/attach.sock` | the daemon's attach socket (0660, group = login account) |
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
-| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-args.sh` + `codex-secrets.json` (the capability only) |
-| `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the channel's last session |
+| `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, `claude-login.sh` (only in a channel set to an added Claude license: that license's directory, provider settings and the channel's placeholder — never a key or a token), Codex's `codex-login.sh` (which license's directory `codex` runs in, and for an API/cloud license its provider settings and the channel's placeholder — never a key), `codex-args.sh` + `codex-secrets.json` (the capability only) |
+| `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the container's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 
 - *`channelgate-ssh@…: Permission denied (publickey)`* straight away, with nothing in the daemon
@@ -311,6 +432,9 @@ ended); `show_channel_ssh` lists the live ones.
   listener. Restart the daemon to rebind it. Current releases never delete a socket another process
   is serving, and log `already served by another process` instead of taking it over; that line
   means a second gateway on this host is using the same attach directory.
+- *`UNPROTECTED PRIVATE KEY FILE` / `bad permissions` for `ssh/host_key` in the gateway log* —
+  the channel's host key became group- or world-readable (a copy or a restore). Current releases
+  reset it to `0600` before every session; on an older one, `chmod 600` it by hand.
 - *Host key changed* warnings — the channel's `ssh/host_key` was removed (a deleted channel
   artifact dir); remove the stale `known_hosts` line.
 - *`403 secret-refused … another-person-ssh-session`* — someone else has an SSH session open in the
@@ -320,5 +444,20 @@ ended); `show_channel_ssh` lists the live ones.
 - *`cg-egress-connect: the gateway's egress proxy refused github.com:22 (403 Forbidden) —
   network-off …`* — outbound SSH needs *Allow network* on; any other host must be a declared raw
   host. `kex_exchange_identification: Connection closed` right after it is ssh's own echo of that.
+- *`cg-egress-connect: server.example.com:2222 is not a declared raw destination for this channel;
+  the gateway's egress proxy carries only HTTPS (TLS) to it …`* — with *Allow network* on, an
+  undeclared host:port still gets a tunnel, but one the proxy inspects, so only TLS passes. The
+  helper sees the proxy's `X-ChannelGate-Tunnel: inspect` answer and refuses a non-TLS client (SSH,
+  SQL Server, PostgreSQL) before a byte leaves the container. A client that waits for the server to
+  speak first (MySQL, SMTP) gets the same line as a hint after five seconds. Ask for the exact host
+  and port with `allow_channel_ssh_host({host, port})`.
 - *Connection drops on daemon restart* — expected; reconnect.
+- *History differs from another person's Slack session* — ordinary Claude/Codex channel histories
+  share the same transcript mounts across roles. Compare the channel/install identity and check
+  whether first-use project migration has completed. HOME credentials and private host `/sudo`
+  sessions remain separate. Old admin-native transcripts require a reviewed import.
+- *Host-key warning after a scope change* — each scope keeps its own key at
+  `<artifactDir>/ssh/host_key`. Ordinary container rebuilds preserve that file. Ask an operator
+  to verify the selected scope's fingerprint before updating the matching known-host entry;
+  a changed key by itself is not proof of a harmless rebuild.
 - `journalctl -u channelgate | grep '\[ssh\]'` shows binds, sessions and relay refresh failures.

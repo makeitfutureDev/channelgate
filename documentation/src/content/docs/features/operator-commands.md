@@ -16,7 +16,7 @@ These commands run from the **gateway source checkout**, as its configured OS ac
 | `npm run update` | Host-managed transactional update |
 | `npm run build:image` | Build the managed container image |
 
-Read [installation](/docs/installation) and [operations](/docs/operations) for prerequisites, service permissions, and exact deployment setup. ChannelGate requires Linux and Node 22.13 or newer; ordinary engine turns need the supported container runtime/image.
+Read [installation](/docs/installation) and [operations](/docs/operations) for prerequisites, service permissions, and exact deployment setup. ChannelGate requires Linux and Node 24.0.0 or newer; ordinary engine turns need the supported container runtime/image.
 
 ## Data and capacity
 

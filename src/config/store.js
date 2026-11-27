@@ -1,3 +1,5 @@
+import { assertSpendingLimitUpdate } from "../ee/channel-spending.js";
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Config store — the single source of truth for users, the channel index, and per-channel meta.
 // Backed by SQLite (see ../db). Functions keep their original async signatures so the ~40 call
 // sites are unchanged; the underlying reads/writes are synchronous SQLite calls that resolve
@@ -16,23 +18,40 @@ import {
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../gateway/channel-engines.js";
 import { assertRegistrationCapacity } from "../ee/registration-limits.js";
+import { adminUserAuthorityChanged } from "./admin-accounts.js";
 import { isApiPrincipal } from "./api-principal.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
 import { stripDeadFields } from "./dead-fields.js";
+import { isRetiredEngineId } from "../engines/retired.js";
+import { coherentLicensePool } from "../engines/registry.js";
 import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
+import { createWorkspaceProjectionReader, workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
 // `nudges` moved from conversation metadata to user records. Retire this shape-specific key only
 // at the channel boundary; unlike stripDeadFields(), this is also safe on internal reads because it
 // is not a secret-retirement policy (some tests intentionally prove old secrets survive until a
 // write while listing maskers still hide them).
+//
+// A channel default naming a RETIRED harness (engines/retired.js) is dropped the same way, on reads
+// and writes alike: the conversation follows the gateway default again, and its model and effort —
+// that harness's own values, meaningless to any other — go with it. Without this the stored id
+// reaches the policy check below as an unknown engine and refuses the save, and a new-channel
+// template that still names it refuses every registration.
 function stripRetiredChannelFields(meta) {
-  const record = meta;
-  if (!record || !Object.hasOwn(record, "nudges")) return record;
-  const { nudges: _retired, ...rest } = record;
-  return rest;
+  let record = meta;
+  if (!record) return record;
+  if (Object.hasOwn(record, "nudges")) {
+    const { nudges: _retired, ...rest } = record;
+    record = rest;
+  }
+  if (isRetiredEngineId(record.engine)) {
+    const { engine: _engine, model: _model, effort: _effort, ...rest } = record;
+    record = rest;
+  }
+  return record;
 }
 
 // ── Bootstrap ───────────────────────────────────────────────────────────────
@@ -46,8 +65,8 @@ export async function ensureRoot() {
 }
 
 // ── Users (global) ────────────────────────────────────────────────────────────
-// Shape: { "<platformUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
-//          nudges, skills[], allowedMcps[], allowedCodexMcps[] } }
+// Shape: { "<platformUserId>": { name, composioToken, isAdmin, approved,
+//          nudges, replyMentions, skills[], allowedMcps[], allowedCodexMcps[] } }
 export async function getUsers() {
   const rows = getDb().prepare("SELECT user_id, data FROM users").all();
   const out = {};
@@ -74,9 +93,9 @@ export async function setUser(userId, patch) {
     const values = typeof patch === "function" ? patch(existing) : patch;
     if (values === null) { db.exec("COMMIT"); return existing; }
     const next = {
-      name: "", composioToken: "", toolboxToken: "", isAdmin: false,
-      approved: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
-      allowedOpenCodeMcps: [], ...existing,
+      name: "", composioToken: "", isAdmin: false,
+      approved: false, replyMentions: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
+      ...existing,
     };
     for (const [key, value] of Object.entries(values || {})) {
       if (value !== undefined) next[key] = value;
@@ -84,6 +103,7 @@ export async function setUser(userId, patch) {
     const saved = stripDeadFields(next);
     db.prepare("INSERT INTO users(user_id, data) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data")
       .run(userId, toJson(saved));
+    adminUserAuthorityChanged(db, userId, existing, saved);
     db.exec("COMMIT");
     emitConfigChange("user", { userId });
     return saved;
@@ -112,10 +132,6 @@ export async function isApproved(userId) {
 
 export async function getComposioToken(userId) {
   return (await getUser(userId))?.composioToken || "";
-}
-
-export async function getToolboxToken(userId) {
-  return (await getUser(userId))?.toolboxToken || "";
 }
 
 // ── Channels index (global) ─────────────────────────────────────────────────
@@ -207,6 +223,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     isDM: Boolean(isDM),
     // The chat surface. Read through platformOr()/capabilitiesFor() — never compared to a literal.
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
+    monthlySpendingLimitUSD: null, // null = unlimited; admin UI only, per UTC calendar month
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
     // Who can MANAGE this channel (modes, network, MCP servers, secrets' modes) from chat:
@@ -220,6 +237,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     // expands to the flags below on save. undefined/legacy channels derive it from the flags.
     allowedUsers: [], // empty = nobody until configured (fail closed). DMs auto-allow the peer.
     allowedMcps: [], // Claude catalog entries; both built-in Composio identities are separate.
+    allowedChannelCodexMcps: [], // Optional servers for the channel account only.
     allowedCodexMcps: [], // Codex runtime app-family/server identities; enforced by codex launch overrides.
     skills: [], // skills added to this conversation (on top of its skill template)
     skillTemplate: "", // slug of the skill template this conversation follows ("" = none)
@@ -228,15 +246,16 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     allowNetwork: false, // allow sandbox network egress (to the configured domains) for git/gh/curl
     autoMode: false, // autonomous: auto-approve permission prompts (no Slack buttons); still sandboxed
     cleanMode: false, // run bare: no MCP servers (gateway/composio/skills), no skills, no favorites block
-    noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
+    skillRuntimeSwap: false, // let a skill's declared preferred model switch the turn's engine/model (src/gateway/skill-runtime.js)
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
-    engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"
+    engine: "", // per-channel license: "" = use the global default, or an engine id (a harness's license)
+    licensePool: "", // more licenses of that harness to move to when it fails: "" | "any" | [ids]
     codexAuthSource: "gateway", // gateway login, or a separate host-side login for this channel
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
+    extraFolders: [], // admin-declared additional host folders mounted beside it: [{ path, mode: "rw"|"ro" }] (src/gateway/extra-folders.js)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)
     composioToken: "", // shared `composio` token; personal `composio-user` remains available too
-    toolboxToken: "", // channel-wide Toolbox token used for everyone here (overrides per-user)
     makeToolboxUrl: "", // per-channel Make MCP toolbox server URL (key stays separate)
     makeToolboxKey: "", // per-channel Make MCP toolbox Bearer key
     model: "", // model override for this channel (empty = engine default)
@@ -246,13 +265,121 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
   };
 }
 
+function workspaceRows() {
+  return getDb().prepare("SELECT slug, data FROM channel_meta ORDER BY rowid").all()
+    .map((row) => ({ slug: row.slug, meta: stripRetiredChannelFields(fromJson(row.data, {})) }));
+}
+
 export async function getChannelMeta(slug) {
-  const row = getDb().prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
-  return row ? stripRetiredChannelFields(fromJson(row.data, null)) : null;
+  const { createWorkDirResolver } = await import("../gateway/folders.js");
+  return createWorkspaceProjectionReader(workspaceRows(), createWorkDirResolver())(slug);
+}
+
+// `rows` is the write transaction's one snapshot of every conversation and `effectiveWorkDir` its
+// one work-folder resolver (createWorkDirResolver): BEGIN IMMEDIATE holds the write lock, so
+// nothing changes between the projections a save compares.
+function prepareWorkspaceSave(slug, current, next, rows, effectiveWorkDir, channelScopedSkills) {
+  delete next.workspaceLink;
+  // Link is derived from the folder, never accepted from a caller.
+  delete next.workspaceOwnerSlug;
+  delete next.workspaceOrigin;
+  delete next.workspacePolicyIsDM;
+  if (typeof current?.workspacePolicyIsDM === "boolean") next.workspacePolicyIsDM = current.workspacePolicyIsDM;
+  if (current && current.workDir === next.workDir) {
+    if (current.workspaceOwnerSlug) next.workspaceOwnerSlug = current.workspaceOwnerSlug;
+    if (current.workspaceOrigin) next.workspaceOrigin = current.workspaceOrigin;
+  }
+  // Resolve an existing default workspace before applying the custom-directory allowlist.
+  // The hint comes from stored assignments, never caller-supplied ownership metadata.
+  if (next.workDir && (!current || current.workDir !== next.workDir)) {
+    const assigned = rows.find((row) => row.slug !== slug && effectiveWorkDir(row.slug, { ...row.meta, cleanMode: false }) === next.workDir.trim());
+    if (assigned) {
+      const source = workspaceProjection(assigned.slug, assigned.meta, rows, effectiveWorkDir);
+      next.workspaceOwnerSlug = source.workspaceOwnerSlug || assigned.slug;
+      next.workspaceOrigin = source.workspaceOrigin || { slug: next.workspaceOwnerSlug, platform: source.workspaceLink?.platform || source.platform };
+    }
+  }
+  const cwd = effectiveWorkDir(slug, { ...next, cleanMode: false });
+  const oldCwd = current && effectiveWorkDir(slug, { ...current, cleanMode: false });
+  if (current && oldCwd === cwd) {
+    if (current.workspaceOwnerSlug) next.workspaceOwnerSlug = current.workspaceOwnerSlug;
+  } else {
+    const peer = rows.find((row) => row.slug !== slug && effectiveWorkDir(row.slug, { ...row.meta, cleanMode: false }) === cwd);
+    if (peer) next.workspaceOwnerSlug = workspaceProjection(peer.slug, peer.meta, rows, effectiveWorkDir).workspaceOwnerSlug || peer.slug;
+  }
+  const candidates = rows.map((row) => row.slug === slug ? { slug, meta: next } : row);
+  if (!candidates.some((row) => row.slug === slug)) candidates.push({ slug, meta: next });
+  const projected = workspaceProjection(slug, next, candidates, effectiveWorkDir);
+  const previous = current && workspaceProjection(slug, current, rows, effectiveWorkDir);
+  if (!projected.workspaceLink && previous?.workspaceLink) {
+    projected.skills = retainWorkspaceSectionSkills(projected, previous.workspaceLink.channelId, channelScopedSkills);
+    if (projected.isDM) projected.template = "custom";
+  }
+  if (projected.workspaceLink && previous?.workspaceLink?.slug === projected.workspaceLink.slug
+      && current?.workDir === next.workDir) {
+    for (const field of WORKSPACE_FIELDS) {
+      if (JSON.stringify(next[field]) !== JSON.stringify(projected[field])) {
+        throw Object.assign(new Error(`This setting is linked to ${projected.workspaceLink.name}. Edit the source conversation's shared setup, or choose a separate working folder.`),
+          { code: "workspace_setting_linked", status: 409, statusCode: 409 });
+      }
+    }
+  }
+  if (projected.workspaceLink) {
+    const source = rows.find((row) => row.slug === projected.workspaceLink.slug);
+    projected.workspaceOrigin = source?.meta.workspaceOrigin || { slug: projected.workspaceLink.slug, platform: projected.workspaceLink.platform };
+  }
+  delete projected.workspaceLink;
+  return projected;
+}
+
+// Section grants are implicit while linked. On separation they become explicit grants so
+// changing the section identity does not silently revoke the folder's existing skills.
+function retainWorkspaceSectionSkills(meta, channelId, channelScopedSkills) {
+  const off = new Set((meta.skillsOff || []).map((name) => name.toLowerCase()));
+  return [...new Set([...(meta.skills || []), ...channelScopedSkills(channelId).filter((name) => !off.has(name.toLowerCase()))])];
+}
+
+// Keep a fallback snapshot for explicit unlinking or an owner moving to another folder.
+// Normal reads always project the live owner; snapshots never override a live source.
+function snapshotWorkspaceFollowers(db, slug, current, next, rows, effectiveWorkDir, channelScopedSkills) {
+  if (!current) return [];
+  if (workspaceProjection(slug, current, rows, effectiveWorkDir).workspaceLink) return [];
+  const changed = [];
+  const oldCwd = effectiveWorkDir(slug, { ...current, cleanMode: false });
+  const sameFolder = oldCwd === effectiveWorkDir(slug, { ...next, cleanMode: false });
+  const setup = workspaceSetup(sameFolder ? next : current);
+  // Each follower is selected from the same pre-write snapshot, including after an earlier
+  // follower has been saved. Reuse its directory observations without caching next/current.
+  const readFollower = createWorkspaceProjectionReader(rows, effectiveWorkDir);
+  for (const row of rows) {
+    if (row.slug === slug || readFollower(row.slug).workspaceLink?.slug !== slug) continue;
+    const copy = { ...row.meta, workspaceOwnerSlug: slug, workspaceOrigin: current.workspaceOrigin || { slug, platform: current.platform } };
+    for (const field of WORKSPACE_FIELDS) {
+      if (Object.hasOwn(setup, field)) copy[field] = setup[field];
+      else delete copy[field];
+    }
+    copy.workspacePolicyIsDM = current.workspacePolicyIsDM ?? Boolean(current.isDM || current.type === "im");
+    if (!sameFolder) {
+      copy.skills = retainWorkspaceSectionSkills(copy, current.channelId, channelScopedSkills);
+      if (copy.isDM) copy.template = "custom";
+    }
+    if (JSON.stringify(copy) === JSON.stringify(row.meta)) continue;
+    db.prepare("UPDATE channel_meta SET data = ? WHERE slug = ?").run(toJson(copy), row.slug);
+    changed.push(row.slug);
+  }
+  return changed;
 }
 
 // Gate policy writes at the store boundary so internal callers and tools share the same rules.
 function validateChannelPolicy(current, next) {
+  if (!Object.hasOwn(next, "monthlySpendingLimitUSD") && Object.hasOwn(current || {}, "monthlySpendingLimitUSD")) {
+    next.monthlySpendingLimitUSD = current.monthlySpendingLimitUSD;
+  }
+  if (next.skillTemplate && next.skillTemplate !== current?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+  if (next.syncDriveFolder && next.syncDriveFolder !== current?.syncDriveFolder) requireEnterpriseFeature("driveSync");
+  if (Object.hasOwn(next, "monthlySpendingLimitUSD")) next.monthlySpendingLimitUSD = assertSpendingLimitUpdate(current, next.monthlySpendingLimitUSD);
+  if (next.skillRuntimeSwap === true && current?.skillRuntimeSwap !== true) requireEnterpriseFeature("skillModelRouting");
+  if (next.codexAuthSource === "channel" && current?.codexAuthSource !== "channel") requireEnterpriseFeature("channelCodexLogin");
   // A whole-record save omitting an existing restriction must not clear it by accident.
   if (!Object.hasOwn(next, "approvedEngines") && Object.hasOwn(current || {}, "approvedEngines")) {
     next.approvedEngines = current.approvedEngines;
@@ -261,24 +388,44 @@ function validateChannelPolicy(current, next) {
     next.approvedEngines = assertApprovedEnginesUpdate(current, next.approvedEngines);
   }
   if (next.engine && next.engine !== current?.engine) assertChannelEngineApproved(next, next.engine);
+  // The license pool belongs to the license it was chosen beside: no license, no pool, and never a
+  // license of the other harness or one that no longer exists.
+  if (Object.hasOwn(next, "licensePool") || Object.hasOwn(current || {}, "licensePool")) {
+    next.licensePool = coherentLicensePool(next.licensePool, next.engine);
+  }
   if (next.codexAuthSource === "channel" && next.codexAuthSource !== current?.codexAuthSource) {
-    assertChannelEngineApproved(next, "codex");
+    assertChannelEngineApproved(next, "codex-channel");
   }
   return next;
 }
 
 export async function saveChannelMeta(slug, meta) {
+  const { channelScopedSkills } = await import("../gateway/skills/templates.js");
+  const { createWorkDirResolver } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? fromJson(row.data, null) : null;
-    const record = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields(meta)));
+    const rows = workspaceRows();
+    const effectiveWorkDir = createWorkDirResolver();
+    // Whole-record configuration saves may have been prepared before a Slack lifecycle event.
+    // Only atomic lifecycle patches can change admission; stale saves cannot undo a removal.
+    const input = { ...meta };
+    if (current) {
+      for (const field of ["archived", "archivedAt", "archivedReason", "botMembership", "botMembershipEventTs"]) {
+        if (Object.hasOwn(current, field)) input[field] = current[field];
+        else delete input[field];
+      }
+    }
+    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields(input)), rows, effectiveWorkDir, channelScopedSkills));
+    const followers = snapshotWorkspaceFollowers(db, slug, current, record, rows, effectiveWorkDir, channelScopedSkills);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
       .run(slug, toJson(record));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
-    return record;
+    for (const follower of followers) emitConfigChange("channel-meta", { slug: follower });
+    return getChannelMeta(slug);
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
     throw error;
@@ -295,21 +442,33 @@ export async function saveChannelMeta(slug, meta) {
 // aborts (nothing written — e.g. "channel not set up yet"). Returns the merged record, or null
 // when aborted.
 export async function patchChannelMeta(slug, patch) {
+  const { channelScopedSkills } = await import("../gateway/skills/templates.js");
+  const { createWorkDirResolver } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? stripRetiredChannelFields(fromJson(row.data, {})) : null;
-    const partial = typeof patch === "function" ? patch(current) : patch;
+    const rows = workspaceRows();
+    const effectiveWorkDir = createWorkDirResolver();
+    const effectiveCurrent = current && workspaceProjection(slug, current, rows, effectiveWorkDir);
+    // A linked conversation's projection shares the owner's nested values with `rows`, the
+    // snapshot every later comparison in this transaction reads. The callback gets its own copy,
+    // so an in-place edit lands in the record being saved (and is refused there when the setting
+    // is linked) instead of rewriting what it is compared against.
+    const base = typeof patch === "function" ? structuredClone(effectiveCurrent) : effectiveCurrent;
+    const partial = typeof patch === "function" ? patch(base) : patch;
     if (partial == null) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial })));
+    const next = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...(base || {}), ...partial })), rows, effectiveWorkDir, channelScopedSkills));
+    const followers = snapshotWorkspaceFollowers(db, slug, current, next, rows, effectiveWorkDir, channelScopedSkills);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
-    return next;
+    for (const follower of followers) emitConfigChange("channel-meta", { slug: follower });
+    return getChannelMeta(slug);
   } catch (e) {
     try {
       db.exec("ROLLBACK");
@@ -322,10 +481,12 @@ export async function patchChannelMeta(slug, patch) {
 
 // List all known channels by reading the index plus their meta (for the admin UI).
 export async function listChannels() {
+  const { createWorkDirResolver } = await import("../gateway/folders.js");
   const index = await getChannelsIndex();
+  const readWorkspace = createWorkspaceProjectionReader(workspaceRows(), createWorkDirResolver());
   const out = [];
   for (const [channelId, entry] of Object.entries(index)) {
-    const meta = (await getChannelMeta(entry.slug)) ?? null;
+    const meta = readWorkspace(entry.slug);
     out.push({ channelId, ...entry, meta });
   }
   return out;

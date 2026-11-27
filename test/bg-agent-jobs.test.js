@@ -30,18 +30,18 @@ const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 test("completion notices explain outcomes instead of exposing process codes", () => {
   const success = backgroundCompletionNotice({
     what: "Background job",
-    label: "Verify toolbox and restart recovery",
+    label: "Verify connectors and restart recovery",
     outcome: { ok: true, kind: "success", summary: "completed successfully" },
   });
   assert.equal(
     success,
-    "✅ Background job *Verify toolbox and restart recovery* completed successfully. Continuing…",
+    "✅ Background job *Verify connectors and restart recovery* completed successfully. Continuing…",
   );
   assert.doesNotMatch(success, /exit code|code 0/i);
 
   const failure = backgroundCompletionNotice({
     what: "Background job",
-    label: "Verify toolbox and restart recovery",
+    label: "Verify connectors and restart recovery",
     outcome: { ok: false, kind: "failed", summary: "failed because it reported a general error" },
   });
   assert.match(failure, /failed because it reported a general error/);

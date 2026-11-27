@@ -5,6 +5,21 @@ available in this turn. It renders real Slack controls; writing button labels in
 does not create buttons. On a surface or run without this tool, ask a concise ordinary question.
 Do not add questions when existing instructions or a reasonable assumption already resolve them.
 
+## "Form" means this tool
+
+When someone in this conversation asks for a **form** — "formular", "formular de Slack",
+"formular nativ", "chestionar", "survey", "questionnaire", "a form with different question
+types", "send me a form", "give me another form" — they mean an `ask_questions` card they can
+fill in here. Post a real one with the tool. Do **not** answer with Block Kit or modal JSON, a
+code sample, a Slack List, a canvas, Google Forms/Typeform, or a description of how a form could be
+built, unless they explicitly name that other product or ask for the code. The same applies when
+they ask you to give them questions to answer themselves (for example "give me a list of
+questions about how to filter this report"): ground the choices in the real data, then post them as
+a form instead of a bulleted list. If the requested form needs something this tool cannot do
+(date/time pickers, file uploads, more than four single-choice options), still post the form
+with the closest supported type (text for a date, multi-choice or custom answer for more options)
+and state the limitation in one line.
+
 ## Input
 
 Supply `title` (up to 120 characters), `questions`, and optionally `presentation` (`auto`,

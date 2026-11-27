@@ -19,7 +19,7 @@ test("Teams /help includes practical workflows and its supported commands", () =
     'always …', 'gateway-usage', 'channel-memory', 'remind me in 2 hours', 'list schedules',
     'delete schedule <id>', 'run it in the background', 'Resume',
     '`/help`', '`/settings`', '`/files [folder]`', '`/secrets`', '`/sendfile <path>`',
-    '`/status`', '`/model [engine] [model|default]`', '`/effort [level|default]`',
+    '`/status`', '`/model [harness] [model|default]`', '`/license [any|name[, name…]|default]`', '`/effort [level|default]`',
     '`/stop`', '`/cancel`', '`/clear`',
   ]) assert.ok(TEAMS_HELP_TEXT.includes(expected), `Teams guide missing: ${expected}`);
 
@@ -128,8 +128,10 @@ test("/help distinguishes thread stops from the top-level /stop command", () => 
   assert.match(HELP_TEXT, /bare `stop` needs no mention only in a DM/);
   assert.doesNotMatch(HELP_TEXT, /type `stop` in that thread/);
   assert.match(HELP_TEXT, /`\/stop` at top level stops every active run/);
-  assert.match(HELP_TEXT, /choose \*Steer Conversation\*, \*Add to Queue\*, or \*Cancel Request\*/i);
-  assert.match(HELP_TEXT, /choice card disappears after a valid selection/i);
+  assert.match(HELP_TEXT, /queues automatically/);
+  assert.match(HELP_TEXT, /\*Steer Conversation\*.*\*Cancel Request\*/i);
+  assert.match(HELP_TEXT, /no Add to Queue click is needed/i);
+  assert.doesNotMatch(HELP_TEXT, /choose.*Add to Queue|steer-or-queue choice/i);
   assert.match(HELP_TEXT, /`\/next <message>`.*queues directly/i);
 });
 
@@ -164,4 +166,17 @@ test('Teams help distinguishes disabled activation from named and custom reactio
   assert.match(selected, /👽 Alien, Smile robot, custom-reaction/);
   assert.doesNotMatch(selected, /Heart eyes robot|👍 Like/);
   adaptiveCardAttachment(createTeamsHelpCard(['alien', 'smilerobot', 'custom-reaction']));
+});
+
+// Compare the practical guide with the current Settings navigation, rather than retaining a
+// second obsolete page inventory in the help tests.
+test("Slack help follows current Settings navigation and independent harness choices", async () => {
+  const { CHANNEL_SETTINGS_TABS } = await import("../src/slack/channel-settings.js");
+  const labels = CHANNEL_SETTINGS_TABS.map(tab => tab === "mcp" ? "MCP" : tab === "api" ? "API tokens" : tab[0].toUpperCase() + tab.slice(1));
+  assert.ok(HELP_TEXT.includes(labels.join(" · ")));
+  assert.match(HELP_TEXT, /DMs omit Access/);
+  assert.match(HELP_TEXT, /Settings → Schedules/);
+  assert.match(HELP_TEXT, /dedicated channel Codex login is a separate harness choice/);
+  assert.match(HELP_TEXT, /other enabled engines remain selectable/);
+  assert.doesNotMatch(HELP_TEXT, /tabs are General|Settings → MCPs|Settings → Automations|keeps the channel on Codex|admin UI → Channel Runtime/);
 });

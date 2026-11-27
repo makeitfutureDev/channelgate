@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
+(await import("../src/config/settings.js")).saveSettings({ emailAccountsEnabled: true });
 const { renderCatalogPage, handleCatalogAction, EMAIL_ACCOUNT_FIELDS } = await import('../src/platforms/msteams/settings-catalog.js');
 const { handleTeamsSettings, teamsSettingsUi } = await import('../src/platforms/msteams/settings.js');
 const { setEmailAccountVerifierForTests } = await import('../src/gateway/email-account-store.js');

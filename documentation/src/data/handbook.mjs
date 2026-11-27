@@ -140,32 +140,38 @@ export const featureGroups = [
   },
   {
     "label": "Agents and models",
-    "description": "Choose an engine, account, model, and a team of agents.",
+    "description": "Choose a harness, license, model, and a team of agents.",
     "items": [
       {
         "slug": "claude-code",
         "label": "Claude Code",
-        "description": "Connect a Claude login and use the primary agent engine."
+        "description": "Connect a Claude login and use the primary agent harness."
       },
       {
         "slug": "codex",
         "label": "OpenAI Codex",
-        "description": "Use Codex with the shared login or a dedicated channel account."
+        "description": "Use Codex with the gateway login or a conversation's own login."
+      },
+      {
+        "slug": "engine-licenses",
+        "label": "Engine licenses",
+        "description": "Add credentials for Claude Code and Codex, select them per conversation, and fail over between them.",
+        "sources": [
+          "src/engines/license-state.js",
+          "src/config/engine-licenses.js",
+          "src/gateway/license-pool.js",
+          "src/gateway/channel-engines.js"
+        ]
       },
       {
         "slug": "dedicated-codex-login",
         "label": "A dedicated Codex login for a conversation",
-        "description": "Select a separate Codex account without falling back to another conversation or gateway login."
+        "description": "Give one conversation its own Codex license that never falls back to another conversation or gateway login."
       },
       {
         "slug": "qwen",
         "label": "Qwen providers",
-        "description": "Configure an opt-in compatible provider through the Claude harness."
-      },
-      {
-        "slug": "opencode",
-        "label": "OpenCode proof adapter",
-        "description": "Use the restricted third engine only for admitted read-only, network-off work."
+        "description": "Switch on an opt-in provider license of the Claude Code harness."
       },
       {
         "slug": "subagents",
@@ -180,12 +186,12 @@ export const featureGroups = [
       {
         "slug": "model-picker",
         "label": "The model and effort picker",
-        "description": "Choose the scope, engine, model, and effort from the Slack wizard."
+        "description": "Choose the scope, harness, license, model, and effort from the Slack wizard."
       },
       {
         "slug": "multi-engine-failover",
         "label": "Engine failover",
-        "description": "Understand fallback behavior and explicit engine pins."
+        "description": "Understand license and harness fallback and explicit pins."
       },
       {
         "slug": "authentication-health",
@@ -311,8 +317,8 @@ export const featureGroups = [
         "description": "Provision reusable user and channel app sessions with the Enterprise Beta integration."
       },
       {
-        "slug": "toolbox-and-make",
-        "label": "Toolbox and Make connections",
+        "slug": "make-mcp",
+        "label": "Make connections",
         "description": "Use optional credential-backed tool servers without mixing account scopes."
       },
       {
@@ -730,6 +736,11 @@ export const featureGroups = [
   }
 ];
 export const configurationPages = [
+  {
+    "slug": "vps-sizing",
+    "label": "VPS sizing and hosting",
+    "description": "Choose server resources, concurrency, storage, and backups for your team."
+  },
   {
     "slug": "gateway-settings",
     "label": "Gateway settings",

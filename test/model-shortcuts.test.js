@@ -4,8 +4,8 @@ import express from "express";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { parseModelShortcut } = await import("../src/config/model-shortcuts.js");
-const { getModelShortcuts, settingsForApi, saveSettings } = await import("../src/config/settings.js");
+const { parseModelShortcut, defaultModelShortcuts, modelShortcutsFromSettings, liftMentionSelector, effortShortcut } = await import("../src/config/model-shortcuts.js");
+const { getModelShortcuts, settingsForApi, saveSettings, getSettings } = await import("../src/config/settings.js");
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 
 const app = express();
@@ -24,11 +24,82 @@ async function put(modelShortcuts, expectedStatus = 200) {
   return response.json();
 }
 
+test("fresh installs inherit supported family defaults without persisting version pins", () => {
+  const defaults = getModelShortcuts();
+  assert.deepEqual(Object.keys(defaults).sort(), ["astra", "fable", "opus", "sol", "sonet", "terra"]);
+  assert.deepEqual(defaults.fable, { engine: "claude", model: "claude-fable-5-2" });
+  assert.equal(defaults.sonet.engine, "claude");
+  assert.match(defaults.sonet.model, /^claude-sonnet-/);
+  assert.deepEqual(defaults.astra, { engine: "codex", model: "gpt-6.2-astra" });
+  assert.deepEqual(defaults.sol, { engine: "codex", model: "gpt-6.2-sol" });
+  assert.equal(defaults.sol.engine, "codex");
+  assert.match(defaults.sol.model, /^gpt-[\d.]+-sol$/);
+  saveSettings({ sessionKeepalive: "10" });
+  assert.deepEqual(getModelShortcuts(), defaults, "unrelated saves retain inheritance");
+  assert.deepEqual(settingsForApi().modelShortcuts, defaults);
+  assert.equal(Object.hasOwn(getSettings(), "modelShortcuts"), false);
+});
+
+test("catalog defaults choose the newest stable family numerically and omit absent families", () => {
+  const catalogs = {
+    claude: ["claude-sonnet-5-9", "claude-sonnet-5-10", "claude-sonnet-6-preview", "claude-sonnet-9-20261023", "claude-sonnet-9-2026-10-23", "sonnet", "claude-opus-5-5", "claude-haiku-5-5"].map(value => ({ value })),
+    codex: ["gpt-6.9-sol", "gpt-6.10-sol", "gpt-6.10-sol-preview", "gpt-7-sol", "gpt-6-astra", "codex"].map(value => ({ value })),
+  };
+  const initial = defaultModelShortcuts(catalogs);
+  assert.equal(initial.sonet.model, "claude-sonnet-5-10");
+  assert.equal(initial.sol.model, "gpt-7-sol");
+  assert.equal(defaultModelShortcuts({codex: catalogs.codex.slice(0, 2)}).sol.model, "gpt-6.10-sol");
+  assert.equal(initial.fable, undefined);
+  assert.equal(initial.terra, undefined);
+  const settings = {};
+  assert.deepEqual(modelShortcutsFromSettings(settings, catalogs), initial);
+  catalogs.claude.push({ value: "claude-sonnet-6" });
+  assert.equal(modelShortcutsFromSettings(settings, catalogs).sonet.model, "claude-sonnet-6");
+  assert.deepEqual(settings, {}, "resolution never freezes a version into settings");
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: {}}, catalogs), {});
+  const custom = {sonet: {engine: "claude", model: "claude-sonnet-5-5"}};
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: custom}, catalogs), custom);
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: null}, catalogs), {});
+  assert.deepEqual(defaultModelShortcuts(), {});
+});
+
 test("mention suffix parses a shortcut and preserves the task", () => {
   assert.deepEqual(parseModelShortcut(":astra build this"), { name: "astra", task: "build this" });
   assert.deepEqual(parseModelShortcut(": FABLE"), { name: "fable", task: "" });
   assert.equal(parseModelShortcut("review :astra"), null);
   assert.equal(parseModelShortcut(":astra, build this"), null);
+});
+
+test("shortcut effort accepts spaced or adjacent colons and preserves task text", () => {
+  for (const prefix of [":sol :HIGH", ":sol:high", ": SOL : high"]) {
+    assert.deepEqual(parseModelShortcut(`${prefix} Build this\nthen review :low`), {
+      name: "sol", effort: "high", task: "Build this\nthen review :low",
+    });
+  }
+  assert.deepEqual(parseModelShortcut(":sol :low"), { name: "sol", effort: "low", task: "" });
+  assert.deepEqual(parseModelShortcut(":sol :"), { name: "sol", effort: "", task: "" });
+  assert.deepEqual(parseModelShortcut(":sol :unknown task"), { name: "sol", effort: "unknown", task: "task" });
+  assert.deepEqual(parseModelShortcut(":sol explain :high"), { name: "sol", task: "explain :high" });
+});
+
+test("selectors after the bot mention count anywhere in the message", () => {
+  const B = "BX";
+  assert.equal(liftMentionSelector(`ok improve the skill creator <@${B}> :opus :medium`, B), ":opus :medium ok improve the skill creator");
+  assert.equal(liftMentionSelector(`please <@${B}> :mid fix the build`, B), ":mid please fix the build");
+  assert.equal(liftMentionSelector(`<@${B}> :sol:high task`, B), ":sol:high task");
+  assert.equal(liftMentionSelector(`do X <@${B}> :high.`, B), ":high do X .");
+  assert.deepEqual(parseModelShortcut(liftMentionSelector(`fix it <@${B}> :opus :mid`, B)), { name: "opus", effort: "medium", task: "fix it" });
+  // Not selectors: a colon after a space-less mention followed by prose, another user's mention, emoji-ish text.
+  assert.equal(liftMentionSelector(`hey <@${B}>: please check`, B), null);
+  assert.equal(liftMentionSelector(`ask <@UOTHER> :high now <@${B}>`, B), null);
+  assert.equal(liftMentionSelector(`<@${B}> :) thanks`, B), null);
+  assert.equal(liftMentionSelector(`no mention :high`, B), null);
+});
+
+test("effort-only names map mid to medium and are reserved", () => {
+  assert.deepEqual(["low", "mid", "MEDIUM", "high", "xhigh", "opus"].map(effortShortcut), ["low", "medium", "medium", "high", "", ""]);
+  assert.deepEqual(modelShortcutsFromSettings({ modelShortcuts: { high: { engine: "claude", model: "claude-opus-5-5" }, opus: { engine: "claude", model: "claude-opus-5-5" } } }),
+    { opus: { engine: "claude", model: "claude-opus-5-5" } });
 });
 
 test("settings save and expose valid engine/model mappings", async () => {

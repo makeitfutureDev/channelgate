@@ -48,7 +48,7 @@ export function createFakeCli({
     if (rest[0] === "run" && rest[1] === "--help") return { code: 0, stdout: RUN_HELP, stderr: "" };
     if (rest[0] === "exec" && rest[1] === "--help") return { code: 0, stdout: EXEC_HELP, stderr: "" };
     if (rest[0] === "run" && rest.includes("--rm") && rest.includes("--cpus")) {
-      return cgroupLimits ? { code: 0, stdout: "", stderr: "" } : { code: 125, stdout: "", stderr: "cgroup controllers not delegated" };
+      return cgroupLimits ? { code: 0, stdout: "CG_LIMITS_VERIFIED\n", stderr: "" } : { code: 125, stdout: "", stderr: "cgroup controllers not delegated" };
     }
     return { code: 0, stdout: "", stderr: "" };
   }
@@ -85,7 +85,7 @@ export function createFakeCli({
   };
 }
 
-// The `inspect --format` line the lifecycle parses, in the exact 10-field shape INSPECT_FORMAT
+// The `inspect --format` line the lifecycle parses, in the exact 11-field shape INSPECT_FORMAT
 // produces (podman prints an empty string for a missing label; docker prints "<no value>"). The
 // last field is `cg.mounts` — empty for a container created before that label existed, which the
 // lifecycle reads as "unknown mounts" and treats as changed.
@@ -100,6 +100,8 @@ export function inspectLine({
   channel = "chan",
   platform = "slack",
   mountFingerprint = "",
+  pid = 0,
 } = {}) {
-  return [name, status, startedAt, imageId, fingerprint, install, image, channel, platform, mountFingerprint].join("|");
+  // The 11th field is `{{.State.Pid}}` — the container's init as a host pid, 0 when not running.
+  return [name, status, startedAt, imageId, fingerprint, install, image, channel, platform, mountFingerprint, pid].join("|");
 }

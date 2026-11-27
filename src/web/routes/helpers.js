@@ -4,6 +4,7 @@
 import { sanitizeMcpMatch, sanitizeCodexMcpSelection } from "../security.js";
 import { ENGINES } from "../../config/settings.js";
 import { isValidModel } from "../../slack/util.js";
+import { isLicenseListedModel } from "../../engines/registry.js";
 import { sanitizeSkillGrantNames } from "../../gateway/access-grants.js";
 
 // Model/effort validation shared by the channel-meta, DM, and DM-template routes: an arbitrary
@@ -11,7 +12,9 @@ import { sanitizeSkillGrantNames } from "../../gateway/access-grants.js";
 // turn in the channel — same guard as the Slack /model command (isValidModel).
 const EFFORTS = ["", "none", "low", "medium", "high", "xhigh", "max", "ultra"]; // mirrors the admin UI select
 export function invalidModelOrEffort(body) {
-  if (typeof body.model === "string" && body.model.trim() && !isValidModel(body.model)) return `unrecognized model "${body.model.trim()}"`;
+  // The family shapes of the built-in harnesses, or a model an admin listed on a license (a custom
+  // server's own names). Which license the model must belong to is the caller's check.
+  if (typeof body.model === "string" && body.model.trim() && !isValidModel(body.model) && !isLicenseListedModel(body.model)) return `unrecognized model "${body.model.trim()}"`;
   if (typeof body.effort === "string" && !EFFORTS.includes(body.effort.trim())) return `effort must be one of: ${EFFORTS.filter(Boolean).join(", ")} (or empty)`;
   return "";
 }
@@ -32,9 +35,6 @@ export const cleanAccessGrants = (value) => ({
   skills: sanitizeSkillGrantNames(value?.skills),
   allowedMcps: sanitizeMcps(value?.allowedMcps),
   allowedCodexMcps: sanitizeCodexMcps(value?.allowedCodexMcps),
-  // OpenCode currently rejects all MCP capability at admission. Preserve no selections here so a
-  // hand-written setting cannot silently broaden its restricted proof profile.
-  allowedOpenCodeMcps: [],
 });
 
 // Shape-clean one DM template (User/Admin) before persisting. Its model/effort are validated by the

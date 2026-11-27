@@ -1,6 +1,8 @@
 import { plainFailureText } from "../util/process-outcome.js";
 import { engineLabel } from "../engines/registry.js";
-import { createBusyThreadChoiceStore } from "./busy-thread-choice.js";
+import { createBusyThreadChoiceStore, takeSlackRunChoice, auditRunChoiceAdmin } from "./busy-thread-choice.js";
+// Slack caps a button label at 75 characters; a license label is admin-typed and may be long.
+import { clipLabel } from "./license-controls.js";
 
 // "Ask before switching harness" (Settings → engineFallbackMode = "ask"): when a turn dies on a
 // replay-safe provider failure that automatic failover WOULD have covered — a usage limit, a lost
@@ -19,8 +21,20 @@ export function createEngineSwitchChoiceStore(options = {}) {
 }
 export const engineSwitchChoices = createEngineSwitchChoiceStore();
 
+const labelList = (labels) => labels.length <= 1 ? labels.join("") : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+
+// The other licenses that were tried after the first one and failed too, as labels. A license of
+// the same harness moves automatically (src/gateway/license-pool.js), so by the time this card is
+// posted every license of the selection has had its turn — the card says so instead of naming one.
+function alsoFailedLabels(ask = {}) {
+  const ids = [...new Set((Array.isArray(ask.alsoFailed) ? ask.alsoFailed : []).filter((id) => typeof id === "string" && id && id !== ask.failedEngine))];
+  // "Both failed": the other harness was part of the walk. Name it last, once.
+  const tried = ask.bothFailed ? [...ids.filter((id) => id !== ask.otherEngine), ask.otherEngine] : ids.filter((id) => id !== ask.otherEngine);
+  return tried.slice(0, 12).map((id) => engineLabel(id));
+}
+
 // What happened, in one plain sentence. `ask` is the record's `ask` field (see the pipeline):
-// { failedEngine, otherEngine, kind, transientRetries, bothFailed, fallbackError }.
+// { failedEngine, otherEngine, kind, transientRetries, bothFailed, fallbackError, alsoFailed }.
 export function engineSwitchChoiceText(ask = {}) {
   const failed = engineLabel(ask.failedEngine);
   const other = engineLabel(ask.otherEngine);
@@ -32,25 +46,24 @@ export function engineSwitchChoiceText(ask = {}) {
       : retries
         ? `${failed} hit a temporary provider error — retried ${retries}× before giving up`
         : `${failed} hit a temporary provider error`;
+  const also = alsoFailedLabels(ask);
   if (ask.bothFailed) {
     const why = plainFailureText(ask.fallbackError, 300);
-    return `⚠️ ${what}, and ${other} could not answer either${why ? ` (${why.slice(0, 300)})` : ""}. Nothing ran for your message. Try again on either harness?`;
+    return `⚠️ ${what}, and ${labelList(also)} could not answer either${why ? ` (${why.slice(0, 300)})` : ""}. Nothing ran for your message. Try again on either harness?`;
   }
-  return `⚠️ ${what}. Nothing ran for your message. Switch this thread to ${other}, or try ${failed} again?`;
+  return `⚠️ ${what}${also.length ? `, and ${labelList(also)} could not answer either` : ""}. Nothing ran for your message. Switch this thread to ${other}, or try ${failed} again?`;
 }
 
+// The buttons offer exactly two moves — the other HARNESS (`ask.otherEngine`) or the license that
+// failed first. The other licenses of the selection are never a button: the gateway already tried
+// them on its own.
 export function engineSwitchChoiceBlocks(id, ask = {}) {
   const failed = engineLabel(ask.failedEngine);
   const other = engineLabel(ask.otherEngine);
+  const button = (action_id, text, style) => ({ type: "button", ...(style ? { style } : {}), action_id, text: { type: "plain_text", text: clipLabel(text) }, value: id });
   const buttons = ask.bothFailed
-    ? [
-      { type: "button", style: "primary", action_id: ENGINE_RETRY_ACTION, text: { type: "plain_text", text: `Try ${failed} again` }, value: id },
-      { type: "button", action_id: ENGINE_SWITCH_ACTION, text: { type: "plain_text", text: `Try ${other} again` }, value: id },
-    ]
-    : [
-      { type: "button", style: "primary", action_id: ENGINE_SWITCH_ACTION, text: { type: "plain_text", text: `Switch to ${other}` }, value: id },
-      { type: "button", action_id: ENGINE_RETRY_ACTION, text: { type: "plain_text", text: `Try ${failed} again` }, value: id },
-    ];
+    ? [button(ENGINE_RETRY_ACTION, `Try ${failed} again`, "primary"), button(ENGINE_SWITCH_ACTION, `Try ${other} again`)]
+    : [button(ENGINE_SWITCH_ACTION, `Switch to ${other}`, "primary"), button(ENGINE_RETRY_ACTION, `Try ${failed} again`)];
   return [
     { type: "section", text: { type: "mrkdwn", text: engineSwitchChoiceText(ask) } },
     { type: "actions", elements: buttons },
@@ -66,10 +79,12 @@ export async function handleEngineSwitchChoice({ ack, body, action, client }, { 
   if (!choice) return { ok: false, reason: "action" };
 
   const choiceId = String(action?.value || "");
-  const outcome = engineSwitchChoices.take(choiceId, userId, channel);
+  const outcome = await takeSlackRunChoice(engineSwitchChoices, choiceId, userId, channel, client);
   if (!outcome.ok) {
     const text = outcome.reason === "owner"
       ? "This choice belongs to the person who sent that message."
+      : outcome.reason === "access"
+        ? "Only a current organization admin with access to this conversation can answer another person's choice."
       : outcome.reason === "claimed"
         ? "This choice is already being handled."
         : "This choice has already been used, stopped, or expired. Send the message again if it still needs attention.";
@@ -101,6 +116,7 @@ export async function handleEngineSwitchChoice({ ack, body, action, client }, { 
       engineChoiceId: choiceId,
       onEngineChoiceAccepted: ({ runId, rec }) => {
         accepted = engineSwitchChoices.accept(choiceId, runId, rec);
+        if (accepted) void auditRunChoiceAdmin(outcome.record, userId, choiceId, choice);
         // The original message stays visible in Slack; once the choice is accepted the card has
         // done its job — remove it instead of leaving a second persistent bot message.
         if (accepted && channel && messageTs) client.chat.delete({ channel, ts: messageTs }).catch(() => {});

@@ -42,7 +42,10 @@ const request = (appId, body) => ({ body, headers: { authorization: `Bearer ${to
 const row = (appId, body, controls = false) => getDb().prepare("SELECT * FROM inbound_events WHERE namespace = ? AND event_id = ?")
   .get(`msteams-bot${controls ? "-controls" : ""}:${appId}`, activityFingerprint(body));
 async function until(predicate) {
-  for (let count = 0; count < 200; count++) {
+  // A wall-clock deadline, not a poll count: on a slow host 200 × 5 ms polls end long before a
+  // loaded event loop delivers the state, which failed update smoke runs on small servers.
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
@@ -170,7 +173,9 @@ test("queued Teams activities recover raw attachments and resolver closures afte
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0].message.attachments.length, 2);
   for (const file of delivered[0].message.attachments) assert.equal(typeof file.download, "function");
-  assert.deepEqual(delivered[0].context, { serviceUrl: SERVICE });
+  const { onWorking, ...context } = delivered[0].context;
+  assert.deepEqual(context, { serviceUrl: SERVICE });
+  assert.equal(typeof onWorking, "function", "the turn can record its visible working message on its own row");
 });
 
 test("ambiguous running Teams work receives a routed interruption notice and never reruns", async t => {
@@ -585,4 +590,37 @@ test("legacy queued Graph Stop recovers into the control lane while four normal 
   assert.ok(active.slice(1).every(body => row(appId, body)?.status === "running"));
   held.finish();
   await until(() => active.every(body => row(appId, body)?.status === "done"));
+});
+
+// Security audit batch 5: Bot Framework reuses one bearer token for many activities, so there is no
+// single-use jti rule (it would refuse real traffic). A verbatim replay of a captured request is
+// stopped by the durable fingerprint dedupe instead, whose retention outlives any token.
+test("one token serves many activities, and a verbatim replay within the token's life never runs twice", async t => {
+  const { INBOUND_RETENTION_MS } = await import("../src/platforms/durable-inbox.js");
+  assert.ok(INBOUND_RETENTION_MS >= 24 * 60 * 60 * 1000, "the dedupe window outlives a Bot Framework token (about an hour)");
+  const appId = randomUUID(), delivered = [];
+  const current = await transport(appId, async (message, context = {}) => { if (!context.queuedNoticeOnly) delivered.push(message.text); });
+  t.after(() => current.stop());
+  const shared = `Bearer ${token(appId)}`;
+  const first = activity(appId, { text: "first" }), second = activity(appId, { text: "second" });
+  for (const body of [first, second]) {
+    const res = response();
+    await current.handler({ body, headers: { authorization: shared } }, res);
+    assert.equal(res.code, 200, "the same token is accepted for a second, different activity");
+  }
+  await until(() => delivered.length === 2);
+  // A captured request replayed verbatim, even after its row is long finished, is acknowledged
+  // (so Bot Service stops retrying) but never dispatched again.
+  await until(() => row(appId, first)?.status === "done");
+  getDb().prepare("UPDATE inbound_events SET created_ms = ? WHERE namespace = ? AND event_id = ?")
+    .run(Date.now() - 2 * 60 * 60 * 1000, `msteams-bot:${appId}`, activityFingerprint(first));
+  const replay = response();
+  await current.handler({ body: structuredClone(first), headers: { authorization: shared } }, replay);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(replay.code, 200);
+  assert.deepEqual(delivered, ["first", "second"]);
+  // A forged activity without a Bot Framework serviceUrl is refused before intake.
+  const forged = response();
+  await current.handler({ body: activity(appId, { serviceUrl: undefined, text: "forged" }), headers: { authorization: shared } }, forged);
+  assert.equal(forged.code, 401);
 });

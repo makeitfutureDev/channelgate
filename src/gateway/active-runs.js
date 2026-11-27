@@ -23,7 +23,10 @@ import { runQueue } from "../slack/message-lifecycle.js";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
 import { assertQuestionAccess } from "./question-access.js";
-import { getUser } from "../config/store.js";
+import { getChannelMeta, getUser } from "../config/store.js";
+import { assertChannelMembership } from "./channel-membership.js";
+import { recordSlackThreadOutcome } from "./slack-threads.js";
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 
 // A queued/recovered fork outlives the author's original rank check. Only a currently admin
 // author may reopen unclassified native state; a member must have a known project-only source.
@@ -33,7 +36,10 @@ export async function recoveryForkSessionId(rec = {}) {
   if ((await getUser(rec.authorId))?.isAdmin === true) return sourceId;
   const rows = getDb().prepare("SELECT runtime FROM sessions WHERE slug = ? AND session_id = ?").all(rec.slug, sourceId);
   return rows.some((row) => {
-    try { return JSON.parse(row.runtime)?.scope === "project"; } catch { return false; }
+    try {
+      const runtime = JSON.parse(row.runtime);
+      return runtime?.backend === "container" && (runtime.scope === "project" || runtime.history === "channel-v1");
+    } catch { return false; }
   }) ? sourceId : "";
 }
 
@@ -116,6 +122,13 @@ export function updateActiveRunRuntime(id, { engine = "", model = "" } = {}) {
   } catch {
     return false;
   }
+}
+
+// Preserve explicit steering order if the daemon restarts before the successor can spawn.
+export function prioritizeActiveRun(id) {
+  const row = getDb().prepare("SELECT data FROM active_runs WHERE id = ?").get(id);
+  const rec = row ? fromJson(row.data, null) : null;
+  if (rec) recordActiveRun(id, { ...rec, queuePriorityAt: Date.now() });
 }
 
 // Clear the in-flight marker when a turn finishes (success, error, or user-stop). Called from the
@@ -258,7 +271,7 @@ export function activeRunForApi(run, { channels = {}, users = {} } = {}) {
     engine,
     engineName: engine ? engineLabel(engine) : "",
     model,
-    modelName: engine ? (model ? modelLabel({ engine, model }) : "CLI default") : "",
+    modelName: engine ? (model ? modelLabel({ engine, model }) : "") : "",
     startedAt: run.startedAt || null,
     attempts: run.attempts || 0,
   };
@@ -319,7 +332,7 @@ const MAX_RECOVER_ATTEMPTS = 2;
 // steer/queue contract instead of overtaking an older recovery that has not entered the queue yet.
 export function reserveRecoveryRuns(stale = []) {
   const reservations = [];
-  for (const rec of stale) {
+  for (const rec of [...stale].sort((a, b) => (b.queuePriorityAt || 0) - (a.queuePriorityAt || 0))) {
     if (rec?.awaitingChoice || !rec?.channelId || !rec?.threadKey) continue;
     const id = rec.id || `${rec.slug}::${rec.threadKey}`;
     const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
@@ -339,25 +352,86 @@ function pendingRecoveryRuns() {
     .map((row) => fromJson(row.data, null)).filter((rec) => rec?.recoveryPending && !rec.awaitingChoice);
 }
 
+// Can this survivor's conversation run YET? After a restart or a reconnect every Slack channel is
+// unverified until the membership pass has read the bot's complete channel list, and the runtime
+// resolver refuses a turn there. A replay started in that window used to fail with "membership
+// has not been verified" and ask the person to send the message again — the opposite of
+// recovering it. Anything else the resolver would refuse (an archived channel, a missing record)
+// is admitted, so the replay's own failure path names the real reason.
+export async function membershipAdmitsRecovery(rec) {
+  let meta = null;
+  try { meta = await getChannelMeta(rec.slug); } catch { /* the replay reports it */ }
+  if (!meta || meta.archived) return true;
+  try {
+    assertChannelMembership({ ...meta, channelId: meta.channelId || rec.channelId });
+    return true;
+  } catch (error) {
+    return error?.code !== "channel_membership_unverified";
+  }
+}
+
+// How long a survivor waits for its channel's membership check before it is replayed anyway and
+// fails with the reason in its thread. Verification normally takes seconds and retries every 30.
+const RECOVERY_MEMBERSHIP_HOLD_MS = 2 * 60_000;
+const RECOVERY_MEMBERSHIP_FRESH_WINDOWS = 5;
+
 // Arm before Slack connects; reconnect callbacks are idempotent and never block connection setup.
+// Survivors whose channel is not admitted yet (`options.admit`, default membershipAdmitsRecovery)
+// keep their reserved place in the thread queue and are replayed by a later start(): the daemon
+// calls it when a membership verification completes, and a bounded timer calls it when none does.
 export function createRunRecovery(stale, options) {
   let reservations = reserveRecoveryRuns(stale);
   let running = null;
   let requested = true;
+  let heldSince = 0;
+  let holdTimer = null;
+  let freshWindows = RECOVERY_MEMBERSHIP_FRESH_WINDOWS;
+  const admit = options.admit || membershipAdmitsRecovery;
+  const maxHoldMs = Number.isFinite(options.maxHoldMs) ? options.maxHoldMs : RECOVERY_MEMBERSHIP_HOLD_MS;
+  const retry = () => start().catch((error) => console.error("[gateway] reconnect recovery failed:", error.message));
   const start = () => {
     if (running) return running;
-    if (!requested || !options.slack?.snapshot?.().connected || !options.slack.getClient?.()) return Promise.resolve();
+    if ((!requested && !reservations.length) || !options.slack?.snapshot?.().connected || !options.slack.getClient?.()) return Promise.resolve();
+    // Only a connection asks for the durable rows again; a verification or the hold timer replays
+    // just the survivors already waiting here.
+    const rescan = requested;
     requested = false;
-    const batch = reservations;
-    reservations = [];
-    batch.push(...reserveRecoveryRuns(pendingRecoveryRuns()));
-    running = recoverRuns([], { ...options, reservations: batch }).finally(() => {
+    running = (async () => {
+      const candidates = [...reservations, ...(rescan ? reserveRecoveryRuns(pendingRecoveryRuns()) : [])];
+      reservations = [];
+      const expired = heldSince > 0 && Date.now() - heldSince >= maxHoldMs;
+      const batch = [];
+      for (const entry of candidates) {
+        const ready = expired || entry.handle.aborted || await Promise.resolve().then(() => admit(entry.rec)).catch(() => true);
+        (ready ? batch : reservations).push(entry);
+      }
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      if (reservations.length) {
+        if (!heldSince) {
+          heldSince = Date.now();
+          await logEvent("run_recover_wait", { count: reservations.length, reason: "slack channel membership not verified yet" });
+        }
+        holdTimer = setTimeout(retry, Math.max(0, heldSince + maxHoldMs - Date.now()) + 5);
+        holdTimer.unref?.();
+      } else {
+        heldSince = 0;
+      }
+      await recoverRuns([], { ...options, reservations: batch });
+    })().finally(() => {
       running = null;
-      if (requested) queueMicrotask(() => start().catch((error) => console.error("[gateway] reconnect recovery failed:", error.message)));
+      if (requested) queueMicrotask(retry);
     });
     return running;
   };
-  const unsubscribe = options.slack?.onConnected?.(() => { requested = true; return start(); });
+  // A new connection starts a new verification, so survivors still waiting get a fresh window —
+  // a bounded number of times, or a socket that keeps reconnecting would hold them silently.
+  const unsubscribeConnected = options.slack?.onConnected?.(() => {
+    requested = true;
+    if (heldSince && freshWindows > 0) { heldSince = 0; freshWindows -= 1; }
+    return start();
+  });
+  const unsubscribe = () => { clearTimeout(holdTimer); holdTimer = null; return unsubscribeConnected?.(); };
   return { start, unsubscribe };
 }
 
@@ -393,6 +467,7 @@ export async function recoverRuns(stale, {
     const attempts = (rec.attempts || 0) + 1;
     if (attempts > MAX_RECOVER_ATTEMPTS) {
       // The attempt cap is this turn's explicit terminal failure — only now is its row deleted.
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: true });
       clearActiveRun(id);
       runQueue.release(runKey, handle);
       await logEvent("run_recover_giveup", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
@@ -447,6 +522,29 @@ export async function recoverRuns(stale, {
     try {
       if (handle.aborted) { markTerminal(); return; }
       if (forceStopping()) return;
+      // A queued /fork is a gateway command, not an engine prompt. Re-enter the Slack
+      // command path only after its source reservation is acquired, so it snapshots the
+      // completed source turn and rechecks the author's current access before forking.
+      if (rec.queuedFork) {
+        const queueError = await acquired;
+        if (queueError) throw queueError;
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
+        await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
+        const { processMessageEvent } = await import("../slack/message-pipeline.js");
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        await processMessageEvent(rec.queuedFork.event, client, {
+          botUserId: rec.queuedFork.botUserId || "",
+          teamId: rec.queuedFork.teamId || rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
+          bypassMention: true,
+          queuedForkHandle: handle,
+        });
+        if (forceStopping()) return;
+        markTerminal();
+        return;
+      }
       // A recovered turn is still an interactive Slack turn. Reconnect it to the same two native
       // surfaces as a foreground run whenever the Slack SDK supports native streaming. Older SDKs
       // and test clients retain the safe final-only delivery path instead of losing the recovery.
@@ -473,6 +571,8 @@ export async function recoverRuns(stale, {
       }
       status?.onEvent?.({ kind: "engine_note", text: "waiting to resume after gateway restart" });
       const queueError = await acquired;
+      const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
+      if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
       if (queueError) throw queueError;
       // Submitting a form authenticates the requester at that instant. A restart (or its queue
       // wait) can outlive that grant, so never replay their answers under stale access rights.
@@ -501,6 +601,10 @@ export async function recoverRuns(stale, {
         text: rec.text,
         threadKey: rec.threadKey,
         forkSourceSessionId: await recoveryForkSessionId(rec),
+        getForkFallbackContext: rec.forkFallback?.sourceThreadTs
+          ? (await import("../slack/message-pipeline.js")).forkFallbackContextGetter(client, { channelId: rec.channelId, botUserId: rec.queuedFork?.botUserId || "", fallback: rec.forkFallback })
+          : null,
+        overrides: rec.runtimeOverrides || null,
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
           verifyQuestionAccess: () => assertQuestionAccess(rec, client) } : {}),
@@ -550,6 +654,7 @@ export async function recoverRuns(stale, {
       }
       // Delivery is the user-visible terminal boundary. Clear the durable row even if shutdown
       // enters its forced phase while bookkeeping finishes, or boot would duplicate it.
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: Boolean(runAdmissionRefusalKind(result) || result.engineError) });
       markTerminal();
     } catch (err) {
       await stopStatus();
@@ -565,6 +670,7 @@ export async function recoverRuns(stale, {
       }
       if (forceStopping()) return; // final sweep interrupted us; keep the row for next boot
       await logEvent("run_recover_error", { slug: rec.slug, error: err.message });
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: true });
       let told = false;
       try {
         await postNoticeWithMenu(client, {
@@ -588,6 +694,8 @@ export async function recoverRuns(stale, {
       else keepRow = true; // already attempted: reconnect must not replay uncertain side effects
     } finally {
       await stopStatus();
+      const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
+      if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
       runQueue.release(runKey, handle);
       if (!keepRow && shouldClearActiveRun({ terminal, forceStopping: forceStopping() })) clearActiveRun(id);
     }

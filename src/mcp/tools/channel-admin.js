@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel-admin tools for the gateway control MCP server: the channel's MCP allowlist, the
 // mode switches (admin/bash/network/auto), working folder, Google Drive sync link, standing
@@ -18,6 +19,7 @@ import { logEvent } from "../../util/logger.js";
 import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../../gateway/mcp-discovery.js";
 import { engineLabel, requireAdapter } from "../../engines/registry.js";
+import { describeChannelApprovedHarnesses, setChannelApprovedHarnesses } from "../../gateway/approved-harnesses.js";
 import { networkEnforcedFor } from "../../engines/network-policy.js";
 import { getDriveSyncEnabled, getDriveSyncKeyJson, getDriveSyncKeyFile, getDriveSyncKeyEmail } from "../../config/settings.js";
 import { parseDriveFolderId, testChannelSync } from "../../gateway/drivesync.js";
@@ -34,7 +36,9 @@ function describeDriveSyncStatus(status) {
     ? `✔️ Last sync succeeded at ${when(last.at)}${first}.`
     : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
 }
-import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
+import { allowedFsRoots, allowedRootFor, resolveWithinRoots } from "../../web/security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
+import { EXTRA_FOLDER_MODES, MAX_EXTRA_FOLDERS, normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
@@ -67,7 +71,7 @@ export function register(server, ctx) {
     { description: "List the MCP servers available to allow in this channel (from the host's configured servers).", inputSchema: {} },
     async () => {
       const meta = await loadMeta();
-      const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && meta?.codexAuthSource === "channel" ? channelId : "" });
+      const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex-channel" ? channelId : "" });
       if (!servers.length) return text("No MCP servers available on the host.");
       return text(servers.map((s) => `• ${s.name}${s.selectable === false ? " (unavailable: " + s.admissionReason + ")" : s.connected ? "" : " (offline)"}`).join("\n"));
     }
@@ -97,7 +101,7 @@ export function register(server, ctx) {
     async ({ names }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its MCP servers.");
       const sourceMeta = await loadMeta();
-      const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && sourceMeta?.codexAuthSource === "channel" ? channelId : "" });
+      const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex-channel" ? channelId : "" });
       const requested = available.filter(s => names.some(name => s.name.toLowerCase() === String(name).toLowerCase()))
         .map(s => persistedSelectionForEngine(activeEngine, s)).filter(Boolean);
       try { await assertNewMcpSelections(activeEngine, requested); }
@@ -212,10 +216,12 @@ export function register(server, ctx) {
     "set_channel_network",
     {
       description:
-        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use (any public host, " +
+        "ADMIN ONLY. Set this channel's allowed network policy. For ordinary proxy-mode containers, " +
+        "on permits internet use (any public host, " +
         "no domain allowlist); off limits the channel to the engine endpoints and its selected connectors. " +
-        "Enforced by the gateway's egress proxy (the container has no network of its own) unless the gateway " +
-        "runs the legacy open-bridge egress mode or this channel was given raw sockets — then it is advisory. " +
+        "The gateway's egress proxy enforces this policy; the container has no network of its own. " +
+        "Legacy open-bridge egress or raw sockets make the policy advisory. In /sudo direct-host threads " +
+        "it is advisory, with no OS-level egress cutoff. " +
         "Private, loopback and cloud-metadata addresses are never reachable through the proxy. It grants no " +
         "host credential files or mounts. Takes effect on the next request.",
       inputSchema: { enabled: z.boolean() },
@@ -233,6 +239,39 @@ export function register(server, ctx) {
             ? "✅ Network OFF — enforced by the egress proxy: only the engine endpoints and this channel's selected connectors are reachable. Effective on the next request."
             : "✅ Network OFF — policy instructs the engine not to use the network; for this channel it is advisory, not an egress cutoff (legacy bridge egress or raw sockets). Effective next message."
       );
+    }
+  );
+
+  server.registerTool(
+    "get_channel_approved_harnesses",
+    {
+      description:
+        "Show which harnesses and licenses this channel may run on — its Approved harnesses list. " +
+        "Everyone in the channel can then pick among them with /model. For an admin the answer also " +
+        "lists every entry that can be approved, with the id to pass to set_channel_approved_harnesses.",
+      inputSchema: {},
+    },
+    async () => {
+      return text(describeChannelApprovedHarnesses(await loadMeta(), { isAdmin: await requireAdmin() }));
+    }
+  );
+
+  server.registerTool(
+    "set_channel_approved_harnesses",
+    {
+      description:
+        "ADMIN ONLY (Enterprise). Set which harnesses and licenses this channel may run on — the same " +
+        "Approved harnesses list as channel Settings. `approved` is \"all\" (no restriction) or a list of " +
+        "entries: `harness:claude` / `harness:codex` (every license of that harness, including ones added " +
+        "later) and single license ids or names (see get_channel_approved_harnesses). The plain ids `claude` " +
+        "and `codex` mean that harness's default sign-in only. The list must keep the license the channel " +
+        "currently runs on. People in the channel choose among the approved entries with /model; a license " +
+        "outside the list is refused for every turn, pool move and fallback. Applies to the next engine launch.",
+      inputSchema: { approved: z.union([z.literal("all"), z.array(z.string().min(1).max(200)).min(1).max(100)]) },
+    },
+    async ({ approved }) => {
+      const result = await setChannelApprovedHarnesses({ slug, channelId, actor: createdBy, source: "mcp", isAdmin: await requireAdmin(), approved });
+      return text(result.text);
     }
   );
 
@@ -259,10 +298,34 @@ export function register(server, ctx) {
     }
   );
 
+  server.registerTool(
+    "set_channel_skill_swap",
+    {
+      description:
+        "ADMINS / CHANNEL MANAGERS. Allow or forbid skill engine and model swapping in this conversation. With it ON, " +
+        "a skill that declares a preferred model (its SKILL.md `model:` field) switches the turn to that model when the " +
+        "skill is used: the same session is resumed on it when the model belongs to the current engine, and a skill " +
+        "preferring the other engine is delegated to a background agent there. A person's /model pin always wins. " +
+        "OFF (the default) leaves every skill on the conversation's configured model. Effective on the next use_skill call.",
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change skill model swapping.");
+      if (!(await patchAuditedMeta((meta) => (meta ? { skillRuntimeSwap: Boolean(enabled) } : null)))) {
+        return text("Channel isn't set up yet — send a normal message first.");
+      }
+      return text(
+        enabled
+          ? "✅ Skill engine/model swapping ON — a skill with a preferred model switches the turn to it when used (a person's pin still wins)."
+          : "✅ Skill engine/model swapping OFF — skills run on the conversation's configured model."
+      );
+    }
+  );
+
   // A run can act only on its capability-bound channel. The daemon controls the host
   // helper; no container gains a shell, Podman socket, NET_ADMIN or credential mount.
   const vpnControl = ctx.vpnControl || { getStatus: getChannelVpnStatus, setEnabled: setChannelVpnEnabled };
-  const vpnAccess = async () => ctx.verifyCapability?.().ok === true && await ctx.requireChannelAccess?.();
+  const vpnAccess = async () => (await ctx.verifyCapability?.())?.ok === true && await ctx.requireChannelAccess?.();
   server.registerTool("get_channel_vpn_status", {
     description: "Read this channel's configured VPN status and missing secret names. Distinguishes connecting, connected, off and failed. Never returns secrets or profiles.",
     inputSchema: {},
@@ -309,9 +372,9 @@ export function register(server, ctx) {
       // Same containment as the admin UI's workDir field (src/web/security.js): the sandbox and
       // admin-mode runs execute in this folder, so it must realpath-resolve (symlinks followed)
       // inside the allowlisted root — an out-of-root or nonexistent path is refused.
-      const root = allowedFsRoot();
-      const real = resolveWithinRoot(root, p);
-      if (!real) return text(`That path doesn't exist or is outside the allowed root (${root}).`);
+      const roots = allowedFsRoots();
+      const real = resolveWithinRoots(p, roots);
+      if (!real) return text(`That path doesn't exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}).`);
       // Existence was proven by resolveWithinRoot; the catch only guards a delete race.
       let isDir = false;
       try {
@@ -320,10 +383,15 @@ export function register(server, ctx) {
         isDir = false;
       }
       if (!isDir) return text(`That path is not a directory:\n${real}`);
+      // Never the daemon's own trees or a parent exposing multiple conversations.
+      // Exact workspace sharing is an explicit admin choice and inherits its existing setup.
+      const forbidden = forbiddenWorkDirReason(real, { slug, allowSharedFolder: true });
+      if (forbidden) return text(`Refused: ${real} is ${forbidden}. Choose a project directory instead.`);
       if (!(await patchAuditedMeta((meta) => (meta ? { workDir: real } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
-      return text(`✅ This channel now runs in:\n${real}\nActive on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
+      const linked = (await getChannelMeta(slug))?.workspaceLink;
+      return text(`✅ This channel now runs in:\n${real}\n${linked ? `Shared setup is linked to ${linked.name}; edit shared settings there. Harness and model remain independent.\n` : ""}Active on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
     }
   );
 
@@ -339,21 +407,87 @@ export function register(server, ctx) {
     }
   );
 
+  // ── Additional folders (admins only) ─────────────────────────────────────────────
+  // Host directories mounted beside the work folder at their identical paths, so one directory
+  // can be shared by several channels that each keep their own work folder
+  // (src/gateway/extra-folders.js). Validated like the work folder; a symlink in the work folder
+  // pointing at a mounted entry then resolves inside the container.
+  server.registerTool(
+    "list_channel_folders",
+    { description: "Show the additional host folders mounted into this channel's container beside its working folder, with each one's read-write/read-only mode.", inputSchema: {} },
+    async () => {
+      const meta = await loadMeta();
+      const entries = normalizeExtraFolders(meta?.extraFolders);
+      if (!entries.length) return text("This channel mounts no additional folders. Its container sees only its working folder, clean workspace and artifacts.");
+      return text(`Additional folders mounted into this channel's container:\n${entries.map((entry) => `• ${entry.path} — ${entry.mode === "ro" ? "read-only" : "read-write"}`).join("\n")}`);
+    }
+  );
+
+  server.registerTool(
+    "add_channel_folder",
+    {
+      description:
+        "ADMIN ONLY. Mount an additional host folder into this channel's container at its identical ABSOLUTE path, " +
+        "beside the working folder (e.g. a project several channels share, or a mounted file server). `mode` is " +
+        "\"rw\" (default) or \"ro\". The folder must be an existing directory inside the allowed root, outside the " +
+        "daemon's own trees (runtime root, SSH and engine logins, container storage), and must not overlap the working " +
+        "folder or another entry. Another conversation's folder is allowed: this channel's members then see its files, " +
+        "instructions and memory. Takes effect on the next " +
+        "message (the container is recreated). Once mounted, a symlink in the working folder pointing at it resolves.",
+      inputSchema: { path: z.string(), mode: z.enum(EXTRA_FOLDER_MODES).optional() },
+    },
+    async ({ path: dir, mode }) => {
+      if (!(await requireAdmin())) return text("Only admins can change this channel's additional folders.");
+      const meta = await loadMeta();
+      if (!meta) return text("Channel isn't set up yet — send a normal message first.");
+      const current = normalizeExtraFolders(meta.extraFolders);
+      if (current.length >= MAX_EXTRA_FOLDERS) return text(`This channel already mounts ${MAX_EXTRA_FOLDERS} additional folders, the maximum. Remove one first.`);
+      const checked = validateExtraFolder(dir, { slug, workDir: effectiveWorkDir(slug, { ...meta, cleanMode: false }), others: current });
+      if (checked.error) return text(checked.error);
+      const entry = { path: checked.path, mode: mode === "ro" ? "ro" : "rw" };
+      if (!(await patchAuditedMeta((m) => (m ? { extraFolders: [...normalizeExtraFolders(m.extraFolders), entry] } : null)))) {
+        return text("Channel isn't set up yet — send a normal message first.");
+      }
+      return text(`✅ ${entry.path} is now mounted into this channel's container (${entry.mode === "ro" ? "read-only" : "read-write"}) at the same path. Active on the next message, which recreates the container.`);
+    }
+  );
+
+  server.registerTool(
+    "remove_channel_folder",
+    { description: "ADMIN ONLY. Stop mounting an additional host folder into this channel's container (pass the exact path shown by list_channel_folders).", inputSchema: { path: z.string() } },
+    async ({ path: dir }) => {
+      if (!(await requireAdmin())) return text("Only admins can change this channel's additional folders.");
+      const wanted = path.resolve(String(dir || "").trim());
+      let removed = false;
+      const next = await patchAuditedMeta((m) => {
+        if (!m) return null;
+        const current = normalizeExtraFolders(m.extraFolders);
+        const kept = current.filter((entry) => entry.path !== wanted);
+        removed = kept.length !== current.length;
+        return removed ? { extraFolders: kept } : null;
+      });
+      if (!next) return text(removed ? "Channel isn't set up yet." : `${wanted} is not one of this channel's additional folders. Use list_channel_folders to see them.`);
+      return text(`✅ ${wanted} is no longer mounted into this channel's container (on the next message).`);
+    }
+  );
+
   server.registerTool(
     "list_folders",
     {
       description:
-        "ADMIN ONLY. Browse folders on the host machine to find one to use with set_channel_workdir. " +
-        "Pass an absolute `path` to list its sub-folders (defaults to the home directory). Returns the " +
-        "resolved path, its parent (to go up), and each sub-folder's full path (to go down or to set).",
+        "ADMIN ONLY. Browse folders on the host machine to find one to use with set_channel_workdir or add_channel_folder. " +
+        "Pass an absolute `path` to list its sub-folders (defaults to the primary allowed root). Returns the " +
+        "resolved path, its parent (to go up), each sub-folder's full path (to go down or to set), and — at the " +
+        "primary root — the other allowed roots an admin configured (Settings → Container runtime).",
       inputSchema: { path: z.string().optional() },
     },
     async ({ path: dir }) => {
       if (!(await requireAdmin())) return text("Only admins can browse the host filesystem.");
       // Browsing is confined to the same allowlisted root as set_channel_workdir / the admin UI.
-      const root = allowedFsRoot();
-      const target = resolveWithinRoot(root, dir && dir.trim() ? dir.trim() : root);
-      if (!target) return text(`That path doesn't exist or is outside the allowed root (${root}).`);
+      const roots = allowedFsRoots();
+      const target = resolveWithinRoots(dir && dir.trim() ? dir.trim() : roots[0], roots);
+      if (!target) return text(`That path doesn't exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}).`);
+      const root = allowedRootFor(target, roots);
       try {
         const entries = await readdir(target, { withFileTypes: true });
         const folders = entries
@@ -361,9 +495,11 @@ export function register(server, ctx) {
           .map((e) => e.name)
           .sort((a, b) => a.localeCompare(b));
         const parent = path.dirname(target);
-        const head = `📂 ${target}\n${parent !== target ? `↑ up: ${parent}` : "(filesystem root)"}`;
+        const parentOk = parent !== target && Boolean(allowedRootFor(parent, roots));
+        const head = `📂 ${target}\n${parentOk ? `↑ up: ${parent}` : "(top of an allowed root)"}`;
         const body = folders.length ? folders.map((f) => `📁 ${path.join(target, f)}`).join("\n") : "(no sub-folders)";
-        return text(`${head}\n\n${body}`);
+        const others = target === roots[0] && roots.length > 1 ? `\n\nOther allowed roots:\n${roots.slice(1).map((r) => `📁 ${r}`).join("\n")}` : "";
+        return text(`${head}\n\n${body}${others}`);
       } catch (e) {
         return text(`Couldn't list ${target}: ${e.message}`);
       }
@@ -450,6 +586,7 @@ export function register(server, ctx) {
     },
     async ({ link }) => {
       if (!(await requireAdmin())) return text("Only admins can set this channel's Google Drive sync folder.");
+      requireEnterpriseFeature("driveSync");
       const raw = (link || "").trim();
       const folderId = parseDriveFolderId(raw);
       if (!folderId) return text("That doesn't look like a Google Drive folder link. Paste the folder URL (…/folders/<id>), an ?id=<id> link, or the bare folder id.");

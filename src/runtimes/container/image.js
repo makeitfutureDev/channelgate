@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundleDigest } from "./image-bundle.js";
 
 // Image resolution. The configured ref (`channelgate/runtime:latest` by default) is a MOVING
 // pointer: the fingerprint that decides "reuse this container or recreate it" must therefore be
@@ -18,13 +19,16 @@ const NO_VALUE = "<no value>";
 // daemon would without importing the settings/database layer.
 export const CONTAINER_DEFAULT_IMAGE = "channelgate/runtime:latest";
 
-// Everything in the checkout that the built image is made of. A change under `containers/` is the
-// Containerfile, the container-side helper scripts, or the pinned CLI versions — all of which are
-// baked in at build time, so the running image is stale the moment one of them moves. The in-image
-// BUNDLE (the helper closure scripts/build-image.mjs stages) is deliberately NOT enumerated here:
-// its contract is what `imageSpecVersion` exists to version, and versions.json says to bump it when
-// the image gains or moves something the daemon relies on. The version comparison below is how a
-// bundle change asks for a rebuild.
+// What the built image is made of, in two halves with one label each:
+//  - `containers/` (label `cg.image.digest`): the Containerfile, the container-side helper scripts
+//    and the pinned CLI versions, all baked in at build time;
+//  - the files OUTSIDE it that the build stages (label `cg.image.bundle`): the engine-spawned helper
+//    closure and the verbatim socket bridge / egress forwarder / SSH ProxyCommand helper, declared
+//    once in ./image-bundle.js for both the builder and this check.
+// The running image is stale the moment either moves. Two labels rather than one widened digest so
+// `cg.image.digest` keeps its meaning: an updater still running the PREVIOUS release's code compares
+// that label alone and must not read a correctly rebuilt image as a failed build.
+// `imageSpecVersion` keeps versioning the CONTRACT (paths, PATH, baked-in packages).
 export const IMAGE_SOURCE_PREFIX = "containers/";
 
 // Read from disk on each explicit check: an updater imports this module before moving the checkout.
@@ -40,15 +44,22 @@ export function expectedImageBuild(repoRoot = fileURLToPath(new URL("../../../",
     }
   }
   visit();
-  return { version: String(versions.imageSpecVersion || ""), digest: hash.digest("hex"), toolchain: versions.npm || {} };
+  return {
+    version: String(versions.imageSpecVersion || ""),
+    digest: hash.digest("hex"),
+    bundleDigest: bundleDigest(repoRoot),
+    toolchain: versions.npm || {},
+  };
 }
 
-export const IMAGE_INSPECT_FORMAT = '{{.Id}}|{{index .Config.Labels "cg.image.version"}}|{{index .Config.Labels "cg.image.digest"}}|{{index .Config.Labels "cg.image.toolchain"}}';
+// The bundle label is LAST: the toolchain label is JSON and cannot contain "|", but appending keeps
+// every earlier field where older callers expect it.
+export const IMAGE_INSPECT_FORMAT = '{{.Id}}|{{index .Config.Labels "cg.image.version"}}|{{index .Config.Labels "cg.image.digest"}}|{{index .Config.Labels "cg.image.toolchain"}}|{{index .Config.Labels "cg.image.bundle"}}';
 export function parseImageBuild(stdout) {
-  const [id, version, digest, toolchain] = String(stdout || "").trim().split("|");
+  const [id, version, digest, toolchain, bundle] = String(stdout || "").trim().split("|");
   let pins = {};
   try { pins = JSON.parse(cleanField(toolchain)); } catch { /* older images have no pins label */ }
-  return { id: cleanField(id), version: cleanField(version), digest: cleanField(digest), toolchain: pins };
+  return { id: cleanField(id), version: cleanField(version), digest: cleanField(digest), bundleDigest: cleanField(bundle), toolchain: pins };
 }
 
 export function imageNotBuiltMessage(ref) {
@@ -61,13 +72,17 @@ export function imageNotBuiltMessage(ref) {
  *
  * Nothing rebuilt the channel image on update before this: `containers/` could change, or the spec
  * version could be bumped, and every container channel kept running the OLD image until an operator
- * noticed the boot warning. The build takes minutes, so it is not free — the three conditions below
- * are the ones where the running image is provably not what this checkout expects.
+ * noticed the boot warning. The build takes minutes, so it is not free — the conditions below are
+ * the ones where the running image is provably not what this checkout expects.
  *
  * @param {object}   input
  * @param {string[]} input.changedPaths             `git diff --name-only <old>..<new>`, repo-relative
  * @param {string}   input.builtSpecVersion         the built image's `cg.image.version` label ("" = none built)
  * @param {string}   input.expectedSpecVersion      `containers/versions.json` in the CANDIDATE checkout
+ * @param {string}   input.builtDigest              the built image's `cg.image.digest` label (`containers/`)
+ * @param {string}   input.expectedDigest           expectedImageBuild().digest of the candidate
+ * @param {string}   input.builtBundleDigest        the built image's `cg.image.bundle` label (staged src files)
+ * @param {string}   input.expectedBundleDigest     expectedImageBuild().bundleDigest of the candidate
  * @returns {boolean}
  */
 export function needsImageBuild({
@@ -76,10 +91,14 @@ export function needsImageBuild({
   expectedSpecVersion = "",
   builtDigest = "",
   expectedDigest = "",
+  builtBundleDigest = "",
+  expectedBundleDigest = "",
 } = {}) {
   const built = String(builtSpecVersion || "").trim();
   const expected = String(expectedSpecVersion || "").trim();
   if (expectedDigest && builtDigest !== expectedDigest) return true;
+  // An image built before the bundle label existed carries none, so it reads as stale once.
+  if (expectedBundleDigest && builtBundleDigest !== expectedBundleDigest) return true;
   if (!built) return true; // nothing built (or the label is unreadable) — build it
   if (!expected) return false; // the candidate declares no spec: nothing to compare, leave the image alone
   if (built !== expected) return true;
@@ -120,9 +139,13 @@ export function createContainerImage({ cli, now = () => Date.now(), ttlMs = 60_0
       const info = await inspectOnce(caps, ref);
       const desired = expectedImageBuild();
       Object.assign(info, {
-        desiredVersion: desired.version, desiredDigest: desired.digest, desiredToolchain: desired.toolchain,
+        desiredVersion: desired.version, desiredDigest: desired.digest, desiredBundleDigest: desired.bundleDigest, desiredToolchain: desired.toolchain,
         managed: ref === CONTAINER_DEFAULT_IMAGE,
-        needsRebuild: needsImageBuild({ builtSpecVersion: info.version, expectedSpecVersion: desired.version, builtDigest: info.digest, expectedDigest: desired.digest }),
+        needsRebuild: needsImageBuild({
+          builtSpecVersion: info.version, expectedSpecVersion: desired.version,
+          builtDigest: info.digest, expectedDigest: desired.digest,
+          builtBundleDigest: info.bundleDigest, expectedBundleDigest: desired.bundleDigest,
+        }),
       });
       cache = { ref, at: now(), info };
       return info;

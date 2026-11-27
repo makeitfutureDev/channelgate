@@ -182,3 +182,60 @@ test("the shared snapshot reader sees a save made through the batch API (what th
   assert.equal(snap.facts, 1);
   assert.match(snap.index, /Fridays/);
 });
+
+// A deployment that runs Claude Code only through an ADDED sign-in license (the channel is locked
+// to it, or the gateway's own login is not approved there) still gets its reviews: the reviewer
+// signs in through that license's own directory and banks the usage under the license.
+test("a channel locked to an added Claude sign-in license is reviewed on that license", async () => {
+  review.resetMemoryReviewState();
+  saveSettings({ agentMemory: true, memoryReviewEvery: 1, memoryReviewNotify: false, engineLicenses: [], engineEnabled: { claude: true, codex: true } });
+  const { createLicense } = await import("../src/config/engine-licenses.js");
+  const { licenseLoginHome } = await import("../src/engines/license-state.js");
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const seat = createLicense({ kind: "claude-login", label: "Review seat", type: "business" });
+  const TOKEN = "sk-ant-oat01-review-seat-fixture";
+  mkdirSync(licenseLoginHome(seat.id), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(licenseLoginHome(seat.id), ".credentials.json"), JSON.stringify({ claudeAiOauth: {
+    accessToken: TOKEN, refreshToken: "review-seat-refresh-stays-on-host", expiresAt: Date.now() + 3_600_000, refreshTokenExpiresAt: Date.now() + 86_400_000,
+  } }), { mode: 0o600 });
+  const { entry, meta: base } = await channel("C_MEM_REVIEW_SEAT", "mem-review-seat");
+  const meta = { ...base, engine: seat.id, approvedEngines: [seat.id] };
+  await saveChannelMeta(entry.slug, meta);
+  assert.deepEqual(review.reviewLicenseCandidates(meta), [seat.id], "the gateway's own login is not approved here");
+
+  // An added sign-in reaches a container only as the channel's relay placeholder, behind the proxy.
+  const proxied = (slug, m) => { const target = resolveTarget(slug, m); return { ...target, container: { ...target.container, egress: { active: true, mode: "proxy" } } }; };
+  const plain = await review.runMemoryReview({
+    channelId: "C_MEM_REVIEW_SEAT", slug: entry.slug, threadKey: "7000.019", authorId: "U_MEM_REVIEW", meta, resolveTarget,
+    fetchTranscript: async () => "Alex: hi", run: async () => { throw new Error("must not run"); },
+  });
+  assert.equal(plain.skipped, "no-container-claude-credential", "without the proxy the license cannot be relayed, and the review says so instead of failing");
+
+  let seen = null;
+  const out = await review.runMemoryReview({
+    channelId: "C_MEM_REVIEW_SEAT", slug: entry.slug, threadKey: "7000.020", authorId: "U_MEM_REVIEW", meta, resolveTarget: proxied,
+    fetchTranscript: async () => "Alex: hi\nRobin: hello",
+    run: async (options) => {
+      seen = options;
+      return { content: `Saved: noted ${TOKEN}`, durationMs: 1, costUSD: 0, usage: {} };
+    },
+  });
+  assert.equal(out.skipped, undefined, `the review ran: ${JSON.stringify(out)}`);
+  assert.equal(seen.engineId, seat.id);
+  assert.match(seen.providerEnv.CLAUDE_CODE_OAUTH_TOKEN, /cgph_/, "it signs in as the license, holding only the relay placeholder");
+  assert.ok(!JSON.stringify(seen.providerEnv).includes(TOKEN));
+  assert.ok(seen.providerEnv.CLAUDE_CONFIG_DIR.includes(seat.id), "in the license's own session directory");
+  assert.ok(!JSON.stringify(seen.providerEnv).includes("review-seat-refresh-stays-on-host"));
+  assert.ok(!String(out.summary || "").includes(TOKEN), "the license's token is scrubbed from the notice text");
+  const row = (await readUsage({ channelId: "C_MEM_REVIEW_SEAT" })).find((u) => u.taskKind === "memory_review");
+  assert.equal(row?.engine, seat.id, "banked under the license that ran it");
+
+  // Locked to the other harness: no review at all.
+  const codexOnly = { ...meta, engine: "codex", approvedEngines: ["harness:codex"] };
+  await saveChannelMeta(entry.slug, codexOnly);
+  const locked = await review.runMemoryReview({
+    channelId: "C_MEM_REVIEW_SEAT", slug: entry.slug, threadKey: "7000.021", authorId: "U_MEM_REVIEW", meta: codexOnly, resolveTarget: proxied,
+    fetchTranscript: async () => "Alex: hi", run: async () => { throw new Error("must not run"); },
+  });
+  assert.equal(locked.skipped, "harness-not-approved");
+});

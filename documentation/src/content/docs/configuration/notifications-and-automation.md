@@ -25,6 +25,16 @@ Post the result in this conversation.
 
 Inspect the resulting schedule under **Automations**. Check its conversation, prompt, timing, delivery mode, and enabled status before relying on it. Cron scheduling uses the server's local timezone; ask for an explicit timezone when describing requirements and verify the saved result.
 
+## Personal reply mentions
+
+Automatic reply mentions are separate from quiet-thread reminders. In Slack App Home →
+**Help & settings**, each person can toggle **Mention me in replies**, or ask the agent to turn it
+on or off. Administrators can change the same preference in **Users → [person] → Automatic reply mentions**.
+New users start off; existing users keep on until they opt out. The choice applies to following
+replies across that platform account’s conversations and survives restart. Slack, Teams and
+Google Chat use it for their automatic requester tag; DMs omit that tag. Explicit answer mentions
+remain available.
+
 ## Personal reminder preferences
 
 A user can change quiet-thread reminders in Slack App Home. Administrators can also edit **Users → [person] → Quiet-thread reminders**. Changing the organization default affects newly seen users. **Apply to all…** overwrites existing personal choices with the selected default and cannot be undone.
@@ -37,7 +47,7 @@ Digests identify participating users' threads awaiting their reply. A configured
 
 Under **Agent defaults → Agent instructions**, **Memory review model** and **Background memory review** control the reviewer. The interval defaults to five turns; `0` disables background review. When review is enabled, recognized corrections and decisions can trigger it before that interval. **Post 🧠 Memory updated** defaults on and makes successful reviewer saves visible.
 
-**Public URL** and **Approval links** under **Connection** enable browser decisions on surfaces without native approval buttons. **How a failover happens → Ask** applies to live Slack turns; unattended schedules, background runs, and API work use automatic recovery when eligible.
+**Public URL** and **Approval links** under **Connection** enable browser decisions on surfaces without native approval buttons. **How a failover happens → Ask** applies to live Slack turns and to the move to the other harness; unattended schedules, background runs, and API work use automatic recovery when eligible. Moving between the [licenses](/docs/features/engine-licenses) of one selection is automatic in both modes.
 
 Routine saved limits and preferences apply without restarting. Hand-editing startup configuration or service environment may require a restart; inspect the resulting schedule and recipient before testing unattended delivery.
 

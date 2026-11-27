@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile, readdir, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { containerAccessNote } from "./runtime-access.js";
+import { getComposioMode, getEmailAccountsEnabled } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 import { DEFAULT_PLATFORM, platformOr, isPlatformId } from "../platforms/registry.js";
@@ -30,11 +31,11 @@ export function overrideGuideDir() {
   return path.join(gatewayRoot(), "config", "gateway-usage");
 }
 
-// A guide file path is valid iff it's SKILL.md, references/<slug>.md, scripts/<slug>.py, or
+// A guide file path is valid iff it's SKILL.md, references/<slug>.md, scripts/<slug>.py|.mjs, or
 // platforms/<platformId>/<slug>.md — no traversal. The platform segment is checked
 // against the registry, so an admin cannot create a directory for a platform that does not exist
 // (it would silently never be read, which reads as "my edit was ignored").
-const FILE_RE = /^(SKILL\.md|references\/[A-Za-z0-9._-]+\.md|scripts\/[A-Za-z0-9._-]+\.py|platforms\/([a-z0-9]+)\/[A-Za-z0-9._-]+\.md)$/;
+const FILE_RE = /^(SKILL\.md|references\/[A-Za-z0-9._-]+\.md|scripts\/[A-Za-z0-9._-]+\.(?:py|mjs)|platforms\/([a-z0-9]+)\/[A-Za-z0-9._-]+\.md)$/;
 export function validGuideFile(file) {
   const f = String(file || "").trim().replace(/^\.\//, "");
   const m = FILE_RE.exec(f);
@@ -74,7 +75,7 @@ async function listGuideFiles(dir) {
   }
   try {
     for (const e of await readdir(path.join(dir, "scripts"), { withFileTypes: true })) {
-      if (e.isFile() && e.name.endsWith(".py")) out.push(`scripts/${e.name}`);
+      if (e.isFile() && (e.name.endsWith(".py") || e.name.endsWith(".mjs"))) out.push(`scripts/${e.name}`);
     }
   } catch {
     /* no scripts dir */
@@ -132,6 +133,7 @@ export async function resolvedGuideFiles(platform = DEFAULT_PLATFORM) {
     if (rel.startsWith("platforms/")) continue;
     if (platformOwned.has(rel)) continue; // the platform supplies its own version
     if (adapter.guideDrop.includes(rel)) continue;
+    if (rel === EMAIL_GUIDE_FILE && !getEmailAccountsEnabled()) continue; // admin switch is off
     out.set(rel, entry);
   }
   return out;
@@ -139,8 +141,39 @@ export async function resolvedGuideFiles(platform = DEFAULT_PLATFORM) {
 
 // Placeholders every guide source may use, so a shared file can name the surface it is running on
 // without being forked per platform.
+// Feature conditions a guide source can carry, so agents are told only about what this gateway
+// has switched on. Two forms, both removed from the materialized file:
+//   • a line ending in ` <!--if:NAME-->` is kept (minus the marker) only while NAME holds;
+//   • a line that is exactly `<!--if:NAME-->` opens a block kept only while NAME holds, closed by a
+//     line that is exactly `<!--endif-->` (blocks do not nest).
+// An unknown NAME never holds, so a typo hides text instead of leaking it everywhere.
+const EMAIL_GUIDE_FILE = "references/email.md";
+const GUIDE_CONDITIONS = {
+  email: () => getEmailAccountsEnabled(),
+  "composio-sdk": () => getComposioMode() === "sdk",
+  "composio-personal": () => getComposioMode() !== "sdk",
+};
+function guideCondition(name) {
+  const check = Object.hasOwn(GUIDE_CONDITIONS, name) ? GUIDE_CONDITIONS[name] : null;
+  return Boolean(check && check());
+}
+export function applyGuideConditions(content) {
+  const out = [];
+  let block = null; // null outside a block, else whether the block is kept
+  for (const line of String(content).split("\n")) {
+    const open = /^<!--if:([a-z0-9-]+)-->$/.exec(line.trim());
+    if (open && block === null) { block = guideCondition(open[1]); continue; }
+    if (line.trim() === "<!--endif-->" && block !== null) { block = null; continue; }
+    if (block === false) continue;
+    const inline = / <!--if:([a-z0-9-]+)-->$/.exec(line);
+    if (inline) { if (guideCondition(inline[1])) out.push(line.slice(0, inline.index)); continue; }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function substitutePlatform(content, adapter, target) {
-  return String(content)
+  return applyGuideConditions(content)
     .replaceAll("{{PLATFORM}}", adapter.label)
     .replaceAll("{{PLATFORM_ID}}", adapter.id)
     .replaceAll("{{CONTAINER_ACCESS}}", containerAccessNote(target));
@@ -170,7 +203,7 @@ async function listSkillFolderFiles(skillDir) {
   }
   try {
     for (const e of await readdir(path.join(skillDir, "scripts"), { withFileTypes: true })) {
-      if (e.isFile() && e.name.endsWith(".py")) out.push(`scripts/${e.name}`);
+      if (e.isFile() && (e.name.endsWith(".py") || e.name.endsWith(".mjs"))) out.push(`scripts/${e.name}`);
     }
   } catch {
     /* none */
@@ -228,7 +261,7 @@ export async function applyGatewayGuide(cwd, { platform = DEFAULT_PLATFORM, targ
 // Overwrite one guide file's content in the override overlay. Propagates on the next message.
 export async function updateGatewayGuide({ file, content }) {
   const f = validGuideFile(file);
-  if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py", or "platforms/<platform>/<name>.md".`);
+  if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py|.mjs", or "platforms/<platform>/<name>.md".`);
   const body = String(content ?? "");
   if (!body.trim()) throw new Error("Refusing to write empty content — pass the new file body.");
   const dest = path.join(overrideGuideDir(), f);
@@ -243,7 +276,7 @@ export async function resetGatewayGuide({ file } = {}) {
   const ovr = overrideGuideDir();
   if (file) {
     const f = validGuideFile(file);
-    if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py", or "platforms/<platform>/<name>.md".`);
+    if (!f) throw new Error(`Invalid guide file "${file}" — use "SKILL.md", "references/<name>.md", "scripts/<name>.py|.mjs", or "platforms/<platform>/<name>.md".`);
     await rm(path.join(ovr, f), { force: true });
     // If that emptied the overlay, remove the (now-stale) override dir entirely.
     if (!(await guideIsOverridden())) await rm(ovr, { recursive: true, force: true });
@@ -269,4 +302,15 @@ export async function readGatewayGuide({ file } = {}) {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([rel, { overridden }]) => ({ file: rel, overridden }));
   return { files: list, overridden: await guideIsOverridden() };
+}
+
+// A shared folder has one stable guide. Cross-platform followers receive their actual surface
+// capabilities in the prompt rather than racing to replace the owner's files.
+export async function linkedWorkspaceGuidePreamble(meta, target) {
+  if (!meta?.workspaceLink || platformOr(meta.workspaceLink.platform).id === platformOr(meta.platform).id) return "";
+  const adapter = platformOr(meta.platform);
+  const files = await resolvedGuideFiles(adapter.id);
+  const source = files.get("references/platform.md");
+  const content = source ? substitutePlatform(await readFile(source.src, "utf8"), adapter, target) : "";
+  return `\n[Actual chat surface for this linked-folder turn: ${adapter.label}. The folder's guide belongs to its source conversation; use these surface capabilities for this reply.]\n${content}\n[End actual chat surface]\n`;
 }

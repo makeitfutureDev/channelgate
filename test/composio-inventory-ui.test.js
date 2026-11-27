@@ -59,11 +59,10 @@ test("confirmed empty inventory differs from unavailable, unconfigured and parti
   assert.match(partial, /ca-one/);
 });
 
-test("source attribution distinguishes personal, channel, organization defaults and direct messages", () => {
+test("source attribution distinguishes personal, channel, SDK and direct-message identities", () => {
   for (const [source, label] of [
     ["user", "Personal connections · composio-user"],
     ["channel", "Channel connections · composio-agent"],
-    ["org", "Organization default · composio-agent"],
     ["sdk-user", "Personal connections · composio-user · SDK"],
     ["sdk-channel", "Channel connections · composio-agent · SDK"],
     ["none-dm", "Direct message · personal connections only"],

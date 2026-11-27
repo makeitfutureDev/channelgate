@@ -10,8 +10,8 @@
 //     NOTE: the `exec resume` subcommand dropped -C/--cd and -s/--sandbox; profiles are plain
 //     config overrides, so the same flags work on fresh and resumed runs — see buildCodexArgs.
 //   - MCP injected with `-c mcp_servers.*` overrides — identical on a fresh run and on a resume,
-//     because `exec resume` reads them the same way. Header-bearing remote MCPs (Composio, the
-//     toolboxes): in a CONTAINER they are relayed by the daemon over the control socket (the
+//     because `exec resume` reads them the same way. Header-bearing remote MCPs (Composio and
+//     Make): in a CONTAINER they are relayed by the daemon over the control socket (the
 //     `remote-mcp` service), so the container holds no credential at all. Composio also uses
 //     that relay on host turns for mandatory membership approvals; other host remotes use native
 //     HTTP with a per-run `http_headers_helper` (see addSecretRemote).
@@ -19,11 +19,12 @@
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
 //     as long as it keeps producing JSONL/progress output.
+import { resourceSnapshotFacts } from "../runtimes/resource-snapshot.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { composioUrl, toolboxUrl } from "../gateway/mcp-catalog.js";
+import { composioUrl } from "../gateway/mcp-catalog.js";
 import { argvSafePrompt } from "./contract.js";
 import { buildChildEnv } from "./child-env.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
@@ -31,6 +32,7 @@ import { browserSpawnEnv } from "../gateway/browser-env.js";
 import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
 import { applyEgressEnv } from "../runtimes/container/egress-env.js";
+import { egressActive } from "../runtimes/container/egress-hook.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { isProgressReportTool, normalizeProgressReport } from "./progress-report.js";
@@ -44,7 +46,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
-import { channelCodexHome } from "../gateway/channel-codex-auth.js";
+import { channelCodexHome, dedicatedCodexLogin, isDedicatedCodex, isChannelCodex } from "../gateway/channel-codex-paths.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
 
@@ -109,18 +111,10 @@ process.stdout.write(JSON.stringify({ [HEADER]: PREFIX + value }));
 // MCP credentials are relayed by the daemon (see addSecretRemote), and the artifact dir the bundle
 // lives in is readable by every process in the container. A sudo-host turn keeps the tokens its
 // headers helpers read.
-export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxKey = "", customMcps = {} } = {}) {
+export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", makeToolboxKey = "", customMcps = {} } = {}) {
   if (isolated) return { gatewayCapability };
-  const bundle = { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
-  for (const [name, entry] of Object.entries(customMcps || {})) {
-    if (entry?.token) bundle[customMcpSecretName(name)] = entry.token;
-  }
-  return bundle;
-}
-
-// The bundle key a custom MCP's token is stored under for its headers helper (a sudo-host turn).
-export function customMcpSecretName(serverName) {
-  return `customMcp:${serverName}`;
+  // Custom servers always use the daemon relay, even on the host: no custom values in artifacts.
+  return { gatewayCapability, composioUserToken, composioToken, makeToolboxKey };
 }
 
 // Names that can ride in a `-c` dotted key path. TOML bare keys are exactly [A-Za-z0-9_-]; anything
@@ -203,6 +197,13 @@ const LIVE_AUTH_FAILURE_RE = /not (?:logged|signed) in|run `?codex login|please 
 // Only "authentication" is actionable live. A usage limit reliably arrives as a JSON error event
 // or a nonzero exit, both already handled on close; killing a live turn on stderr prose about
 // limits would risk ending a healthy run that merely quoted one.
+// Require the CLI router's own CreateProcess diagnostic; generic EAGAIN/network errors and
+// text printed by a tool are not evidence that the harness cannot create a process.
+export function isCodexResourceFailure(line = "") {
+  return /\bcodex_core::tools::router:/.test(line)
+    && /\bexec_command failed:.*CreateProcess.*Failed to create unified exec process: Resource temporarily unavailable/.test(line);
+}
+
 export function classifyCodexLiveStderr(line = "") {
   return LIVE_AUTH_FAILURE_RE.test(String(line)) ? "authentication" : "";
 }
@@ -672,7 +673,7 @@ export function codexSpawnDropsCapabilities({ target = null, cwd = "", dangerous
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [], provider = null }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   const isolated = isIsolatedTarget(runtimeTarget);
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
@@ -682,6 +683,11 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
   // No anonymous usage metrics to OpenAI from any turn (src/engines/codex-telemetry.js).
   args.push("-c", CODEX_NO_TELEMETRY);
+  if (isDedicatedCodex(runtimeTarget?.meta) || isChannelCodex(runtimeTarget?.meta) || provider) args.push("-c", 'cli_auth_credentials_store="file"');
+  // A provider license (engines/license-adapters.js) points this CLI at its own server. The
+  // overrides ride argv because --ignore-user-config drops config.toml; they name the environment
+  // variable that holds the credential, never the credential.
+  if (provider) for (const override of provider.config || []) args.push("-c", override);
   // Slack is the only interactive surface for this daemon. In non-autonomous modes, fail closed:
   // approval-required Codex actions are rejected instead of hanging on an invisible prompt. In
   // autonomous mode, route eligible approvals through Codex auto-review so safe MCP reads (for
@@ -795,7 +801,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
     args.push("-c", `mcp_servers.gateway.startup_timeout_sec=60`);
   }
 
-  // A header-bearing remote MCP (both Composio identities, the toolboxes).
+  // A header-bearing remote MCP (both Composio identities and Make).
   //
   // ISOLATED (the channel container): relayed by the DAEMON over the control socket. The entry is
   // the same secret-env-bridge → socket-bridge chain the gateway entry uses — the signed capability
@@ -803,7 +809,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   // the server; the daemon verifies the capability's `remoteMcps` claim plus its own registration
   // (made when the capability was minted, src/gateway/mcp.js) and dials the real URL with the real
   // header. The bundle then holds ONLY the capability and no headers helper is written, so no
-  // process in the container can read a Composio or toolbox credential. A server the relay cannot
+  // process in the container can read a Composio or Make credential. A server the relay cannot
   // carry (a non-https override, a malformed header) is skipped here exactly as mcp.js drops and
   // reports it.
   //
@@ -870,20 +876,19 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   addComposio("composio-user", composioUserEndpoint, composioUserToken, "composioUserToken");
   addComposio("composio-agent", composioEndpoint, composioToken, "composioToken");
 
-  // Toolbox MCP, same native transport, carrying this run's token as a Bearer header.
-  if (!clean && toolboxToken) {
-    addSecretRemote("makeitfuture-toolbox", toolboxUrl(), "toolboxToken", "Authorization", "Bearer ", { Authorization: `Bearer ${toolboxToken}` });
-  }
-
   if (!clean && makeToolboxUrl && makeToolboxKey) {
     addSecretRemote("make-toolbox", makeToolboxUrl, "makeToolboxKey", "Authorization", "Bearer ", { Authorization: `Bearer ${makeToolboxKey}` });
   }
 
   // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, both bare
-  // TOML keys by construction. Relayed by the daemon in a container exactly like the toolboxes.
+  // TOML keys by construction. Relayed by the daemon in a container exactly like Make.
   for (const [name, entry] of Object.entries(clean ? {} : customMcps || {})) {
-    if (!entry?.url || !entry?.token || !BARE_TOML_KEY.test(name)) continue;
-    addSecretRemote(name, entry.url, customMcpSecretName(name), "Authorization", "Bearer ", { Authorization: `Bearer ${entry.token}` });
+    if (!secretBundlePath || !entry?.url || !BARE_TOML_KEY.test(name)) continue;
+    // Headers and query values are materialized only in the daemon's registration. A host turn
+    // also gets a bridge, keeping credentials out of argv, MCP config and helper files.
+    // `publicOnly` like the registration (customMcpRemotes): an http:// URL is relayable for a custom
+    // MCP, whose dial admits it only for an admin-approved private host:port.
+    if (!remoteMcpServerProblem({ url: entry.url, headers: {}, publicOnly: true })) addRelayedRemote(name);
   }
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any
@@ -904,7 +909,40 @@ export const CODEX_PROXY_NODE_OPTIONS = "--disable-warning=UNDICI-EHPA";
 // See buildClaudeEnv: the channel's own secrets are re-filtered at this boundary and go in first,
 // so the gateway's TMPDIR / HOME / CODEX_HOME — and the browser namespace, which is a
 // confinement boundary, not a preference (gateway/browser-env.js) — always win.
-export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null } = {}, source = process.env) {
+// The names that authenticate or redirect this CLI at OpenAI. A provider license's run must carry
+// none of them: an inherited key would be sent to a third-party server, and an inherited base URL
+// would send the license's key somewhere else.
+export const OPENAI_ROUTING_NAMES = ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
+
+// `provider` (a provider license) is gateway-owned and applied dead last, like Claude's
+// providerEnv: the OpenAI routing names go, whatever family the provider's own SDK path reads
+// (`provider.strip`, e.g. every AWS_* name for Bedrock) goes, then the license's pins come back.
+function applyCodexProviderEnv(env, provider) {
+  if (!provider) return env;
+  for (const name of OPENAI_ROUTING_NAMES) delete env[name];
+  if (provider.strip instanceof RegExp) {
+    for (const name of Object.keys(env)) if (provider.strip.test(name)) delete env[name];
+  }
+  for (const [name, value] of Object.entries(provider.env || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    env[name] = String(value);
+  }
+  return env;
+}
+
+// The OpenAI names a container run on a SIGN-IN must not inherit, because each one outranks or
+// redirects the login file the gateway placed: an API key in the environment answers instead of
+// the relayed sign-in, and a dedicated login (Codex EU, an added license, the channel's own
+// account) must not be pointed at another endpoint, organization or project either. One list for
+// a turn's environment (below) and for the `codex` an SSH session runs (gateway/ssh-session.js),
+// so a terminal can never be on a different account than the same channel's turn.
+export function codexLoginEnvStrip(target) {
+  const dedicated = isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta);
+  if (!dedicated && target?.container?.credentialMode?.codex !== "relay") return [];
+  return ["OPENAI_API_KEY", "CODEX_API_KEY", ...(dedicated ? ["OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"] : [])];
+}
+
+export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = null, provider = null } = {}, source = process.env) {
   // An ISOLATED runtime has the image's layout, not the host's: HOME and CODEX_HOME are the
   // container's (CODEX_HOME is the bind-mounted per-install codex home that carries auth.json),
   // TMPDIR is the container's tmpfs, and PATH is the image's — the daemon's toolchain launcher dir
@@ -916,7 +954,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...safeSpawnEnv(extraEnv),
       ...browserSpawnEnv(browserNamespace, { target }),
       NODE_USE_ENV_PROXY: "1",
-      ...(target?.meta?.codexAuthSource !== "channel" && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
+      ...(!provider && !isDedicatedCodex(target?.meta) && !isChannelCodex(target?.meta) && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
     const env = applyEgressEnv({
@@ -926,16 +964,14 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       TMPDIR: image.tmpDir,
       PATH: image.path,
     }, target);
-    if (target?.meta?.codexAuthSource === "channel" || target?.container?.credentialMode?.codex === "relay") {
-      delete env.OPENAI_API_KEY;
-      delete env.CODEX_API_KEY;
-    }
+    for (const name of codexLoginEnvStrip(target)) delete env[name];
     // Behind the proxy NODE_USE_ENV_PROXY=1 makes Node 22 print its experimental-EnvHttpProxyAgent
     // warning on every node process's stderr — the Codex npm launcher's and every node child a
     // shell command starts. Gateway-owned and set LAST: NODE_OPTIONS is a reserved name a channel
     // secret can never carry (channel-env.js, re-filtered by safeSpawnEnv above) and it is not in
-    // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 22
+    // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 24
     // accepts --disable-warning in NODE_OPTIONS.
+    applyCodexProviderEnv(env, provider);
     if (env.CG_EGRESS === "proxy") env.NODE_OPTIONS = CODEX_PROXY_NODE_OPTIONS;
     return env;
   }
@@ -944,10 +980,19 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     ...browserSpawnEnv(browserNamespace),
     NODE_USE_ENV_PROXY: "1",
   }, source);
-  if (target?.meta?.codexAuthSource === "channel") {
-    hostEnv.CODEX_HOME = channelCodexHome(target.meta.channelId);
+  if (isDedicatedCodex(target?.meta) || isChannelCodex(target?.meta)) {
+    hostEnv.CODEX_HOME = dedicatedCodexLogin(target?.meta)?.home || channelCodexHome(target.meta.channelId);
     delete hostEnv.OPENAI_API_KEY;
     delete hostEnv.CODEX_API_KEY;
+    delete hostEnv.OPENAI_BASE_URL;
+    delete hostEnv.OPENAI_ORG_ID;
+    delete hostEnv.OPENAI_PROJECT_ID;
+  }
+  if (provider) {
+    applyCodexProviderEnv(hostEnv, provider);
+    // The license's own directory, never the operator's CODEX_HOME: its sessions stay apart and
+    // the operator's ChatGPT sign-in is not in reach of a third-party server's run.
+    hostEnv.CODEX_HOME = provider.home;
   }
   return hostEnv;
 }
@@ -959,7 +1004,7 @@ export async function installRelayedCodexLogin(target, deps = null) {
   if (typeof target?.runtime?.writeHomeFile !== "function") {
     return "this runtime cannot hold a relayed Codex sign-in (no writeHomeFile)";
   }
-  if ((target.container?.mounts || []).some((mount) => mount.kind === "codex-auth")) {
+  if ((target.container?.mounts || []).some((mount) => mount.kind === (isDedicatedCodex(target?.meta) ? "codex-eu-auth" : "codex-auth"))) {
     return "the container still mounts the shared Codex sign-in file; it is recreated on the next run";
   }
   const credential = deps?.credential || (await import("../gateway/egress/grants.js")).containerCodexCredential;
@@ -994,7 +1039,6 @@ export async function runCodex({
   composioEndpoint = null,
   composioUserToken = "",
   composioToken = "",
-  toolboxToken = "",
   makeToolboxUrl = "",
   makeToolboxKey = "",
   customMcps = {},
@@ -1018,12 +1062,17 @@ export async function runCodex({
   runId = "",
   timeoutMs = 10 * 60 * 1000,
   maxSilenceMs = null,
+  resourceRecoveryMs = 15_000,
   signal = null,
   onDelta = null,
   onEvent = null,
   onSessionResolved = null,
   // TEST SEAM: { credential } replaces containerCodexCredential (src/gateway/egress/grants.js).
   codexRelayDeps = null,
+  // A provider license's routing (engines/license-adapters.js): `{ config, env, strip, home }`.
+  // Its credential is an environment variable the adapter resolved (a placeholder in a
+  // container), so no Codex sign-in is checked, relayed or written for such a run.
+  provider = null,
 }) {
   // Sign-in is checked BEFORE anything is spawned. A logged-out Codex is not reliably a fast
   // failure — depending on build and credential shape it can sit there refreshing or waiting,
@@ -1032,6 +1081,10 @@ export async function runCodex({
   // before any work exists to lose, so the orchestrator diverts it to the other harness with a
   // visible reason. The probe fails OPEN: only a positively absent/empty credential lands here.
   const runtime = runtimeTargetOr(target, cwd);
+  if (!isDedicatedCodex(runtime?.meta) && isChannelCodex(runtime?.meta)) {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   const isolated = isIsolatedTarget(runtime);
   if (isolated && !artifactDir) {
     throw commandError("Codex container runs require an artifact directory", { engine: "codex", providerError: false });
@@ -1039,10 +1092,12 @@ export async function runCodex({
   // The container backend owns its copied login. A direct host run reads the exact CODEX_HOME the
   // CLI will use, preserving the same fail-open credential semantics as every other probe.
   let credentialFailure = null;
-  if (isolated && typeof runtime.runtime.credentialError === "function") {
-    credentialFailure = await runtime.runtime.credentialError(runtime, "codex");
+  if (provider) {
+    // Checked by the license's adapter before this call; the default account's login is not this run's.
+  } else if (isolated && typeof runtime.runtime.credentialError === "function") {
+    credentialFailure = await runtime.runtime.credentialError(runtime, dedicatedCodexLogin(runtime?.meta)?.id || (runtime?.meta?.engine === "codex-channel" ? "codex-channel" : "codex"));
   } else if (!isolated) {
-    const channelHome = runtime?.meta?.codexAuthSource === "channel" ? channelCodexHome(runtime.meta.channelId) : "";
+    const channelHome = dedicatedCodexLogin(runtime?.meta)?.home || (isChannelCodex(runtime?.meta) ? channelCodexHome(runtime.meta.channelId) : "");
     const state = await readCodexAuthState({ codexHome: channelHome || codexStateDir, hostCodexHome: channelHome || undefined, env: channelHome ? { CODEX_HOME: channelHome } : process.env });
     if (state.known && !state.authenticated) credentialFailure = describeCodexAuth(state);
   }
@@ -1051,7 +1106,7 @@ export async function runCodex({
   // src/gateway/codex-token-relay.js), written into its HOME volume right here, before every spawn,
   // so the claims it carries follow the daemon's current token. Failing to place it is a
   // credential failure like any other: replay-safe, before any work exists to lose.
-  if (!credentialFailure && isolated && runtime.container?.credentialMode?.codex === "relay") {
+  if (!provider && !credentialFailure && isolated && (isDedicatedCodex(runtime?.meta) || isChannelCodex(runtime?.meta) ? egressActive(runtime) : runtime.container?.credentialMode?.codex === "relay")) {
     credentialFailure = await installRelayedCodexLogin(runtime, codexRelayDeps).catch((error) => `Codex could not be signed in inside the container: ${error?.message || error}`);
   }
   // A backend may answer with an Error or with the sentence itself; both mean the same thing here.
@@ -1088,7 +1143,7 @@ export async function runCodex({
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
   const secretDir = artifactDir ? path.join(artifactDir, "run") : runTmpDir();
-  const bundle = codexSecretBundle({ isolated, gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey, customMcps });
+  const bundle = codexSecretBundle({ isolated, gatewayCapability, composioUserToken, composioToken, makeToolboxKey, customMcps });
   const secretBundlePath = !clean && Object.values(bundle).some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";
@@ -1100,7 +1155,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers, provider });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }
@@ -1113,7 +1168,7 @@ export async function runCodex({
       cmd: "codex",
       args,
       cwd,
-      env: buildCodexEnv({ extraEnv, browserNamespace, target: runtime }),
+      env: buildCodexEnv({ extraEnv, browserNamespace, target: runtime, provider }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       runId: runId || newRunId("run"),
@@ -1144,6 +1199,13 @@ export async function runCodex({
     const pendingTools = new Map();
     let timedOut = false;
     let liveFailure = null;
+    let resourceTimer = null;
+    let resourceSnapshot = { unavailable: true };
+    let resourceObserved = false;
+    let resourceGeneration = 0;
+    let lastSuccessfulCommandAt = 0;
+    let closing = false;
+    const clearResourceTimer = () => { clearTimeout(resourceTimer); resourceTimer = null; };
     let stderrBuffer = "";
     let lastNote = "";
     let lastNoteAt = 0;
@@ -1226,6 +1288,12 @@ export async function runCodex({
       if (!p) return;
       const messageId = p.item?.id || p.item_id || p.itemId;
       const explicitPhase = p.item?.phase ?? p.phase;
+      if (p.type === "turn.completed" || (p.type === "item.completed" && codexItemKey(p.item?.type) === "commandexecution" && p.item?.exit_code === 0)) {
+        clearResourceTimer();
+        resourceObserved = false;
+        resourceGeneration += 1;
+        lastSuccessfulCommandAt = Date.now();
+      }
       if (messageId && explicitPhase) messagePhases.set(messageId, explicitPhase);
       if (codexItemMayExecuteTool(p.item)) {
         if (p.type === "item.started") {
@@ -1320,6 +1388,27 @@ export async function runCodex({
           /* a status callback must never end a live run */
         }
       }
+      const diagnosticAt = Date.parse(/^\S+/.exec(line)?.[0] || "");
+      // stdout/stderr are separate pipes. A successful command may arrive before an OLDER
+      // timestamped failure log. Treat that as possible recovery, never kill on stale evidence.
+      const recoveredDiagnostic = lastSuccessfulCommandAt > 0 && Number.isFinite(diagnosticAt) && diagnosticAt <= lastSuccessfulCommandAt;
+      if (!completed && !resourceObserved && !recoveredDiagnostic && isCodexResourceFailure(line)) {
+        resourceObserved = true;
+        resourceSnapshot = { unavailable: true };
+        const generation = ++resourceGeneration;
+        // Capture where the engine runs, before killing it. A failed or slow probe never changes
+        // the recovery deadline. Optional backends cannot leak arbitrary fields into the log.
+        Promise.resolve().then(() => runtime.runtime.inspectResources?.(runtime, {
+          pid: child.pid, runId: child.runtime?.runId || "",
+        })).then((value) => { if (generation === resourceGeneration) resourceSnapshot = resourceSnapshotFacts(value); }).catch(() => {});
+        if (!closing) resourceTimer = setTimeout(() => {
+          resourceTimer = null;
+          if (closing || completed || signal?.aborted) return;
+          liveFailure = { kind: "runtime_resource" };
+          onAbort();
+        }, Math.max(1, resourceRecoveryMs));
+        resourceTimer?.unref?.();
+      }
       if (liveFailure || classifyCodexLiveStderr(line) !== "authentication") return;
       // Only while the turn provably has nothing to lose. Once a tool ran or text streamed, a log
       // line never ends the run — and never makes it replayable on the other harness.
@@ -1357,9 +1446,12 @@ export async function runCodex({
         i = stderrBuffer.indexOf("\n");
       }
       if (stderrBuffer.length > 4_000) { handleStderrLine(stderrBuffer.trim()); stderrBuffer = ""; }
+      else if (isCodexResourceFailure(stderrBuffer)) handleStderrLine(stderrBuffer.trim());
     });
 
     child.on("error", (err) => {
+      closing = true;
+      clearResourceTimer();
       watchdog.stop();
       rm(scratchDir, { recursive: true, force: true }).catch(() => {});
       for (const file of removeRunSecrets()) rm(file, { force: true }).catch(() => {});
@@ -1371,6 +1463,8 @@ export async function runCodex({
     });
 
     child.on("close", async (code, exitSignal) => {
+      closing = true;
+      clearResourceTimer();
       watchdog.stop();
       if (buffer.trim()) handleLine(buffer.trim());
       if (stderrBuffer.trim()) { handleStderrLine(stderrBuffer.trim()); stderrBuffer = ""; }
@@ -1433,6 +1527,8 @@ export async function runCodex({
           sessionId: resolvedSessionId,
           usage: accounting.usage,
           usageRequests: accounting.requests,
+          contextTokens: accounting.context?.tokens || 0,
+          contextWindow: accounting.context?.window || 0,
           usageAccounting: { root: accounting, children },
           runtimeModel: accounting.model || model || "",
           costUSD: null,
@@ -1447,6 +1543,13 @@ export async function runCodex({
         exitCode: code,
         signal: exitSignal || null,
       };
+      if (!signal?.aborted && (liveFailure?.kind === "runtime_resource" || (resourceObserved && !completed && code !== 0))) {
+        return reject(commandError("Codex could not create a tool process because runtime resources were unavailable. Check process/thread limits and running jobs before retrying.", {
+          ...failureDetails, engine: "codex", errorCode: "ENGINE_RESOURCE_EXHAUSTED",
+          processEnded: true, resourceSnapshot, replaySafe: false,
+          stderr: stderr.slice(0, 4000),
+        }));
+      }
       if (timedOut) {
         // A wedged turn is still worth classifying: the reason it went quiet is usually sitting in
         // the stderr we buffered. Naming it turns an opaque "no output" into an actionable
@@ -1586,6 +1689,8 @@ export async function runCodex({
         sessionId: resolvedSessionId,
         usage: accounting.usage,
         usageRequests: accounting.requests,
+        contextTokens: accounting.context?.tokens || 0,
+        contextWindow: accounting.context?.window || 0,
         usageAccounting: { root: accounting, children },
         runtimeModel: accounting.model || model || "",
         costUSD: null, // Codex doesn't report a dollar cost

@@ -110,11 +110,7 @@ test("connections save and remove per scope, never echo a token, and refuse what
   await removeSettingsForm("make:c", await ctx());
   assert.equal((await meta()).makeToolboxUrl, "");
 
-  await saveSettingsForm("toolbox:p", { token: "tb-personal-123456" }, await ctx());
-  assert.equal((await store.getUser("U_MEMBER")).toolboxToken, "tb-personal-123456");
-  await removeSettingsForm("toolbox:p", await ctx());
-  assert.equal((await store.getUser("U_MEMBER")).toolboxToken, "");
-  assert.equal((await saveSettingsForm("toolbox:c", { token: "abc" }, await ctx())).field, "token", "too short");
+
 });
 
 test("a conversation's custom MCP servers need a manager; the viewer's own do not", async () => {
@@ -294,16 +290,17 @@ test("every page, in every role and with every inline form open, passes Block Ki
     focusMember: { id: "U5", approved: true, use: true, manage: false, inChannel: true },
     vpn: { configured: false, state: "unconfigured" },
     resume: { inThread: true, command: "codex resume 019a7c2e" },
-    connections: { composioMode: "personal", composioChannel: masked("t5zq"), composioTokenLabel: "Team", toolboxChannel: { configured: false }, toolboxOrg: masked("aaaa"), makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: masked("mkey"), toolboxUrl: "https://toolbox.example/mcp" },
-    my: { composio: masked("9f2a"), composioLabel: "me", toolbox: { configured: false } },
+    connections: { composioMode: "personal", composioChannel: masked("t5zq"), composioTokenLabel: "Team", makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: masked("mkey") },
+    my: { composio: masked("9f2a"), composioLabel: "me" },
     customMcps: { channel: [{ name: "linear", serverName: "custom-linear", url: "https://mcp.linear.app/mcp", tokenLast4: "ABCD" }], personal: [{ name: "notes", serverName: "my-notes", url: "https://notes.example/mcp", tokenLast4: "WXYZ" }] },
     cloudMcp: { claude: { ready: true, options: Array.from({ length: 120 }, (_, i) => ({ key: `srv-${i}`, label: `Server ${i}` })), selected: ["srv-1"], inherited: ["drive"] }, codex: { ready: false } },
     secrets: [{ name: long, last4: "beef", protected: true, hosts: ["a.example", "b.example"] }, { name: "GMAIL_APP_PASSWORD", last4: "rzhb", protected: false }],
     orgSecrets: [{ name: "ORG_KEY", last4: "o123", protected: true, approval: true, hosts: [] }],
     personalSecrets: [{ name: "MY_TOKEN", last4: "p123", protected: true, approval: true, hosts: [] }],
-    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"] },
+    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"], notLoaded: [{ name: "private-one", tier: "channel" }, { name: "private-two", tier: "organization" }] },
     skillPicker: { options: Array.from({ length: 130 }, (_, i) => ({ key: `skill-${i}`, label: `skill-${i}`, description: "d".repeat(200) })), selected: ["skill-3"] },
-    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [] },
+    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [], foreign: ["someone-elses-skill"] },
+    apiTokens: { manager: true, tokens: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `flow <${i}> ${"n".repeat(80)}`, prefix: "cgk_abcd", last4: "wxyz", createdBy: i % 2 ? "U_OWNER" : "U_OTHER", createdAt: "2026-11-03T10:00:00.000Z", lastUsedAt: i % 3 ? "" : "2026-11-04T10:00:00.000Z", revoked: false })) },
     automations: [
       { id: "rec1", cron: "0 9 * * 1-5", description: "Daily", enabled: true, kind: "task", lastStatus: "ok" },
       { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping", enabled: true, kind: "reminder" },
@@ -315,10 +312,10 @@ test("every page, in every role and with every inline form open, passes Block Ki
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true },
     { canEditAccess: true, canEditSecrets: true, canManageCustomMcp: true, canManageVpn: true, canEditOrgSecrets: true, canManageCloudMcp: true, canEnableAdmin: true },
   ];
-  const forms = ["composio:c", "make:c", "toolbox:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "toolbox:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN"];
-  const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
+  const forms = ["composio:c", "make:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN", "tok-add:c"];
+  const formPage = (key) => key.startsWith("tok") ? "api" : (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
-    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "you"]) {
+    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "api", "diagnostics", "you"]) {
       for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
         const view = buildChannelSettingsView(snapshot, { ...state, ...extra }, { ...options, tab, notice: "✅ Saved." });
         assert.deepEqual(blockKitProblems(view), [], `${tab} ${JSON.stringify(options)} ${JSON.stringify(extra)}`);
@@ -331,4 +328,37 @@ test("every page, in every role and with every inline form open, passes Block Ki
   }
   // A DM, too.
   assert.deepEqual(blockKitProblems(buildChannelSettingsView({ ...snapshot, isDM: true, mode: { adminMode: true } }, state, { tab: "agent", canEnableAdmin: true })), []);
+});
+
+test("the You page names stored grants of another person's personal skill as not loaded", () => {
+  const view = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [], foreign: ["callbox-form"] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  const text = JSON.stringify(view.blocks);
+  assert.match(text, /Not loaded: `callbox-form` — another person's personal skill/);
+  const clean = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  assert.doesNotMatch(JSON.stringify(clean.blocks), /Not loaded/);
+});
+
+test("generic custom MCP forms save, preserve, replace and clear headers and query parameters", async () => {
+  const url = "https://93.184.215.14/mcp";
+  const added = await saveSettingsForm("cm-add:p", { name: "generic", url, authType: "custom", headers: "x-key=first-secret\nx-extra=second-secret", queryParams: "api_key=query-secret" }, await ctx());
+  assert.match(added.notice, /my-generic/);
+  const saved = async () => (await store.getUser("U_MEMBER")).customMcps.find((row) => row.name === "generic");
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }, { name: "x-extra", value: "second-secret" }]);
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=", queryParams: "" }, await ctx());
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }], "missing row removes it; blank row value preserves saved value");
+  assert.equal((await saved()).queryParams[0].value, "query-secret", "blank collection preserves");
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=replacement", queryParams: "[]" }, await ctx());
+  assert.equal((await saved()).headers[0].value, "replacement");
+  assert.deepEqual((await saved()).queryParams, []);
+  const bad = await saveSettingsForm("cm:p:generic", { url, headers: "invalid" }, await ctx());
+  assert.equal(bad.field, "headers");
+  assert.equal((await saved()).headers[0].value, "replacement");
+  await saveSettingsForm("cm:p:generic", { url, headers: "[]" }, await ctx());
+  assert.deepEqual((await saved()).headers, []);
+  await removeSettingsForm("cm:p:generic", await ctx());
+});
+
+test("the Skills page names personal skills granted to the conversation or organization as not loaded", () => {
+  const view = buildChannelSettingsView({ skills: { channel: ["mine"], additional: ["mine"], organization: [], notLoaded: [{ name: "shay-private", tier: "channel" }, { name: "org-private", tier: "organization" }] } }, { channelId: "C_SK", slug: "sk", threadTs: "", ownerId: "U1" }, { tab: "skills" });
+  assert.match(JSON.stringify(view.blocks), /Not loaded: `shay-private`, `org-private` \(organization\) — a personal skill loads only for its author/);
 });

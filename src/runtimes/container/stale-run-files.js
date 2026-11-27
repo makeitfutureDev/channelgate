@@ -3,7 +3,7 @@
 // Before container-secrets P1 every turn wrote its MCP config (`cg-mcp-<uuid>.json`, the memory
 // reviewer's `cg-mcp-review-<uuid>.json`) and every Codex run its secret bundle
 // (`run/cg-codex-secrets-<uuid>.json` + one `…-<server>.headers.cjs` per header helper) with REAL
-// Composio/toolbox tokens into `~/ChannelGate/.runtime/<platform>/<slug>/` — the directory that is
+// Composio/Make tokens into `~/ChannelGate/.runtime/<platform>/<slug>/` — the directory that is
 // bind-mounted read-write into the channel's own container. Each run removes its own files in a
 // `finally`, but a crashed daemon, a killed process or an interrupted run leaked them, and a
 // leftover stays readable by every later turn in that container. The container backend sweeps

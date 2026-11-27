@@ -8,10 +8,10 @@ const RANGES = [
   [0, 23], // hour
   [1, 31], // day of month
   [1, 12], // month
-  [0, 6], // day of week (0/7 = Sunday)
+  [0, 7], // day of week (0/7 = Sunday)
 ];
 
-function parseField(field, min, max) {
+function parseField(field, min, max, sundayAlias = false) {
   const values = new Set();
   for (const part of field.split(",")) {
     const [rangePart, stepPart] = part.split("/");
@@ -26,7 +26,9 @@ function parseField(field, min, max) {
       hi = m[2] !== undefined ? parseInt(m[2], 10) : lo;
     }
     if (lo < min || hi > max || lo > hi) return null;
-    for (let v = lo; v <= hi; v += step) values.add(v);
+    // Expand and step in the original numeric range before folding Sunday 7 onto 0.
+    // Normalizing endpoints first would turn 5-7/2 into the descending range 5-0.
+    for (let v = lo; v <= hi; v += step) values.add(sundayAlias && v === 7 ? 0 : v);
   }
   return values;
 }
@@ -36,7 +38,7 @@ export function parseCron(expr) {
   if (fields.length !== 5) return null;
   const sets = [];
   for (let i = 0; i < 5; i++) {
-    const s = parseField(fields[i], RANGES[i][0], RANGES[i][1]);
+    const s = parseField(fields[i], RANGES[i][0], RANGES[i][1], i === 4);
     if (!s) return null;
     sets.push(s);
   }
@@ -100,7 +102,7 @@ export function cronMatches(expr, date) {
   const domStar = expr.trim().split(/\s+/)[2] === "*";
   const dowStar = expr.trim().split(/\s+/)[4] === "*";
   const domOk = dom.has(d.getDate());
-  const dowOk = dow.has(wday) || (wday === 0 && dow.has(7)); // allow 7 = Sunday
+  const dowOk = dow.has(wday); // parseCron normalizes Sunday 7 to 0
   if (domStar && dowStar) return true;
   if (domStar) return dowOk;
   if (dowStar) return domOk;
@@ -126,7 +128,7 @@ export function nextCronRun(expr, from = new Date(), { maxDays = 400 } = {}) {
     if (!mon.has(d.getMonth() + 1)) return false;
     const wday = d.getDay();
     const domOk = dom.has(d.getDate());
-    const dowOk = dow.has(wday) || (wday === 0 && dow.has(7)); // allow 7 = Sunday
+    const dowOk = dow.has(wday); // parseCron normalizes Sunday 7 to 0
     if (domStar && dowStar) return true;
     if (domStar) return dowOk;
     if (dowStar) return domOk;

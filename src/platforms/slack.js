@@ -112,6 +112,8 @@ export const slackAdapter = validatePlatformAdapter({
     proactivePost: true,
     proactiveDm: true,
     agentDirectory: true,
+    codeChannels: true,
+    threadForks: true,
   },
   formatOutbound(markdown, { directory = null, capabilities = this?.capabilities } = {}) {
     // Slack keeps its existing pipeline byte-for-byte: mdToMrkdwn escapes model-authored control

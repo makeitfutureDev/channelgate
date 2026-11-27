@@ -1,6 +1,6 @@
 // The daemon-side relay behind the `remote-mcp` socket service (src/mcp/socket-server.js): an MCP
 // Server on the container's socket whose tools are a header-bearing REMOTE MCP server (Composio
-// user/agent, the toolboxes) dialled by the daemon with the real credential. The container side is
+// user/agent, the Make connection) dialled by the daemon with the real credential. The container side is
 // the ordinary socket bridge holding only the signed run capability, so the credential never
 // crosses into a container — not in a config file, not in an env var, not in a bundle.
 //
@@ -15,7 +15,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { publicPinnedFetch } from "./public-fetch.js";
+import { createCustomMcpFetch, publicPinnedFetch } from "./public-fetch.js";
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -32,15 +32,19 @@ import {
 export const RELAY_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
 const CLIENT_INFO = { name: "channelgate-remote-relay", version: "1.0.0" };
 
-/** An https URL with no embedded credentials, or a throw. The URL itself is never echoed. */
-export function validateRemoteUrl(value) {
+/**
+ * An https URL with no embedded credentials, or a throw. The URL itself is never echoed.
+ * `allowHttp` admits http:// as well — only for a custom MCP dialled through the private-host-aware
+ * fetch, which itself refuses plain http to anything but an admin-approved private destination.
+ */
+export function validateRemoteUrl(value, { allowHttp = false } = {}) {
   let url;
   try {
     url = new URL(String(value || ""));
   } catch {
     throw new Error("remote MCP relay requires a valid URL");
   }
-  if (url.protocol !== "https:") throw new Error("remote MCP relay requires an HTTPS URL");
+  if (url.protocol !== "https:" && !(allowHttp && url.protocol === "http:")) throw new Error("remote MCP relay requires an HTTPS URL");
   if (url.username || url.password) throw new Error("remote MCP relay refuses credentials in the URL");
   return url;
 }
@@ -65,10 +69,13 @@ function unavailable(status) {
 
 // `publicOnly` (a custom MCP, src/gateway/custom-mcps.js) dials through publicPinnedFetch: every
 // request re-resolves the host, refuses an internal address and pins the connection to the vetted
-// records (src/mcp/public-fetch.js). An injected test `fetch` still wins.
-export async function connectRemoteClient({ url, headers = {}, fetch = undefined, publicOnly = false, retryDelaysMs = REMOTE_CONNECT_RETRY_DELAYS_MS } = {}) {
-  const target = validateRemoteUrl(url);
-  if (publicOnly && !fetch) fetch = publicPinnedFetch;
+// records (src/mcp/public-fetch.js). With `privateHosts` (a getter for the admin-approved private
+// destinations, src/config/private-mcp-hosts.js) it may also reach one of those, over http or https.
+// An injected test `fetch` still wins.
+export async function connectRemoteClient({ url, headers = {}, fetch = undefined, publicOnly = false, privateHosts = null, retryDelaysMs = REMOTE_CONNECT_RETRY_DELAYS_MS } = {}) {
+  const privateAware = publicOnly && typeof privateHosts === "function";
+  const target = validateRemoteUrl(url, { allowHttp: privateAware });
+  if (publicOnly && !fetch) fetch = privateAware ? createCustomMcpFetch(privateHosts) : publicPinnedFetch;
   const requestInit = { headers: { ...headers } };
   for (let attempt = 0; ; attempt++) {
     const streamable = new Client(CLIENT_INFO, { capabilities: {} });
@@ -163,12 +170,13 @@ export function createRelayHandlers(remote, authorize) {
  * (a connected Client-like object) or `connect` may be injected by tests; production dials
  * `url` with `headers` through connectRemoteClient.
  */
-export async function runRemoteRelay({ url, headers = {}, publicOnly = false, transport, authorize, remote = null, connect = connectRemoteClient } = {}) {
+export async function runRemoteRelay({ url, headers = {}, publicOnly = false, privateHosts = null, transport, authorize, remote = null, connect = connectRemoteClient } = {}) {
   if (typeof authorize !== "function") throw new Error("remote MCP relay requires an authorization check");
   if (!transport) throw new Error("remote MCP relay requires a transport");
   authorize();
-  validateRemoteUrl(url);
-  const client = remote || await connect({ url, headers, ...(publicOnly ? { publicOnly: true } : {}) });
+  const privateAware = publicOnly && typeof privateHosts === "function";
+  validateRemoteUrl(url, { allowHttp: privateAware });
+  const client = remote || await connect({ url, headers, ...(publicOnly ? { publicOnly: true } : {}), ...(privateAware ? { privateHosts } : {}) });
   const handlers = createRelayHandlers(client, authorize);
   const instructions = typeof client.getInstructions === "function" ? client.getInstructions() : undefined;
   const server = new Server(

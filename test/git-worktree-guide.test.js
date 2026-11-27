@@ -69,3 +69,19 @@ test("this project's own instruction file carries the protocol, not a passing me
   assert.match(section[0], /never `rm -rf`/);
   assert.match(section[0], /uncommitted changes in the shared checkout that you did not write/i);
 });
+
+test("cleanup after landing covers the worktree, the local branch and the remote branch, in both files", async () => {
+  const reference = await readFile(referenceUrl, "utf8");
+  const agents = await readFile(agentsUrl, "utf8");
+  const step4 = /## Step 4 — clean up[^]*?(?=\n## )/.exec(reference)?.[0] || "";
+  for (const [name, text] of [["git-repos.md step 4", step4], ["AGENTS.md", agents]]) {
+    assert.match(text, /git merge-base --is-ancestor/, `${name}: cleanup waits for the landing check`);
+    assert.match(text, /git worktree remove \.worktrees\/<slug>/, `${name}: removes the worktree`);
+    assert.match(text, /git branch -d <type>\/<slug>/, `${name}: deletes the local branch`);
+    assert.match(text, /git push origin --delete <type>\/<slug>/, `${name}: deletes the remote branch`);
+    assert.match(text, /git fetch --prune origin/, `${name}: prunes stale remote refs`);
+    assert.match(text, /never delete an unmerged branch/i, `${name}: unmerged work is kept`);
+  }
+  assert.match(step4, /never the default or integration branch/, "only the task's own branch is deleted");
+  assert.match(agents, /never `main`, `beta`\s+or any `archive\/\*` ref/);
+});

@@ -3,6 +3,9 @@ title: Skill templates
 description: Follow a centrally maintained workflow set while keeping local additions.
 ---
 
+**Enterprise availability.** Channel skill templates require an effective Enterprise license. Saved templates remain stored after downgrade but do not contribute grants; directly assigned skills remain available.
+
+
 A skill template is a reusable selection of explicit skill slugs. Conversations follow its current contents live; a template edit changes subsequent requests in every conversation assigned to it.
 
 ## Preview and assign

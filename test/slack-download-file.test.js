@@ -141,3 +141,64 @@ test("failed root uploads retain retry behavior after a later reply", async (t) 
   assert.equal(failed.skipped, "HTTP 503");
   assert.deepEqual(await pipeline.filterCarriedRootFiles([file], { root, sub }), [file]);
 });
+
+test("HTML uploads and the same bytes renamed .txt retain their exact content", async (t) => {
+  const root = await scratch(t);
+  const html = '<!doctype html><html><head><title>Slack sign-in error troubleshooting</title></head><body>Sign in to Slack to discuss this report. <a href="https://slack.com/signin">Slack</a></body></html>';
+  for (const [name, mimetype, contentType] of [
+    ["report.html", "text/html", "text/html; charset=utf-8"],
+    ["report.txt", "text/plain", "text/plain"],
+    ["another.txt", "text/plain", "text/html"],
+  ]) {
+    const file = slackFile({ name, mimetype, size: Buffer.byteLength(html) });
+    const [saved] = await download.downloadSlackFiles([file], "fixture-token", { root, sub: "html",
+      fetchImpl: async () => new Response(html, { headers: { "content-type": contentType } }) });
+    assert.equal(saved.skipped, undefined, `${name} is a real attachment`);
+    assert.equal(await readFile(saved.path, "utf8"), html);
+    assert.equal(await download.wasAttachmentDelivered(root, "html", file), true);
+  }
+});
+
+test("Slack authentication and error HTML is rejected across chunk boundaries and MIME types", async (t) => {
+  const root = await scratch(t);
+  const pages = [
+    '<!doctype html><html><head><title>Sign in | Slack</title></head></html>',
+    '<html><head><title>Slack</title></head><body><form id="signin_form" action="/signin"></form></body></html>',
+    '<!doctype html><html><head><title>Slack | File not found</title></head></html>',
+    '<html><head><title>Slack</title></head><body class="p-error_page">Unavailable</body></html>',
+  ];
+  for (let index = 0; index < pages.length; index++) {
+    const html = pages[index];
+    const file = slackFile({ name: `bad-${index}.html`, mimetype: "text/html", size: 0 });
+    const [saved] = await download.downloadSlackFiles([file], "fixture-token", { root, sub: "auth",
+      fetchImpl: async () => new Response(new ReadableStream({
+        start(controller) {
+          // Tiny chunks ensure markup and markers cannot depend on the first network packet.
+          for (let offset = 0; offset < html.length; offset += 3) controller.enqueue(Buffer.from(html.slice(offset, offset + 3)));
+          controller.close();
+        },
+      }), { headers: { "content-type": index % 2 ? "application/octet-stream" : "text/html" } }) });
+    assert.match(saved.skipped, /sign-in or error page/);
+    assert.doesNotMatch(saved.skipped, /bot is missing/);
+    assert.equal(await download.isAttachmentOnDisk(root, "auth", file), false);
+    assert.equal(await download.wasAttachmentDelivered(root, "auth", file), false);
+  }
+  assert.deepEqual(await readdir(path.join(root, "uploads", "auth")), [], "rejected temporary files are removed");
+});
+
+test("Slack sign-in redirects and HTTP failures never become delivered files", async (t) => {
+  const root = await scratch(t);
+  const file = slackFile({ name: "report.txt", size: 0 });
+  let cancelled = false;
+  const [redirect] = await download.downloadSlackFiles([file], "fixture-token", { root, sub: "auth-url",
+    fetchImpl: async () => ({ ok: true, url: "https://example.slack.com/signin?redir=download",
+      body: { cancel: async () => { cancelled = true; } } }) });
+  assert.match(redirect.skipped, /sign-in or error page/);
+  assert.equal(cancelled, true);
+  for (const status of [401, 403, 404, 503]) {
+    const [failed] = await download.downloadSlackFiles([file], "fixture-token", { root, sub: "auth-url",
+      fetchImpl: async () => new Response("<html>error</html>", { status }) });
+    assert.equal(failed.skipped, `HTTP ${status}`);
+  }
+  await assert.rejects(readdir(path.join(root, "uploads")), { code: "ENOENT" });
+});

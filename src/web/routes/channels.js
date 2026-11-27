@@ -1,4 +1,9 @@
+import { assertValidEgressPrivateHosts } from "../../gateway/egress/private-hosts.js";
+import { channelBudgetStatus } from "../../gateway/channel-budget.js";
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
+import { normalizeLicensePool } from "../../gateway/license-pool.js";
+import { assertSpendingLimitUpdate } from "../../ee/channel-spending.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
@@ -6,11 +11,14 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // instructions (CLAUDE.md). Split from admin.js; mounted by createAdminRouter so every URL is
 // unchanged.
 import { Router } from "express";
-import { getTemplate } from "../../gateway/skills/catalog.js";
+import { getSkill, getTemplate } from "../../gateway/skills/catalog.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { allowedFsRoot, resolveWithinRoot } from "../security.js";
+import { allowedFsRoots, resolveWithinRoots } from "../security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
+import { normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 // MEMORY.md and CLAUDE.md live INSIDE the channel's agent-writable working folder, so every read
 // and write below is a symlink sink: a planted `CLAUDE.md -> ~/.channelgate/config/settings.json`
 // would otherwise stream the gateway's secrets straight into an admin browser, and the save would
@@ -28,7 +36,7 @@ import {
   getUsers,
 } from "../../config/store.js";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
-import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
+import { ensureChannelFolder, assertChannelNotArchived, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
 import { workspaceConflictsBySlug } from "../../gateway/workspace-assignments.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { removeChannelCustomMcp, saveChannelCustomMcp } from "../../gateway/custom-mcp-store.js";
@@ -43,6 +51,7 @@ import {
 } from "../../config/settings.js";
 import { testChannelSync, syncChannelNow, driveSyncStatus } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
+import { restrictedAccessAllowedUsers } from "../../slack/access-settings.js";
 // Two forms on purpose. normalizeStoredDomains is TOLERANT and belongs on the read/spawn path (a
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
 // opposite: silently dropping the whole list because one entry has a typo destroyed every
@@ -59,9 +68,8 @@ import {
   withChannelMembershipLock,
 } from "../../slack/members.js";
 import { invalidModelOrEffort, sanitizeMcps, sanitizeCodexMcps } from "./helpers.js";
-import { CODEX_AUTH_SOURCES, channelCodexHome } from "../../gateway/channel-codex-auth.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../../engines/registry.js";
-import { channelCodexLoginStatus, startChannelCodexLogin, cancelChannelCodexLogin } from "../../gateway/channel-codex-login.js";
+import { channelCodexHome } from "../../gateway/channel-codex-auth.js";
+import { engineLabel, modelBelongsToEngine } from "../../engines/registry.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
 import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
@@ -92,6 +100,18 @@ const WEB_ADMIN_ACTOR = "admin UI";
 // retired integration's token must not survive as a listing field nobody thought to mask.
 // The flat email-account form fields a PUT body may carry (gateway/email-accounts.js validates).
 export const EMAIL_ACCOUNT_BODY_FIELDS = Object.freeze(["address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "imapSecurity", "smtpHost", "smtpPort", "smtpUser", "smtpPassword", "smtpSecurity"]);
+// A model rides beside the license it was picked for. A NEW model the conversation's resulting
+// license cannot serve is refused; a stored one left behind by a license change in the same
+// request is dropped — a run would ignore it, and every picker would keep showing a stale value.
+function reconcileModelWithEngine(next, current, body) {
+  const runs = effectiveMeta(next).engine || getEngine();
+  if (!next.model || !ENGINES.includes(runs) || modelBelongsToEngine(next.model, runs)) return;
+  if (typeof body.model === "string" && body.model.trim() !== (current.model || "")) {
+    throw Object.assign(new Error(`model "${next.model}" is not a ${engineLabel(runs)} model`), { status: 400, statusCode: 400 });
+  }
+  if ((next.engine || "") !== (current.engine || "")) next.model = "";
+}
+
 export function emailAccountBody(req) {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const out = { name: req.params.name };
@@ -103,7 +123,6 @@ export function emailAccountBody(req) {
 export function maskChannelMeta(meta = {}) {
   const mask = (v) => ({ has: Boolean(v), last4: v ? String(v).slice(-4) : "" });
   const tok = mask(meta.composioToken);
-  const tb = mask(meta.toolboxToken);
   const mk = mask(meta.makeToolboxKey);
   return {
     ...stripDeadFields(meta),
@@ -115,9 +134,6 @@ export function maskChannelMeta(meta = {}) {
     composioToken: undefined,
     hasComposioToken: tok.has,
     composioTokenLast4: tok.last4,
-    toolboxToken: undefined,
-    hasToolboxToken: tb.has,
-    toolboxTokenLast4: tb.last4,
     makeToolboxKey: undefined,
     hasMakeToolboxKey: mk.has,
     makeToolboxKeyLast4: mk.last4,
@@ -136,12 +152,33 @@ export function createChannelsRouter({
   composioInventory = loadComposioInventory,
 } = {}) {
   const router = Router();
+  // Archived conversations remain inspectable, but no admin write may provision or edit their files.
+  router.use("/channels/:channelId", async (req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+    try {
+      const entry = (await getChannelsIndex())[req.params.channelId];
+      if (entry) await assertChannelNotArchived(entry.slug);
+      next();
+    } catch (error) {
+      if (error.code === "channel_archived") return res.status(409).json({ error: error.message, code: error.code });
+      next(error);
+    }
+  });
 
   const registeredChannel = async (req, res) => {
     const entry = (await getChannelsIndex())[req.params.channelId];
     if (!entry) res.status(404).json({ error: "unknown channel" });
     return entry;
   };
+
+  router.get("/channels/:channelId/budget", async (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const entry = await registeredChannel(req, res);
+      if (!entry) return;
+      res.json(channelBudgetStatus(req.params.channelId, await getChannelMeta(entry.slug)));
+    } catch (error) { next(error); }
+  });
 
   // Resolve only this conversation's shared identity; personal accounts stay on user pages.
   router.get("/channels/:channelId/composio-connections", async (req, res, next) => {
@@ -152,39 +189,6 @@ export function createChannelsRouter({
       const meta = await getChannelMeta(entry.slug);
       const record = { ...entry, ...meta, isDM: Boolean(entry.isDM || meta?.isDM || entry.type === "im" || meta?.type === "im") };
       res.json(await composioInventory({ kind: "channel", id: req.params.channelId, record }));
-    } catch (error) { next(error); }
-  });
-
-  router.get("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      if (!(await registeredChannel(req, res))) return;
-      res.json(await channelCodexLoginStatus(req.params.channelId));
-    } catch (error) { next(error); }
-  });
-  router.post("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      const entry = await registeredChannel(req, res);
-      if (!entry) return;
-      assertChannelEngineApproved(await getChannelMeta(entry.slug), "codex");
-      const method = req.body?.method;
-      const status = await startChannelCodexLogin(req.params.channelId, method, {
-        key: req.body?.key,
-        onAuthenticated: async () => {
-          const before = await getChannelMeta(entry.slug);
-          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex", model: modelBelongsToEngine(current.model, "codex") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex") ? current.effort : "" }));
-          await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
-        },
-      });
-      res.status(202).json(status);
-    } catch (error) {
-      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
-      next(error);
-    }
-  });
-  router.delete("/channels/:channelId/codex-login", async (req, res, next) => {
-    try {
-      if (!(await registeredChannel(req, res))) return;
-      res.json({ cancelled: cancelChannelCodexLogin(req.params.channelId) });
     } catch (error) { next(error); }
   });
 
@@ -277,7 +281,7 @@ export function createChannelsRouter({
             template: meta.template || "user",
             workDirConflict: conflicts.get(c.slug) || null,
             // A DM is a channel too, so it gets the SAME masker — the copy that used to live here
-            // masked Composio and Toolbox but not the Make toolbox key or a dead field.
+            // masked Composio but not the Make toolbox key or a dead field.
             meta: maskChannelMeta(meta),
           };
         });
@@ -297,24 +301,31 @@ export function createChannelsRouter({
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
       if (body.engine && body.engine !== current.engine) {
-        try { await assertEngineSelectable(body.engine); }
+        try { await assertEngineSelectable(body.engine, { channelId: req.params.channelId, meta: current }); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
       if (Array.isArray(body.allowedMcps)) {
         try { await assertNewMcpSelections("claude", sanitizeMcps(body.allowedMcps), current.allowedMcps); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
-      const next_ = { ...current };
+      let next_ = { ...current };
+      if (Object.hasOwn(body, "monthlySpendingLimitUSD")) next_.monthlySpendingLimitUSD = body.monthlySpendingLimitUSD;
       if (Object.hasOwn(body, "approvedEngines")) next_.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
-      if (Array.isArray(body.skills)) next_.skills = body.skills;
+      if (Array.isArray(body.skills)) {
+        const foreign = newForeignPersonalSkillGrants(body.skills, current.skills, { lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign, { tier: "shared" }) });
+        next_.skills = body.skills;
+      }
       if (typeof body.skillTemplate === "string") {
         const key = body.skillTemplate.trim();
+        if (key && key !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
         if (key && !getTemplate(key)) return res.status(400).json({ error: `unknown skill template "${key}"` });
         next_.skillTemplate = key ? getTemplate(key).slug : "";
       }
       if (Array.isArray(body.allowedMcps)) next_.allowedMcps = sanitizeMcps(body.allowedMcps);
       if (Array.isArray(body.allowedCodexMcps)) next_.allowedCodexMcps = sanitizeCodexMcps(body.allowedCodexMcps);
+      if (Array.isArray(body.allowedChannelCodexMcps)) next_.allowedChannelCodexMcps = sanitizeCodexMcps(body.allowedChannelCodexMcps);
       if (typeof body.model === "string") next_.model = body.model.trim();
       if (typeof body.effort === "string") next_.effort = body.effort.trim();
       if (typeof body.adminMode === "boolean") next_.adminMode = body.adminMode;
@@ -322,25 +333,34 @@ export function createChannelsRouter({
       if (typeof body.allowNetwork === "boolean") next_.allowNetwork = body.allowNetwork;
       if (typeof body.autoMode === "boolean") next_.autoMode = body.autoMode;
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
+      if (typeof body.skillRuntimeSwap === "boolean") next_.skillRuntimeSwap = body.skillRuntimeSwap;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
-      if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
-      if (next_.codexAuthSource === "channel") {
-        next_.engine = "codex";
-        if (!modelBelongsToEngine(next_.model, "codex")) next_.model = "";
-        if (!effortBelongsToEngine(next_.effort, "codex")) next_.effort = "";
-      }
+      // A pool is chosen WITH its license: sent → validated beside it; a new license with no pool
+      // sent → the old license's pool does not carry over.
+      if (Object.hasOwn(body, "licensePool")) next_.licensePool = normalizeLicensePool(body.licensePool, next_.engine);
+      else if ((next_.engine || "") !== (current.engine || "")) next_.licensePool = "";
+      reconcileModelWithEngine(next_, current, body);
+      // The legacy channel Codex account is retired: a channel's own account is an engine license
+      // limited to the channel (Settings → Licenses). A save may only leave it, never enter it.
+      if (body.codexAuthSource === "gateway") next_.codexAuthSource = "gateway";
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
-      if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
-      if (body.clearToolboxToken === true) next_.toolboxToken = "";
+      // A license NAMED for this conversation is checked by name: the projection below drops one
+      // that is limited to another conversation (it reads as "no default here"), which must not
+      // turn a refused pick into a silent save.
+      if (Object.hasOwn(body, "engine") && next_.engine) assertChannelEngineApproved(next_, next_.engine);
       if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
         assertChannelEngineApproved(next_, effectiveMeta(next_).engine || getEngine());
       }
-      await saveChannelMeta(entry.slug, next_);
+      let replaced = current;
+      next_ = await patchChannelMeta(entry.slug, (live) => {
+        replaced = live || current;
+        return { ...next_, monthlySpendingLimitUSD: Object.hasOwn(body, "monthlySpendingLimitUSD") ? body.monthlySpendingLimitUSD : live?.monthlySpendingLimitUSD ?? null };
+      });
       await ensureChannelFolder(entry.slug, effectiveMeta(next_)); // re-provision with effective config
       // Same posture change, same audit row as a channel: a DM's template/admin-mode/network flags
       // decide what its runs can reach. Nothing is written when only unaudited fields moved.
-      await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: current, after: next_ });
+      await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: replaced, after: next_ });
       res.json({ ok: true });
     } catch (e) {
       if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
@@ -359,7 +379,7 @@ export function createChannelsRouter({
       // DMs aren't shown here — a DM has no per-channel settings (access is governed by the
       // user's approval in the Users tab, not allowedUsers/MCPs/skills).
       const channels = allChannels.filter((c) => !c.isDM && c.type !== "im");
-      // Per-channel Composio / Toolbox / Make toolbox secrets are NOT returned — only has*/last4
+      // Per-channel Composio / Make toolbox secrets are NOT returned — only has*/last4
       // for display. The UI fetches a value on demand via POST /secrets/reveal, which re-prompts
       // for the admin password. Only overwritten on save when a non-empty value is sent.
       for (const ch of channels) {
@@ -404,10 +424,15 @@ export function createChannelsRouter({
       const body = req.body ?? {};
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
+      // A channel is a shared tier: it may not newly grant anybody's personal skill.
+      if (Array.isArray(body.skills)) {
+        const foreign = newForeignPersonalSkillGrants(body.skills, (await getChannelMeta(entry.slug))?.skills, { lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign, { tier: "shared" }) });
+      }
       if (body.engine) {
         const current = await getChannelMeta(entry.slug);
         if (body.engine !== current?.engine) {
-          try { await assertEngineSelectable(body.engine); }
+          try { await assertEngineSelectable(body.engine, { channelId: req.params.channelId, meta: current }); }
           catch (error) { return res.status(400).json({ error: error.message }); }
         }
       }
@@ -434,16 +459,43 @@ export function createChannelsRouter({
         } else if (!wanted) {
           workDirPatch = "";
         } else {
-          const root = allowedFsRoot();
+          const roots = allowedFsRoots();
           // The folder picker returns a server-validated REAL path. If that folder's name carries
           // trailing/leading whitespace (a stray space, NBSP, tab, …), the trimmed value points at
           // a non-existent sibling and the save 400s even though Browse just accepted it. So try the
           // trimmed value first (normalizes accidentally-typed surrounding spaces), then fall back to
           // the raw value before rejecting. resolveWithinRoot still enforces containment either way.
-          const real = resolveWithinRoot(root, wanted) || resolveWithinRoot(root, body.workDir);
+          const real = resolveWithinRoots(wanted, roots) || resolveWithinRoots(body.workDir, roots);
           if (!real || !(await stat(real)).isDirectory())
-            return res.status(400).json({ error: `workDir must be an existing directory under ${root}` });
+            return res.status(400).json({ error: `workDir must be an existing directory under ${roots.join(" or ")}` });
+          // Inside the root is not enough: the daemon's own trees and other conversations' folders
+          // are refused regardless (src/gateway/workdir-boundary.js) — the folder is mounted
+          // read-write into the channel's container.
+          const forbidden = forbiddenWorkDirReason(real, { slug: entry.slug, allowSharedFolder: true });
+          if (forbidden) return res.status(400).json({ error: `workDir refused: ${real} is ${forbidden}. Choose a project directory instead.` });
           workDirPatch = real;
+        }
+      }
+      // Additional folders (src/gateway/extra-folders.js): mounted beside the work folder, so each
+      // entry passes the work folder's own checks plus the no-overlap rule — against the work
+      // folder THIS save ends up with. Unchanged lists are not re-validated (same grandfathering
+      // as workDir); the runtime resolver re-checks every stored entry at every spawn anyway.
+      let extraFoldersPatch; // undefined = leave unchanged
+      if (Array.isArray(body.extraFolders)) {
+        const cur = await getChannelMeta(entry.slug);
+        const wanted = normalizeExtraFolders(body.extraFolders);
+        const stored = normalizeExtraFolders(cur?.extraFolders);
+        if (JSON.stringify(wanted) !== JSON.stringify(stored)) {
+          const workDirForCheck = workDirPatch !== undefined
+            ? (workDirPatch || effectiveWorkDir(entry.slug, { ...(cur || {}), workDir: "", cleanMode: false }))
+            : effectiveWorkDir(entry.slug, { ...(cur || {}), cleanMode: false });
+          const accepted = [];
+          for (const item of wanted) {
+            const checked = validateExtraFolder(item.path, { slug: entry.slug, workDir: workDirForCheck, others: accepted });
+            if (checked.error) return res.status(400).json({ error: `extraFolders refused: ${checked.error}` });
+            accepted.push({ path: checked.path, mode: item.mode });
+          }
+          extraFoldersPatch = accepted;
         }
       }
       // Validated HERE for the same reason as workDir: the merge callback below runs synchronously
@@ -453,6 +505,14 @@ export function createChannelsRouter({
       if (body.egressRawHosts !== undefined) {
         try {
           egressRawHostsPatch = assertValidEgressRawHosts(body.egressRawHosts);
+        } catch (e) {
+          return res.status(400).json({ error: e.message });
+        }
+      }
+      let egressPrivateHostsPatch;
+      if (body.egressPrivateHosts !== undefined) {
+        try {
+          egressPrivateHostsPatch = assertValidEgressPrivateHosts(body.egressPrivateHosts);
         } catch (e) {
           return res.status(400).json({ error: e.message });
         }
@@ -468,11 +528,18 @@ export function createChannelsRouter({
         if (Array.isArray(body.allowedUsers)) {
           allowedUsersPatch = await validatedChannelGuests(channelId, body.allowedUsers);
         }
+        // Read before the transaction (the callback below is synchronous): narrowing the use policy
+        // evicts the approved members seeded into allowedUsers under "approved", exactly as the
+        // Slack Access control does (src/slack/access-settings.js restrictedAccessAllowedUsers).
+        const users = CHANNEL_ACCESS_MODES.includes(body.access) && body.access !== "approved" ? await getUsers() : null;
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
           replaced = current;
+          const spendingPatch = Object.hasOwn(body, "monthlySpendingLimitUSD")
+            ? { monthlySpendingLimitUSD: assertSpendingLimitUpdate(current, body.monthlySpendingLimitUSD) } : {};
           const out = {
             ...current,
+            ...spendingPatch,
             // Access model: who can USE (access) and who can MANAGE (manageAccess + managers[]).
             access: CHANNEL_ACCESS_MODES.includes(body.access) ? body.access : current.access ?? "approved",
             manageAccess: ["admins", "members", "custom"].includes(body.manageAccess) ? body.manageAccess : current.manageAccess ?? "admins",
@@ -480,6 +547,7 @@ export function createChannelsRouter({
             allowedUsers: allowedUsersPatch ?? current.allowedUsers,
             allowedMcps: Array.isArray(body.allowedMcps) ? sanitizeMcps(body.allowedMcps) : current.allowedMcps,
             allowedCodexMcps: Array.isArray(body.allowedCodexMcps) ? sanitizeCodexMcps(body.allowedCodexMcps) : current.allowedCodexMcps ?? [],
+            allowedChannelCodexMcps: Array.isArray(body.allowedChannelCodexMcps) ? sanitizeCodexMcps(body.allowedChannelCodexMcps) : current.allowedChannelCodexMcps ?? [],
             skills: Array.isArray(body.skills) ? body.skills : current.skills,
             skillTemplate: typeof body.skillTemplate === "string" ? (body.skillTemplate.trim() ? getTemplate(body.skillTemplate.trim())?.slug ?? "__unknown__" : "") : (current.skillTemplate || ""),
             adminMode: typeof body.adminMode === "boolean" ? body.adminMode : current.adminMode,
@@ -487,12 +555,13 @@ export function createChannelsRouter({
             allowNetwork: typeof body.allowNetwork === "boolean" ? body.allowNetwork : current.allowNetwork,
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
-            noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
+            skillRuntimeSwap: typeof body.skillRuntimeSwap === "boolean" ? body.skillRuntimeSwap : Boolean(current.skillRuntimeSwap),
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,
-            codexAuthSource: CODEX_AUTH_SOURCES.includes(body.codexAuthSource) ? body.codexAuthSource : current.codexAuthSource || "gateway",
+            codexAuthSource: body.codexAuthSource === "gateway" ? "gateway" : current.codexAuthSource || "gateway",
             approvedTools: Array.isArray(body.approvedTools) ? body.approvedTools.map(String) : current.approvedTools,
             workDir: workDirPatch !== undefined ? workDirPatch : current.workDir,
+            extraFolders: extraFoldersPatch !== undefined ? extraFoldersPatch : normalizeExtraFolders(current.extraFolders),
             // Google Drive sync folder link — a plain string (no filesystem validation like workDir);
             // an empty string turns the sync off. The scheduled bisync engine consumes it later.
             syncDriveFolder: typeof body.syncDriveFolder === "string" ? body.syncDriveFolder.trim() : current.syncDriveFolder,
@@ -500,19 +569,21 @@ export function createChannelsRouter({
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
           if (Object.hasOwn(body, "approvedEngines")) out.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
-          if (out.codexAuthSource === "channel") {
-            out.engine = "codex";
-            if (!modelBelongsToEngine(out.model, "codex")) out.model = "";
-            if (!effortBelongsToEngine(out.effort, "codex")) out.effort = "";
-          }
+          // A license named for this conversation is checked by name (see the DM route above).
+          if (Object.hasOwn(body, "engine") && out.engine) assertChannelEngineApproved(out, out.engine);
           if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
             assertChannelEngineApproved(out, effectiveMeta(out).engine || getEngine());
           }
+          // A pool is chosen WITH its license (see the DM route above).
+          if (Object.hasOwn(body, "licensePool")) out.licensePool = normalizeLicensePool(body.licensePool, out.engine);
+          else if ((out.engine || "") !== (current.engine || "")) out.licensePool = "";
+          reconcileModelWithEngine(out, current, body);
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and
           // written only when sent, so an unrelated save records no change to them.
           if (typeof body.rawNetwork === "boolean") out.rawNetwork = body.rawNetwork;
           if (egressRawHostsPatch !== undefined) out.egressRawHosts = egressRawHostsPatch;
+          if (egressPrivateHostsPatch !== undefined) out.egressPrivateHosts = egressPrivateHostsPatch;
           // Capability profile: a preset expands to (and OVERRIDES) the four capability flags, so the
           // preset is authoritative even if a stale checkbox was also sent. "custom" keeps whatever
           // flags were set above (the individual toggles). An unknown/absent profile leaves things as-is.
@@ -530,14 +601,17 @@ export function createChannelsRouter({
           // clear flag empties it.
           if (typeof body.composioToken === "string" && body.composioToken.length > 0) out.composioToken = body.composioToken.trim();
           if (body.clearComposioToken === true) out.composioToken = "";
-          if (typeof body.toolboxToken === "string" && body.toolboxToken.length > 0) out.toolboxToken = body.toolboxToken.trim();
-          if (body.clearToolboxToken === true) out.toolboxToken = "";
           // Owner labels (who the shared channel token authenticates as). Not secret — plain strings
           // that always round-trip; an empty string clears the label.
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
-          if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
+          if (out.skillTemplate && out.skillTemplate !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
+          if (out.syncDriveFolder && out.syncDriveFolder !== current.syncDriveFolder) requireEnterpriseFeature("driveSync");
           if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
+          if (users) {
+            const narrowed = restrictedAccessAllowedUsers(current, out, users);
+            if (narrowed) out.allowedUsers = narrowed.allowedUsers;
+          }
           return out;
         });
       };
@@ -632,7 +706,8 @@ export function createChannelsRouter({
     try {
       const entry = (await getChannelsIndex())[req.params.channelId];
       if (!entry) return res.status(404).json({ error: "unknown channel" });
-      res.json(driveSyncStatus(entry.slug));
+      const meta = await getChannelMeta(entry.slug);
+      res.json(driveSyncStatus(meta?.workspaceLink?.slug || entry.slug));
     } catch (e) {
       next(e);
     }
@@ -645,14 +720,25 @@ export function createChannelsRouter({
   router.post("/channels/reset-access", async (_req, res, next) => {
     try {
       const orgDefault = getDefaultChannelAccess();
-      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
+      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
       for (const ch of channels) {
-        const current = ch.meta ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-        const next_ = { ...current, access: orgDefault, manageAccess: "admins", managers: [], allowedUsers: [] };
-        await saveChannelMeta(ch.slug, next_);
-        await ensureChannelFolder(ch.slug, next_);
+        // The list is a snapshot: a removal or another admin's update can commit while the
+        // preceding channel is being provisioned. Re-read and guard archival inside the write.
+        const patched = await patchChannelMeta(ch.slug, (current) => {
+          if (current?.archived) return null;
+          const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
+          return { ...base, access: orgDefault, manageAccess: "admins", managers: [], allowedUsers: [] };
+        });
+        if (!patched) continue;
         reset++;
+        try {
+          await ensureChannelFolder(ch.slug, patched);
+        } catch (error) {
+          // Removal after this reset committed still wins; provisioning's live guard refuses
+          // the write. Keep processing the other channels and count the committed reset.
+          if (!["channel_archived", "channel_membership_unverified"].includes(error.code)) throw error;
+        }
       }
       await logEvent("channels_access_reset", { count: reset, orgDefault });
       res.json({ ok: true, count: reset, orgDefault });
@@ -677,17 +763,28 @@ export function createChannelsRouter({
   router.post("/channels/reset-runtime", async (req, res, next) => {
     try {
       const includeThreads = Boolean(req.body?.includeThreads);
-      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
+      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
+      const resetSlugs = [];
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
+          if (current?.archived) return null;
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, engine: base.codexAuthSource === "channel" ? "codex" : "", model: "", effort: "" };
+          return { ...base, engine: "", model: "", effort: "" };
         });
-        if (patched) reset++;
+        if (patched) {
+          reset++;
+          resetSlugs.push(ch.slug);
+        }
       }
-      // Same set of channels as above, so a DM's thread pins survive exactly as its meta does.
-      const threads = includeThreads ? await clearThreadRuntimeOverrides(channels.map((c) => c.slug)) : 0;
+      // A channel skipped by the atomic guard must keep its thread pins too. Re-check each one
+      // before clearing pins, since removal may also have committed during a later channel's reset.
+      let threads = 0;
+      if (includeThreads) {
+        for (const slug of resetSlugs) {
+          if (!(await getChannelMeta(slug))?.archived) threads += await clearThreadRuntimeOverrides([slug]);
+        }
+      }
       await logEvent("channels_runtime_reset", { count: reset, includeThreads, threads });
       res.json({ ok: true, count: reset, threads });
     } catch (e) {
@@ -798,6 +895,9 @@ export function createChannelsRouter({
           name: req.params.name,
           url: typeof req.body?.url === "string" ? req.body.url : "",
           token: typeof req.body?.token === "string" ? req.body.token : "",
+          authType: req.body?.authType,
+          headers: req.body?.headers,
+          queryParams: req.body?.queryParams,
         }, { actor: WEB_ADMIN_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });
@@ -930,10 +1030,10 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       let raw = await readNoFollow(file);
-      if (raw === null && !custom) {
+      if (raw === null && !custom && !ctx.meta?.archived) {
         // Default folder never provisioned yet — materialize it so the editor shows reality.
         await ensureChannelFolder(ctx.entry.slug, effectiveMeta(ctx.meta));
         raw = await readNoFollow(file); // still null when the agentsFile toggle is off
@@ -956,7 +1056,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       const body = typeof req.body?.channel === "string" ? req.body.channel : "";
       const cur = (await readNoFollow(file)) ?? ""; // absent, or a refused symlink

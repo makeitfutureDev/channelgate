@@ -129,3 +129,67 @@ test("v8 repairs duplicate channel slugs and enforces uniqueness", () => {
     db.close();
   }
 });
+
+test("v37 preserves existing credential bytes and handles without guessing owner identity", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter(item => item.version <= 36)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    db.prepare("INSERT INTO users(user_id,data) VALUES(?,?)").run("U_EXISTING", JSON.stringify({ name: "Same label", isAdmin: true }));
+    db.prepare("INSERT INTO admin_accounts(id,username,display_name,user_handle,auth_version,created_ms) VALUES(?,?,?,?,?,?)")
+      .run("legacy", "same-label", "Same label", "opaque-existing-handle", 9, 1);
+    db.prepare("INSERT INTO admin_passkeys(id,account_id,public_key,counter,transports,device_type,backed_up,name,created_ms) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run("credential-kept", "legacy", Buffer.from([1, 7, 9]), 12, '["internal"]', "multiDevice", 1, "Physical key", 2);
+    db.prepare("INSERT INTO admin_enrollment_tokens(digest,account_id,auth_version,expires_ms) VALUES(?,?,?,?)")
+      .run("old-invite-digest", "legacy", 9, Date.now() + 60_000);
+    const credential = db.prepare("SELECT * FROM admin_passkeys").get();
+    runMigrations(db);
+    const account = db.prepare("SELECT * FROM admin_accounts").get();
+    assert.equal(account.user_id, null, "matching names cannot establish ownership");
+    assert.equal(account.user_handle, "opaque-existing-handle");
+    assert.equal(account.auth_version, 10);
+    assert.deepEqual(db.prepare("SELECT * FROM admin_passkeys").get(), credential);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM admin_enrollment_tokens").get().n, 0);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM admin_identity_links").get().n, 0);
+  } finally { db.close(); }
+});
+
+
+test("v47 preserves existing Activity rows and persists explicit Slack session titles", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter((item) => item.version <= 46)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    db.exec("INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,done_ms,agent_engaged) VALUES('C1','100.000001','work','U1','Original title',123,456,789,1)");
+    runMigrations(db);
+    const row = db.prepare("SELECT * FROM slack_threads").get();
+    assert.equal(row.title, "Original title");
+    assert.equal(row.starter_id, "U1");
+    assert.equal(row.last_message_ms, 456);
+    assert.equal(row.done_ms, 789);
+    assert.equal(row.agent_engaged, 1);
+    assert.equal(row.session_title, "");
+    assert.equal(row.session_title_ts, 0);
+    db.exec("UPDATE slack_threads SET title='Custom title',session_title='Custom title',session_title_ts=200.000001");
+    runMigrations(db);
+    assert.equal(db.prepare("SELECT session_title FROM slack_threads").get().session_title, "Custom title");
+  } finally { db.close(); }
+});
+
+test("Later clock upgrade queues existing postponed roots without scanning open work", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE slack_threads(id TEXT,later_ms INTEGER,completion_marker_retry_ms INTEGER);
+      INSERT INTO slack_threads VALUES('later',1000,0),('active',0,0),('retry',0,77)`);
+    migrations.find((m) => m.version === 50).up(db);
+    const rows = db.prepare("SELECT * FROM slack_threads ORDER BY id").all();
+    assert.equal(rows.find((r) => r.id === "later").completion_marker_retry_ms, 1);
+    assert.equal(rows.find((r) => r.id === "active").completion_marker_retry_ms, 0);
+    assert.equal(rows.find((r) => r.id === "retry").completion_marker_retry_ms, 77);
+    assert.ok(rows.every((r) => r.later_marker === 0));
+  } finally { db.close(); }
+});

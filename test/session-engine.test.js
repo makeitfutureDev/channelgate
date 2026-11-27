@@ -110,18 +110,19 @@ test("isSessionNotFound heals Codex 0.147's missing lexical rollout path", () =>
 });
 
 test("a self-minted session id is stamped with ITS OWN engine, and the thread then sticks to it", async () => {
-  // Regression for the run.js post-success stamp: it used to hardcode "codex", so an OpenCode
-  // thread's minted id was saved as a codex session and turn 2 silently migrated the thread onto
-  // Codex (fresh context + the un-restricted MCP surface). The stamp must carry the run's engine.
+  // Regression for the run.js post-success stamp: it used to hardcode "codex", so another
+  // self-minting harness's thread id was saved as a codex session and turn 2 silently migrated the
+  // thread onto Codex (fresh context + a different MCP surface). The stamp must carry the run's
+  // engine.
   const slug = "session-engine-selfmint";
-  await saveSession(slug, "t-oc", "oc-minted-thread-id", "opencode");
-  const row = await resolveSession(slug, "t-oc", "opencode");
-  assert.equal(row.engine, "opencode");
-  assert.equal(row.sessionId, "oc-minted-thread-id");
-  // Turn 2 in an opencode channel: the sticky decision must keep opencode, not switch engines.
+  await saveSession(slug, "t-eu", "eu-minted-thread-id", "codex-eu");
+  const row = await resolveSession(slug, "t-eu", "codex-eu");
+  assert.equal(row.engine, "codex-eu");
+  assert.equal(row.sessionId, "eu-minted-thread-id");
+  // Turn 2 in a Codex EU channel: the sticky decision must keep Codex EU, not switch engines.
   assert.deepEqual(
-    decideThreadEngine({ requested: "opencode", sessionEngine: row.engine, isNew: false, explicit: false }),
-    { engine: "opencode", switch: false },
+    decideThreadEngine({ requested: "codex-eu", sessionEngine: row.engine, isNew: false, explicit: false }),
+    { engine: "codex-eu", switch: false },
   );
 });
 
@@ -130,4 +131,35 @@ test("unsupported list_turns heals only an explicit failed thread resume", () =>
   assert.equal(isSessionNotFound({ details: { stderr: "thread/resume failed: list_turns is not supported yet" } }), true);
   assert.equal(isSessionNotFound({ message: "list_turns is not supported yet" }), false);
   assert.equal(isSessionNotFound({ details: { stdout: "thread/resume failed: list_turns is not supported yet" } }), false);
+});
+
+test("isForkUnavailable matches Codex's refused thread/fork lineage and nothing broader", async () => {
+  const { isForkUnavailable } = await import("../src/gateway/run.js");
+  const atlas = {
+    message: "Codex failed because it reported a general error: Error: thread/fork: thread/fork failed: invalid paginated history lineage for 01a1ca13-2104-7fc0-be74-eacd5f0771bb: missing source rollout (code -32600)",
+    details: { stderr: "", toolUseCount: 0 },
+  };
+  assert.equal(isForkUnavailable(atlas), true);
+  assert.equal(isForkUnavailable({ details: { stderr: "thread/fork failed: source rollout belongs to another thread" } }), true);
+  assert.equal(isForkUnavailable({ message: "network error", details: { stderr: "ECONNRESET" } }), false);
+  assert.equal(isForkUnavailable({ message: "thread/resume failed: list_turns is not supported yet" }), false);
+  assert.equal(isForkUnavailable({ details: { stdout: "thread/fork failed: missing source rollout" } }), false, "stdout alone never triggers a fallback");
+});
+
+test("isSessionNotFound heals a resume whose fork lineage is missing on this runtime, and only a resume", async () => {
+  const { isForkUnavailable } = await import("../src/gateway/run.js");
+  // Atlas, int-hubexo-nordics, 2026-11-14: a Codex /fork child switched to /sudo. The carry copied
+  // the child's own rollout to the host, Codex 0.167 walked its paginated lineage and found no
+  // source there. Before: a dead-ended turn, twice. Now: the carry brings the sources, and when it
+  // cannot (the chain is broken on both sides), the thread heals from the Slack transcript.
+  const resume = { message: "Codex failed because it reported a general error: Error: thread/resume: thread/resume failed: invalid paginated history lineage for 01a1d921-e18b-7d21-a2db-230d62d843a0: missing source rollout (code -32600)" };
+  assert.equal(isSessionNotFound(resume), true);
+  assert.equal(isSessionNotFound({ message: "Error: thread/resume: thread/resume failed: invalid paginated history lineage for x: cutoff byte offset is past the source rollout (code -32600)" }), true);
+  assert.equal(isSessionNotFound({ message: "Error: thread/resume: thread/resume failed: invalid paginated history lineage for x: source rollout belongs to another thread (code -32600)" }), true);
+  // A refused FORK is the fresh-session fallback's business (isForkUnavailable), not a heal; and
+  // the same words in the model's own output never reset a thread.
+  const fork = { message: "Codex failed because it reported a general error: Error: thread/fork failed: invalid paginated history lineage for x: missing source rollout (code -32600)" };
+  assert.equal(isSessionNotFound(fork), false);
+  assert.equal(isForkUnavailable(fork), true);
+  assert.equal(isSessionNotFound({ message: "general error", details: { stdout: "thread/resume failed: invalid paginated history lineage" } }), false);
 });

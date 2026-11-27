@@ -3,6 +3,9 @@ title: Access and users
 description: Approve users and separate conversation use, conversation management, and organization administration.
 ---
 
+**Enterprise availability.** Exact company email-domain auto-approval requires an effective Enterprise license. Saved policies do not approve users after expiry; manual user approval remains available.
+
+
 ChannelGate checks who may talk to the bot before starting an agent run. Permission to use a conversation, permission to manage it, and organization administrator status are separate decisions.
 
 ## Approve a user

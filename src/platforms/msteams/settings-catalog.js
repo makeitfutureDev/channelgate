@@ -1,16 +1,18 @@
+import { engineAvailableForChannel } from "../../gateway/channel-engines.js";
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Teams catalog pages share the same credential, grant and catalog stores as Slack Settings.
 // Card state carries identifiers only; stored credentials never become input defaults.
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
-import { getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
+import { getOrgAccessGrants, getComposioMode, getEmailAccountsEnabled } from '../../config/settings.js';
 import { getChannelMeta, getUser, setUser } from '../../config/store.js';
 import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
 import { assertNewMcpSelections } from '../../gateway/mcp-selection.js';
-import { requireAdapter } from '../../engines/registry.js';
-import { listSkills } from '../../gateway/skills/catalog.js';
+import { requireAdapter, engineLabel } from '../../engines/registry.js';
+import { getSkill, listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from '../../gateway/skills/templates.js';
 import { ensureChannelFolder } from '../../gateway/folders.js';
@@ -34,21 +36,21 @@ function emailAccountRows(ui, scope, accounts, emptyText) {
 const label = scope => ({ channel: 'Channel', organization: 'Organization', personal: 'Personal' })[scope];
 const str = value => typeof value === 'string' ? value.trim() : '';
 const configured = value => value ? `Configured${typeof value === 'string' && value.length >= 12 ? ` (••••${value.slice(-4)})` : ''}` : 'Not configured';
-const keyFor = (engine, item) => engine === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
-const orgKeys = () => new Set((getOrgAccessGrants().skills || []).map(value => value.toLowerCase()));
+export const keyFor = (engine, item) => requireAdapter(engine).cli === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
+export const orgKeys = () => new Set((getOrgAccessGrants().skills || []).map(value => value.toLowerCase()));
 
-function pageSlice(items, requested, size = PAGE_SIZE) {
+export function pageSlice(items, requested, size = PAGE_SIZE) {
   const totalPages = Math.max(1, Math.ceil(items.length / size));
   const page = Math.min(Math.max(0, Number.isSafeInteger(Number(requested)) ? Number(requested) : 0), totalPages - 1);
   return { items: items.slice(page * size, (page + 1) * size), page, totalPages };
 }
-function pager(ui, pageKey, page, totalPages, extra = {}) {
+export function pager(ui, pageKey, page, totalPages, extra = {}) {
   const actions = [];
   if (page) actions.push(ui.execute('Previous', 'settings.catalog.page', { page: pageKey, index: page - 1, ...extra }, 'none'));
   if (page + 1 < totalPages) actions.push(ui.execute('Next', 'settings.catalog.page', { page: pageKey, index: page + 1, ...extra }, 'none'));
   return actions;
 }
-function skillItems(ctx) {
+export function skillItems(ctx) {
   const channel = new Set(channelSkillGrants(effectiveMeta(ctx.meta)).map(value => value.toLowerCase()));
   const org = orgKeys();
   const direct = new Set((ctx.meta.skills || []).map(value => value.toLowerCase()));
@@ -60,17 +62,17 @@ function skillItems(ctx) {
     rows.set(key, { key: skill.slug, name: skill.name || skill.slug, description: skill.description || '', active, inherited: org.has(key), direct: direct.has(key) });
   }
   // Preserve removal controls for legacy grants whose source disappeared.
-  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
+  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: getSkill(key)?.visibility === 'personal' ? 'Personal skill — not loaded here (only its author can use it); deactivate to remove' : 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
   return [...rows.values()].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
-async function cloudItems(ctx, engine) {
+export async function cloudItems(ctx, engine) {
   const field = selectionFieldForEngine(engine);
   const direct = ctx.meta[field] || [];
   const org = getOrgAccessGrants()[field] || [];
   const directKeys = new Set(direct.map(item => keyFor(engine, item)));
   const inheritedKeys = new Set(org.map(item => keyFor(engine, item)));
   // A channel card must not publish the administrator's ungranted/private connection catalog.
-  const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && ctx.meta.codexAuthSource === 'channel' ? ctx.channelId : '' });
+  const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex-channel' ? ctx.channelId : '' });
   const availableKeys = new Set(available.map(item => keyFor(engine, item)));
   const rows = new Map();
   for (const source of [...available, ...direct, ...org]) {
@@ -109,7 +111,7 @@ export async function renderCatalogPage(page, ctx, ui) {
       actions.push(ui.execute('Open private settings', 'settings.private', { page: 'secrets' }, 'none'), ...pager(ui, page, slice.page, slice.totalPages));
       return { body, actions };
     }
-    const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || ctx.userIsAdmin);
+    const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || (ctx.userIsAdmin && enterpriseFeatureEnabled('organizationVariables')));
     const scope = scopes.includes(ctx.state.variableScope) ? ctx.state.variableScope : 'channel';
     body.push(ui.heading('Add or update variable'), ui.choice('variableScope', 'Scope', scope, scopes.map(value => ({ title: label(value), value }))),
       ui.input('variableName', 'Name', ctx.state.variableName || ''), ui.input('variableValue', 'New value (never displayed)', ''),
@@ -125,10 +127,14 @@ export async function renderCatalogPage(page, ctx, ui) {
     const templateSlice = pageSlice(templates, ctx.state.templatePage, 20);
     const choices = [...templateSlice.items];
     if (template && !choices.some(item => item.slug === template.slug)) choices.push(template);
-    body.push(ui.heading('Skills'), ui.text(`Template: ${String(template?.name || 'None').slice(0, 100)}\nChannel skills: ${channelSkillGrants(effective).join(', ').slice(0, 800) || 'None'}\nOrganization skills: ${(getOrgAccessGrants().skills || []).join(', ').slice(0, 800) || 'None'}`),
-      ui.choice('skillTemplate', 'Skill template', template?.slug || 'none', [{ title: 'None', value: 'none' }, ...choices.map(item => ({ title: String(item.name || item.slug).slice(0, 100), value: item.slug }))]),
-      ui.buttons([ui.execute('Apply template', 'settings.template')]));
-    if (templateSlice.totalPages > 1) body.push(ui.text(`Templates — page ${templateSlice.page + 1}/${templateSlice.totalPages}`), ui.buttons(pager(ui, page, templateSlice.page, templateSlice.totalPages, { catalog: 'templates' })));
+    body.push(ui.heading('Skills'), ui.text(`Template: ${String(template?.name || 'None').slice(0, 100)}\nChannel skills: ${channelSkillGrants(effective).join(', ').slice(0, 800) || 'None'}\nOrganization skills: ${(getOrgAccessGrants().skills || []).join(', ').slice(0, 800) || 'None'}`));
+    if (enterpriseFeatureEnabled('skillTemplates')) {
+      body.push(ui.choice('skillTemplate', 'Skill template', template?.slug || 'none', [{ title: 'None', value: 'none' }, ...choices.map(item => ({ title: String(item.name || item.slug).slice(0, 100), value: item.slug }))]), ui.buttons([ui.execute('Apply template', 'settings.template')]));
+      if (templateSlice.totalPages > 1) body.push(ui.text(`Templates — page ${templateSlice.page + 1}/${templateSlice.totalPages}`), ui.buttons(pager(ui, page, templateSlice.page, templateSlice.totalPages, { catalog: 'templates' })));
+    } else {
+      body.push(ui.text('Skill templates require Enterprise. Saved assignments are retained and inactive; direct channel skills remain available.'));
+      if (effective.skillTemplate) body.push(ui.choice('skillTemplate', 'Clear saved template', 'none', [{ title: 'None', value: 'none' }]), ui.buttons([ui.execute('Clear template', 'settings.template')]));
+    }
     const all = skillItems(ctx), slice = pageSlice(all, ctx.state.skillPage);
     body.push(ui.text(`${all.length} catalog skills — page ${slice.page + 1}/${slice.totalPages}`));
     for (const item of slice.items) {
@@ -141,28 +147,35 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (page !== 'mcp') return null;
   const meta = ctx.meta;
   const connectionSummary = ctx.isShared
-    ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nToolbox: ${meta.toolboxToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
-    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nToolbox: ${configured(meta.toolboxToken)}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}\nOrganization Toolbox: ${configured(getDefaultToolboxToken())}`;
+    ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
+    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}`;
   body.push(ui.heading('MCP connections'), ui.text(connectionSummary));
   if (ctx.publicCredentials) {
     body.push(ui.text('Add and rotate connection credentials in your private browser settings.'),
       ui.buttons([ui.execute('Open private settings', 'settings.private', { page: 'mcp' }, 'none')]));
   } else body.push(
     ui.text('Leave token fields blank to keep their stored value.'), ui.input('composioToken', 'New Composio token', ''),
-    ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''), ui.input('toolboxToken', 'New Toolbox token', ''),
+    ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''),
     ui.input('makeToolboxUrl', 'Make MCP server URL', meta.makeToolboxUrl || ''), ui.input('makeToolboxKey', 'New Make MCP token', ''),
     ui.buttons([ui.execute('Save connections', 'settings.connections.save')]));
-  body.push(ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
-    ui.buttons([ui.execute(meta.noDefaultTokens ? 'Enable inherited credentials' : 'Disable inherited credentials', 'settings.connections.fallback', { enabled: Boolean(meta.noDefaultTokens) }, 'none')]));
   const disconnect = [];
   if (meta.composioToken) disconnect.push(ui.execute('Disconnect Composio', 'settings.connections.remove', { connection: 'composio' }, 'none'));
-  if (meta.toolboxToken) disconnect.push(ui.execute('Disconnect Toolbox', 'settings.connections.remove', { connection: 'toolbox' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
+  body.push(...await mailAndPersonalRows(ctx, ui));
+  return cloudRows(ctx, ui, page, body, actions);
+}
+
+// The parts of the MCP page that are not conversation/thread settings: the email accounts (their
+// logins are verified on save) and the person's own connections. Shared with the Teams batch page.
+export async function mailAndPersonalRows(ctx, ui) {
+  const body = [], meta = ctx.meta;
   // Email accounts: the list is masked (hosts, ports, user names — never a password). Inputs are
   // never prefilled, and a public space card gets no inputs at all.
-  body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
-  if (ctx.publicCredentials) body.push(ui.text('Connect or update an email account in your private browser settings.'));
+  const email = getEmailAccountsEnabled();
+  if (email) body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
+  if (!email) { /* Email accounts are off gateway-wide (Settings). */ }
+  else if (ctx.publicCredentials) body.push(ui.text('Connect or update an email account in your private browser settings.'));
   else {
     body.push(ui.text('Connect a mailbox by its IMAP and SMTP settings. Both logins are tested before anything is saved. Blank ports mean 993 (IMAP) and 587 (SMTP); blank SMTP user and password mean the IMAP ones. Leave passwords blank to keep the stored ones when editing.'),
       ...(ctx.isShared ? [] : [ui.choice('emailScope', 'Belongs to', EMAIL_SCOPES.includes(ctx.state.emailScope) ? ctx.state.emailScope : 'channel', [{ title: 'This conversation', value: 'channel' }, { title: 'Me (personal)', value: 'personal' }])]),
@@ -174,23 +187,26 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (!ctx.isShared) {
     const personal = await getUser(ctx.ownerId);
     body.push(ui.heading('My connections'),
-      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}\nPersonal Toolbox: ${personal?.toolboxToken ? 'Configured' : 'Not configured'}`),
+      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}`),
       ui.text('These tokens apply only to your own requests. Leave a field blank to keep its stored value. In SDK mode, a saved Personal-mode Composio token is inactive.'),
       ui.input('personalComposioToken', 'New personal Composio token', ''),
-      ui.input('personalToolboxToken', 'New personal Toolbox token', ''),
       ui.buttons([ui.execute('Save my connections', 'settings.personal.save')]));
     const remove = [];
     if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
-    if (personal?.toolboxToken) remove.push(ui.execute('Disconnect my Toolbox', 'settings.personal.remove', { connection: 'toolbox' }, 'none'));
     if (remove.length) body.push(ui.buttons(remove));
-    body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
+    if (email) body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
       ...(ctx.publicCredentials ? [] : [ui.text('Add or update one with the email account form above, choosing "Me (personal)". It is used only for your own requests.')]));
   }
+  return body;
+}
+
+async function cloudRows(ctx, ui, page, body, actions) {
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
   if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));
-  const engine = ctx.state.cloudEngine === 'codex' ? 'codex' : 'claude';
-  body.push(ui.buttons(['claude', 'codex'].map(value => ui.execute(value === 'codex' ? 'Codex catalog' : 'Claude catalog', 'settings.catalog.page', { page: 'mcp', engine: value, index: 0 }, 'none'))));
+  const engines = ['claude', 'codex', 'codex-channel'].filter(id => engineAvailableForChannel(ctx.meta, id));
+  const engine = engines.includes(ctx.state.cloudEngine) ? ctx.state.cloudEngine : 'claude';
+  body.push(ui.buttons(engines.map(value => ui.execute(`${engineLabel(value)} catalog`, 'settings.catalog.page', { page: 'mcp', engine: value, index: 0 }, 'none'))));
   const all = await cloudItems(ctx, engine), slice = pageSlice(all, ctx.state.cloudPage);
   body.push(ui.text(`${engine} — ${all.length} capabilities — page ${slice.page + 1}/${slice.totalPages}`));
   for (const item of slice.items) {
@@ -231,7 +247,7 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     const index = Number.isSafeInteger(Number(data.index)) && Number(data.index) >= 0 ? Number(data.index) : 0;
     ctx.state[data.page === 'skills' && data.catalog === 'templates' ? 'templatePage' : { secrets: 'variablePage', mcp: 'cloudPage', skills: 'skillPage' }[data.page]] = index;
     if (data.page === 'mcp' && data.engine) {
-      if (!['claude', 'codex'].includes(data.engine)) throw new Error('Unknown engine.');
+      if (!['claude', 'codex', 'codex-channel'].includes(data.engine) || !engineAvailableForChannel(ctx.meta, data.engine)) throw new Error('Unknown engine.');
       ctx.state.cloudEngine = data.engine;
     }
     if (data.page === 'secrets' && data.variableName) {
@@ -241,7 +257,7 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     }
     return true;
   }
-  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
+  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
   if (!known.includes(action)) return false;
   const current = await fresh(ctx);
   if (ctx.publicCredentials && ['settings.variable.save', 'settings.connections.save', 'settings.personal.save', 'settings.email.save'].includes(action)) {
@@ -281,13 +297,13 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     if (current.isShared || !current.ownerId) throw new Error('Personal connections require your authenticated settings window.');
     const patch = {};
     if (action === 'settings.personal.save') {
-      for (const [input, field] of [['personalComposioToken', 'composioToken'], ['personalToolboxToken', 'toolboxToken']]) {
+      for (const [input, field] of [['personalComposioToken', 'composioToken']]) {
         const value = str(data[input]);
         if (value && value.length < 6) throw new Error('Connection tokens must contain at least six characters.');
         if (value) patch[field] = value;
       }
     } else {
-      const field = { composio: 'composioToken', toolbox: 'toolboxToken' }[data.connection];
+      const field = { composio: 'composioToken' }[data.connection];
       if (!field) throw new Error('Unknown personal connection.');
       patch[field] = '';
     }
@@ -313,21 +329,20 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     return true;
   }
   if (action === 'settings.connections.save') {
-    const form = Object.fromEntries(['composioToken', 'composioTokenLabel', 'toolboxToken', 'makeToolboxUrl', 'makeToolboxKey'].map(key => [key, str(data[key])]));
-    for (const key of ['composioToken', 'toolboxToken', 'makeToolboxKey']) if (form[key] && form[key].length < 6) throw new Error('Connection tokens must contain at least six characters.');
+    const form = Object.fromEntries(['composioToken', 'composioTokenLabel', 'makeToolboxUrl', 'makeToolboxKey'].map(key => [key, str(data[key])]));
+    for (const key of ['composioToken', 'makeToolboxKey']) if (form[key] && form[key].length < 6) throw new Error('Connection tokens must contain at least six characters.');
     await current.patch(stored => {
       const patch = resolveMakeToolboxUpdate(stored, { makeToolboxUrl: form.makeToolboxUrl, makeToolboxKey: form.makeToolboxKey });
       if (form.composioToken) patch.composioToken = form.composioToken;
       if (typeof data.composioTokenLabel === 'string' && (!current.isShared || form.composioTokenLabel)) patch.composioTokenLabel = form.composioTokenLabel;
-      if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
       return patch;
     });
-    await record(current, 'channel_connections_updated', { connections: ['Composio', 'Toolbox', 'Make MCP'] });
+    await record(current, 'channel_connections_updated', { connections: ['Composio', 'Make MCP'] });
     ctx.state.tab = 'mcp'; ctx.state.notice = 'Connection settings saved.';
     return true;
   }
   if (action === 'settings.connections.remove') {
-    const patches = { composio: { composioToken: '' }, toolbox: { toolboxToken: '' }, make: { makeToolboxUrl: '', makeToolboxKey: '' } };
+    const patches = { composio: { composioToken: '' }, make: { makeToolboxUrl: '', makeToolboxKey: '' } };
     if (!Object.hasOwn(patches, data.connection)) throw new Error('Unknown connection.');
     const patch = patches[data.connection];
     await current.patch(() => patch);
@@ -335,24 +350,18 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     ctx.state.tab = 'mcp'; ctx.state.notice = 'Connection removed.';
     return true;
   }
-  if (action === 'settings.connections.fallback') {
-    if (typeof data.enabled !== 'boolean') throw new Error('Invalid inherited credential setting.');
-    await current.patch(() => ({ noDefaultTokens: !data.enabled }));
-    ctx.state.tab = 'mcp'; ctx.state.notice = 'Inherited credential setting saved.';
-    return true;
-  }
   if (action === 'settings.cloud.toggle') {
     if (!current.userIsAdmin) throw new Error('Only administrators can manage Cloud MCP.');
-    if (!['claude', 'codex'].includes(data.engine) || typeof data.activate !== 'boolean' || !str(data.key)) throw new Error('Invalid Cloud MCP selection.');
+    if (!['claude', 'codex', 'codex-channel'].includes(data.engine) || !engineAvailableForChannel(ctx.meta, data.engine) || typeof data.activate !== 'boolean' || !str(data.key)) throw new Error('Invalid Cloud MCP selection.');
     const engine = data.engine, key = str(data.key), field = selectionFieldForEngine(engine);
     if ((getOrgAccessGrants()[field] || []).some(item => keyFor(engine, item) === key)) throw new Error('Organization MCP grants are inherited and cannot be changed here.');
     let selection = null;
     if (data.activate) {
-      const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && current.meta.codexAuthSource === 'channel' ? current.channelId : '' });
+      const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex-channel' ? current.channelId : '' });
       selection = persistedSelectionForEngine(engine, available.find(item => keyFor(engine, item) === key));
       if (!selection) throw new Error('That MCP capability is no longer available.');
       await assertNewMcpSelections(engine, [selection], current.meta[field] || [], {
-        channelId: current.meta.codexAuthSource === 'channel' ? current.channelId : '',
+        channelId: engine === 'codex-channel' ? current.channelId : '',
       });
     }
     // Discovery and admission are asynchronous; recheck roles before the write.

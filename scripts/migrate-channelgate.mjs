@@ -34,7 +34,7 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gatewayRoot, workspaceRoot } from "../src/config/paths.js";
-import { platformFolderName } from "../src/platforms/registry.js";
+import { platformFolderName, platformFolderNames } from "../src/platforms/registry.js";
 
 // The pre-rename defaults. Only ever used as SOURCES — nothing is written back to them except the
 // MOVED.md breadcrumb.
@@ -42,6 +42,11 @@ export const LEGACY_GATEWAY_DIRNAME = ".claude-gateway";
 export const LEGACY_WORKSPACE_DIRNAME = "Slack Agent";
 
 const BREADCRUMB = "MOVED.md";
+const PENDING_MIGRATION = "rename-migration.pending";
+
+export function pendingMigrationFile(root) {
+  return path.join(root, PENDING_MIGRATION);
+}
 
 async function exists(p) {
   try {
@@ -193,6 +198,59 @@ export function readChannelRecords(db) {
     out.push({ slug: row.slug, platform: meta.platform, workDir, customWorkDir: Boolean(workDir) });
   }
   return out;
+}
+
+// Admission for automatic boot/update migration. Never walk engine histories or open the
+// writable store here: a normal namespaced channels directory is NOT legacy evidence.
+export async function channelGateMigrationReason(options = {}) {
+  const { env = process.env } = options;
+  const roots = resolveRoots(options);
+  const { legacyRoot, newRoot, legacyWorkspace, newWorkspace, rootPinned } = roots;
+  if (!rootPinned && await hasRuntimeState(legacyRoot) && !(await hasRuntimeState(newRoot))) {
+    return "pre-rename runtime root";
+  }
+  const root = await exists(newRoot) ? newRoot : legacyRoot;
+  if (await exists(pendingMigrationFile(root))) return "unfinished rename migration";
+
+  const db = await openReadOnly(dryRunDbFile(root, env));
+  let records;
+  try {
+    records = readChannelRecords(db);
+  } finally {
+    db?.close();
+  }
+  // Pre-SQLite installations still need admission, including explicitly pinned roots.
+  // Do not consult inert JSON backups once SQLite is present.
+  if (!db && !(await exists(dryRunDbFile(root, env)))) {
+    let index = {};
+    try { index = JSON.parse(await readFile(path.join(root, "config", "channels.json"), "utf8")); } catch { /* no legacy index */ }
+    for (const entry of Object.values(index)) {
+      if (!entry?.slug) continue;
+      let meta = {};
+      try { meta = JSON.parse(await readFile(path.join(root, "channels", entry.slug, "meta.json"), "utf8")); } catch { /* default workspace */ }
+      records.push({ slug: entry.slug, platform: meta.platform, customWorkDir: Boolean(meta.workDir?.trim()) });
+    }
+  }
+  for (const rec of records) {
+    const pf = platformFolderName(rec.platform);
+    // A platform directory can share its name with an unprovisioned channel. It is not a flat
+    // channel unless direct metadata proves that; never try to move a parent into its own child.
+    const reserved = platformFolderNames().includes(rec.slug);
+    const flatMetadata = await exists(path.join(root, "channels", rec.slug, "meta.json")) ||
+      await exists(path.join(root, "channels", rec.slug, ".claude", "settings.json"));
+    for (const tree of ["channels", "clean-workspaces"]) {
+      if (reserved && !flatMetadata) continue;
+      if (await exists(path.join(root, tree, rec.slug)) && !(await exists(path.join(root, tree, pf, rec.slug)))) {
+        return `flat ${tree} layout`;
+      }
+    }
+    if (!rec.customWorkDir &&
+        await exists(path.join(legacyWorkspace, rec.slug)) &&
+        !(await exists(path.join(newWorkspace, pf, rec.slug)))) {
+      return "pre-rename channel workspace";
+    }
+  }
+  return "";
 }
 
 // ── Moving ───────────────────────────────────────────────────────────────────────────────────
@@ -1547,7 +1605,8 @@ export async function migrateChannelGate({
     : rootMode === "none" && !(await exists(newRoot))
       ? legacyRoot
       : newRoot;
-  if (!repath && !movingRoot && !moveWorkspace && !(await exists(path.join(rootForChannels, "channels")))) {
+  if (!repath && !movingRoot && !moveWorkspace && !(await exists(path.join(rootForChannels, "channels"))) &&
+      !(await exists(pendingMigrationFile(rootForChannels)))) {
     return { ran: false, reason: "nothing to migrate", dryRun };
   }
 
@@ -1589,6 +1648,14 @@ export async function migrateChannelGate({
   for (const [from, to] of extra) log(`  • path rule      ${from} → ${to} (operator-supplied: a folder moved by hand)`);
 
   try {
+    // Persist BEFORE moving anything. It travels with a renamed root and keeps an interrupted
+    // rewrite eligible even after the last physical legacy folder has already moved.
+    if (!dryRun && !repath) {
+      const markerRoot = movingRoot ? legacyRoot : rootForChannels;
+      await mkdir(markerRoot, { recursive: true });
+      await writeFile(pendingMigrationFile(markerRoot), "ChannelGate rename migration incomplete\n", { flag: "wx", mode: 0o600 })
+        .catch((error) => { if (error.code !== "EEXIST") throw error; });
+    }
     if (rootMode === "move") {
       if (!dryRun) summary.movedRoot = await moveTree(legacyRoot, newRoot, { rename, log });
       else summary.movedRoot = "planned";
@@ -1640,7 +1707,12 @@ export async function migrateChannelGate({
       // Per-channel metadata: <root>/channels/<slug> → <root>/channels/<platform>/<slug>
       const metaFrom = path.join(channelsFrom, "channels", rec.slug);
       const metaTo = path.join(rootForChannels, "channels", pf, rec.slug);
-      if (path.resolve(metaFrom) !== path.resolve(metaTo) && (await exists(metaFrom)) && !(await exists(metaTo))) {
+      const reserved = platformFolderNames().includes(rec.slug);
+      const flatMetadata = await exists(path.join(metaFrom, "meta.json")) ||
+        await exists(path.join(metaFrom, ".claude", "settings.json"));
+      const possibleFlat = !reserved || flatMetadata;
+      if (possibleFlat && await exists(metaFrom) && await exists(metaTo)) summary.collisions.push(metaFrom);
+      if (possibleFlat && path.resolve(metaFrom) !== path.resolve(metaTo) && (await exists(metaFrom)) && !(await exists(metaTo))) {
         log(`  • ${rec.slug}: channels/${rec.slug} → channels/${pf}/${rec.slug}`);
         if (!dryRun) await moveTree(metaFrom, metaTo, { rename, log });
         summary.metaFolders++;
@@ -1648,7 +1720,8 @@ export async function migrateChannelGate({
       // Clean-mode workspace, same rule.
       const cleanFrom = path.join(channelsFrom, "clean-workspaces", rec.slug);
       const cleanTo = path.join(rootForChannels, "clean-workspaces", pf, rec.slug);
-      if (path.resolve(cleanFrom) !== path.resolve(cleanTo) && (await exists(cleanFrom)) && !(await exists(cleanTo))) {
+      if (possibleFlat && await exists(cleanFrom) && await exists(cleanTo)) summary.collisions.push(cleanFrom);
+      if (possibleFlat && path.resolve(cleanFrom) !== path.resolve(cleanTo) && (await exists(cleanFrom)) && !(await exists(cleanTo))) {
         log(`  • ${rec.slug}: clean-workspaces/${rec.slug} → clean-workspaces/${pf}/${rec.slug}`);
         if (!dryRun) await moveTree(cleanFrom, cleanTo, { rename, log });
         summary.cleanWorkspaces++;
@@ -1663,6 +1736,7 @@ export async function migrateChannelGate({
       const wsTo = path.join(newWorkspace, pf, rec.slug);
       if (wsFrom === wsTo || !(await exists(wsFrom))) continue;
       if (await exists(wsTo)) {
+        summary.collisions.push(wsFrom);
         log(`  • ${rec.slug}: SKIPPED — ${wsTo} already exists (never clobbered)`);
         continue;
       }
@@ -1801,6 +1875,11 @@ export async function migrateChannelGate({
         log(`[migrate] dry run would leave ${summary.audit.historical} occurrence(s) behind (historical content, by design).`);
       }
     }
+    if (!dryRun && !summary.errors.length && !summary.codex.errors.length && !summary.collisions.length &&
+        !summary.claude.collisions.length && !summary.claude.unresolved.length &&
+        (!summary.audit || summary.audit.total === 0)) {
+      await rm(pendingMigrationFile(rootForChannels), { force: true });
+    }
     return summary;
   } catch (error) {
     summary.failed = error.message;
@@ -1853,6 +1932,9 @@ export async function repathChannelGate(options = {}) {
 // Boot entry point: never throws, never exits. src/server.js awaits this before opening the DB.
 export async function migrateChannelGateAtBoot(options = {}) {
   try {
+    if (!options.dryRun && !options.repath && !(await channelGateMigrationReason(options))) {
+      return { ran: false, reason: "no legacy layout or unfinished migration", dryRun: false };
+    }
     const result = await migrateChannelGate(options);
     if (result.refused || result.failed) await applyFallback(options);
     return result;

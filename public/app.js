@@ -5,6 +5,7 @@
 import { conversationKindForChannel, conversationRouteForPath, pathForConversation, pathForView, titleForView, viewForPath } from "./admin-routes.js";
 import {
   accessGrantSkillOptions,
+  accessGrantSkillSelection,
   captureGrantMcpSelection,
   conversationChannelName,
   matchesConversationSource,
@@ -18,7 +19,9 @@ import {
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
-import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
+import { setSubscriptionsActive } from "./admin-subscriptions.js";
+import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { freshAdminAuth, mountAdminAccess, mountUserDashboardAccess } from "./admin-access.js";
 import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
@@ -26,14 +29,18 @@ import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
 import { emailAccountEditorMarkup, mountEmailAccountEditor } from "./admin-email-accounts.js";
 import { mountComposioInventory } from "./admin-composio.js";
+import { syncComposioPolicyUi, paintComposioPolicy, readComposioPolicy } from "./admin-composio-policy.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
+import { engineChoices, engineDisplayName, harnessOf, mountLicenseLock, mountLicensePicker, mountLicensesManager, policyAdmits } from "./admin-licenses.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
 const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z"/></svg>`;
 
 // ── Reference data / state ──────────────────────────────────────────────────────
 let SKILLS = [];
+// Personal catalog skills with their author ({ slug, createdBy }): offered only to that person.
+let PERSONAL_SKILLS = [];
 let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, resolved, channels }
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
@@ -45,8 +52,8 @@ let DMS = [];
 let DM_TEMPLATES = {};
 let GLOBAL_ENGINE = "claude";
 let ENGINE_MANIFESTS = [];
-// Which harnesses the admin left switched on. A disabled engine must not appear in ANY picker —
-// global, per channel, or per DM — so every engine <select> is built from this filter.
+// Which licenses the admin left switched on. A license that is off must not appear in ANY picker —
+// global, per channel, or per DM — so every engine picker is built from this filter.
 let ENGINE_ENABLED = {};
 let GLOBAL_COMPOSIO_MODE = "personal";
 let orgGrantsEditor = null;
@@ -71,7 +78,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card, .lic-form, .lic-panel, .ch-licenses-card";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -112,32 +119,37 @@ function applyEngineManifests(manifests) {
   )])));
 }
 
-function engineIsEnabled(id) {
-  return ENGINE_ENABLED[id] !== false;
+// Where an engine picker stands (admin-licenses.js): the manifest and the on/off map, plus — for a
+// channel — whether it signed in its own Codex account and which licenses its lock admits.
+// `channelIds` names the conversation the picker is for (its id and, for a code channel, the
+// channel it was opened from): a license limited to one conversation is offered only there, so a
+// picker with no conversation — a template, the gateway default — never offers one.
+function licenseEnv({ codexAuthSource = "", policy = null, channelIds = [] } = {}) {
+  return { manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED, codexAuthSource, policy, channelIds: channelIds.filter(Boolean) };
 }
 
-// Enabled harnesses only — but never an EMPTY list: if the map hasn't loaded yet (or somehow
-// disables everything) fall back to the full manifest so a picker is never blank.
-function selectableEngines() {
-  const enabled = ENGINE_MANIFESTS.filter((m) => engineIsEnabled(m.id));
-  return enabled.length ? enabled : ENGINE_MANIFESTS;
+// What an engine id reads as wherever one is printed. From the manifest — a license an admin added
+// has an id nobody can read.
+function engineLabel(id) {
+  return engineDisplayName(ENGINE_MANIFESTS, id);
 }
 
-function engineOptionsHtml({ includeDefault = false } = {}) {
-  return (includeDefault ? '<option value="">Default (global setting)</option>' : "") +
-    selectableEngines().map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
+// The one-control form of the picker, for a row that stores a single engine id and nothing beside
+// it (a model shortcut, the connector catalog switch): one option per usable license.
+function engineOptionsHtml() {
+  return engineChoices(licenseEnv()).map((choice) => `<option value="${escapeHtml(choice.id)}">${escapeHtml(choice.label)}</option>`).join("");
 }
 
-function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value }) {
-  const engine = effectiveEngine(engineSelect?.value || "");
+function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value, engine: pinnedEngine, blankLabel = "default" }) {
+  const engine = pinnedEngine || effectiveEngine(engineSelect?.value || "");
   const modelEfforts = MODEL_EFFORT_OPTIONS[engine]?.[modelSelect?.value || ""];
   const options = modelEfforts?.length
     ? [["", "default"], ...modelEfforts.map((effort) => [effort, effort])]
     : EFFORT_OPTIONS[engine] || EFFORT_OPTIONS.claude;
   const current = value !== undefined ? value : effortSelect.value;
-  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
+  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(v ? text : blankLabel)}</option>`).join("");
   effortSelect.value = options.some(([v]) => v === current) ? current : "";
-  if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
+  if (label) label.textContent = `Effort (${engineLabel(engine)})`;
 }
 
 // Model choices per engine — mirrors the Slack /model wizard's buttons. Every value passes the
@@ -145,11 +157,18 @@ function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, val
 const MODEL_OPTIONS = {
   claude: [
     ["claude-opus-5-5", "Opus 5.5"],
-    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-fable-5-2", "Fable 5.2"],
     ["claude-sonnet-5-5", "Sonnet 5.5"],
     ["claude-haiku-4-5", "Haiku 4.5"],
   ],
   codex: [
+    ["gpt-6.2-astra", "GPT-6.2 Astra"],
+    ["gpt-6.2-sol", "GPT-6.2 Sol"],
+    ["gpt-6.1-terra", "GPT-6.1 Terra"],
+    ["gpt-6.1-sol", "GPT-6.1 Sol"],
+    ["gpt-6-astra", "GPT-6 Astra"],
+    ["gpt-6-sol", "GPT-6 Sol"],
+    ["gpt-6-luna", "GPT-6 Luna"],
     ["codex", "Codex (default family)"],
     ["gpt-5.6-sol", "GPT-5.6 Sol"],
     ["gpt-5.6", "GPT-5.6 (alias for Sol)"],
@@ -166,7 +185,15 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  if (engine === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  const manifest = ENGINE_MANIFESTS.find((m) => m.id === engine);
+  // A license whose listed models are its whole catalog has no family of further ids: a saved
+  // model it no longer lists is dropped, not offered again for a save the server would refuse.
+  if (manifest?.modelListClosed) return false;
+  const family = manifest?.modelFamily || engine;
+  // A license's own family ("license:<id>") follows its harness's shapes.
+  if (family === "codex" || (String(family).startsWith("license:") && manifest?.harness === "codex")) return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  if (family === "claude-extra") return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov)?:bedrock:/i.test(model);
+  if (family === "bedrock") return /^(?:opus|sonnet|haiku)$|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov|-cn)?:bedrock:/i.test(model);
   // Mirrors isQwenTextModel (src/engines/qwen.js): the provider families, minus the image/audio
   // and single-purpose ones that cannot hold a conversation. Every engine generated from that
   // table shares the shapes, so the check follows the SERVER's list of provider harnesses rather
@@ -187,13 +214,19 @@ function syncModelOptions({ engineSelect, modelSelect, value, engine, blankLabel
   modelSelect.value = options.some(([v]) => v === current) ? current : "";
 }
 
+function syncDefaultEffort(modelSelect, effortSelect, engine, value) {
+  const sync = (next) => syncEffortOptions({ modelSelect, effortSelect, engine, value: next, blankLabel: "CLI default" });
+  sync(value || "");
+  modelSelect.onchange = () => sync(effortSelect.value);
+}
+
 function addModelShortcutRow(name = "", target = {}) {
   const box = document.getElementById("model-shortcuts-editor");
   const row = document.createElement("div");
   row.className = "model-shortcut-row";
   row.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0";
   row.innerHTML = `<input class="shortcut-name" type="text" maxlength="24" placeholder="astra" aria-label="Shortcut name" style="max-width:120px" />
-    <select class="shortcut-engine" aria-label="Engine"></select>
+    <select class="shortcut-engine" aria-label="Harness"></select>
     <select class="shortcut-model" aria-label="Model"></select>
     <button type="button" class="clear-tok shortcut-remove">Remove</button>`;
   const engineSelect = row.querySelector(".shortcut-engine");
@@ -202,7 +235,7 @@ function addModelShortcutRow(name = "", target = {}) {
   if (target.engine && ![...engineSelect.options].some((option) => option.value === target.engine)) {
     const option = document.createElement("option");
     option.value = target.engine;
-    option.textContent = `${target.engine} (disabled)`;
+    option.textContent = `${engineLabel(target.engine)} (disabled)`;
     engineSelect.add(option);
   }
   engineSelect.value = target.engine || engineSelect.options[0]?.value || "claude";
@@ -287,7 +320,7 @@ function modeLabelOf(m = {}) {
   const network = m.adminMode
     ? " · unrestricted network"
     : m.allowNetwork
-      ? ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`
+      ? " · approved-domain network"
       : "";
   return base + network;
 }
@@ -301,7 +334,7 @@ const PROFILE_FLAGS = {
 const PROFILE_HELP = {
   read: "Reads files. Edits and commands need approval. Selecting Read-only turns Auto off.",
   worker: "Runs commands and edits files in this channel’s folder only. Auto approves tool requests automatically; Lean removes optional skills and connectors.",
-  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Confined to the channel folder unless “Admin channels can access the host home” is enabled in Settings → Container runtime. That setting shares the gateway user’s home with all admitted members; it does not grant host root access.",
+  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Confined to the channel folder unless “Admin channels can access the host home” is enabled in Settings → Container runtime. That setting adds the home mount only to trusted admin runs in Admin channels; other members retain their project mounts. It does not grant host root access.",
 };
 // Per-option descriptions for the two access dropdowns (shown live under each, like the profile help).
 const ACCESS_HELP = {
@@ -338,18 +371,25 @@ function capLabelOf(m = {}) {
   const base = [PROFILE_LABEL[p], m.autoMode ? "Auto" : "", m.cleanMode ? "Lean" : ""].filter(Boolean).join(" · ");
   if (m.adminMode) return base + " · unrestricted network";
   if (!m.allowNetwork) return base;
-  return base + ` · ${["claude", "codex"].includes(String(m.engine || "claude")) ? "approved-domain network" : "network unsupported"}`;
+  return base + " · approved-domain network";
 }
 
 // ── View switching + URL history ────────────────────────────────────────────────
-function loadView(name) {
+function loadView(name, { refreshIdentity = true } = {}) {
   if (name === "system-health") setSystemHealthActive(true);
+  if (name === "subscriptions") setSubscriptionsActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
-  if (name === "settings" && !viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+  if (name === "settings") {
+    if (!viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+    // The self-saving identity card can change when chat discovers the first admin or a user
+    // role changes. Refresh it independently so existing unsaved Settings edits stay intact.
+    else if (refreshIdentity) mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog }).catch(() => {});
+  }
   if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
   if (name === "skills") loadSkills().catch(() => {}); // always refresh
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
+  if (name === "roi") loadRoi().catch(() => {});
   if (name === "audit") loadAudit().catch(() => {}); // always refresh
   if (name === "dashboard") loadDashboard().catch(() => {}); // always refresh
 }
@@ -370,6 +410,7 @@ function setView(name, { history = "push", load = true } = {}) {
   if (history === "replace") window.history.replaceState({ view }, "", path);
   else if (history === "push" && window.location.pathname !== path) window.history.pushState({ view }, "", path);
   if (view !== "system-health") setSystemHealthActive(false);
+  if (view !== "subscriptions") setSubscriptionsActive(false);
   if (load) loadView(view);
   if (view === "settings") enterSettingsView(hash);
 }
@@ -399,11 +440,48 @@ async function loadApiDocs() {
   if (note) {
     note.textContent =
       hasKey === true
-        ? "A token is set. Reveal, copy, or regenerate it under Settings → HTTP run API."
-        : hasKey === false
-        ? "No token generated yet — create one under Settings → HTTP run API."
-        : "Generate one under Settings → HTTP run API.";
-    note.classList.toggle("apidoc-note-warn", hasKey === false);
+        ? "Channel tokens: ask the agent in a conversation for create_api_token. A deprecated organization-wide key is also set under Settings → HTTP run API."
+        : "Channel tokens: ask the agent in a conversation for create_api_token (listed below). No organization-wide key is set — good.";
+    note.classList.toggle("apidoc-note-warn", hasKey === true);
+  }
+  await paintApiTokens();
+}
+
+// Every channel token across conversations — names, conversation, creator, dates, last four
+// characters — and a revoke. Values never reach this page (they exist once, in the minting reply).
+async function paintApiTokens() {
+  const rows = document.getElementById("apitok-rows");
+  if (!rows) return;
+  let tokens = [];
+  try {
+    tokens = (await api("/api/api-tokens")).tokens || [];
+  } catch {
+    rows.innerHTML = `<tr><td colspan="6" class="hint">Sign in to see channel tokens.</td></tr>`;
+    return;
+  }
+  const when = (v) => (v ? escapeHtml(String(v).slice(0, 16).replace("T", " ")) : "never");
+  rows.innerHTML = tokens.length
+    ? tokens.map((t) => `<tr${t.revoked ? ' class="muted"' : ""}>
+        <td><code>${escapeHtml(t.prefix)}…${escapeHtml(t.last4)}</code> ${escapeHtml(t.name)}${t.revoked ? " <em>(revoked)</em>" : ""}</td>
+        <td>${escapeHtml(t.channelName || t.slug)}</td>
+        <td><code>${escapeHtml(t.createdBy)}</code></td>
+        <td>${when(t.createdAt)}</td>
+        <td>${when(t.lastUsedAt)}</td>
+        <td>${t.revoked ? "" : `<button type="button" class="ghost apitok-revoke" data-id="${escapeHtml(String(t.id))}">Revoke</button>`}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" class="hint">No channel tokens yet. In a conversation, ask the agent: “create an API token for this channel”.</td></tr>`;
+  for (const btn of rows.querySelectorAll(".apitok-revoke")) {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/api-tokens/${encodeURIComponent(btn.dataset.id)}/revoke`, { method: "POST", body: "{}" });
+      } catch (e) {
+        btn.disabled = false;
+        alert(`Could not revoke: ${e?.message || e}`);
+        return;
+      }
+      await paintApiTokens();
+    });
   }
 }
 
@@ -470,7 +548,7 @@ function renderAuditRows() {
     const when = new Date(r.ts).toLocaleString();
     const conv = r.channelName || r.slug || "?";
     const author = r.authorName || r.authorId || "?";
-    const eng = (r.engine || "?") + (r.taskKind && r.taskKind !== "interactive" ? " · " + r.taskKind : "");
+    const eng = (engineLabel(r.engine) || "?") + (r.taskKind && r.taskKind !== "interactive" ? " · " + r.taskKind : "");
     const tok = fmtNum((r.tokensIn || 0) + (r.tokensOut || 0));
     const cost = r.costUSD == null ? "—" : fmtUSD(r.costUSD) + (r.costEstimated ? "*" : "");
     return `<tr class="audit-row" data-i="${i}" tabindex="0">
@@ -573,7 +651,7 @@ function openSessionDetail(r) {
   const author = r.authorName || r.authorId || "?";
   const totalTok = (r.tokensIn || 0) + (r.tokensOut || 0);
   const cost = r.costUSD == null ? "—" : fmtUSD(r.costUSD) + (r.costEstimated ? " · estimated" : "");
-  const engine = (r.engine || "?") + (r.model ? " · " + r.model : "");
+  const engine = (engineLabel(r.engine) || "?") + (r.model ? " · " + r.model : "");
   const rows = [
     ["Time", new Date(r.ts).toLocaleString()],
     ["Conversation", conv + (r.slug && r.slug !== conv ? ` · ${r.slug}` : "")],
@@ -629,7 +707,7 @@ async function loadAudit() {
   const byLabel = (a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { sensitivity: "base" });
   fillAuditSelect(document.getElementById("audit-channel"), [...chanOpts.entries()].sort(byLabel), "All conversations");
   fillAuditSelect(document.getElementById("audit-user"), [...userOpts.entries()].sort(byLabel), "All users");
-  fillAuditSelect(document.getElementById("audit-engine"), [...engineSet].sort().map((e) => [e, e]), "All engines");
+  fillAuditSelect(document.getElementById("audit-engine"), [...engineSet].sort().map((e) => [e, engineLabel(e)]), "All engines");
 
   auditShown = AUDIT_PAGE;
   renderAuditRows();
@@ -942,10 +1020,12 @@ let activeRunsLive = false;
 let activeRunsSource = null;
 let activeModalTimer = null;
 
+// A run counts under its harness whichever license it is on; the manifest says which that is.
 function dashboardActiveRuns() {
+  const harnessOfRun = (run) => harnessOf(ENGINE_MANIFESTS.find((m) => m.id === run.engine));
   return dashHarness === "all"
     ? ACTIVE_RUNS
-    : ACTIVE_RUNS.filter((run) => String(run.engine || run.engineName || "").toLowerCase() === dashHarness);
+    : ACTIVE_RUNS.filter((run) => String(run.engine || run.engineName || "").toLowerCase() === dashHarness || harnessOfRun(run) === dashHarness);
 }
 
 function renderActiveSessions() {
@@ -1223,6 +1303,7 @@ async function loadDashboard() {
     </div>`;
 
   body.innerHTML = `
+    ${d.historyDays ? `<p class="hint">Free cost-tracking history covers the last ${fmtNum(d.historyDays)} days. Enterprise includes unlimited history.</p>` : ""}
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
     <div class="dash-legend">${modelLegend(keys)}</div>
@@ -1447,7 +1528,7 @@ function workDirConflictSummary(conflict) {
   const names = others.map((item) => item.isDM || item.type === "im"
     ? (item.name || item.slug)
     : hashName(item.name || item.slug));
-  return `Working folder is also assigned to ${names.join(", ")}`;
+  return `Working folder setup is linked with ${names.join(", ")}`;
 }
 
 function convRow(key, color, name, sub, cost, conflict = null) {
@@ -1459,10 +1540,10 @@ function convRow(key, color, name, sub, cost, conflict = null) {
   // Compact whole-dollar 30-day cost (skip sub-$1 rows so the list stays quiet).
   const dollars = cost == null ? null : Math.round(cost);
   const costHtml = dollars && dollars >= 1 ? `<span class="conv-cost">$${escapeHtml(dollars.toLocaleString())}</span>` : "";
-  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Working folder conflict">!</span>' : "";
+  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Linked working folder">↔</span>' : "";
   el.innerHTML =
     `<span class="capdot" style="background:${color}"></span>` +
-    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Shared working folder</small>' : ""}</span>` +
+    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Linked folder setup</small>' : ""}</span>` +
     conflictHtml +
     costHtml;
   el.addEventListener("click", (e) => {
@@ -1499,7 +1580,7 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), c.meta?.archived ? "Archived" : capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
@@ -1572,11 +1653,6 @@ function openDetail(key) {
 }
 
 // ── Shared checklist helpers (MCP list, filter box, "N of M enabled" count) ───────
-function effectiveMcpEngine(value) {
-  const engine = effectiveEngine(value);
-  const manifest = ENGINE_MANIFESTS.find((entry) => entry.id === engine);
-  return manifest?.supports?.mcp === false ? "" : engine;
-}
 
 function mcpEntryId(entry) {
   return String(entry?.id || entry?.name || "");
@@ -1588,28 +1664,30 @@ function mcpBoxState(box) {
     return {
       claude: Array.isArray(parsed.claude) ? parsed.claude.map(String) : [],
       codex: Array.isArray(parsed.codex) ? parsed.codex.map(String) : [],
+      "codex-channel": Array.isArray(parsed["codex-channel"]) ? parsed["codex-channel"].map(String) : [],
     };
   } catch {
-    return { claude: [], codex: [] };
+    return { claude: [], codex: [], "codex-channel": [] };
   }
 }
 
-function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
+function initializeMcpBox(box, { claude = [], codex = [], "codex-channel": channelCodex = [] } = {}) {
   box.dataset.kind = "m";
   box.dataset.mcpSelections = JSON.stringify({
     claude: claude.map(mcpEntryId).filter(Boolean),
     codex: codex.map(mcpEntryId).filter(Boolean),
+    "codex-channel": channelCodex.map(mcpEntryId).filter(Boolean),
   });
   // Preserve already-saved objects when discovery is unavailable/offline so an unrelated Save
   // round-trips them instead of silently erasing access.
-  box._mcpOriginals = { claude: [...claude], codex: [...codex] };
+  box._mcpOriginals = { claude: [...claude], codex: [...codex], "codex-channel": [...channelCodex] };
 }
 
 function captureMcpSelection(box) {
   if (box.dataset.engine === "both") {
     if (box.dataset.mcpLoading) return;
     const state = mcpBoxState(box);
-    for (const engine of ["claude", "codex"]) {
+    for (const engine of ["claude", "codex", ...(box.dataset.mcpChannelId ? ["codex-channel"] : [])]) {
       state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
         .map((input) => input.value);
     }
@@ -1628,7 +1706,7 @@ function captureMcpSelection(box) {
 }
 
 function catalogWithSavedEntries(box, engine) {
-  const catalog = AVAILABLE_MCPS[engine === "codex" ? (box.dataset.mcpCodexKey || "codex") : engine] || [];
+  const catalog = AVAILABLE_MCPS[engine === "codex-channel" ? `codex-channel:${box.dataset.mcpChannelId}` : engine] || [];
   const state = mcpBoxState(box);
   const wanted = new Set(state[engine]);
   const merged = [...catalog];
@@ -1662,10 +1740,10 @@ function paintMcpBox(box, engine) {
 function paintAllMcpBoxes(box) {
   box.replaceChildren();
   box.classList.remove("empty");
-  for (const engine of ["claude", "codex"]) {
+  for (const engine of ["claude", "codex", ...(box.dataset.mcpChannelId ? ["codex-channel"] : [])]) {
     const section = document.createElement("section");
     section.className = "mcp-engine-group";
-    section.innerHTML = `<h5>${engine === "claude" ? "Claude" : "Codex"}</h5>`;
+    section.innerHTML = `<h5>${engine === "claude" ? "Claude" : engine === "codex-channel" ? "Codex (channel account)" : "Codex"}</h5>`;
     const list = document.createElement("div");
     const selected = mcpBoxState(box)[engine];
     const items = catalogWithSavedEntries(box, engine).map(entry => mcpCheckboxItem(entry, selected));
@@ -1677,10 +1755,10 @@ function paintAllMcpBoxes(box) {
 }
 
 async function loadMcpCatalog(engine, channelId = "") {
-  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  const key = engine === "codex-channel" && channelId ? `codex-channel:${channelId}` : engine;
   if (Array.isArray(AVAILABLE_MCPS[key])) return AVAILABLE_MCPS[key];
   if (!MCP_CATALOG_LOADS[key]) {
-    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
+    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex-channel" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
       .then((result) => {
         AVAILABLE_MCPS[key] = Array.isArray(result.servers) ? result.servers : [];
         return AVAILABLE_MCPS[key];
@@ -1695,18 +1773,20 @@ async function loadMcpCatalog(engine, channelId = "") {
 async function renderMcpBoxForEngine(box, engineValue, countEl, channelId = "") {
   captureMcpSelection(box);
   box.dataset.engine = "both";
-  const codexKey = channelId ? `codex:${channelId}` : "codex";
-  box.dataset.mcpCodexKey = codexKey;
-  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine === "codex" ? codexKey : engine]));
+  box.dataset.mcpChannelId = channelId;
+  const engines = ["claude", "codex", ...(channelId ? ["codex-channel"] : [])];
+  const keyFor = engine => engine === "codex-channel" ? `codex-channel:${channelId}` : engine;
+  const missing = engines.filter(engine => !Array.isArray(AVAILABLE_MCPS[keyFor(engine)]));
   if (missing.length) {
     box.dataset.mcpLoading = "both";
     box.classList.add("empty");
-    box.textContent = "loading Claude and Codex MCP lists…";
+    box.textContent = "loading MCP lists…";
     updateChecksCount(box, countEl);
-    await Promise.all(missing.map(async (engine) => {
-      try { await loadMcpCatalog(engine, engine === "codex" ? channelId : ""); } catch { AVAILABLE_MCPS[engine === "codex" ? codexKey : engine] = []; }
+    await Promise.all(missing.map(async engine => {
+      try { await loadMcpCatalog(engine, engine === "codex-channel" ? channelId : ""); }
+      catch { AVAILABLE_MCPS[keyFor(engine)] = []; }
     }));
-    if (!box.isConnected || box.dataset.mcpCodexKey !== codexKey) return;
+    if (!box.isConnected || box.dataset.mcpChannelId !== channelId) return;
   }
   delete box.dataset.mcpLoading;
   paintAllMcpBoxes(box);
@@ -1747,14 +1827,13 @@ function wireGrantTierNavigation(select, currentTier) {
 }
 
 // Skills/connectors share one editor at each tier. Its MCP state keeps independent Claude/Codex
-// selections while the engine dropdown switches the visible catalog; OpenCode deliberately has
-// no MCP editor because its restricted proof profile rejects that capability.
-function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
+// selections while the engine dropdown switches the visible catalog.
+function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "access-grants-editor";
   el.innerHTML = `
     <div class="grid grid-2">
-      <label class="field"><span>Connector engine</span><select class="grant-engine"></select></label>
+      <label class="field"><span>Connector harness</span><select class="grant-engine"></select></label>
     </div>
     <div class="grid grid-2">
       <div class="col tools-col">
@@ -1769,11 +1848,9 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
       </div>
     </div>`;
   const engineSelect = el.querySelector(".grant-engine");
-  engineSelect.innerHTML = selectableEngines()
-    .filter((m) => m.id !== "opencode")
-    .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`)
-    .join("");
-  engineSelect.value = effectiveMcpEngine(GLOBAL_ENGINE) || "claude";
+  engineSelect.innerHTML = engineOptionsHtml();
+  engineSelect.value = effectiveEngine(GLOBAL_ENGINE) || "claude";
+  if (engineSelect.selectedIndex < 0) engineSelect.selectedIndex = 0;
   const mcpsBox = el.querySelector(".grant-mcps");
   const mcpsCount = el.querySelector(".grant-mcps-count");
   initializeMcpBox(mcpsBox, {
@@ -1782,7 +1859,8 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
   });
   const skillsBox = el.querySelector(".grant-skills");
   skillsBox.dataset.kind = "s";
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS, ownerId: tier === "user" ? ownerId : "" });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".grant-mcps-filter"), mcpsCount);
   wireChecksTools(skillsBox, el.querySelector(".grant-skills-filter"), el.querySelector(".grant-skills-count"));
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
@@ -1800,7 +1878,6 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
         .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
       allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
         .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
-      allowedOpenCodeMcps: [],
     }),
   };
 }
@@ -2005,12 +2082,12 @@ function renderChannelDetail(ch) {
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
   card.querySelector(".ch-name").textContent = conversationChannelName(ch);
-  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
+  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "") + (meta.archived ? " · Archived — re-invite the bot to resume configuration updates" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
   // Header capability pill — colored by the live mode; kept in sync as flags change.
   const modePill = card.querySelector(".ch-mode");
-  const paintModePill = (m) => { modePill.textContent = capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
+  const paintModePill = (m) => { modePill.textContent = meta.archived ? "Archived" : capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
   paintModePill(meta);
 
   // ── Dirty tracking / savebar ──────────────────────────────────────────────────
@@ -2068,6 +2145,7 @@ function renderChannelDetail(ch) {
   initializeMcpBox(mcpsBox, {
     claude: meta.allowedMcps || [],
     codex: meta.allowedCodexMcps || [],
+    "codex-channel": meta.allowedChannelCodexMcps || [],
   });
   wireChecksTools(mcpsBox, card.querySelector(".ch-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
@@ -2086,7 +2164,7 @@ function renderChannelDetail(ch) {
     }
     const inherited = () => {
       const template = SKILL_TEMPLATES.find((t) => t.slug === templateSelect.value);
-      const section = catalog.skills.filter((s) => s.channelScope === ch.channelId && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
+      const section = catalog.skills.filter((s) => s.channelScope === (meta.workspaceLink?.channelId || ch.channelId) && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
       return [
         { id: "organization", label: "Organization skills", slugs: overview.orgSkills || [], note: "Managed organization-wide." },
         { id: "template", label: "Template skills", slugs: template?.resolved || [], note: template ? `Included by ${template.name}. Edit the template in Skills → Templates.` : "Choose a template above to include its skills." },
@@ -2094,7 +2172,8 @@ function renderChannelDetail(ch) {
       ];
     };
     skillsPicker = mountSkillAssignmentPicker(skillsBox, { skills: catalog.skills, sources: catalog.sources, selected: meta.skills || [], inherited: inherited(), onChange: markDirty });
-    templateSelect.disabled = false;
+    templateSelect.disabled = !!meta.workspaceLink;
+    if (meta.workspaceLink) for (const input of skillsBox.querySelectorAll("input,button,select")) input.disabled = true;
     templateSelect.addEventListener("change", () => skillsPicker.update({ inherited: inherited() }));
   }).catch((error) => {
     if (!skillsBox.isConnected) return;
@@ -2114,6 +2193,7 @@ function renderChannelDetail(ch) {
   flagEls.cleanMode.checked = !!meta.cleanMode;
   const networkBox = card.querySelector(".ch-network");
   networkBox.checked = !!meta.allowNetwork;
+  showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
   // Picking a base preserves the independent Auto/Lean controls.
@@ -2162,9 +2242,35 @@ function renderChannelDetail(ch) {
   manageSel.addEventListener("change", applyManageUI);
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
-  card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
+  card.querySelector(".ch-skillswap").checked = !!meta.skillRuntimeSwap;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
+  if (meta.workspaceLink) {
+    const notice = document.createElement("p");
+    notice.className = "hint";
+    notice.textContent = `Linked folder setup: ${meta.workspaceLink.name}. Skills, templates, memory, instructions, mode, network and Drive sync follow this source. Edit shared settings there; choose a separate folder to unlink. Harness and model remain independent.`;
+    const source = document.createElement("button");
+    source.type = "button";
+    source.textContent = "Open source conversation";
+    source.addEventListener("click", () => {
+      const id = meta.workspaceLink.channelId;
+      selectConv((DMS.some((d) => d.channelId === id) ? "dm:" : "ch:") + id);
+    });
+    for (const cap of capCards) { cap.style.pointerEvents = "none"; cap.setAttribute("aria-disabled", "true"); }
+    for (const pane of card.querySelectorAll('.subpane[data-pane="access"], .subpane[data-pane="connections"], .subpane[data-pane="mcps"], .subpane[data-pane="environment"], .subpane[data-pane="skills"]')) {
+      const locked = document.createElement("fieldset");
+      locked.disabled = true;
+      locked.style.cssText = "border:0;padding:0;margin:0;min-width:0";
+      while (pane.firstChild) locked.appendChild(pane.firstChild);
+      pane.appendChild(locked);
+    }
+    notice.appendChild(source);
+    card.querySelector(".dhead").after(notice);
+    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean", ".ch-skillswap"]) {
+      const input = card.querySelector(selector);
+      if (input) { input.disabled = true; input.title = "Edit this shared setting in the source conversation"; }
+    }
+  }
   card.querySelector(".ch-browse").addEventListener("click", () => openFolderPicker(workdirInput));
   card.querySelector(".ch-workdir-reset").addEventListener("click", () => {
     if (!workdirInput.value) return;
@@ -2173,6 +2279,45 @@ function renderChannelDetail(ch) {
     workdirInput.dispatchEvent(new Event("input", { bubbles: true }));
     workdirInput.focus();
   });
+  // Additional folders: one row per entry (path, mode, Browse, Remove). Rows are read back on Save
+  // (collectExtraFolders); an empty path row is dropped there rather than refused here.
+  const extraList = card.querySelector(".ch-extrafolders");
+  const addExtraFolderRow = (entry = { path: "", mode: "rw" }) => {
+    const row = document.createElement("div");
+    row.className = "row ch-extrafolder";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ch-extrafolder-path";
+    input.placeholder = "/absolute/path/to/folder";
+    input.value = entry.path || "";
+    const mode = document.createElement("select");
+    mode.className = "ch-extrafolder-mode";
+    for (const [value, label] of [["rw", "read-write"], ["ro", "read-only"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      mode.appendChild(option);
+    }
+    mode.value = entry.mode === "ro" ? "ro" : "rw";
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "ghost";
+    browse.textContent = "Browse…";
+    browse.addEventListener("click", () => openFolderPicker(input));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => { row.remove(); markDirty(); });
+    row.append(input, mode, browse, remove);
+    extraList.appendChild(row);
+    return input;
+  };
+  for (const entry of Array.isArray(meta.extraFolders) ? meta.extraFolders : []) addExtraFolderRow(entry);
+  card.querySelector(".ch-extrafolder-add").addEventListener("click", () => { addExtraFolderRow().focus(); markDirty(); });
+  const collectExtraFolders = () => Array.from(card.querySelectorAll(".ch-extrafolder"))
+    .map((row) => ({ path: row.querySelector(".ch-extrafolder-path").value.trim(), mode: row.querySelector(".ch-extrafolder-mode").value }))
+    .filter((entry) => entry.path);
   card.querySelector(".ch-syncdrive").value = meta.syncDriveFolder || "";
   card.querySelector(".ch-synctest").addEventListener("click", async () => {
     const result = card.querySelector(".ch-synctest-result");
@@ -2226,101 +2371,110 @@ function renderChannelDetail(ch) {
   } else {
     approvedBox.textContent = "";
   }
-  const engineSelect = card.querySelector(".ch-engine");
-  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
-  engineSelect.value = meta.engine || "";
+  // The legacy channel Codex account is retired (a channel's own account is a license limited to
+  // it, below); a channel the boot migration could not move still reads its stored switch.
+  const legacyAuthSource = meta.codexAuthSource === "channel" ? "channel" : "gateway";
+  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
+  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
+  const modelSelect = card.querySelector(".ch-model");
+  const effortSelect = card.querySelector(".ch-effort");
+  const effortLabel = card.querySelector(".ch-effort-label");
+  // The lock: whole harnesses (`harness:<id>`) and single licenses this channel may run on.
   const harnessPolicy = card.querySelector(".ch-harness-policy");
   const harnessRestrict = card.querySelector(".ch-harness-restrict");
   const harnessOptions = card.querySelector(".ch-harness-options");
   const harnessHelp = card.querySelector(".ch-harness-help");
   let harnessPolicyDirty = false;
   harnessRestrict.checked = Array.isArray(meta.approvedEngines);
-  checkboxList(harnessOptions, ENGINE_MANIFESTS.map((m) => ({ value: m.id, label: m.label })), meta.approvedEngines || [], "value", "label");
-  const approvedHarnesses = () => harnessRestrict.checked ? explicitCheckedValues(harnessOptions) : null;
+  // A license limited to another conversation can never run here, so it is not something to approve.
+  const hereIds = [ch.channelId, meta.codeChannel?.originChannelId].filter(Boolean);
+  const harnessLock = mountLicenseLock(harnessOptions, { manifests: ENGINE_MANIFESTS.filter((m) => !m.limitedToChannel || hereIds.includes(m.limitedToChannel)), policy: meta.approvedEngines });
+  const approvedHarnesses = () => harnessRestrict.checked ? harnessLock.values() : null;
+  const approvalAdmits = (id) => policyAdmits(approvedHarnesses(), ENGINE_MANIFESTS.find((m) => m.id === id));
+  // The channel default: harness → license → "if it fails, also use" (meta `engine` + `licensePool`).
+  // It offers what this channel may run on right now — the lock and the Codex sign-in as they
+  // stand on the card, saved or not. `engineSelect.value` is the engine id, "" = the gateway default.
+  const engineSelect = mountLicensePicker({
+    harnessSelect: card.querySelector(".ch-engine"),
+    env: () => licenseEnv({ codexAuthSource: legacyAuthSource, policy: approvedHarnesses(), channelIds: [ch.channelId, meta.codeChannel?.originChannelId] }),
+    engine: meta.engine || "",
+    pool: meta.licensePool || "",
+    includeDefault: true,
+    defaultAllowed: () => approvalAdmits(effectiveEngine("")),
+    onChange: () => syncChannelRuntime(),
+  });
+  let shownEngine = engineSelect.value;
+  // Model and effort belong to the engine the picker resolved to; so does the MCP catalog.
+  const syncChannelRuntime = () => {
+    shownEngine = engineSelect.value;
+    syncModelOptions({ engineSelect, modelSelect, blankLabel: "gateway default (Settings)" });
+    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, legacyAuthSource === "channel" ? ch.channelId : "");
+  };
   const paintHarnessPolicy = () => {
     harnessOptions.hidden = !harnessRestrict.checked;
-    const approved = approvedHarnesses();
-    for (const option of engineSelect.options) {
-      option.disabled = approved !== null && !approved.includes(option.value || GLOBAL_ENGINE || "claude");
-    }
+    engineSelect.repaint();
+    if (engineSelect.value !== shownEngine) syncChannelRuntime();
   };
   harnessPolicy.addEventListener("change", () => { harnessPolicyDirty = true; paintHarnessPolicy(); });
   paintHarnessPolicy();
   void api("/api/license").then((license) => {
     if (!harnessPolicy.isConnected) return;
+    for (const [selector, key] of [[".ch-skillswap", "skillModelRouting"], [".ch-skill-template", "skillTemplates"], [".ch-syncdrive", "driveSync"]]) {
+      const control = card.querySelector(selector);
+      if (control) {
+        const entitled = license.features?.[key] === true;
+        control.title = entitled ? "" : "Requires Enterprise; existing configuration can be cleared";
+        if (control.type === "checkbox") control.disabled = !entitled && !control.checked;
+        else if (control.tagName === "SELECT") for (const option of control.options) option.disabled = !entitled && Boolean(option.value);
+        else control.readOnly = !entitled && !control.value;
+      }
+    }
+    const addChannelLicense = card.querySelector(".ch-licenses .lic-add");
+    if (license.features?.channelCodexLogin !== true) {
+      card.querySelector(".ch-licenses-enterprise").hidden = false;
+      if (addChannelLicense) addChannelLicense.disabled = true;
+    }
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
       ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
-      : "Approve one or more harnesses, then choose an approved channel default. Thread pins and automatic fallback must also use approved harnesses. Uncheck to allow all harnesses.";
+      : "Lock this channel to whole harnesses or to single licenses, then choose an approved channel default. A whole harness includes licenses added to it later. Thread pins and automatic fallback must also stay inside the approved set. Uncheck to allow everything.";
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
-  const authSource = card.querySelector(".ch-codex-auth-source");
-  const channelPanel = card.querySelector(".ch-auth-channel-panel");
-  const modelSelect = card.querySelector(".ch-model");
-  const effortSelect = card.querySelector(".ch-effort");
-  const effortLabel = card.querySelector(".ch-effort-label");
-  const paintAuthScope = () => {
-    const dedicated = authSource.value === "channel";
-    channelPanel.hidden = !dedicated;
-    card.querySelector(".ch-engine-field").hidden = dedicated;
-    if (dedicated) engineSelect.value = "codex";
-    syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
-    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, dedicated ? ch.channelId : "");
-  };
-  authSource.value = meta.codexAuthSource || "gateway";
-  authSource.addEventListener("change", paintAuthScope);
-  mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
-    onComplete: () => {
-      authSource.value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
-      delete AVAILABLE_MCPS[`codex:${ch.channelId}`];
-      paintAuthScope();
+
+  // "Licenses for this channel": the Settings → Licenses manager, drawn for this conversation only.
+  // Its add/edit form is the same one, locked to this channel; a change reloads the engine
+  // manifest so the harness picker above offers the new license at once.
+  const channelLicenses = mountLicensesManager({
+    root: card.querySelector(".ch-licenses"),
+    api,
+    confirm: confirmDialog,
+    copyText: copyTerminalCommand,
+    mountCodexLogin: mountCodexLoginBox,
+    state: () => ({ manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED }),
+    reload: async () => {
+      if (!settingsDirty) await loadSettings();
+      await channelLicenses.load();
+      if (card.isConnected) { engineSelect.repaint(); syncChannelRuntime(); }
     },
+    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    scope: { channelId: ch.channelId, label: conversationChannelName(ch) || ch.name || ch.slug || ch.channelId },
   });
-  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
-  syncModelOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    value: meta.model || "",
-    blankLabel: "gateway default (Settings)",
+  void channelLicenses.load();
+  card.querySelector(".ch-licenses-all")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    setView("settings");
+    selectSettingsSection("engine-licenses");
   });
-  syncEffortOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    effortSelect: card.querySelector(".ch-effort"),
-    label: card.querySelector(".ch-effort-label"),
-    value: meta.effort || "",
-  });
-  paintAuthScope();
-  engineSelect.addEventListener("change", () => {
-    syncModelOptions({
-      engineSelect,
-      modelSelect: card.querySelector(".ch-model"),
-      blankLabel: "gateway default (Settings)",
-    });
-    syncEffortOptions({
-      engineSelect,
-      modelSelect: card.querySelector(".ch-model"),
-      effortSelect: card.querySelector(".ch-effort"),
-      label: card.querySelector(".ch-effort-label"),
-    });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
-  });
-  card.querySelector(".ch-model").addEventListener("change", () => syncEffortOptions({
-    engineSelect,
-    modelSelect: card.querySelector(".ch-model"),
-    effortSelect: card.querySelector(".ch-effort"),
-    label: card.querySelector(".ch-effort-label"),
-  }));
+  syncModelOptions({ engineSelect, modelSelect, value: meta.model || "", blankLabel: "gateway default (Settings)" });
+  syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: meta.effort || "" });
+  syncChannelRuntime();
+  modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
   card.querySelector(".ch-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (meta.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
-    : (meta.hasComposioToken ? "" : "no token (uses org default)");
-  card.querySelector(".ch-toolboxtoken-state").textContent = meta.hasToolboxToken ? "" : "no token (uses each user's own)";
+    : (meta.hasComposioToken ? "" : "no token (no shared composio-agent here)");
   attachReveal(card.querySelector(".ch-composio"), { has: meta.hasComposioToken, last4: meta.composioTokenLast4, fetch: revealSecret("channel", "composioToken", ch.slug) });
-  attachReveal(card.querySelector(".ch-toolboxtoken"), { has: meta.hasToolboxToken, last4: meta.toolboxTokenLast4, fetch: revealSecret("channel", "toolboxToken", ch.slug) });
   card.querySelector(".ch-composio-label").value = meta.composioTokenLabel || "";
-  card.querySelector(".ch-toolboxtoken-label").value = meta.toolboxTokenLabel || "";
   // Per-channel environment secrets. These are the ONE part of the channel card that saves
   // immediately rather than on the card's Save button: the card round-trips its fields, and a
   // write-only value must never be a field that round-trips. The list is names + last4 only —
@@ -2404,25 +2558,24 @@ function renderChannelDetail(ch) {
   // ── Save (full meta PUT — identical body/fields to before) ────────────────────
   savebar.querySelector(".save-channel").addEventListener("click", async () => {
     const composioTok = tokenValue(card.querySelector(".ch-composio"));
-    const toolboxTok = tokenValue(card.querySelector(".ch-toolboxtoken"));
     const composioLabel = card.querySelector(".ch-composio-label").value;
-    const toolboxLabel = card.querySelector(".ch-toolboxtoken-label").value;
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
-    const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
       const approvals = approvedHarnesses();
-      if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness.");
-      if (approvals !== null && !approvals.includes(authSource.value === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
-        throw new Error("Choose a channel default from its approved harnesses.");
+      if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness or license.");
+      if (approvals !== null && !approvalAdmits(legacyAuthSource === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
+        throw new Error("Choose a channel default from its approved harnesses and licenses.");
       }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
-        body: JSON.stringify({
+        body: JSON.stringify(Object.fromEntries(Object.entries({
           ...(harnessPolicyDirty ? { approvedEngines: approvals } : {}),
           ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox), usersBox.dataset.changed === "1"),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
+            .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
+          allowedChannelCodexMcps: selectedMcpEntries(mcpsBox, "codex-channel")
             .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
           ...(skillsPicker ? {
             skills: skillsPicker.getSelected(),
@@ -2439,30 +2592,33 @@ function renderChannelDetail(ch) {
           allowNetwork: card.querySelector(".ch-network").checked,
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
+          skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
           memory: card.querySelector(".ch-memory").checked,
-          noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
-          codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
+          // Beside the license it belongs to; "" when the choice is a single license or inherited.
+          licensePool: engineSelect.pool ?? "",
+          ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
+            ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
+          extraFolders: collectExtraFolders(),
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
           effort: card.querySelector(".ch-effort").value,
           ...(composioTok ? { composioToken: composioTok } : {}),
-          ...(toolboxTok ? { toolboxToken: toolboxTok } : {}),
           // Owner labels always round-trip (empty clears them) — notes, not secrets.
           composioTokenLabel: composioLabel,
-          toolboxTokenLabel: toolboxLabel,
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
           ...(clearMakeToolbox ? { clearMakeToolbox: true } : {}),
-        }),
+        }).filter(([key]) => !meta.workspaceLink?.fields?.includes(key === "licensePool" ? "engine" : key)))),
       });
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
-      if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
-      initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
+      if (composioTok) void loadComposioConnections(true);
+      initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [], "codex-channel": ch.meta.allowedChannelCodexMcps || [] });
       if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
       updateChecksCount(mcpsBox, mcpsCount);
       void refreshVpn();
@@ -2487,6 +2643,10 @@ function renderChannelDetail(ch) {
       // conversation collections from the authoritative server rather than repainting stale flags.
       if (!(await refreshConversationRows())) renderConvList();
       detailDirty = false;
+      if (meta.workspaceLink?.slug !== ch.meta.workspaceLink?.slug) {
+        renderChannelDetail(ch);
+        return;
+      }
       savebarMsg.textContent = "Saved";
       savebarMsg.classList.add("clean");
       setTimeout(() => { if (!detailDirty) savebar.hidden = true; }, 1500);
@@ -2614,6 +2774,9 @@ function renderChannelDetail(ch) {
   }
 
   detail.innerHTML = "";
+  if (meta.archived) {
+    for (const control of card.querySelectorAll("input, select, textarea, button:not(.subtab)")) control.disabled = true;
+  }
   detail.appendChild(node);
   const refreshVpn = mountChannelVpnControls(card, ch.channelId);
 }
@@ -2624,7 +2787,9 @@ function renderChannelDetail(ch) {
 // a network switch, then the Tools (MCP/Skills) and Runtime (engine/model/effort) blocks — so a
 // template is configured with the exact same elements as a channel. getValues() returns the flat
 // flag shape the template/DM save expects (no `profile` field — it's re-derived from the flags).
-function buildConfigEditor(cfg = {}) {
+// `storesPool` is false where only `engine` is stored (the settings templates): the license step
+// then offers single licenses, with no "Any license" and no "also use".
+function buildConfigEditor(cfg = {}, { storesPool = false, channelId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "cfg-editor";
   el.innerHTML = `
@@ -2667,8 +2832,8 @@ function buildConfigEditor(cfg = {}) {
 
     <p class="fldlab" style="margin-top:20px">Runtime</p>
     <div class="grid grid-2">
-      <label class="field"><span>Engine (which CLI drives this)</span>
-        <select class="cfg-engine"><option value="">Default (global setting)</option><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+      <label class="field"><span>Harness (which CLI drives this)</span>
+        <select class="cfg-engine"><option value="">Default (global setting)</option></select></label>
       <label class="field"><span>Model</span>
         <select class="cfg-model"></select></label>
       <label class="field"><span class="cfg-effort-label">Effort</span>
@@ -2682,48 +2847,34 @@ function buildConfigEditor(cfg = {}) {
     claude: cfg.allowedMcps || [],
     codex: cfg.allowedCodexMcps || [],
   });
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".cfg-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, el.querySelector(".cfg-skills-filter"), el.querySelector(".cfg-skills-count"));
   fillSkillTemplateSelect(el.querySelector(".cfg-skill-template"), cfg.skillTemplate || "", el.querySelector(".cfg-skill-template-state"));
-  const engineSelect = el.querySelector(".cfg-engine");
-  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
-  engineSelect.value = cfg.engine || "";
+  const modelSelect = el.querySelector(".cfg-model");
+  const effortSelect = el.querySelector(".cfg-effort");
+  const effortLabel = el.querySelector(".cfg-effort-label");
+  // Harness → license (→ "if it fails, also use" where a pool is stored). `engineSelect.value` is
+  // the engine id, "" = the gateway default.
+  const engineSelect = mountLicensePicker({
+    harnessSelect: el.querySelector(".cfg-engine"),
+    env: () => licenseEnv({ channelIds: [channelId] }),
+    engine: cfg.engine || "",
+    pool: storesPool ? cfg.licensePool || "" : "",
+    includeDefault: true,
+    allowPool: storesPool,
+    onChange: () => {
+      syncModelOptions({ engineSelect, modelSelect, blankLabel: "gateway default (Settings)" });
+      syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+      renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+    },
+  });
   renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
-  syncModelOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    value: cfg.model || "",
-    blankLabel: "gateway default (Settings)",
-  });
-  syncEffortOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    effortSelect: el.querySelector(".cfg-effort"),
-    label: el.querySelector(".cfg-effort-label"),
-    value: cfg.effort || "",
-  });
-  engineSelect.addEventListener("change", () => {
-    syncModelOptions({
-      engineSelect,
-      modelSelect: el.querySelector(".cfg-model"),
-      blankLabel: "gateway default (Settings)",
-    });
-    syncEffortOptions({
-      engineSelect,
-      modelSelect: el.querySelector(".cfg-model"),
-      effortSelect: el.querySelector(".cfg-effort"),
-      label: el.querySelector(".cfg-effort-label"),
-    });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
-  });
-  el.querySelector(".cfg-model").addEventListener("change", () => syncEffortOptions({
-    engineSelect,
-    modelSelect: el.querySelector(".cfg-model"),
-    effortSelect: el.querySelector(".cfg-effort"),
-    label: el.querySelector(".cfg-effort-label"),
-  }));
+  syncModelOptions({ engineSelect, modelSelect, value: cfg.model || "", blankLabel: "gateway default (Settings)" });
+  syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel, value: cfg.effort || "" });
+  modelSelect.addEventListener("change", () => syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel }));
 
   // Capability cards → hidden flag checkboxes (identical mapping + copy to the channel Access tab).
   const flags = {
@@ -2776,6 +2927,7 @@ function buildConfigEditor(cfg = {}) {
     allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
       .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
     engine: engineSelect.value,
+    ...(storesPool ? { licensePool: engineSelect.pool } : {}),
     model: el.querySelector(".cfg-model").value,
     effort: el.querySelector(".cfg-effort").value,
     adminMode: flags.adminMode.checked,
@@ -2785,6 +2937,17 @@ function buildConfigEditor(cfg = {}) {
     cleanMode: flags.cleanMode.checked,
   });
   return { el, getValues };
+}
+
+// Budgets are conversation-local and administered here, outside shared workspace/template policy.
+function readBudgetInput(input) {
+  if (!input.checkValidity()) throw new Error("Enter a positive monthly USD budget, or leave it blank for unlimited.");
+  return input.value === "" ? null : Number(input.value);
+}
+function showBudgetStatus(element, channelId) {
+  api(`/api/channels/${encodeURIComponent(channelId)}/budget`).then((budget) => {
+    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s)${budget.limitUSD === null ? "" : "; repair pricing to resume"}` : ""}`;
+  }).catch(() => { element.textContent = "Budget usage unavailable. Reopen this conversation to retry."; });
 }
 
 // ── Shared savebar (DM + template details) ────────────────────────────────────────
@@ -2870,8 +3033,21 @@ function renderDmDetail(id) {
     <select class="dm-template"><option value="user">User template</option><option value="admin">Admin template</option><option value="custom">Custom</option></select>`;
   card.appendChild(tplField);
   const tplSel = tplField.querySelector(".dm-template");
-  tplSel.value = dm.template;
+  tplSel.value = dm.meta?.workspaceLink ? "custom" : dm.template;
+  if (dm.meta?.workspaceLink) {
+    tplSel.disabled = true;
+    const linked = document.createElement("p");
+    linked.className = "hint";
+    linked.textContent = `Shared setup linked to ${dm.meta.workspaceLink.name}. Edit shared settings in that source conversation; harness, model and effort remain independent.`;
+    head.after(linked);
+  }
 
+  const budgetField = document.createElement("label");
+  budgetField.className = "field";
+  budgetField.innerHTML = `<span>Monthly budget (USD) · Enterprise</span><input type="number" class="dm-budget" min="0.01" step="any" placeholder="Unlimited" /><em class="state">Blank = unlimited. Resets monthly at 00:00 UTC. Active runs may exceed the limit; unpriced usage pauses new runs until pricing is repaired. External service charges are excluded.</em><em class="state dm-budget-status" role="status"></em>`;
+  budgetField.querySelector("input").value = dm.meta?.monthlySpendingLimitUSD ?? "";
+  card.appendChild(budgetField);
+  showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
   const customBox = document.createElement("div");
   customBox.className = "dm-custom";
   card.appendChild(customBox);
@@ -2879,7 +3055,13 @@ function renderDmDetail(id) {
   const renderCustom = () => {
     customBox.innerHTML = "";
     ed = null;
-    if (tplSel.value === "custom") { ed = buildConfigEditor(dm.meta || {}); customBox.appendChild(ed.el); }
+    if (tplSel.value === "custom") {
+      ed = buildConfigEditor(dm.meta || {}, { storesPool: true, channelId: dm.channelId });
+      customBox.appendChild(ed.el);
+      if (dm.meta?.workspaceLink) for (const input of ed.el.querySelectorAll("input,select,button")) {
+        if (!input.matches(".cfg-engine,.lic-select,.lic-also input,.cfg-model,.cfg-effort")) input.disabled = true;
+      }
+    }
   };
   renderCustom();
   paintCap(tplSel.value);
@@ -2891,9 +3073,12 @@ function renderDmDetail(id) {
     card, bar,
     async () => {
       const tpl = tplSel.value;
-      const body = { template: tpl, ...(tpl === "custom" && ed ? ed.getValues() : {}) };
+      const values = tpl === "custom" && ed ? ed.getValues() : {};
+      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key === "licensePool" ? "engine" : key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
+      showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
       dm.template = tpl;
+      dm.meta = { ...dm.meta, monthlySpendingLimitUSD: body.monthlySpendingLimitUSD };
       renderConvList();
     },
     () => renderDmDetail(id),
@@ -2902,262 +3087,32 @@ function renderDmDetail(id) {
   detail.appendChild(card);
 }
 
-// ── Schedules ──────────────────────────────────────────────────────────────────
-let scheduleEditor = null;
-let scheduleRows = [];
-
-function scheduleDetail(label, value) {
-  return `<div class="schedule-detail"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`;
-}
-
-function scheduleTime(hour, minute) {
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function parseScheduleCron(cron) {
-  const [minute, hour, monthDay, month, weekDay] = String(cron || "").trim().split(/\s+/);
-  if ([minute, hour, monthDay, month, weekDay].some((part) => part === undefined) || month !== "*") return { frequency: "advanced" };
-  if (/^\d+$/.test(minute) && hour === "*" && monthDay === "*" && weekDay === "*") return { frequency: "hourly", minute };
-  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return { frequency: "advanced" };
-  const time = scheduleTime(hour, minute);
-  if (monthDay === "*" && weekDay === "*") return { frequency: "daily", time };
-  if (monthDay === "*" && weekDay === "1-5") return { frequency: "weekdays", time };
-  if (monthDay === "*" && /^[0-6]$/.test(weekDay)) return { frequency: "weekly", day: weekDay, time };
-  if (/^\d+$/.test(monthDay) && weekDay === "*") return { frequency: "monthly", monthDay, time };
-  return { frequency: "advanced" };
-}
-
-function friendlySchedule(schedule) {
-  if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
-  if (schedule.intervalDays) return `Every ${schedule.intervalDays} days · next ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
-  const parsed = parseScheduleCron(schedule.cron);
-  const at = parsed.time ? ` at ${parsed.time}` : "";
-  if (parsed.frequency === "daily") return `Daily${at}`;
-  if (parsed.frequency === "weekdays") return `Weekdays${at}`;
-  if (parsed.frequency === "weekly") return `Weekly on ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(parsed.day)]}${at}`;
-  if (parsed.frequency === "monthly") return `Monthly on day ${Number(parsed.monthDay)}${at}`;
-  if (parsed.frequency === "hourly") return `Hourly at :${String(parsed.minute).padStart(2, "0")}`;
-  return "Custom schedule";
-}
-
-function localDateTimeValue(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function syncScheduleTimingFields() {
-  const once = Boolean(scheduleEditor?.schedule.once);
-  const interval = Boolean(scheduleEditor?.schedule.intervalDays);
-  const frequency = document.getElementById("schedule-frequency").value;
-  document.getElementById("schedule-recurring-fields").hidden = once || interval;
-  document.getElementById("schedule-once-wrap").hidden = !once;
-  document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
-  document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
-  document.getElementById("schedule-time-wrap").hidden = once || ["hourly", "advanced"].includes(frequency);
-  document.getElementById("schedule-minute-wrap").hidden = once || frequency !== "hourly";
-  document.getElementById("schedule-cron-wrap").hidden = once || frequency !== "advanced";
-}
-
-function cronFromScheduleEditor() {
-  const frequency = document.getElementById("schedule-frequency").value;
-  const [hour = "0", minute = "0"] = document.getElementById("schedule-time").value.split(":");
-  if (frequency === "daily") return `${Number(minute)} ${Number(hour)} * * *`;
-  if (frequency === "weekdays") return `${Number(minute)} ${Number(hour)} * * 1-5`;
-  if (frequency === "weekly") return `${Number(minute)} ${Number(hour)} * * ${document.getElementById("schedule-day").value}`;
-  if (frequency === "monthly") return `${Number(minute)} ${Number(hour)} ${Number(document.getElementById("schedule-month-day").value)} * *`;
-  if (frequency === "hourly") return `${Number(document.getElementById("schedule-minute").value)} * * * *`;
-  return document.getElementById("schedule-modal-cron").value.trim();
-}
-
-function openScheduleEditor(schedule) {
-  const modal = document.getElementById("schedule-modal");
-  const prompt = document.getElementById("schedule-modal-prompt");
-  const error = document.getElementById("schedule-modal-error");
-  const status = schedule.lastRun
-    ? `${schedule.lastStatus || "unknown"} · ${new Date(schedule.lastRun).toLocaleString()}`
-    : "Never run";
-  scheduleEditor = { schedule };
-  document.getElementById("schedule-modal-title").textContent = schedule.description || "Automation details";
-  document.getElementById("schedule-modal-details").innerHTML = [
-    scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
-    scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
-    scheduleDetail("Status", status),
-    ...(schedule.intervalDays ? [scheduleDetail("Timing", friendlySchedule(schedule))] : []),
-  ].join("");
-  document.getElementById("schedule-modal-description").value = schedule.description || "";
-  document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
-  const parsed = parseScheduleCron(schedule.cron);
-  document.getElementById("schedule-frequency").value = parsed.frequency;
-  document.getElementById("schedule-time").value = parsed.time || "09:00";
-  document.getElementById("schedule-day").value = parsed.day || "1";
-  document.getElementById("schedule-month-day").value = parsed.monthDay || "1";
-  document.getElementById("schedule-minute").value = parsed.minute || "0";
-  document.getElementById("schedule-modal-cron").value = schedule.cron || "";
-  document.getElementById("schedule-modal-run-at").value = localDateTimeValue(schedule.runAt);
-  document.getElementById("schedule-modal-notify").value = schedule.notify || "channel";
-  document.getElementById("schedule-modal-notify-user").value = schedule.notifyUserId || "";
-  document.getElementById("schedule-modal-notify-user-wrap").hidden = schedule.notify !== "user";
-  const deliveryWrap = document.getElementById("schedule-modal-delivery-wrap");
-  deliveryWrap.hidden = schedule.kind === "reminder";
-  const delivery = document.getElementById("schedule-modal-delivery");
-  delivery.value = schedule.delivery || "standard";
-  delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
-  delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
-  document.getElementById("schedule-modal-thread").value = schedule.deliveryThread || "";
-  document.getElementById("schedule-modal-visibility").value = schedule.executionVisibility || "visible";
-  document.getElementById("schedule-modal-result-policy").value = schedule.resultPolicy || "always";
-  document.getElementById("schedule-modal-failure-notify").checked = schedule.failureNotify !== false;
-  document.getElementById("schedule-modal-sudo").checked = schedule.sudo === true;
-  document.getElementById("schedule-modal-sudo").disabled = Boolean(schedule.loop);
-  for (const field of document.querySelectorAll(".schedule-task-control")) field.hidden = schedule.kind === "reminder";
-  syncScheduleDeliveryFields();
-  prompt.value = schedule.prompt || "";
-  syncScheduleTimingFields();
-  error.textContent = "";
-  error.hidden = true;
-  modal.hidden = false;
-  prompt.focus();
-}
-
-function closeScheduleEditor() {
-  document.getElementById("schedule-modal").hidden = true;
-  document.getElementById("schedule-modal-error").hidden = true;
-  scheduleEditor = null;
-}
-
-async function saveScheduleEditor() {
-  if (!scheduleEditor) return;
-  const input = document.getElementById("schedule-modal-prompt");
-  const errorEl = document.getElementById("schedule-modal-error");
-  const save = document.getElementById("schedule-modal-save");
-  const prompt = input.value;
-  if (!prompt.trim()) {
-    errorEl.textContent = "Prompt cannot be empty.";
-    errorEl.hidden = false;
-    input.focus();
-    return;
-  }
-
-  save.disabled = true;
-  save.textContent = "Saving…";
-  errorEl.hidden = true;
-  try {
-    const schedule = scheduleEditor.schedule;
-    const body = {
-      prompt,
-      description: document.getElementById("schedule-modal-description").value.trim(),
-      enabled: document.getElementById("schedule-modal-enabled").checked,
-      notify: document.getElementById("schedule-modal-notify").value,
-      notifyUserId: document.getElementById("schedule-modal-notify-user").value,
-    };
-    // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
-    // another timezone cannot shift it (or turn a future task into an immediately due one).
-    if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
-    else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
-    if (schedule.kind !== "reminder") {
-      body.delivery = document.getElementById("schedule-modal-delivery").value;
-      body.deliveryThread = document.getElementById("schedule-modal-thread").value.trim();
-      body.executionVisibility = document.getElementById("schedule-modal-visibility").value;
-      body.resultPolicy = document.getElementById("schedule-modal-result-policy").value;
-      body.failureNotify = document.getElementById("schedule-modal-failure-notify").checked;
-      body.sudo = document.getElementById("schedule-modal-sudo").checked;
+// ── Automations ────────────────────────────────────────────────────────────────
+// The health board is ONE component shared with the Activity dashboard (src/web/automation-board.js,
+// served at /automation-board.js); the console only gives it the admin scope and its CSRF marker.
+// The ROI page is the same component in its "roi" mode, mounted into its own root.
+const boardMounts = new Map();
+function mountBoard(rootId, extra, what) {
+  if (boardMounts.has(rootId)) return boardMounts.get(rootId);
+  const mounted = (async () => {
+    const board = await import("/automation-board.js");
+    if (!document.getElementById("automation-board-css")) {
+      const style = document.createElement("style");
+      style.id = "automation-board-css";
+      style.textContent = board.AUTOMATION_BOARD_CSS;
+      document.head.append(style);
     }
-    const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
-    Object.assign(scheduleEditor.schedule, result.schedule);
-    closeScheduleEditor();
-    await loadSchedules();
-  } catch (error) {
-    const modalError = document.getElementById("schedule-modal-error");
-    modalError.textContent = error.message || "Could not save the automation.";
-    modalError.hidden = false;
-    input.focus();
-  } finally {
-    save.disabled = false;
-    save.textContent = "Save automation";
-  }
+    board.automationBoardBrowser({ boardApi: "/api/automation-board", boardHeaders: { "X-CG-Request": "1" }, adminConsole: true, roiHref: "/roi", boardHref: "/automations", rootId, ...extra }, window);
+  })().catch((error) => {
+    boardMounts.delete(rootId);
+    const host = document.getElementById(rootId);
+    if (host) host.textContent = `Couldn’t load ${what}: ${error.message}`;
+  });
+  boardMounts.set(rootId, mounted);
+  return mounted;
 }
-
-async function loadSchedules() {
-  const { schedules } = await api("/api/schedules");
-  scheduleRows = schedules;
-  renderSchedules();
-}
-
-function renderSchedules() {
-  const wrap = document.getElementById("schedules");
-  const query = document.getElementById("schedule-search").value.trim().toLocaleLowerCase();
-  if (!scheduleRows.length) {
-    wrap.innerHTML = `<p class="hint">No schedules yet. In a channel, ask the bot something like "every weekday at 9am, post a standup reminder".</p>`;
-    return;
-  }
-  const schedules = scheduleRows.filter((schedule) => !query || [schedule.channelName, schedule.description, schedule.prompt, friendlySchedule(schedule), schedule.cron].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
-  if (!schedules.length) {
-    wrap.innerHTML = `<div class="card schedule-empty"><strong>No matching automations</strong><span>Try a channel, person, automation name, or timing.</span></div>`;
-    return;
-  }
-  const groups = {};
-  for (const s of schedules) (groups[s.channelName] ||= []).push(s);
-  wrap.innerHTML = "";
-  for (const [name, list] of Object.entries(groups)) {
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `<div class="card-head"><h3>${escapeHtml(name)}</h3><span class="badge">${list.length} job${list.length === 1 ? "" : "s"}</span></div>`;
-    for (const s of list) {
-      const row = document.createElement("div");
-      row.className = "sched-row";
-      // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
-      const latest = s.runSummary?.lastStartedAt || s.lastRun;
-      const lastStatus = s.runSummary?.lastStatus || s.lastStatus;
-      const runHtml = latest
-        ? `<span class="sched-run" title="${escapeHtml(automationStatusLabel(lastStatus))}"><span class="dot ${["ok", "found"].includes(lastStatus) ? "ok" : automationStatusTone(lastStatus)}"></span>${escapeHtml(automationStatusLabel(lastStatus))} · ${escapeHtml(new Date(latest).toLocaleString())}</span>`
-        : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
-      row.innerHTML = `
-        <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
-        <button type="button" class="sched-open" title="View details and edit prompt">
-          <span class="sched-friendly" title="${escapeHtml(s.cron || "")}">${escapeHtml(friendlySchedule(s))}</span>${s.cronValid || s.once ? "" : ' <span class="sched-badge">invalid</span>'}
-          <span class="sched-desc">${escapeHtml(s.description || s.prompt)}</span>
-          ${runHtml}
-        </button>
-        <span class="sched-saved">saved</span>
-        ${s.executionVisibility === "silent" ? '<span class="sched-badge">silent</span>' : ""}
-        ${s.sudo ? '<span class="sched-badge">sudo · gateway host</span>' : ""}
-        <button type="button" class="ghost sched-history">Runs${s.runSummary?.total ? ` · ${s.runSummary.total}` : ""}</button>
-        <button class="sched-del">Delete</button>`;
-      const savedFlash = row.querySelector(".sched-saved");
-      row.querySelector(".sched-open").addEventListener("click", () => openScheduleEditor(s));
-      row.querySelector(".sched-history").addEventListener("click", () => openScheduleHistory(s));
-      row.addEventListener("click", (e) => {
-        if (e.target.closest("input, select, button, label")) return;
-        openScheduleEditor(s);
-      });
-      // Brief "saved" flash next to the row on a successful autosave PUT (notify + enable).
-      const flashSaved = () => { savedFlash.classList.add("show"); setTimeout(() => savedFlash.classList.remove("show"), 1400); };
-      row.querySelector(".sched-enabled").addEventListener("change", async (e) => {
-        await api(`/api/schedules/${s.id}`, { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) });
-        flashSaved();
-      });
-      row.querySelector(".sched-del").addEventListener("click", async () => {
-        const ok = await confirmDialog({ title: "Delete this automation?", body: "The schedule is removed and stops running. This can't be undone.", confirmLabel: "Delete", danger: true });
-        if (!ok) return;
-        await api(`/api/schedules/${s.id}`, { method: "DELETE" });
-        loadSchedules();
-      });
-      card.appendChild(row);
-    }
-    wrap.appendChild(card);
-  }
-}
-
-function syncScheduleDeliveryFields() {
-  document.getElementById("schedule-modal-thread-wrap").hidden = scheduleEditor?.schedule.kind === "reminder"
-    || document.getElementById("schedule-modal-delivery").value !== "thread";
-}
+const loadSchedules = () => mountBoard("ab-root", {}, "automations");
+const loadRoi = () => mountBoard("roi-root", { page: "roi" }, "ROI");
 
 let scheduleHistory = null;
 let scheduleHistoryRequest = 0;
@@ -3174,7 +3129,6 @@ function closeScheduleHistory() {
 }
 
 function openScheduleHistory(schedule = null) {
-  // Preserve unsaved editor values underneath the history dialog.
   clearInterval(scheduleHistoryTimer);
   scheduleHistory = { schedule, runs: [], before: null, loading: false, detailLoading: false, selectedRun: null };
   scheduleRunRequest++;
@@ -3372,21 +3326,24 @@ function renderUsersTable() {
     const role = u.isAdmin
       ? `<span class="rolechip admin">Admin</span>`
       : u.approved ? `<span class="rolechip appr">Approved</span>` : `<span class="rolechip none">No access</span>`;
+    // Count only grants that load: another person's personal skill is skipped at run time.
+    const skillOptions = accessGrantSkillOptions([], u.skills || [], { personal: PERSONAL_SKILLS, ownerId: id });
+    const foreignSkills = skillOptions.filter((option) => option.foreign).length;
+    const loadedSkills = accessGrantSkillSelection(skillOptions, u.skills || []).length;
     const tok =
       `<span class="tokdots">` +
-      `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i>` +
-      `<i class="${u.hasToolboxToken ? "set" : ""}" title="Toolbox">T</i></span>`;
+      `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i></span>`;
     return `<tr data-id="${escapeHtml(id)}"${userDrawerId === id ? ' class="sel"' : ""}>
       <td>${escapeHtml(u.name || id)}</td>
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
-      <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
+      <td class="user-skills-count" title="Skills enabled for this user (personal grants)${foreignSkills ? ` — ${foreignSkills} not loaded: another person's personal skill` : ""}">${loadedSkills}${foreignSkills ? ' <span class="pill" title="Another person\'s personal skill is granted here and is skipped at run time. Open the user to remove it.">⚠</span>' : ""}</td>
       <td>${u.nudges ? "On" : "Off"}</td>
       <td>${tok}</td>
     </tr>`;
   }).join("");
   wrap.innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Slack ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Name</th><th>User ID</th><th>Role</th><th title="Skills enabled for this user (personal grants)">Skills</th><th>Reminders</th><th>Tokens</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   for (const tr of wrap.querySelectorAll("tbody tr[data-id]")) tr.addEventListener("click", () => openUserDrawer(tr.dataset.id));
 }
@@ -3411,7 +3368,21 @@ function openUserDrawer(id) {
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
   node.querySelector(".ud-nudges").checked = !!u.nudges;
-  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user" });
+  node.querySelector(".ud-reply-mentions").checked = u.replyMentions === true;
+  const activityHost = node.querySelector(".ud-activity-identities");
+  const linkedActivity = new Set(u.activityIdentities || []);
+  const activityCandidates = Object.fromEntries(Object.entries(USERS).filter(([uid, user]) => {
+    if (uid === id) return false;
+    if (linkedActivity.has(uid)) return true;
+    const assigned = Object.entries(USERS).some(([owner, record]) => owner !== id && (record.activityIdentities || []).includes(uid));
+    return (user.approved || user.isAdmin) && user.activityPlatform && !assigned && !(user.activityIdentities || []).length;
+  }).map(([uid, user]) => [uid, { ...user, name: `${user.name || uid} · ${user.activityPlatform === "msteams" ? "Microsoft Teams" : "Google Chat"}` }]));
+  const activityPicker = mountUserPicker(activityHost, {
+    users: activityCandidates, selected: [...linkedActivity], includeUser: () => true,
+    labels: { selected: "Linked Activity accounts", placeholder: "Search users by name, email or account ID…",
+      search: "Search Activity users", available: "Available Activity accounts", empty: "No Activity accounts linked." },
+  });
+  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
   userGrantsHost.appendChild(userGrantsEditor.el);
@@ -3419,17 +3390,28 @@ function openUserDrawer(id) {
   node.querySelector(".ud-composio-state").textContent = GLOBAL_COMPOSIO_MODE === "sdk"
     ? (u.hasComposioToken ? "saved · inactive in SDK mode" : "inactive in SDK mode")
     : (u.hasComposioToken ? "" : "no token set");
-  node.querySelector(".ud-toolbox-state").textContent = u.hasToolboxToken ? "" : "no token set";
 
   drawer.innerHTML = "";
   drawer.hidden = false;
   drawer.appendChild(node);
 
+  mountUserDashboardAccess(drawer.querySelector(".ud-dashboard-access"), id, { confirm: confirmDialog });
+  drawer.querySelector(".ud-save-activity").addEventListener("click", async () => {
+    const state = drawer.querySelector(".ud-activity-saved");
+    state.textContent = "saving…";
+    try {
+      await api(`/api/users/${encodeURIComponent(id)}/activity-identities`, {
+        method: "PUT", body: JSON.stringify({ activityIdentities: activityPicker.getValues() }),
+      });
+      await loadUsers();
+      document.querySelector("#user-drawer .ud-activity-saved").textContent = "✓ saved";
+    } catch (error) { state.textContent = "✗ " + error.message; }
+  });
+
+
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
-  attachReveal(drawer.querySelector(".ud-toolboxtoken"), { has: u.hasToolboxToken, last4: u.toolboxTokenLast4, fetch: revealSecret("user", "toolboxToken", id) });
   drawer.querySelector(".ud-composio-label").value = u.composioTokenLabel || "";
-  drawer.querySelector(".ud-toolboxtoken-label").value = u.toolboxTokenLabel || "";
   mountComposioInventory(drawer.querySelector(".ud-composio-inventory"), `/api/users/${encodeURIComponent(id)}/composio-connections`);
 
   drawer.querySelector(".ud-close").addEventListener("click", closeUserDrawer);
@@ -3478,10 +3460,8 @@ function openUserDrawer(id) {
   const saved = drawer.querySelector(".ud-saved");
   drawer.querySelector(".ud-save").addEventListener("click", async () => {
     const token = tokenValue(drawer.querySelector(".ud-composio"));
-    const toolboxToken = tokenValue(drawer.querySelector(".ud-toolboxtoken"));
     // Owner labels always round-trip (empty clears them) — notes, not secrets.
     const composioTokenLabel = drawer.querySelector(".ud-composio-label").value;
-    const toolboxTokenLabel = drawer.querySelector(".ud-toolboxtoken-label").value;
     saved.textContent = "saving…";
     try {
       await api(`/api/users/${encodeURIComponent(id)}`, {
@@ -3491,10 +3471,9 @@ function openUserDrawer(id) {
           isAdmin: drawer.querySelector(".ud-admin").checked,
           approved: drawer.querySelector(".ud-approved").checked,
           nudges: drawer.querySelector(".ud-nudges").checked,
+          replyMentions: drawer.querySelector(".ud-reply-mentions").checked,
           ...(token ? { composioToken: token } : {}),
-          ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,
-          toolboxTokenLabel,
           accessGrants: userGrantsEditor.getValues(),
         }),
       });
@@ -3563,29 +3542,29 @@ function syncComposioModeUi() {
   const entitled = document.getElementById("set-composio-mode")?.dataset.sdkEntitled === "true";
   const sdkField = document.getElementById("composio-sdk-key-field");
   if (sdkField) sdkField.hidden = mode !== "sdk";
+  const policy = document.getElementById("composio-sdk-policy");
+  if (policy) syncComposioPolicyUi(policy, { sdkMode: mode === "sdk", entitled });
   const help = document.getElementById("composio-mode-help");
   if (help) {
     help.textContent = mode === "sdk"
       ? (entitled ? "Enterprise · Beta. Stable identity per Slack user/channel; separate sessions per Slack thread. Only channel managers manage shared connections." : "Enterprise · Beta. An active Enterprise license is required. Save Personal tokens mode or activate an Enterprise license to restore integrations.")
-      : "Uses the saved token on each user and channel, with the organization token as the shared fallback.";
+      : "Uses the saved token on each user (composio-user) and on each channel (composio-agent). There is no organization-wide fallback.";
   }
-  const note = document.getElementById("composio-personal-token-note");
-  if (note) note.textContent = mode === "sdk" ? "· Composio tokens retained, currently inactive" : "";
 }
 
-// The org-default "clear" buttons arm a pending delete that applies on Save (batch-save model,
+// The settings "clear" buttons arm a pending delete that applies on Save (batch-save model,
 // same as the checkbox they replaced). Toggling is purely visual until the save handler reads
 // the .armed class; disarmClearTok resets one after a successful save.
 function disarmClearTok(btn) {
   if (!btn) return;
   btn.classList.remove("armed");
   btn.textContent = "clear";
-  btn.title = "Remove this org-default token when you save";
+  btn.title = "Remove this saved token when you save";
 }
 function toggleClearTok(btn) {
   const armed = btn.classList.toggle("armed");
   btn.textContent = armed ? "clear ✓" : "clear";
-  btn.title = armed ? "This org-default token will be removed when you save" : "Remove this org-default token when you save";
+  btn.title = armed ? "This saved token will be removed when you save" : "Remove this saved token when you save";
   markSettingsDirty();
 }
 
@@ -3741,13 +3720,17 @@ function enterSettingsView(hash = "") {
 // Deep-jump to ONE control (not a whole section) and mark it, for cross-page links like the API
 // docs' "generate a token" pointer.
 function revealSetting(id) {
+  const el = document.getElementById(id);
+  revealSettingsNode(el?.closest(".setcard") || el);
+}
+
+// The same jump for a node that has no id of its own (a card cloned from a template, one field).
+function revealSettingsNode(card) {
+  if (!card) return;
   settingsJumps += 1;
   settingsJumpTarget = null;
   settingsJumpUntil = 0;
   clearSettingsSearch();
-  const el = document.getElementById(id);
-  const card = el?.closest(".setcard") || el;
-  if (!card) return;
   scrollSettingsTo(card);
   card.classList.remove("pulse");
   void card.offsetWidth; // restart the animation when the same card is targeted twice
@@ -3820,6 +3803,62 @@ const SETTINGS_HAVE_PROVIDER_KEY = {};
 // save body carries exactly the providers the server declared.
 let QWEN_ENGINE_IDS = [];
 let QWEN_PROVIDER_CARDS = [];
+let TERMINAL_HARNESS_CARDS = [];
+
+async function copyTerminalCommand(command) {
+  try {
+    await navigator.clipboard.writeText(command);
+    return true;
+  } catch {
+    // Self-hosted HTTP pages may have no Clipboard API. Keep a user-initiated copy available.
+    const input = document.createElement("textarea");
+    input.value = command;
+    input.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.append(input);
+    try {
+      input.select();
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      input.remove();
+    }
+  }
+}
+
+function paintTerminalHarnesses(harnesses, settings) {
+  const tpl = document.getElementById("terminal-harness-tpl");
+  if (!tpl) return;
+  for (const old of document.querySelectorAll(".terminal-harness-card")) old.remove();
+  TERMINAL_HARNESS_CARDS = [];
+  for (const harness of harnesses || []) {
+    const card = tpl.content.firstElementChild.cloneNode(true);
+    const at = (role) => card.querySelector(`[data-role="${role}"]`);
+    at("label").textContent = harness.label;
+    at("description").textContent = harness.description;
+    at("command").textContent = harness.command;
+    const copy = at("copy-command");
+    copy.setAttribute("aria-label", `Copy ${harness.label} terminal command`);
+    copy.addEventListener("click", async () => {
+      at("copy-state").textContent = "Copying…";
+      const copied = await copyTerminalCommand(harness.command);
+      at("copy-state").textContent = copied ? "Copied" : "Could not copy — select the command and copy it manually.";
+      copy.focus();
+    });
+    const modelSelect = at("default-model");
+    const effortSelect = at("default-effort");
+    syncModelOptions({ modelSelect, engine: harness.id, value: settings[harness.modelField] || "", blankLabel: "provider default" });
+    syncDefaultEffort(modelSelect, effortSelect, harness.id, settings[harness.effortField]);
+    tpl.parentNode.insertBefore(card, tpl);
+    TERMINAL_HARNESS_CARDS.push({ ...harness, modelSelect, effortSelect });
+  }
+}
+
+function collectTerminalHarnesses() {
+  return Object.fromEntries(TERMINAL_HARNESS_CARDS.flatMap((card) => [
+    [card.modelField, card.modelSelect.value], [card.effortField, card.effortSelect.value],
+  ]));
+}
 
 // One settings card per provider, cloned from the template that marks where they belong. Rendered
 // as SIBLINGS of the other cards (not nested in a wrapper) so the settings search, the jump nav
@@ -3838,6 +3877,7 @@ function paintQwenProviders(providers) {
     const keyInput = at("api-key");
     const urlInput = at("base-url");
     const modelSelect = at("default-model");
+    const effortSelect = at("default-effort");
     const clearBtn = at("clear-key");
     // An endpoint the provider ships is a placeholder (blank = keep it); one only the operator can
     // know is not, so the box says so instead of implying a default exists.
@@ -3848,6 +3888,7 @@ function paintQwenProviders(providers) {
     // The button sits inside the field's <label>; preventDefault stops the click focusing the input.
     clearBtn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(clearBtn); });
     syncModelOptions({ modelSelect, engine: p.id, value: p.defaultModel || "", blankLabel: "provider default" });
+    syncDefaultEffort(modelSelect, effortSelect, p.id, p.defaultEffort);
     // Say WHERE the list came from: a stale shipped list and a live account list look identical in
     // a picker, and the difference decides whether a missing model is a typo or a missing key.
     const catalog = ENGINE_MANIFESTS.find((m) => m.id === p.id)?.modelCatalog;
@@ -3857,7 +3898,7 @@ function paintQwenProviders(providers) {
         ? "Built-in list — the account's own list could not be read. Check the key and endpoint, then reload."
         : "Built-in list. Save an API key to read the account's own models.");
     tpl.parentNode.insertBefore(card, tpl);
-    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, clearBtn });
+    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, effortSelect, clearBtn });
   }
 }
 
@@ -3868,6 +3909,7 @@ function collectQwenProviders() {
   for (const card of QWEN_PROVIDER_CARDS) {
     body[card.baseUrlField] = card.urlInput.value;
     body[card.defaultModelField] = card.modelSelect.value;
+    body[card.defaultEffortField] = card.effortSelect.value;
     const typed = tokenValue(card.keyInput);
     if (typed) body[card.apiKeyField] = typed;
     if (card.clearBtn.classList.contains("armed")) body[`clear${card.apiKeyField[0].toUpperCase()}${card.apiKeyField.slice(1)}`] = true;
@@ -3875,54 +3917,115 @@ function collectQwenProviders() {
   return body;
 }
 
-// One checkbox per known harness. Re-rendered (not patched) on every change so the engine pickers
-// and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
-function paintEngineToggles() {
-  const box = document.getElementById("engine-enabled-box");
-  if (!box || !ENGINE_MANIFESTS.length) return;
-  const onCount = ENGINE_MANIFESTS.filter((m) => engineIsEnabled(m.id)).length;
-  box.replaceChildren(...ENGINE_MANIFESTS.map((m) => {
-    const on = engineIsEnabled(m.id);
-    const label = document.createElement("label");
-    label.className = "engine-toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = on;
-    // The last enabled harness can't be switched off — the daemon would have nothing to run, and
-    // the API refuses that state anyway. Disable the box rather than let the save 400.
-    input.disabled = on && onCount === 1;
-    input.title = input.disabled ? "At least one harness must stay enabled" : "";
-    input.addEventListener("change", () => {
-      ENGINE_ENABLED[m.id] = input.checked;
-      const globalSelect = document.getElementById("set-engine");
-      const chosen = globalSelect?.value;
-      paintEngineToggles();
-      if (globalSelect) {
-        globalSelect.innerHTML = engineOptionsHtml();
-        // Turning off the harness that IS the default silently re-points the default at an enabled
-        // one — visibly, in the select, before the admin saves.
-        globalSelect.value = engineIsEnabled(chosen) ? chosen : selectableEngines()[0]?.id || chosen;
-      }
+// ── Settings: engine licenses ─────────────────────────────────────────────────────────────────────
+// Every license of each harness, switched on and off here (admin-licenses.js draws the list and
+// owns adding, editing, verifying and removing one). Re-rendered — not patched — on every change, so
+// the pickers and the "last one standing" lock stay derived from a single source: ENGINE_ENABLED.
+// (These are ENGINE licenses. The ChannelGate product license is loadLicense(), further down.)
+let HEALTH_ENGINES = null; // /api/health → engines: the status shown for a license the gateway ships with
+let licensesManager = null;
+let gatewayEnginePicker = null; // #set-engine as the harness step of the gateway default
+
+// Where a license the gateway ships with is configured on this page, if it is: its own card, or
+// the default-model field named after it.
+function builtinLicenseSettings(id) {
+  return TERMINAL_HARNESS_CARDS.find((card) => card.id === id)?.modelSelect.closest(".setcard")
+    || QWEN_PROVIDER_CARDS.find((card) => card.id === id)?.keyInput.closest(".setcard")
+    || document.getElementById(`set-default-${id}-model`)?.closest(".field")
+    || null;
+}
+
+// The conversations a license can be limited to (Settings can be opened before the Conversations
+// page ever loaded its lists, so they are fetched when missing).
+async function licenseConversations() {
+  // Read-only here: the Conversations page owns its lists and repaints when it loads them.
+  let channels = CHANNELS, dms = DMS;
+  if (!channels.length && !dms.length) {
+    [{ channels }, { dms }] = await Promise.all([api("/api/channels"), api("/api/dms")]);
+  }
+  const named = [
+    ...channels.map((c) => ({ id: c.channelId, label: conversationChannelName(c) || c.name || c.slug || c.channelId })),
+    ...dms.map((d) => ({ id: d.channelId, label: `DM · ${d.userName || d.dmUserId || d.slug || d.channelId}` })),
+  ];
+  return named.filter((place) => place.id).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+
+function paintEngineLicenses() {
+  const root = document.getElementById("engine-enabled-box");
+  if (!root || !ENGINE_MANIFESTS.length) return;
+  licensesManager ||= mountLicensesManager({
+    root,
+    api,
+    confirm: confirmDialog,
+    copyText: copyTerminalCommand,
+    mountCodexLogin: mountCodexLoginBox,
+    state: () => ({ manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED }),
+    health: (id) => HEALTH_ENGINES?.[id] || null,
+    setEnabled: (id, on) => {
+      ENGINE_ENABLED[id] = on;
+      licensesManager.paint();
+      // Switching off the license that IS the default re-points the default at one that is on —
+      // visibly, in the picker, before the admin saves.
+      gatewayEnginePicker?.repaint();
       markSettingsDirty();
-    });
-    label.append(input, document.createTextNode(` ${m.label}`));
-    // An OPT-IN harness needs a provider credential of its own, so say where that lives. Without
-    // this the checkbox reads like every other one and the admin only discovers the missing key
-    // when a run fails in Slack.
-    if (m.optIn && !SETTINGS_HAVE_PROVIDER_KEY[m.id]) {
-      const hint = document.createElement("em");
-      hint.className = "state";
-      hint.textContent = " · needs an API key below";
-      label.append(hint);
-    }
-    return label;
-  }));
+    },
+    // A license that needs a provider credential of its own says where that lives. Without this the
+    // switch reads like every other one and the admin only discovers the missing key when a run
+    // fails in Slack.
+    builtinNote: (m) => !m.optIn || SETTINGS_HAVE_PROVIDER_KEY[m.id] ? ""
+      : m.terminalSetup ? " · configure in a terminal (Settings button)" : " · needs an API key (Settings button)",
+    openBuiltin: (m) => builtinLicenseSettings(m.id) ? () => revealSettingsNode(builtinLicenseSettings(m.id)) : null,
+    blocked: () => settingsDirty ? "Save your settings changes first — changing a license reloads this page from the saved settings." : "",
+    reload: loadSettings,
+    // Only the step this page can account for: its own version → the one the check produced.
+    versionMoved: ({ from, to } = {}) => { if (SETTINGS_VERSION && SETTINGS_VERSION === String(from)) SETTINGS_VERSION = String(to); },
+    // What a license can be limited to: every channel and DM this gateway knows, by name.
+    conversations: licenseConversations,
+    // The gateway's own Codex sign-in ("Default sign-in" of Codex): ChatGPT or an API key.
+    gatewayCodexLogin: {
+      url: "/api/gateway/codex-login",
+      onComplete: () => {
+        delete AVAILABLE_MCPS.codex;
+        const box = document.querySelector("#channel-detail .ch-mcps");
+        if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
+      },
+    },
+  });
+  licensesManager.paint();
+}
+
+// The gateway default as the picker stores it: `engine` + `enginePool`.
+function readGatewayEngine() {
+  return gatewayEnginePicker
+    ? { engine: gatewayEnginePicker.value, enginePool: gatewayEnginePicker.pool }
+    : { engine: document.getElementById("set-engine").value };
 }
 
 // Read the whole Settings form into the API's shape. Separate from the save handler because it is
 // called TWICE: once right after a paint (the baseline the page was loaded with) and once on Save
 // — what differs between the two is all that gets sent.
+function paintLogoColor(color) {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return;
+  document.getElementById("set-logo-color").value = color;
+  document.getElementById("set-logo-hex").value = color;
+  const preview = document.getElementById("set-logo-preview");
+  preview.querySelector("rect").setAttribute("fill", color);
+  const luminance = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16) / 255)
+    .map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  preview.querySelector("g").setAttribute("fill", luminance > .179 ? "#18382b" : "#ffffff");
+}
+for (const id of ["set-logo-color", "set-logo-hex"]) document.getElementById(id).addEventListener("input", (event) => {
+  paintLogoColor(event.target.value);
+});
+document.getElementById("reset-logo-color").addEventListener("click", () => { paintLogoColor("#ff642f"); markSettingsDirty(); });
 function readSettingsForm() {
+  if (!document.getElementById("set-logo-hex").checkValidity()) throw new Error("Logo color must be a six-digit hex color, such as #ff642f.");
+  for (const id of ["set-max-concurrent-runs", "set-reserved-interactive-runs"]) {
+    const input = document.getElementById(id);
+    if (!input.checkValidity()) throw new Error(`${id === "set-max-concurrent-runs" ? "Maximum parallel agent runs" : "Reserved interactive slots"} must be a whole number between ${input.min} and ${input.max}.`);
+  }
+
   return {
     // Tokens are write-only: tokenValue() is "" unless the admin actually typed a new one (the
     // fields are pre-filled with the masked stored value, so `.value` is never blank).
@@ -3938,19 +4041,15 @@ function readSettingsForm() {
     trustedBotApps: document.getElementById("set-trusted-apps").value,
     defaultChannelAccess: document.getElementById("set-channel-access").value,
     composioMode: document.getElementById("set-composio-mode").value,
+    composioSdkPolicy: readComposioPolicy(document.getElementById("composio-sdk-policy")),
     ...(tokenValue(document.getElementById("set-composio-sdk-key")) ? { composioSdkApiKey: tokenValue(document.getElementById("set-composio-sdk-key")) } : {}),
     ...(document.getElementById("clear-composio-sdk-key").classList.contains("armed") ? { clearComposioSdkApiKey: true } : {}),
-    ...(tokenValue(document.getElementById("set-default-composio")) ? { defaultComposioToken: tokenValue(document.getElementById("set-default-composio")) } : {}),
-    ...(document.getElementById("clear-default-composio").classList.contains("armed") ? { clearDefaultComposioToken: true } : {}),
-    ...(tokenValue(document.getElementById("set-default-toolbox")) ? { defaultToolboxToken: tokenValue(document.getElementById("set-default-toolbox")) } : {}),
-    ...(document.getElementById("clear-default-toolbox").classList.contains("armed") ? { clearDefaultToolboxToken: true } : {}),
-    // Owner labels always round-trip (empty clears them) — they're notes, not secrets.
-    defaultComposioTokenLabel: document.getElementById("set-default-composio-label").value,
-    defaultToolboxTokenLabel: document.getElementById("set-default-toolbox-label").value,
     accessGrants: orgGrantsEditor?.getValues() || {},
     composioMcpUrl: document.getElementById("set-composio").value,
-    toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
+    appleAppIds: document.getElementById("set-apple-app-ids").value,
+    logoColor: document.getElementById("set-logo-hex").value,
+    trustProxy: document.getElementById("set-trust-proxy").value,
     approvalLinks: document.getElementById("set-approval-links").value,
     aiTestingUsers: aiTestingPicker?.getValues() || [],
     ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
@@ -3971,20 +4070,35 @@ function readSettingsForm() {
     ...(document.getElementById("clear-license-key").classList.contains("armed") ? { clearLicenseKey: true } : {}),
     platformUrl: document.getElementById("set-platform-url").value,
     contextWindow: Number(document.getElementById("set-ctxwindow").value) || undefined,
-    engine: document.getElementById("set-engine").value,
+    ...readGatewayEngine(),
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    defaultClaudeEffort: document.getElementById("set-default-claude-effort").value,
+    defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
+    ...collectTerminalHarnesses(),
+    iosCallsEnabled: document.getElementById("set-ios-calls-enabled").checked,
+    ...(document.getElementById("set-apns-team-id").value.trim() ? { apnsTeamId: document.getElementById("set-apns-team-id").value.trim() } : {}),
+    ...(document.getElementById("set-apns-key-id").value.trim() ? { apnsKeyId: document.getElementById("set-apns-key-id").value.trim() } : {}),
+    apnsBundleId: document.getElementById("set-apns-bundle-id").value.trim() || "com.makeitfuture.channelgate",
+    ...(document.getElementById("set-apns-private-key").value.trim() ? { apnsPrivateKey: document.getElementById("set-apns-private-key").value.trim() } : {}),
+    clearApnsPrivateKey: document.getElementById("clear-apns-private-key").checked,
+    voiceCallsEnabled: document.getElementById("set-voice-calls-enabled").checked,
+    ...(tokenValue(document.getElementById("set-gemini-api-key")) ? { geminiApiKey: tokenValue(document.getElementById("set-gemini-api-key")) } : {}),
+    ...(document.getElementById("clear-gemini-api-key").classList.contains("armed") ? { clearGeminiApiKey: true } : {}),
+    ...(document.getElementById("set-voice-call-model").value ? { voiceCallModel: document.getElementById("set-voice-call-model").value } : {}),
+    ...(document.getElementById("set-voice-call-voice").value ? { voiceCallVoice: document.getElementById("set-voice-call-voice").value } : {}),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
-    modelChangeAccess: document.getElementById("set-model-change-access").value,
     modelShortcuts: collectModelShortcuts(),
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
     engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
     showMessageCost: document.getElementById("set-show-message-cost").checked,
     whisperEnabled: document.getElementById("set-whisper-enabled").checked,
+    maxConcurrentRuns: Number(document.getElementById("set-max-concurrent-runs").value),
+    reservedInteractiveRuns: Number(document.getElementById("set-reserved-interactive-runs").value),
     containerCli: document.getElementById("set-container-cli").value,
     containerImage: document.getElementById("set-container-image").value,
     containerIdleMinutes: Number(document.getElementById("set-container-idle").value) || undefined,
@@ -3993,6 +4107,8 @@ function readSettingsForm() {
     containerMemory: document.getElementById("set-container-memory").value,
     containerCpus: document.getElementById("set-container-cpus").value,
     containerFullAccessHome: document.getElementById("set-container-full-access-home").checked,
+    fsRoots: document.getElementById("set-fs-roots").value.split("\n").map((line) => line.trim()).filter(Boolean),
+    privateMcpHosts: document.getElementById("set-private-mcp-hosts").value.split("\n").map((line) => line.trim()).filter(Boolean),
     containerEgressMode: document.getElementById("set-container-egress-bridge").checked ? "bridge" : "proxy",
     containerEgressSecretsStrict: document.getElementById("set-container-egress-strict").checked,
     // Write-only: send a value only when one was typed; "clear" arms an explicit removal.
@@ -4009,6 +4125,7 @@ function readSettingsForm() {
     noResponseReminderHours: Number(document.getElementById("set-nudge-hours").value) || undefined,
     defaultNudges: document.getElementById("set-default-nudges").checked,
     publicFileLinksEnabled: document.getElementById("set-public-file-links-enabled").checked,
+    emailAccountsEnabled: document.getElementById("set-email-accounts-enabled").checked,
     driveSyncEnabled: document.getElementById("set-drivesync-enabled").checked,
     driveSyncKeyFile: document.getElementById("set-drivesync-keyfile").value,
     ...(document.getElementById("set-drivesync-keyjson").value.trim() ? { driveSyncKeyJson: document.getElementById("set-drivesync-keyjson").value } : {}),
@@ -4029,7 +4146,6 @@ function readSettingsForm() {
     ...(dmTplEditors.user && dmTplEditors.admin
       ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
       : {}),
-    ...(document.getElementById("set-adminpw").value ? { adminPassword: document.getElementById("set-adminpw").value } : {}),
     // HTTP run API token (write-only): send the new value only if edited/generated; the clear
     // toggle removes it. Leaving the field untouched keeps the stored token.
     ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
@@ -4038,21 +4154,37 @@ function readSettingsForm() {
 }
 
 function paintSettings(s) {
+  const iphone = s.iosCalls || {};
+  document.getElementById("set-ios-calls-enabled").checked = iphone.enabled === true;
+  document.getElementById("set-apns-team-id").value = iphone.teamId || "";
+  document.getElementById("set-apns-key-id").value = iphone.keyId || "";
+  document.getElementById("set-apns-bundle-id").value = iphone.bundleId || "com.makeitfuture.channelgate";
+  document.getElementById("set-apns-private-key").value = "";
+  document.getElementById("clear-apns-private-key").checked = false;
+  document.getElementById("apns-key-state").textContent = iphone.hasPrivateKey ? "stored" : "not configured";
+  const voice = s.voiceCalls || {};
+  document.getElementById("set-voice-calls-enabled").checked = voice.enabled === true;
+  document.getElementById("gemini-api-key-state").textContent = tokenState(voice.hasApiKey, voice.apiKeyLast4);
+  attachReveal(document.getElementById("set-gemini-api-key"), { has: voice.hasApiKey, last4: voice.apiKeyLast4, fetch: revealSecret("settings", "geminiApiKey") });
+  for (const [id, options, current] of [["set-voice-call-model", voice.models, voice.model], ["set-voice-call-voice", voice.voices, voice.voice]]) {
+    const select = document.getElementById(id);
+    select.replaceChildren(...(options || []).map((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; return option; }));
+    select.value = current || "";
+  }
   document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
   document.getElementById("set-perplexity-session-token").value = "";
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
-  // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
+  // Before the licenses paint: they annotate an opt-in license whose provider key is still missing.
   paintQwenProviders(s.qwenProviders);
   for (const p of s.qwenProviders || []) SETTINGS_HAVE_PROVIDER_KEY[p.id] = p.hasApiKey === true;
-  paintEngineToggles();
+  paintTerminalHarnesses(s.terminalHarnesses, s);
+  paintEngineLicenses();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });
   orgGrantsHost.replaceChildren(orgGrantsEditor.el);
   wireGrantTierNavigation(document.getElementById("org-grant-tier"), "organization");
-  const globalEngineSelect = document.getElementById("set-engine");
-  if (globalEngineSelect && ENGINE_MANIFESTS.length) globalEngineSelect.innerHTML = engineOptionsHtml();
   document.getElementById("state-bot").textContent = tokenState(s.tokens.hasBotToken, s.tokens.botTokenLast4);
   document.getElementById("state-app").textContent = tokenState(s.tokens.hasAppToken, s.tokens.appTokenLast4);
   document.getElementById("state-sign").textContent = s.tokens.hasSigningSecret ? "set" : "not set";
@@ -4068,6 +4200,7 @@ function paintSettings(s) {
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
+  paintComposioPolicy(document.getElementById("composio-sdk-policy"), s.composioSdkPolicy);
   document.getElementById("set-composio-mode").dataset.sdkEntitled = String(s.composioSdk?.entitled === true);
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = s.composioSdk?.entitled !== true;
   document.getElementById("set-composio-sdk-key").disabled = s.composioSdk?.entitled !== true;
@@ -4076,8 +4209,10 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-composio-sdk-key"), "");
   syncComposioModeUi();
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
-  document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
+  document.getElementById("set-apple-app-ids").value = s.appleAppIds || "";
+  paintLogoColor(s.logoColor || "#ff642f");
+  document.getElementById("set-trust-proxy").value = s.trustProxy || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
   aiTestingPicker = mountUserPicker(document.getElementById("set-ai-testing-users"), {
     users: USERS, selected: s.aiTestingUsers || [], onChange: markSettingsDirty,
@@ -4110,38 +4245,40 @@ function paintSettings(s) {
   document.getElementById("teams-create-command").textContent = s.teams?.messagingEndpoint
     ? `teams app create --name "ChannelGate" --endpoint "${teamsEndpoint}"`
     : 'teams app create --name "ChannelGate" --endpoint "https://<public-url>/api/teams/messages"';
-  document.getElementById("default-composio-state").textContent = tokenState(s.hasDefaultComposioToken, s.defaultComposioTokenLast4);
-  document.getElementById("default-toolbox-state").textContent = tokenState(s.hasDefaultToolboxToken, s.defaultToolboxTokenLast4);
-  attachReveal(document.getElementById("set-default-composio"), { has: s.hasDefaultComposioToken, last4: "", fetch: revealSecret("settings", "defaultComposioToken") });
-  attachReveal(document.getElementById("set-default-toolbox"), { has: s.hasDefaultToolboxToken, last4: "", fetch: revealSecret("settings", "defaultToolboxToken") });
-  document.getElementById("set-default-composio-label").value = s.defaultComposioTokenLabel || "";
-  document.getElementById("set-default-toolbox-label").value = s.defaultToolboxTokenLabel || "";
   document.getElementById("set-ctxwindow").value = s.contextWindow || "";
-  if (s.engine) document.getElementById("set-engine").value = s.engine;
+  // The gateway default: harness → license → "if it fails, also use" (settings `engine` + `enginePool`).
+  if (ENGINE_MANIFESTS.length) {
+    gatewayEnginePicker ||= mountLicensePicker({ harnessSelect: document.getElementById("set-engine"), env: () => licenseEnv() });
+    gatewayEnginePicker.set(s.engine || "", s.enginePool || "");
+  } else if (s.engine) document.getElementById("set-engine").value = s.engine;
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
-  document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
+  for (const engine of ["claude", "codex"]) {
+    syncDefaultEffort(document.getElementById(`set-default-${engine}-model`), document.getElementById(`set-default-${engine}-effort`), engine, s[`default${engine === "claude" ? "Claude" : "Codex"}Effort`]);
+  }
   paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
   document.getElementById("set-whisper-enabled").checked = s.whisperEnabled !== false;
+  document.getElementById("set-max-concurrent-runs").value = s.maxConcurrentRuns ?? 8;
+  document.getElementById("set-reserved-interactive-runs").value = s.reservedInteractiveRuns ?? 2;
   // Container runtime. The token follows the write-only rule: has*/last4 here, value on demand.
   document.getElementById("set-container-cli").value = s.containerCli || "auto";
   document.getElementById("set-container-image").value = s.containerImage || "";
   document.getElementById("set-container-idle").value = s.containerIdleMinutes ?? 10;
   document.getElementById("set-container-max").value = s.containerMaxRunning ?? 8;
-  document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 1024;
+  document.getElementById("set-container-pids").value = s.containerPidsLimit ?? 4096;
   document.getElementById("set-container-memory").value = s.containerMemory || "";
   document.getElementById("set-container-cpus").value = s.containerCpus || "";
   document.getElementById("set-container-full-access-home").checked = s.containerFullAccessHome === true;
+  document.getElementById("set-fs-roots").value = Array.isArray(s.fsRoots) ? s.fsRoots.join("\n") : "";
+  document.getElementById("set-private-mcp-hosts").value = Array.isArray(s.privateMcpHosts) ? s.privateMcpHosts.join("\n") : "";
   document.getElementById("set-container-egress-bridge").checked = s.containerEgressMode === "bridge";
   document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
-  document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);
-  document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
   // HTTP run API key: a revealable field seeded with the stored token (so it can be copied into an
   // automation) plus a set/not-set state. Generated client-side, persisted on Save (write-only).
   attachReveal(document.getElementById("set-apikey"), { has: s.hasApiKey, last4: s.apiKeyLast4, fetch: revealSecret("settings", "apiKey") });
@@ -4162,6 +4299,7 @@ function paintSettings(s) {
   document.getElementById("set-nudge-hours").value = s.noResponseReminderHours ?? 24;
   document.getElementById("set-default-nudges").checked = s.defaultNudges === true;
   document.getElementById("set-public-file-links-enabled").checked = s.publicFileLinksEnabled === true;
+  document.getElementById("set-email-accounts-enabled").checked = s.emailAccountsEnabled === true;
   document.getElementById("set-drivesync-enabled").checked = s.driveSyncEnabled === true;
   // Pasted key is write-only: never echo it; show set/not-set + the service-account email to share with.
   document.getElementById("set-drivesync-keyjson").value = "";
@@ -4218,7 +4356,6 @@ function paintSettings(s) {
   // refused one — to a save that never will. They also have to go before the baseline below, or a
   // pending action would be captured as "already the server's state" and then never sent.
   for (const btn of document.querySelectorAll("#view-settings .clear-tok.armed")) disarmClearTok(btn);
-  document.getElementById("set-adminpw").value = "";
   document.getElementById("set-gchat-key").value = "";
   // Remember what this paint put on the page: Save sends the difference against it, so a field
   // nobody touched here is never re-asserted over another writer's newer value.
@@ -4234,7 +4371,10 @@ async function loadSettings() {
   ]);
   USERS = directory.users || {};
   paintSettings(settings);
-  await Promise.all([loadLicense(), loadOrgSecrets()]);
+  await Promise.all([loadLicense(), loadOrgSecrets(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
+  // The admin-added engine licenses: their type, sign-in state and verification (the manifest
+  // painted above already lists them by name).
+  await licensesManager?.load();
 }
 
 // ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
@@ -4242,24 +4382,30 @@ async function loadSettings() {
 // hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
 // that erodes the "resolve a NAMED field" property web/secrets.js depends on.
 let orgSecretEditor = null;
+let orgSecretEntitled = null;
 async function loadOrgSecrets() {
   const host = document.getElementById("org-secrets-editor");
   if (!host) return;
   let vars = [];
+  const license = await api("/api/license").catch(() => ({ features: {} }));
+  const entitled = license.features?.organizationVariables === true;
   try {
     vars = (await api("/api/org-secrets")).vars || [];
   } catch {
     /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
   }
-  if (orgSecretEditor) {
+  if (orgSecretEditor && orgSecretEntitled === entitled) {
     orgSecretEditor.setVars(vars);
     return;
   }
   host.textContent = "";
+  orgSecretEntitled = entitled;
   host.appendChild(secretEditorMarkup());
   const card = document.getElementById("org-secrets-card");
   orgSecretEditor = mountSecretEditor({
     root: card,
+    disabled: !entitled,
+    allowRemoval: true,
     vars,
     userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
@@ -4293,35 +4439,49 @@ const LICENSE_STATE_LABEL = {
   expired_grace: "· grace expired",
 };
 
-const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : String(v));
-const fmtLicenseTime = (v) => (v ? new Date(v).toLocaleString() : "—");
+const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : escapeHtml(String(v)));
+const fmtLicenseTime = (v) => (v ? escapeHtml(new Date(v).toLocaleString()) : "—");
 
 function paintLicense(l) {
   document.getElementById("license-state-chip").textContent = LICENSE_STATE_LABEL[l.state] || `· ${l.state}`;
+  const instructions = document.getElementById("set-agents-instructions");
+  instructions.readOnly = l.features?.organizationInstructions !== true;
+  document.getElementById("organization-instructions-entitlement").textContent = instructions.readOnly
+    ? "Enterprise is required to add or edit organization instructions. Saved instructions remain active; you can clear them explicitly. Channel instructions and core safety rules remain available."
+    : "Organization defaults follow the existing channel and Lean-mode rules. Saved instructions remain active if the license is downgraded.";
+  document.getElementById("clear-organization-instructions").onclick = () => { instructions.value = ""; instructions.dispatchEvent(new Event("input", { bubbles: true })); };
   document.getElementById("set-composio-mode").dataset.sdkEntitled = String(l.features?.composioSdk === true);
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
   document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;
   syncComposioModeUi();
+  document.querySelectorAll('[id^="set-drivesync-"]').forEach((control) => {
+    if ("disabled" in control) { control.disabled = l.features?.driveSync !== true; control.title = control.disabled ? "Google Drive sync requires Enterprise" : ""; }
+  });
+  const domainToggle = document.getElementById("user-auto-approval-enabled");
+  if (domainToggle && !domainToggle.checked) domainToggle.disabled = l.features?.companyDomainApproval !== true;
 
   const banner = document.getElementById("license-banner");
   banner.className = `license-banner ${l.banner?.level || ""}`.trim();
   banner.textContent = l.banner?.text || "";
   banner.hidden = !l.banner;
 
+  // Everything here comes from the licensing platform's response. The key fields are already
+  // escaped below; the free-text ones must be too, because this list is rendered as HTML.
   const facts = [
-    ["Tier", l.tier === "none" ? "no key" : l.tier],
-    ["Organization", l.organization || "—"],
+    ["Tier", l.tier === "none" ? "no key" : escapeHtml(l.tier)],
+    ["Organization", escapeHtml(l.organization || "—")],
     ["Key", l.hasLicenseKey ? `…${escapeHtml(l.licenseKeyLast4)} (from ${escapeHtml(l.licenseKeySource)})` : "none"],
     ["Registered channels", fmtLicenseLimit(l.limits?.channels)],
     ["Registered users", fmtLicenseLimit(l.limits?.users)],
-    ["Active conversations / month", fmtLicenseLimit(l.limits?.conversations)],
-    ["AI messages / conversation / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
+    ["Conversation threads / channel / month", l.limits?.conversationsPerChannelPerMonth === undefined ? "not reported" : fmtLicenseLimit(l.limits.conversationsPerChannelPerMonth)],
+    ["AI messages / channel / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
     ["Last verified", fmtLicenseTime(l.verifiedAt)],
     ["Next check", fmtLicenseTime(l.nextCheckAt)],
     ["Expires", l.expiresAt ? fmtLicenseTime(l.expiresAt) : "—"],
     ["Installation id", `<code>${escapeHtml(l.installationId || "")}</code>`],
     ["Platform", `<code>${escapeHtml(l.platformUrl || "")}</code>`],
   ];
+  if (l.tier !== "free" && l.limits?.conversations !== null) facts.push(["Active channels / month", fmtLicenseLimit(l.limits?.conversations)]);
   if (l.placeholderPublicKey) facts.push(["Signing key", "PLACEHOLDER — this build cannot verify a production key"]);
   document.getElementById("license-facts").innerHTML = facts
     .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`)
@@ -4340,17 +4500,17 @@ function paintLicense(l) {
   // instead of every conversation filling the track relative to the busiest one.
   const max = cap === null ? Math.max(1, ...rows.map((r) => r.runs)) : cap;
   const limitLine = cap === null
-    ? `Unlimited AI messages per conversation on this tier — bars are relative to the busiest conversation.`
-    : `Limit: ${cap} AI messages per conversation this month. A conversation is warned once at 80% and refused at the limit.`;
+    ? `Unlimited AI messages per channel on this tier — bars are relative to the busiest channel.`
+    : `Limit: ${cap} AI messages per channel this month. A channel is warned once at 80% and refused at the limit.`;
   host.innerHTML =
     `<p class="license-usage-limit">${escapeHtml(limitLine)}</p>` +
     rows.map((r) => {
       const pct = Math.max(2, Math.min(100, (r.runs / max) * 100));
       const ratio = cap === null ? 0 : r.runs / cap;
       const tone = ratio >= 1 ? "over" : ratio >= 0.8 ? "near" : "";
-      const name = r.conversationId + (r.admitted ? "" : " (not in this month's allowed set)");
+      const name = `${r.conversationId} · ${r.activeConversations ?? 0} active threads` + (r.admitted ? "" : " (not in this month's allowed set)");
       return `<div class="bar-row">
-        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(r.conversationId)}</span>
+        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
         <span class="bar-track"><span class="bar-fill ${tone}" style="width:${pct}%${tone ? "" : ";background:var(--orange)"}"></span></span>
         <span class="bar-val">${r.runs}${cap === null ? "" : ` / ${cap}`}</span>
       </div>`;
@@ -4393,13 +4553,14 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
     btn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(btn); });
   }
   document.getElementById("set-composio-mode").addEventListener("change", syncComposioModeUi);
+  document.getElementById("composio-sdk-policy").addEventListener("change", syncComposioModeUi);
 
   // Connect / disconnect a chat platform without restarting the daemon — the same live-reconnect
   // affordance Slack has had, for the platforms whose credentials live on this page.
@@ -4537,33 +4698,28 @@ function bindSettings() {
     try { form = readSettingsForm(); }
     catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
-    const newPw = form.adminPassword || "";
+    // The pool sits beside the license it belongs to: a save that moves the default sends both,
+    // or the daemon would clear the pool as it does for a bare engine change.
+    if (Object.hasOwn(patch, "engine") && Object.hasOwn(form, "enginePool")) patch.enginePool = form.enginePool;
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
     // settings change just persists and takes effect on the next message, no reconnect.
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
-      const currentAdminPassword = newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true"
-        ? await passwordDialog({ body: "Enter your current admin password to change it." }) : "";
-      if (newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true" && !currentAdminPassword) {
-        saved.textContent = "Password change cancelled";
-        return;
+      if (Object.hasOwn(patch, "publicUrl")) {
+        const me = await api("/api/auth/me");
+        if (!me.bootstrap) await freshAdminAuth();
       }
       const r = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify({
           ...patch,
-          ...(newPw ? { currentAdminPassword } : {}),
           // Echo the version this page was painted from: the server refuses the save (409) if
           // anything wrote settings in the meantime, instead of landing it on a newer state.
           ...(SETTINGS_VERSION ? { settingsVersion: SETTINGS_VERSION } : {}),
           connectSlack: slackTokenChanged,
         }),
       });
-      if (newPw) await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: newPw }) });
-      // Reset only the write-only password box; the token fields are repainted (masked) by the
-      // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
-      document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.
@@ -4677,7 +4833,7 @@ async function fsBrowse(p) {
     const names = otherAssignments.map((item) => item.isDM || item.type === "im"
       ? (item.name || item.slug)
       : hashName(item.name || item.slug));
-    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it here will share one working folder between conversations.`;
+    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it links this conversation to the existing folder setup: skills, memory, instructions, mode, network and Drive sync. Harness and model stay independent.`;
     conflict.hidden = false;
   } else {
     conflict.textContent = "";
@@ -4687,7 +4843,16 @@ async function fsBrowse(p) {
   document.getElementById("fs-up").dataset.parent = data.parent || "";
   const list = document.getElementById("fs-list");
   list.innerHTML = "";
-  if (!data.dirs.length) {
+  // The other allowed roots (Settings → Container runtime) are offered at the primary root.
+  for (const root of Array.isArray(data.otherRoots) ? data.otherRoots : []) {
+    const row = document.createElement("div");
+    row.className = "fs-item";
+    row.innerHTML = ICON_FOLDER;
+    row.appendChild(document.createTextNode(`${root} (allowed root)`));
+    row.addEventListener("click", () => fsBrowse(root));
+    list.appendChild(row);
+  }
+  if (!data.dirs.length && !(data.otherRoots || []).length) {
     list.innerHTML = `<div class="fs-item" style="color:var(--muted);cursor:default">(no sub-folders)</div>`;
   }
   for (const d of data.dirs) {
@@ -4721,8 +4886,12 @@ async function loadHealth() {
     // One chip per harness. An installed CLI that is signed OUT looks healthy to a version probe
     // and then fails every turn, so the chip reports the credential, not just the binary.
     const engines = h.engines && typeof h.engines === "object" ? h.engines : { claude: h.claude || {} };
+    const firstHealth = !HEALTH_ENGINES;
+    HEALTH_ENGINES = engines;
+    if (firstHealth) licensesManager?.paint();
     const engineChips = Object.entries(engines).filter(([, check]) => check?.enabled !== false).map(([id, check]) => {
-      const name = id.charAt(0).toUpperCase() + id.slice(1);
+      // Named from the manifest — a license an admin added has an id nobody can read.
+      const name = ENGINE_MANIFESTS.some((m) => m.id === id) ? engineLabel(id) : id.charAt(0).toUpperCase() + id.slice(1);
       const signedOut = check?.auth?.known === true && check.auth.authenticated === false;
       const ok = !!check?.available && !signedOut;
       const label = !check?.available
@@ -4772,6 +4941,7 @@ function paintContainerRuntimeHealth(state) {
     if (state.awaitingImage) bits.push(`${state.awaitingImage} container(s) awaiting the built image; adopted on the next idle start.`);
   }
   if (state.socket && state.socket.listening === false) bits.push("The gateway control socket is not listening — container runs would have no gateway tools.");
+  if (state.service?.advice) bits.push(state.service.advice);
   el.textContent = bits.join(" ");
 }
 
@@ -4957,16 +5127,6 @@ window.addEventListener("popstate", async () => {
 });
 
 // ── Static event wiring (elements always present in the DOM) ─────────────────────
-const scheduleModal = document.getElementById("schedule-modal");
-document.getElementById("schedule-modal-close").addEventListener("click", closeScheduleEditor);
-document.getElementById("schedule-modal-cancel").addEventListener("click", closeScheduleEditor);
-document.getElementById("schedule-modal-save").addEventListener("click", saveScheduleEditor);
-document.getElementById("schedule-modal-prompt").addEventListener("input", () => {
-  document.getElementById("schedule-modal-error").hidden = true;
-});
-document.getElementById("schedule-search").addEventListener("input", renderSchedules);
-document.getElementById("schedule-modal-delivery").addEventListener("change", syncScheduleDeliveryFields);
-document.getElementById("schedule-history-open").addEventListener("click", () => openScheduleHistory(scheduleEditor?.schedule));
 document.getElementById("schedule-history-all").addEventListener("click", () => openScheduleHistory());
 document.getElementById("schedule-history-close").addEventListener("click", closeScheduleHistory);
 document.getElementById("schedule-history-refresh").addEventListener("click", () => loadScheduleHistory());
@@ -5003,35 +5163,8 @@ document.getElementById("drivesync-sync-all").addEventListener("click", async ()
     button.disabled = false;
   }
 });
-// Same clear affordance as the users search: the × shows once there is a query, Escape clears.
-{
-  const search = document.getElementById("schedule-search");
-  const clear = document.getElementById("schedule-search-clear");
-  search.addEventListener("input", () => { clear.hidden = !search.value.trim(); });
-  search.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    search.value = "";
-    clear.hidden = true;
-    renderSchedules();
-  });
-  clear.addEventListener("click", () => {
-    search.value = "";
-    clear.hidden = true;
-    renderSchedules();
-    search.focus();
-  });
-}
-document.getElementById("schedule-frequency").addEventListener("change", syncScheduleTimingFields);
-document.getElementById("schedule-modal-notify").addEventListener("change", (event) => {
-  document.getElementById("schedule-modal-notify-user-wrap").hidden = event.target.value !== "user";
-});
-scheduleModal.addEventListener("click", (e) => {
-  if (e.target === scheduleModal) closeScheduleEditor();
-});
 document.addEventListener("keydown", (e) => {
-  if (!document.getElementById("schedule-history-modal").hidden && e.key === "Escape") { closeScheduleHistory(); return; }
-  if (!scheduleModal.hidden && e.key === "Escape") closeScheduleEditor();
+  if (!document.getElementById("schedule-history-modal").hidden && e.key === "Escape") closeScheduleHistory();
 });
 
 for (const b of document.querySelectorAll(".nav-item")) {
@@ -5068,6 +5201,13 @@ for (const a of document.querySelectorAll("#settings-nav a")) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     selectSettingsSection(a.dataset.sec);
+  });
+}
+// The pointer from "Engine & runtime" to the licenses section is the same kind of jump.
+for (const a of document.querySelectorAll("#settings-body a.lic-jump")) {
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    selectSettingsSection("engine-licenses");
   });
 }
 
@@ -5182,7 +5322,12 @@ document.getElementById("fs-modal").addEventListener("click", (e) => {
     e.preventDefault();
     const id = idInput.value.trim();
     if (!id) return;
-    await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    try {
+      await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    } catch (error) {
+      await infoDialog({ title: "Couldn't add user", body: error.message || "The user could not be added. Try again." });
+      return;
+    }
     idInput.value = "";
     form.hidden = true;
     const search = document.getElementById("users-search");
@@ -5246,46 +5391,38 @@ document.getElementById("dash-range").addEventListener("change", () => loadDashb
 document.getElementById("dash-harness").addEventListener("change", () => loadDashboard().catch(() => {}));
 document.getElementById("dash-source").addEventListener("change", () => loadDashboard().catch(() => {}));
 
-document.getElementById("remove-password").addEventListener("click", async () => {
-  const ok = await confirmDialog({
-    title: "Remove admin password?",
-    body: "The UI becomes open — anyone who can reach it can administer, with no sign-in.",
-    confirmLabel: "Remove",
-    danger: true,
-  });
-  if (!ok) return;
-  const currentAdminPassword = await passwordDialog({ body: "Enter your current admin password to remove it.", danger: true });
-  if (!currentAdminPassword) return;
-  try {
-    await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, currentAdminPassword, connectSlack: false }) });
-    document.getElementById("daemon-msg").textContent = "✓ password removed";
-    await loadSettings();
-    await loadHealth();
-  } catch (error) {
-    document.getElementById("daemon-msg").textContent = "✗ " + error.message;
-  }
-});
-
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
+  const identity = await api("/api/auth/me", { cache: "no-store" });
+  if (identity.linkRequired || identity.bootstrap) {
+    // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
+    // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
+    document.querySelector(".app").style.display = "none";
+    const gate = document.createElement("main");
+    gate.className = "identity-link-gate";
+    const card = document.createElement("div");
+    card.className = "setcard identity-link-card";
+    const title = document.createElement("h2");
+    title.textContent = identity.linkRequired ? "Link your gateway admin user" : "Complete dashboard access setup";
+    const access = document.getElementById("admin-access");
+    card.append(title, access);
+    gate.append(card);
+    document.body.append(gate);
+    await mountAdminAccess(access, { confirm: confirmDialog, onLinked: () => window.location.reload() });
+    return;
+  }
   await loadHealth();
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
-  mountCodexLoginBox(document.getElementById("gateway-codex-login"), "/api/gateway/codex-login", {
-    onComplete: () => {
-      delete AVAILABLE_MCPS.codex;
-      const box = document.querySelector("#channel-detail .ch-mcps");
-      if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
-    },
-  });
-  const { skills } = await api("/api/skills");
+  const { skills, personalSkills = [] } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
   } catch {
     SKILL_TEMPLATES = [];
   }
   SKILLS = skills;
+  PERSONAL_SKILLS = Array.isArray(personalSkills) ? personalSkills : [];
   await loadSettings();
   await loadUsers(); // populate USERS for the channel user pickers (+ render the Users view)
   await loadConversations(); // default view: render the unified list (light); details render on click
@@ -5293,7 +5430,7 @@ async function init() {
   viewLoaded.users = true;
   viewLoaded.settings = true;
   if (initialConversationRoute) await selectConv(initialConversationRoute.key, { history: "none", canonicalize: true });
-  loadView(initialView);
+  loadView(initialView, { refreshIdentity: false });
 
   // Warm both catalogs off the critical path; every grant editor shows Claude and Codex together.
   for (const engine of ["claude", "codex"]) loadMcpCatalog(engine).catch(() => {});
@@ -5397,7 +5534,8 @@ function renderSkillTemplateEditor(mount, slug) {
     </div>`;
   const box = mount.querySelector(".tpl-skills");
   box.dataset.kind = "s";
-  checkboxList(box, accessGrantSkillOptions(SKILLS, t.skills || []), t.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, t.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(box, skillOptions, accessGrantSkillSelection(skillOptions, t.skills || []));
   wireChecksTools(box, mount.querySelector(".tpl-skills-filter"), mount.querySelector(".tpl-skills-count"));
   const status = mount.querySelector(".tpl-status");
   mount.querySelector(".tpl-cancel").addEventListener("click", () => { skillTplEditing = null; renderSkillTemplatesSettings(); });

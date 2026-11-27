@@ -20,7 +20,7 @@ export async function checkFunctionalityCoverage() {
 
   const expected = new Map();
   const toolsDirectory = resolve(root, 'src/mcp/tools');
-  const files = (await readdir(toolsDirectory)).filter((name) => name.endsWith('.js')).map((name) => resolve(toolsDirectory, name));
+  const files = (await readdir(toolsDirectory)).filter((name) => /\.(?:js|ts)$/.test(name)).map((name) => resolve(toolsDirectory, name));
   files.push(resolve(root, 'src/web/skills-mcp.js'));
   for (const file of files) {
     const source = await readFile(file, 'utf8');

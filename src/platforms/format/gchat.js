@@ -1,24 +1,25 @@
 // Outbound formatter for Google Chat.
 //
-// Google Chat's standard-Markdown mode (`markup_syntax: MARKDOWN`, GA 2026-08-07) renders real
-// Markdown — bold, italic, strikethrough, code, links, lists — but NOT tables and NOT headings in a
-// plain message. Both are degraded here rather than taught to the model: tables become fixed-width
-// blocks, headings become bold lines. Tables that genuinely need to be tabular go out as Cards v2
-// or a snippet artifact, which is a connector decision, not a formatter one.
+// Every text write is sent with `markupSyntax: MARKUP_SYNTAX_MARKDOWN` (googlechat/api.js), so a
+// reply renders as standard Markdown — bold, italic, strikethrough, code, links, lists, quotes —
+// whatever syntax the operator's Chat app defaults to. Tables and headings are still degraded here
+// (fixed-width blocks, bold lines) until a live space proves they render in a plain message; tables
+// that genuinely need to be tabular go out as Cards v2 or a file, a connector decision.
 //
-// SECURITY: `<users/{id}>` in outgoing text creates a REAL mention, and `<users/all>` pings the
-// whole space. Model output is untrusted, so those sequences are defanged before any sanctioned
-// mention is inserted — exactly the contract slack/format.js enforces for `<!channel>`.
+// SECURITY: in Markdown mode `<chat-user data-user="users/{id}">` creates a REAL mention and
+// `users/all` pings the whole space; the Chat-syntax form `<users/{id}>` does the same in older
+// apps. Model output is untrusted, so every such sequence is defanged — case-insensitively, since
+// the Markdown form is an HTML tag — before any sanctioned mention is inserted, exactly the contract
+// slack/format.js enforces for `<!channel>`. The other `chat-*` tags (emoji, citations) are
+// defanged too: only the gateway decides what the app's message annotates.
 import { degradeMarkdown, chunkText } from "./degrade.js";
 import { createMentionResolver } from "./mentions.js";
 
-// Google Chat's own text does not document an escape for `<users/…>`, and HTML entities are not
-// reliably decoded in plain message text. Breaking the sequence with a zero-width space is the
-// safest defang available: visually identical for a reader, unparseable as an annotation.
-// TODO(connector): re-verify against a live space when the Chat transport lands — if `&lt;` turns
-// out to render correctly in MARKDOWN mode, prefer it (it survives copy/paste cleanly).
+// Chat documents no escape for a literal `<`, so the sequence is broken with a zero-width space:
+// visually identical for a reader, unparseable as a tag or annotation in either syntax. Inline code
+// spans are left verbatim (a code span is literal text in both syntaxes).
 const ZWSP = "​";
-const DANGEROUS = /<(?=users\/|\/?chat-user\b)/g;
+const DANGEROUS = /<(?=\s*\/?\s*(?:users\/|chat-[a-z]))/gi;
 
 export function defangChatControlSeqs(text) {
   if (!text) return text || "";
@@ -28,12 +29,19 @@ export function defangChatControlSeqs(text) {
     .join("");
 }
 
+// The sanctioned mention markup, for an id the gateway itself resolved (never model text).
+export function chatUserMention(user) {
+  const id = String(user || '').replace(/^users\//, '');
+  if (/^[A-Za-z0-9_-]+$/.test(id)) return `<chat-user data-user="users/${id}">`;
+  if (/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(id)) return `<chat-user data-email="${id}">`;
+  return '';
+}
+
 export function createChatMentionResolver(normalizeName) {
   return createMentionResolver({
     normalizeName,
-    // Chat's id-based mention. The user id is the bare numeric id; the resource form is what the
-    // API expects inline in message text.
-    render: (id) => `<users/${id}>`,
+    // Markdown mode's id-based mention. The user id is the bare numeric id.
+    render: (id) => chatUserMention(id),
     defang: defangChatControlSeqs,
     // `all` is Chat's space-wide broadcast; the Slack words are kept reserved too so a directory
     // that happens to contain a user literally named "Channel" can never become a broadcast.
@@ -55,10 +63,8 @@ export function formatChatOutbound(markdown, { capabilities = {}, directory = nu
     : defanged;
   let text = resolved.trim();
   // The requester comes from authenticated intake. Add the mention after defanging model text.
-  const user = String(requester?.id || '').replace(/^users\//, '');
-  if (/^[A-Za-z0-9_-]+$/.test(user) || /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(user)) {
-    text += `${text ? '\n\n' : ''}<users/${user}>`;
-  }
+  const mention = chatUserMention(requester?.id);
+  if (mention) text += `${text ? '\n\n' : ''}${mention}`;
   // Chat mentions are inline in the text, so every chunk is self-contained and carries no entities.
   return { text, chunks: chunkText(text, capabilities.maxMessageChars || MAX_CHAT_MESSAGE_CHARS).map((c) => ({ text: c, mentions: [] })) };
 }

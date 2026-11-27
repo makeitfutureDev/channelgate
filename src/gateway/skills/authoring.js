@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Authoring and review: create a local skill, revise one, delete your own, decide a proposal,
 // and the grant helpers for the three tiers. Shared by the gateway MCP tools (chat), the external
 // MCP endpoint and the admin API so every surface applies exactly the same rules:
@@ -11,7 +12,7 @@
 //     proposal, once approved, makes it an organization skill;
 //   • every new revision of a local skill is published to the configured Git repository when
 //     publishing is on (publish.js) — best effort, reported, never blocking.
-import { getSkill, putSkillRevision, skillBundle, pinSkill, getProposal, decideProposal, createProposal, normalizeSlug, setSkillVisibility, tombstoneSkill, excludeSkill, SkillCatalogError } from "./catalog.js";
+import { getSkill, putSkillRevision, skillBundle, pinSkill, advanceSkillPin, protectUnpublishedSkillRevision, getProposal, decideProposal, createProposal, normalizeSlug, setSkillVisibility, tombstoneSkill, excludeSkill, SkillCatalogError } from "./catalog.js";
 import { normalizeSkillFiles, decodeInputFile, isSkillManifestPath } from "./files.js";
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
 import { withDependencies } from "./resolve.js";
@@ -48,7 +49,7 @@ export function describeOwner(skill) {
     case "bundled":
       return "bundled with the gateway";
     default:
-      return `${skill?.visibility === "personal" ? "personal, " : ""}authored locally${skill?.createdBy ? ` by ${skill.createdBy}` : ""}`;
+      return `${skill?.visibility === "personal" ? "personal, " : ""}gateway-owned${skill?.createdBy ? `, created by ${skill.createdBy}` : ""}`;
   }
 }
 
@@ -115,7 +116,8 @@ export function skillTier(skill) {
 // caller's job; ownership is enforced here. A skill pinned to an older revision is re-pinned to
 // the new one — otherwise the edit would be stored and silently never run. A publish-repository
 // skill is pushed back to its folder; when that push fails the new revision stays pinned so the
-// next sync of the repository cannot quietly bring the old files back.
+// next sync of the repository cannot quietly bring the old files back. Successful publication
+// clears recovery pins only; manual and approved-proposal pins remain intentional.
 export async function updateLocalSkill({ skill, files = [], remove = [], note = "", createdBy = "", publish = true, fetchImpl = undefined } = {}) {
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
   const edit = skillEditability(skill);
@@ -127,17 +129,13 @@ export async function updateLocalSkill({ skill, files = [], remove = [], note = 
   const r = putSkillRevision({ slug: skill.slug, files: merged, ...owner, sourceRef: "manual", note, createdBy, status: "active" });
   if (r.conflict) throw new SkillCatalogError(r.reason, { status: 409 });
   if (r.changed) logEvent("skill_updated", { author: createdBy, skill: skill.slug, revision: r.revision?.revisionNo, via: edit.via });
-  const shouldPublish = r.changed && skill.visibility !== "personal" && publish;
+  if (r.changed && r.skill.pinnedRevisionId != null) advanceSkillPin(r.skill.id, r.skill.pinnedRevisionId, r.revision.id);
+  const retryPublication = r.skill.pinReason === "publication" && r.skill.pinnedRevisionId === r.revision?.id;
+  const shouldPublish = (r.changed || retryPublication) && skill.visibility !== "personal" && publish;
   const published = shouldPublish ? await publishQuietly({ slug: skill.slug, revisionId: r.revision.id, actor: createdBy, ...(fetchImpl ? { fetchImpl } : {}) }) : { published: false, reason: r.changed ? "not published" : "unchanged" };
-  let pinned = false;
-  if (r.changed && r.revision) {
-    const keepPinned = skill.pinnedRevisionId != null || (edit.via === "repository" && !published.published);
-    if (keepPinned) {
-      pinSkill(skill.slug, r.revision.revisionNo);
-      pinned = true;
-    }
-  }
-  return { ...r, skill: getSkill(skill.slug) || r.skill, published, pinned, via: edit.via };
+  if (r.changed && edit.via === "repository" && !published.published) protectUnpublishedSkillRevision(r.revision.id);
+  const current = getSkill(skill.slug) || r.skill;
+  return { ...r, skill: current, published, pinned: current.pinnedRevisionId != null, via: edit.via };
 }
 
 // Move a skill between the shared library and a channel's section ("" = the library). The
@@ -314,6 +312,13 @@ export async function revokeSkillsFromUser(userId, slugs) {
   return { removed: result.removed, stillRequired: result.stillRequired, names: result.names };
 }
 
+// Validate before governance handlers touch any catalog flags or grants.
+export function validateSkillGovernanceChange(skill, { enabled, mandatory } = {}) {
+  if (mandatory !== true) return;
+  if (enabled === false) throw new SkillCatalogError("A mandatory skill cannot be disabled in the same request.", { status: 400 });
+  if (resolveGrantSlugs([skill.slug], sanitizeSkillGrantNames(getOrgAccessGrants().skills || [])).added.length) requireEnterpriseFeature("mandatoryOrgSkills");
+}
+
 // The organization tier: every conversation.
 export function grantSkillsToOrg(slugs) {
   const grants = getOrgAccessGrants();
@@ -350,6 +355,7 @@ export function proposeSkillChange({ skill = "", kind = "change", files = [], no
   if ((kind === "promote" || kind === "feedback" || kind === "delete" || kind === "template") && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
   let target = "";
   if (kind === "template") {
+    requireEnterpriseFeature("skillTemplates");
     const tpl = getTemplate(template);
     if (!tpl) throw new SkillCatalogError(`no skill template named "${template}" (see list_skill_templates)`, { status: 404 });
     if (existing.visibility === "personal") throw new SkillCatalogError(`"${slug}" is a personal skill; promote it before it can join a template`, { status: 409 });
@@ -365,17 +371,42 @@ export function proposeSkillChange({ skill = "", kind = "change", files = [], no
   return { proposal, skill: existing };
 }
 
+// Who decides a proposal. A change or feedback on a channel skill that this gateway can write is
+// that channel's business: its members could make the same edit themselves with update_skill, so
+// they decide it (an admin still can). Everything else reaches past one channel — the shared
+// library, a template, the whole catalog, or a source the gateway cannot write to, where approval
+// pins an override — and stays with admins. `channelId` is the conversation whose members decide.
+export function proposalDecider(proposal) {
+  const admin = { tier: "admin", channelId: "" };
+  if (!proposal || !["change", "feedback"].includes(proposal.kind)) return admin;
+  const skill = getSkill(proposal.slug);
+  if (!skill || skill.deleted || skillTier(skill) !== "channel") return admin;
+  if (proposal.kind === "change" && !skillEditability(skill).editable) return admin;
+  return { tier: "channel", channelId: skill.channelScope };
+}
+
 // Approve or reject. Approval of a change writes one revision (pinned as an override when the
 // skill is source-owned) and publishes it; approval of a promotion makes a personal skill an
 // organization skill (and publishes it) or, for an organization skill, grants it everywhere;
-// approving feedback just closes it.
-export async function decideSkillProposal(id, { decision, decidedBy = "", note = "" } = {}) {
+// approving feedback just closes it. `asChannelMember` is a decision by the owning channel's
+// member (proposalDecider): it is re-checked here, and a change lands exactly as that member's own
+// update_skill would — never as an admin-only pinned override.
+export async function decideSkillProposal(id, { decision, decidedBy = "", note = "", asChannelMember = false } = {}) {
   const proposal = getProposal(id);
   if (!proposal) throw new SkillCatalogError("proposal not found", { status: 404 });
   if (proposal.status !== "pending") throw new SkillCatalogError(`proposal #${id} is already ${proposal.status}`, { status: 409 });
+  if (asChannelMember && proposalDecider(proposal).tier !== "channel") {
+    throw new SkillCatalogError(`proposal #${id} needs an admin: it is not an edit of a channel skill`, { status: 403 });
+  }
+  if (asChannelMember && decision === "approve" && proposal.kind === "change") {
+    const r = await updateLocalSkill({ skill: getSkill(proposal.slug), files: proposal.files, note: note || proposal.note || `proposal #${proposal.id} by ${proposal.proposedBy}`, createdBy: decidedBy });
+    const p = decideProposal(id, { status: "approved", decidedBy, note, revisionId: r.revision?.id ?? null });
+    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "approved", revision: r.revision?.revisionNo, by: "channel" });
+    return { proposal: p, revision: r.changed ? r.revision : null, unchanged: !r.changed, pinned: false, promoted: false, published: r.published, deleted: false, templated: false };
+  }
   if (decision === "reject") {
     const p = decideProposal(id, { status: "rejected", decidedBy, note });
-    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected" });
+    logEvent("skill_proposal_decided", { author: decidedBy, proposal: id, skill: p.slug, decision: "rejected", ...(asChannelMember ? { by: "channel" } : {}) });
     return { proposal: p, revision: null, pinned: false, promoted: false, published: null, deleted: false, templated: false };
   }
   if (decision !== "approve") throw new SkillCatalogError("decision must be approve or reject");
@@ -423,7 +454,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
     if (r.conflict) throw new SkillCatalogError(r.reason, { status: 409 });
     revision = r.revision;
     if (skill && skill.ownerKind !== "local" && revision) {
-      pinSkill(skill.slug, revision.revisionNo);
+      pinSkill(skill.slug, revision.revisionNo, { reason: "proposal" });
       pinned = true;
     }
     if (revision && (skill?.ownerKind === "local" || !skill)) published = await publishQuietly({ slug: r.skill.slug, revisionId: revision.id, actor: decidedBy });
@@ -439,6 +470,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
 // else asks with a "template" proposal. Personal and deleted skills never join a template.
 
 export function addSkillsToTemplate(templateKey, slugs = [], { actor = "" } = {}) {
+  requireEnterpriseFeature("skillTemplates");
   const tpl = getTemplate(templateKey);
   if (!tpl) throw new SkillCatalogError(`no skill template named "${templateKey}"`, { status: 404 });
   const have = new Set((tpl.skills || []).map((s) => s.toLowerCase()));

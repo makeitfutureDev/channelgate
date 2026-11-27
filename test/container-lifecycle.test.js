@@ -17,6 +17,7 @@ const { currentInstallId } = await import("../src/runtimes/container/names.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { configDir, gatewayRoot, runtimeSocketDir, cleanWorkspaceFolder, codexEngineHome } = await import("../src/config/paths.js");
 const { CODEX_CONTAINER_AUTH_FILE } = await import("../src/runtimes/container/credentials.js");
+const { agentSshDir, ensureAgentSshIdentity } = await import("../src/config/agent-ssh.js");
 
 const SETTINGS = {
   enabled: true, defaultBackend: "container", cli: "auto", image: "channelgate/runtime:latest",
@@ -30,9 +31,9 @@ function target(slug, overrides = {}) {
 // A fake CLI that always resolves the image and answers `inspect` from a mutable state object.
 // `lifecycleOpts` reaches createContainerLifecycle so a test can drive the rebuild wait on a fake
 // clock (`now` + `sleep`) instead of real timers.
-function harness({ state = { exists: false }, kind = "podman", extraRoutes = [], lifecycleOpts = {} } = {}) {
+function harness({ state = { exists: false }, kind = "podman", rootless = true, extraRoutes = [], lifecycleOpts = {} } = {}) {
   const fake = createFakeCli({
-    kind,
+    kind, rootless,
     routes: [
       ...extraRoutes,
       { match: (a) => a[1] === "image" && a[2] === "inspect", result: { code: 0, stdout: "sha256:img|1.0.0" } },
@@ -64,16 +65,20 @@ async function warmed(h, t, { fingerprint = null, mountFingerprint = null } = {}
   return t;
 }
 
-test("mounts: nothing under the gateway root but the clean workspace, the MCP socket dir and the Codex auth file — and nothing under config/", () => {
+test("mounts: only the shared SSH identity subtree is mounted from config, read-only", () => {
   const t = target("mounts-chan");
-  const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
+  const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir(), agentSshDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "agent-ssh", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
     if (mount.type === "volume" || mount.type === "tmpfs") continue;
     assert.ok(path.isAbsolute(mount.source), `${mount.kind} mount source must be absolute`);
-    assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
+    if (mount.kind === "agent-ssh") {
+      assert.deepEqual(mount, { kind: "agent-ssh", type: "bind", source: agentSshDir(), target: "/home/agent/.ssh/channelgate", mode: "ro" });
+    } else {
+      assert.ok(!mount.source.startsWith(`${configDir()}${path.sep}`) && mount.source !== configDir(), `${mount.kind} must never mount config/`);
+    }
     const underRoot = mount.source === gatewayRoot() || mount.source.startsWith(`${gatewayRoot()}${path.sep}`);
     if (!underRoot) continue;
     assert.ok(
@@ -101,6 +106,30 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   }
 });
 
+test("the same read-only keypair is prepared for different channels, platforms and author scopes", async () => {
+  const identity = ensureAgentSshIdentity();
+  const homes = new Set();
+  for (const [platform, runtimeScope] of [["slack", "project"], ["slack", "admin"], ["googlechat", "project"], ["msteams", "project"]]) {
+    const t = resolveRuntime(`ssh-${platform}-${runtimeScope}`, {
+      platform, channelId: `C_SHARED_${platform}`, adminMode: runtimeScope === "admin", cleanMode: true,
+    }, { isAdminAuthor: runtimeScope === "admin", settings: SETTINGS });
+    const h = harness();
+    await h.lifecycle.ensureUp(t);
+    const mount = t.container.mounts.find((m) => m.kind === "agent-ssh");
+    assert.equal(mount.source, identity.dir);
+    assert.equal(mount.target, "/home/agent/.ssh/channelgate");
+    assert.equal(mount.mode, "ro");
+    assert.ok(h.fake.last("run").includes(`${identity.dir}:/home/agent/.ssh/channelgate:ro`));
+    assert.equal(ensureAgentSshIdentity().fingerprint, identity.fingerprint, "container preparation never changes identity");
+    homes.add(t.container.homeVolume);
+    h.reaper.stopTimer();
+  }
+  assert.equal(homes.size, 4, "only the SSH key is shared, not the channel HOME volumes");
+  const t = target("ssh-old-mount");
+  const old = { ...t, container: { ...t.container, mounts: t.container.mounts.filter((m) => m.kind !== "agent-ssh") } };
+  assert.notEqual(containerMountFingerprint(t), containerMountFingerprint(old), "an old container must be recreated to gain the mount");
+});
+
 // The operator-home grant: a Full-access (adminMode) channel, while the gateway-wide switch is
 // on, gets the daemon user's whole home read-write at its identical path — with the container
 // engine's own storage masked out — and NOTHING else changes for any other channel.
@@ -110,7 +139,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { isAdminAuthor: true, settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "agent-ssh", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");
@@ -263,7 +292,7 @@ test("state machine: exited → start (no recreate), and a lost lease is announc
   lease.release();
   assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: true });
   assert.deepEqual(h.fake.last("start"), ["podman", "start", t.container.name]);
-  assert.equal(h.fake.last("run"), null, "an exited container is started, never recreated");
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0, "an exited container is started, never recreated");
   assert.ok(announced.some((m) => /background processes from the previous session were lost/i.test(m)));
 });
 
@@ -276,9 +305,126 @@ test("state machine: running with a matching fingerprint is reused as-is", async
   h.fake.reset();
   const result = await h.lifecycle.ensureUp(t, {});
   assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: false });
-  assert.equal(h.fake.last("run"), null);
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0);
   assert.equal(h.fake.last("start"), null);
   assert.equal(h.fake.last("rm"), null);
+});
+
+const SCOPE_UNIT = `libpod-${"a".repeat(64)}.scope`;
+const SCOPE_CONFLICT = `Error: OCI runtime error: unable to apply cgroup configuration: unable to start unit "${SCOPE_UNIT}" (properties [{Name:Description Value:"container"}]): Unit ${SCOPE_UNIT} was already loaded or has a fragment file.`;
+
+test("exited container retries a transient rootless Podman systemd scope conflict without recreation", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-recovery"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", once: true, result: { code: 125, stderr: SCOPE_CONFLICT } });
+  const result = await h.lifecycle.ensureUp(t);
+  assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: true });
+  assert.equal(h.fake.find("start").length, 2);
+  assert.deepEqual(delays, [1_000]);
+  assert.equal(h.fake.find("rm").length + h.fake.find("run").filter((a) => a[2] === "-d").length + h.fake.find("volume").length + h.fake.find("stop").length, 0);
+  assert.ok(h.logs.some((line) => line.includes("retrying start (1/2)")));
+});
+
+test("systemd scope retries are bounded and preserve the final CLI error", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-exhausted"));
+  h.reaper.markStopped(t.container.name);
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => ({ code: 125, stderr: `${SCOPE_CONFLICT} attempt=${++attempts}` }) });
+  await assert.rejects(h.lifecycle.ensureUp(t), /could not start container .*attempt=3$/);
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [1_000, 2_000]);
+  assert.equal(h.reaper.snapshot().some((entry) => entry.running), false);
+  assert.equal(h.fake.find("rm").length + h.fake.find("run").filter((a) => a[2] === "-d").length + h.fake.find("volume").length, 0);
+});
+
+test("scope retry recovers on its final permitted attempt", async () => {
+  const delays = [];
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+  const t = await warmed(h, target("scope-last-attempt"));
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => (++attempts < 3 ? { code: 125, stderr: SCOPE_CONFLICT } : { code: 0 }) });
+  assert.equal((await h.lifecycle.ensureUp(t)).started, true);
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [1_000, 2_000]);
+});
+
+test("unrelated startup failures and non-Podman runtimes fail immediately", async () => {
+  for (const [kind, stderr, rootless = true] of [
+    ["podman", "Error: permission denied"],
+    ["podman", "Error: cgroup controllers not delegated"],
+    ["podman", SCOPE_CONFLICT.replaceAll(SCOPE_UNIT, "unrelated.scope")],
+    ["podman", SCOPE_CONFLICT.replace(`Unit ${SCOPE_UNIT}`, `Unit libpod-${"b".repeat(64)}.scope`)],
+    ["docker", SCOPE_CONFLICT],
+    ["podman", SCOPE_CONFLICT, false],
+  ]) {
+    const delays = [];
+    const h = harness({ kind, rootless, state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async (ms) => delays.push(ms) } });
+    const t = await warmed(h, target(`scope-unrelated-${kind}`));
+    h.fake.addRoute({ match: (a) => a[1] === "start", result: { code: 125, stderr } });
+    await assert.rejects(h.lifecycle.ensureUp(t), (error) => error.message.endsWith(stderr));
+    assert.equal(h.fake.find("start").length, 1);
+    assert.deepEqual(delays, []);
+  }
+});
+
+test("Stop interrupts scope retry delay and releases the container mutex", async () => {
+  let enteredSleep;
+  const sleeping = new Promise((resolve) => { enteredSleep = resolve; });
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: () => { enteredSleep(); return new Promise(() => {}); } } });
+  const t = await warmed(h, target("scope-stop"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", once: true, result: { code: 125, stderr: SCOPE_CONFLICT } });
+  const controller = new AbortController();
+  const pending = h.lifecycle.ensureUp(t, { signal: controller.signal });
+  const rejected = assert.rejects(pending, { name: "AbortError", details: { explicitStop: true } });
+  await sleeping;
+  controller.abort();
+  await rejected;
+  assert.equal(h.fake.find("start").length, 1, "Stop must prevent a retry");
+  assert.equal((await h.lifecycle.ensureUp(t)).started, true, "a later turn can acquire the same mutex");
+});
+
+test("Stop during a failed CLI start prevents the retry delay", async () => {
+  const controller = new AbortController();
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: async () => assert.fail("cancelled start must not wait") } });
+  const t = await warmed(h, target("scope-stop-start"));
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => { controller.abort(); return { code: 125, stderr: SCOPE_CONFLICT }; } });
+  await assert.rejects(h.lifecycle.ensureUp(t, { signal: controller.signal }), { name: "AbortError" });
+  assert.equal(h.fake.find("start").length, 1);
+});
+
+test("concurrent turns share one scope retry sequence under the container mutex", async () => {
+  let enteredSleep;
+  let finishSleep;
+  const sleeping = new Promise((resolve) => { enteredSleep = resolve; });
+  const h = harness({ state: { exists: true, status: "exited" }, lifecycleOpts: { sleep: () => { enteredSleep(); return new Promise((resolve) => { finishSleep = resolve; }); } } });
+  const t = await warmed(h, target("scope-concurrent"));
+  let attempts = 0;
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => {
+    if (++attempts === 1) return { code: 125, stderr: SCOPE_CONFLICT };
+    h.state.status = "running";
+    return { code: 0 };
+  } });
+  const first = h.lifecycle.ensureUp(t);
+  await sleeping;
+  const second = h.lifecycle.ensureUp(t);
+  finishSleep();
+  const results = await Promise.all([first, second]);
+  assert.equal(attempts, 2);
+  assert.deepEqual(results.map((result) => result.started), [true, false]);
+});
+
+test("Stop coinciding with successful start preserves running-container accounting", async () => {
+  const controller = new AbortController();
+  const h = harness({ state: { exists: true, status: "exited" } });
+  const t = await warmed(h, target("scope-stop-success"));
+  h.reaper.markStopped(t.container.name);
+  h.fake.addRoute({ match: (a) => a[1] === "start", result: () => { controller.abort(); return { code: 0 }; } });
+  await assert.rejects(h.lifecycle.ensureUp(t, { signal: controller.signal }), { name: "AbortError" });
+  assert.equal(h.fake.find("start").length, 1);
+  assert.equal(h.reaper.snapshot().find((entry) => entry.name === t.container.name).running, true);
 });
 
 test("state machine: running with a stale fingerprint recreates when unleased", async () => {
@@ -351,6 +497,26 @@ test("mount mismatch + busy: waits for the runs inside, announces it, then rebui
   assert.equal(announced.length, 1, "announced once, not once per poll");
 });
 
+test("shared history migration drains an active project writer without double-excluding its own lease", async () => {
+  let polls = 0;
+  let writer;
+  const h = harness({ lifecycleOpts: {
+    sleep: async () => {
+      polls++;
+      assert.equal(h.fake.find("run").some((argv) => argv.includes("--entrypoint")), false, "migration must not start while the old project writer is live");
+      if (polls === 2) writer.release();
+    },
+  } });
+  const t = resolveRuntime("history-project-writer", { platform: "slack", channelId: "C_HISTORY_WRITER" }, { settings: SETTINGS });
+  writer = h.reaper.acquireLease(t, { kind: "job", id: "active-project-writer" });
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "history-preparation" });
+  try {
+    await h.lifecycle.ensureUp(t, { lease: own });
+    assert.equal(polls, 2, "one writer must remain after excluding the preparatory lease once");
+    assert.equal(h.fake.find("run").filter((argv) => argv.includes("--entrypoint")).length, 1);
+  } finally { writer.release(); own.release(); }
+});
+
 test("mount rebuild waits past its notice interval then resumes automatically", async () => {
   let clock = 0;
   let job;
@@ -383,7 +549,7 @@ test("Stop aborts a rebuild waiter without touching the occupied container", asy
   const own = h.reaper.acquireLease(t, { id: "r1" });
   await assert.rejects(h.lifecycle.ensureUp(t, { lease: own, signal: controller.signal }), { name: "AbortError" });
   assert.equal(h.fake.last("rm"), null);
-  assert.equal(h.fake.last("run"), null);
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0);
   assert.equal(h.reaper.leaseCount(t.container.name), 2);
   own.release(); job.release();
   await h.lifecycle.ensureUp(t, {});
@@ -507,6 +673,44 @@ test("boot reconcile: running containers of THIS install are swept for run/warm 
   assert.deepEqual(sweep.slice(2), ["cg-a", "cg-sweep", "run", "warm"]);
   assert.deepEqual(result.swept, [{ name: "cg-a", ids: ["run-1", "warm-2"] }]);
   assert.equal(reaper.snapshot().find((e) => e.name === "cg-a").running, true);
+});
+
+test("boot reconcile: a container listed as running or stopping whose process is gone is removed, not registered idle", async () => {
+  // What a control-group kill of the daemon's unit leaves behind: Podman's record still says
+  // running (conmon died with it, so no exit was written) while the init pid no longer exists.
+  // Registering that corpse idle only had the reaper `stop` it into a permanent "stopping".
+  const ids = ["aaa", "bbb", "ccc", "ddd"];
+  const byId = {
+    aaa: inspectLine({ name: "cg-live", status: "running", install: currentInstallId(), channel: "a", pid: 4001 }),
+    bbb: inspectLine({ name: "cg-dead", status: "running", install: currentInstallId(), channel: "b", pid: 4002 }),
+    ccc: inspectLine({ name: "cg-dead-stopping", status: "stopping", install: currentInstallId(), channel: "c", pid: 4003 }),
+    // No pid reported (an older CLI, a fixture): never judged dead.
+    ddd: inspectLine({ name: "cg-unknown", status: "running", install: currentInstallId(), channel: "d" }),
+  };
+  const fake = createFakeCli({
+    kind: "podman",
+    routes: [
+      { match: (a) => a[1] === "ps", result: { code: 0, stdout: `${ids.join("\n")}\n` } },
+      { match: (a) => a[1] === "inspect" && a.length > 5, result: (a) => ({ code: 0, stdout: a.slice(5).map((id) => byId[id]).filter(Boolean).join("\n") }) },
+      { match: (a) => a[1] === "exec" && a.includes("cg-sweep"), result: { code: 0, stdout: "" } },
+    ],
+  });
+  const logs = [];
+  const cli = createContainerCli({ exec: fake.exec });
+  const reaper = createContainerReaper({ log: (m) => logs.push(m) });
+  const lifecycle = createContainerLifecycle({
+    cli, image: createContainerImage({ cli }), reaper, log: (m) => logs.push(m),
+    pidAlive: (pid) => pid === 4001,
+  });
+  const result = await lifecycle.bootReconcile(SETTINGS);
+  assert.deepEqual(result.dead, ["cg-dead", "cg-dead-stopping"]);
+  assert.deepEqual(result.running, ["cg-live", "cg-unknown"]);
+  const removed = fake.find("rm").map((argv) => argv[argv.length - 1]);
+  assert.deepEqual(removed, ["cg-dead", "cg-dead-stopping"], "only the dead ones are removed");
+  assert.ok(fake.find("rm").every((argv) => !argv.includes("-v") && !argv.includes("--volumes")), "the HOME volume outlives the container");
+  assert.deepEqual(fake.find("exec").filter((argv) => argv.includes("cg-sweep")).map((argv) => argv[2]), ["cg-live", "cg-unknown"], "a dead container is never exec'd into");
+  assert.deepEqual(reaper.snapshot().map((entry) => entry.name).sort(), ["cg-live", "cg-unknown"]);
+  assert.ok(logs.some((m) => /2 container\(s\) were listed as running with their processes gone \(cg-dead, cg-dead-stopping\)/.test(m)));
 });
 
 test("parsers: podman and docker inspect shapes, and the gone-error matcher", () => {

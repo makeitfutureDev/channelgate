@@ -32,7 +32,7 @@ function makeClient() {
 
 test("channel-thread streamed reply @-mentions the requester at the very end", async () => {
   const { client, calls } = makeClient();
-  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, authorId: "U777", teamId: "T1", dir: null });
+  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, replyMentions: true, authorId: "U777", teamId: "T1", dir: null });
   progress.onDelta("Here is the answer.");
   await progress.finalize({ content: "Here is the answer.", durationMs: 5, usage: { input_tokens: 3, output_tokens: 1 } });
 
@@ -44,7 +44,7 @@ test("channel-thread streamed reply @-mentions the requester at the very end", a
 
 test("DM reply does not @-mention the peer (already notified)", async () => {
   const { client, calls } = makeClient();
-  const progress = startProgress("stream", client, "D1", "111.000", { isDM: true, authorId: "U777", teamId: "T1", dir: null });
+  const progress = startProgress("stream", client, "D1", "111.000", { isDM: true, replyMentions: true, authorId: "U777", teamId: "T1", dir: null });
   progress.onDelta("Answer.");
   await progress.finalize({ content: "Answer.", durationMs: 5, usage: {} });
 
@@ -53,7 +53,7 @@ test("DM reply does not @-mention the peer (already notified)", async () => {
 
 test("tool-only reply (nothing streamed) carries the requester tag in the finalized message", async () => {
   const { client, calls } = makeClient();
-  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, authorId: "U9", teamId: "T1", dir: null });
+  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, replyMentions: true, authorId: "U9", teamId: "T1", dir: null });
   // No onDelta → rawLen === 0 → the answer is sent as the stop() markdown_text.
   await progress.finalize({ content: "Short tool-only answer.", durationMs: 5, usage: {} });
 
@@ -64,7 +64,7 @@ test("tool-only reply (nothing streamed) carries the requester tag in the finali
 
 test("long answer tags the OVERFLOW follow-up, not the truncated first message", async () => {
   const { client, calls } = makeClient();
-  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, authorId: "U5", teamId: "T1", dir: null });
+  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, replyMentions: true, authorId: "U5", teamId: "T1", dir: null });
   // No onDelta + content well over one Slack message → oneShot + overflow follow-up.
   const long = "line\n".repeat(4000);
   await progress.finalize({ content: long, durationMs: 5, usage: {} });
@@ -83,9 +83,42 @@ test("long answer tags the OVERFLOW follow-up, not the truncated first message",
 
 test("an author-less post (no user id) never yields a broken mention", async () => {
   const { client, calls } = makeClient();
-  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, authorId: "", teamId: "T1", dir: null });
+  const progress = startProgress("stream", client, "C1", "111.000", { isDM: false, replyMentions: true, authorId: "", teamId: "T1", dir: null });
   progress.onDelta("Answer.");
   await progress.finalize({ content: "Answer.", durationMs: 5, usage: {} });
 
   assert.ok(!JSON.stringify(calls).includes("<@>"), "must never emit an empty <@> mention");
+});
+
+for (const enabled of [false, true]) {
+  for (const delivery of ["stream", "one-shot", "overflow", "fallback"]) {
+    test(`reply mention ${enabled ? "on" : "off"} is respected by ${delivery} delivery`, async () => {
+      const { client, calls } = makeClient();
+      if (delivery === "fallback") client.chatStream = () => { throw new Error("stream unavailable"); };
+      const progress = startProgress("stream", client, "C_PREF", "111.001", {
+        isDM: false, authorId: "U_PREF", replyMentions: enabled, teamId: "T1", dir: null,
+      });
+      const answer = delivery === "overflow" ? "line\n".repeat(4000) : "Preference answer.";
+      if (delivery === "stream" || delivery === "fallback") progress.onDelta(answer);
+      await progress.finalize({ content: answer, durationMs: 5, usage: {} });
+      const delivered = calls.filter(([kind]) => ["append", "stopStream", "postMessage"].includes(kind))
+        .map(([, payload]) => payload?.markdown_text || payload?.text || "").join("");
+      assert.ok(delivered.includes(delivery === "overflow" ? "line" : "Preference answer."));
+      assert.equal(delivered.split("<@U_PREF>").length - 1, enabled ? 1 : 0);
+    });
+  }
+}
+
+test("default reply omits the automatic tag and keeps explicit requested mentions", async () => {
+  const { client, calls } = makeClient();
+  const progress = startProgress("stream", client, "C_PREF", "111.002", {
+    isDM: false, authorId: "U_DEFAULT", teamId: "T1",
+    dir: { map: new Map([["jane doe", "U_JANE"]]), maxWords: 2 },
+  });
+  progress.onDelta("Please ask @Jane Doe for the update.");
+  await progress.finalize({ content: "Please ask @Jane Doe for the update.", durationMs: 5, usage: {} });
+  const delivered = calls.filter(([kind]) => kind === "append" || kind === "stopStream")
+    .map(([, payload]) => payload?.markdown_text || "").join("");
+  assert.ok(!delivered.includes("<@U_DEFAULT>"));
+  assert.ok(delivered.includes("<@U_JANE>"));
 });

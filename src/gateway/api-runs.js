@@ -1,3 +1,4 @@
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 // HTTP run API: fire a headless run without a Slack message. `POST /api/runs` (see
 // ../web/routes/runs.js) hands the parsed request here; startApiRun() provisions/resolves a gated
 // folder, pre-mints a session, kicks the run through runMessage() in the background, and returns a
@@ -25,6 +26,7 @@ import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
 import path from "node:path";
 import {
+  getUser,
   getChannelEntry,
   getChannelsIndex,
   upsertChannelEntry,
@@ -34,6 +36,9 @@ import {
   defaultChannelMeta,
 } from "../config/store.js";
 import { assertChannelEngineApproved } from "./channel-engines.js";
+import { normalizeLicensePool } from "./license-pool.js";
+import { assertEngineSelectable } from "../engines/selection.js";
+import { unservedModelReason } from "../engines/registry.js";
 import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
 import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
@@ -52,10 +57,16 @@ import { getDirectory } from "../slack/directory.js";
 import { mdToMrkdwn } from "../slack/format.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
-import { PROFILE_FLAGS, API_PRINCIPAL } from "./modes.js";
-import { postNotice, asConnector } from "../platforms/notify.js";
+import { PROFILE_FLAGS, API_PRINCIPAL, isAuthorized } from "./modes.js";
+import { isAdmin, isApproved } from "../config/store.js";
+import { postNotice, postDirectMessage, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule } from "./schedule-outcome.js";
+import { API_MAX_INFLIGHT, apiSourceId, backfillApiRunLedger, normalizeApiRunName, noteApiDuplicate, noteApiRejection, openApiRun, syncApiRun } from "./api-run-history.js";
+import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
+import { appendScheduleRunEvent } from "./schedule-runs.js";
+import { plainFailureText } from "../util/process-outcome.js";
 import { resolveApiConversation, threadPermalink, validateConversationKey } from "./api-conversations.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
@@ -64,7 +75,10 @@ import { resolveApiConversation, threadPermalink, validateConversationKey } from
 export const API_CHANNEL_ID = "cg-api";
 export const API_SLUG = "api";
 
-const MAX_INFLIGHT = 25; // reject new starts past this many concurrently-running API jobs (429)
+// Where a run shows in its channel: "visible" (kickoff thread + answer), "hidden" (nothing posted;
+// GET / webhook / Automations page only), "on-failure" (nothing unless it needs attention).
+export const API_VISIBILITIES = ["visible", "hidden", "on-failure"];
+const MAX_INFLIGHT = API_MAX_INFLIGHT; // reject new starts past this many concurrently-running API jobs (429)
 // Cap for an inline base64 payload or a downloaded webhook-supplied fileUrl — the same ceiling every
 // inbound attachment gets (util/bounded-bytes.js). A fileUrl body streams to disk under it; an
 // inline payload is in practice bounded far lower by the JSON body limit of the admin app.
@@ -100,6 +114,9 @@ function persist(job) {
     "INSERT INTO api_jobs(id, status, created_ms, data) VALUES(?, ?, ?, ?) " +
     "ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data"
   ).run(job.id, job.status, job.createdMs, toJson(job));
+  // The run ledger follows every checkpoint (telemetry: it never throws, and is a no-op for a
+  // job that has no ledger row).
+  syncApiRun(job);
 }
 
 // Trim the in-memory map and prune old persisted rows. Cheap; called once per start.
@@ -151,6 +168,7 @@ function startShape(job, reused = false) {
     jobId: job.id,
     status: job.status,
     engine: job.engine,
+    harness: job.engine,
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     slackThread: Boolean(job.slackThread),
@@ -221,6 +239,7 @@ export function stopApiRun(id) {
 // Recover only DELIVERY of durable results. Unknown in-flight work is explicitly interrupted;
 // the caller must reconcile side effects before submitting another execution.
 export async function recoverApiRuns({ slack, deliver = deliverResult, webhook = fireWebhook } = {}) {
+  backfillApiRunLedger();
   const stale = getDb().prepare("SELECT data FROM api_jobs ORDER BY created_ms").all()
     .map((r) => fromJson(r.data, null)).filter((j) => j &&
       (["running", "queued"].includes(j.status) || j.deliveryPending || j.webhookPending || j.interruptionNoticePending));
@@ -233,21 +252,22 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
       job.status = "interrupted";
       job.completedMs = Date.now();
       job.error = "The gateway restarted before saving this run's result. External actions may already have happened. Inspect the target systems before explicitly submitting a new run; this request was not run again.";
-      job.interruptionNoticePending = Boolean(job.slackThread);
+      job.taskStatus = "interrupted";
+      job.interruptionNoticePending = Boolean(job.slackThread) || job.visibility === "on-failure";
       job.webhookPending = Boolean(job.webhook);
     }
     jobs.set(job.id, job);
     persist(job);
-    const client = job.slackThread ? connectedClient : null;
+    const client = job.slackThread || job.visibility === "on-failure" ? connectedClient : null;
     try {
-      if (client && job.deliveryPending && job.result) {
+      if (client && job.slackThread && job.deliveryPending && job.result) {
         await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
           result: { ...job.result, engine: job.engine, cwd: job.cwd, sessionId: job.sessionId }, footer: true });
         job.deliveryPending = false;
         persist(job);
       }
       if (client && job.interruptionNoticePending) {
-        await postNotice(client, { conversationId: job.channelId, threadKey: job.threadKey,
+        await postNotice(client, { conversationId: job.channelId, threadKey: job.slackThread ? job.threadKey : "",
           text: `⚠️ API run \`${job.id}\` was interrupted. External actions are unknown; inspect before retrying. It was not run again.` });
         job.interruptionNoticePending = false;
         persist(job);
@@ -464,6 +484,7 @@ async function fireWebhook(job) {
     sessionId: job.sessionId,
     resumeCommand: job.resumeCommand,
     engine: job.engine,
+    harness: job.engine,
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     costUSD: job.costUSD ?? null,
@@ -474,6 +495,9 @@ async function fireWebhook(job) {
     costEstimated: Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     error: job.error || null,
+    taskStatus: job.taskStatus || null,
+    outcome: job.outcome || null,
+    model: job.model || null,
     result: job.result ? { content: job.result.content } : null,
   };
   const controller = new AbortController();
@@ -487,12 +511,21 @@ async function fireWebhook(job) {
     });
     await logEvent("api_webhook", { id: job.id, status: job.status, code: res.status, ok: res.ok });
     await res.body?.cancel?.().catch(() => {});
+    // Delivered, or a refused delivery the Automations page shows as "Webhook not delivered"
+    // (retried once more after a gateway restart; the result stays readable by job id).
+    job.webhookAttempts = (job.webhookAttempts || 0) + 1;
     if (res.ok) {
       job.webhookPending = false;
-      persist(job);
+      job.webhookError = "";
+    } else {
+      job.webhookError = `The webhook answered HTTP ${res.status}.`;
     }
+    persist(job);
   } catch (e) {
     await logEvent("api_webhook_error", { id: job.id, error: e.message }).catch(() => {});
+    job.webhookAttempts = (job.webhookAttempts || 0) + 1;
+    job.webhookError = controller.signal.aborted ? `The webhook did not answer within ${WEBHOOK_TIMEOUT_MS / 1000} seconds.` : "The webhook could not be reached.";
+    try { persist(job); } catch { /* the job row is the caller's record; a ledger note must not throw here */ }
   } finally {
     clearTimeout(t);
   }
@@ -518,7 +551,7 @@ function countInflight() {
 // Returns job admission/session facts plus conversationKey/threadTs/threadReused/threadPermalink.
 // or { ok:false, code, error }. The run itself proceeds in the background.
 export async function startApiRun(input = {}) {
-  const { message, file, fileUrl, engine: engineIn, model, effort, mode, idempotencyKey } = input;
+  const { message, file, fileUrl, engine: engineIn, harness: harnessIn, licenses, model, effort, mode, idempotencyKey } = input;
   const msg = String(message ?? "").trim();
   const hasFile = Boolean((typeof file?.dataBase64 === "string" && file.dataBase64) || (typeof file === "string" && file) || fileUrl);
   if (!msg && !hasFile) return { ok: false, code: 400, error: "Provide a `message` (and/or a file)." };
@@ -529,6 +562,18 @@ export async function startApiRun(input = {}) {
     return { ok: false, code: 400, error: error.message };
   }
   if (conversationKey && !input.channel) return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  let outcomeOptions;
+  try {
+    const successCriteria = normalizeSuccessCriteria(input.successCriteria);
+    if (input.reportOutcome !== undefined && typeof input.reportOutcome !== "boolean") return { ok: false, code: 400, error: "reportOutcome must be true or false." };
+    const visibility = input.visibility === undefined || input.visibility === null || input.visibility === "" ? "visible" : input.visibility;
+    if (!API_VISIBILITIES.includes(visibility)) return { ok: false, code: 400, error: `visibility must be one of: ${API_VISIBILITIES.join(", ")}.` };
+    if (visibility !== "visible" && conversationKey) return { ok: false, code: 400, error: "conversationKey continues a visible Slack thread; it cannot be combined with visibility \"" + visibility + "\"." };
+    // "on-failure" must know whether the WORK failed, so it always asks the agent for its report.
+    outcomeOptions = { successCriteria, visibility, reportOutcome: input.reportOutcome === true || Boolean(successCriteria) || visibility === "on-failure", name: normalizeApiRunName(input.name) };
+  } catch (error) {
+    return { ok: false, code: 400, error: error.message };
+  }
   // Resolve keyed targets before deduplication, so a globally reused event key can never return
   // a different channel's conversation. Legacy unkeyed idempotency semantics remain unchanged.
   const conversationEntry = conversationKey ? await resolveChannel(input.channel) : null;
@@ -544,13 +589,23 @@ export async function startApiRun(input = {}) {
 
   // Per-request overrides (win over the channel/DM config for this one run). Validated before the
   // reservation below so a malformed request never consumes an in-flight slot.
-  const engineOv = engineIn ? String(engineIn).trim().toLowerCase() : "";
-  if (engineOv && !ENGINES.includes(engineOv)) return { ok: false, code: 400, error: `engine must be one of: ${ENGINES.join(", ")}` };
+  const legacyEngineOv = engineIn ? String(engineIn).trim().toLowerCase() : "";
+  const harnessOv = harnessIn ? String(harnessIn).trim().toLowerCase() : "";
+  if (legacyEngineOv && harnessOv && legacyEngineOv !== harnessOv) return { ok: false, code: 400, error: "harness and engine must name the same harness when both are supplied." };
+  const engineOv = harnessOv || legacyEngineOv;
+  if (engineOv && !ENGINES.includes(engineOv)) return { ok: false, code: 400, error: `harness (or engine) must be one of: ${ENGINES.join(", ")}` };
   const modeOv = mode ? normalizeMode(mode) : "";
   if (modeOv === "invalid") return { ok: false, code: 400, error: "mode must be one of: read, worker, auto, full, lean (aliases: bash→worker, admin→full)" };
+  // `licenses`: the more licenses of the named harness this one run may move to when the named
+  // license fails — "any", or a list of license ids. It rides with the harness override only.
+  let poolOv = "";
+  if (licenses != null && licenses !== "") {
+    if (!engineOv) return { ok: false, code: 400, error: "licenses needs a harness: name the license to start on in `harness`." };
+    try { poolOv = normalizeLicensePool(licenses, engineOv); } catch (error) { return { ok: false, code: 400, error: error.message }; }
+  }
   const overrides =
     engineOv || model || effort || modeOv
-      ? { engine: engineOv || undefined, model: model ? String(model) : undefined, effort: effort ? String(effort) : undefined, mode: modeOv || undefined }
+      ? { engine: engineOv || undefined, licensePool: poolOv || undefined, model: model ? String(model) : undefined, effort: effort ? String(effort) : undefined, mode: modeOv || undefined }
       : null;
 
   // Idempotency: a repeat POST carrying the same key within the TTL returns the ORIGINAL job
@@ -559,20 +614,33 @@ export async function startApiRun(input = {}) {
   const idemKey = idempotencyKey ? String(idempotencyKey).slice(0, 200) : "";
   if (idemKey) {
     const existing = findByIdempotencyKey(idemKey);
-    if (existing) return dedupedShape(startShape(existing, true));
+    if (existing) {
+      noteApiDuplicate(existing.id);
+      return dedupedShape(startShape(existing, true));
+    }
     // A same-key POST is mid-start: share its outcome instead of racing a duplicate run.
     const pending = pendingStarts.get(idemKey);
-    if (pending) return dedupedShape(await pending);
+    if (pending) {
+      const shared = await pending;
+      if (shared?.ok && shared.jobId) noteApiDuplicate(shared.jobId);
+      return dedupedShape(shared);
+    }
   }
   // Backpressure: bound concurrently-running API jobs (runMessage's own semaphore bounds spawns).
-  if (countInflight() >= MAX_INFLIGHT) return { ok: false, code: 429, error: `Too many API runs in flight (${MAX_INFLIGHT}). Retry shortly.` };
+  if (countInflight() >= MAX_INFLIGHT) {
+    // Nothing runs, but the refusal is recorded against its source (one aggregated ledger row).
+    const p = input.principal || null;
+    const target = p?.channelId || conversationEntry?.channelId || (input.channel ? (await resolveChannel(input.channel).catch(() => null))?.channelId : API_CHANNEL_ID);
+    if (target) noteApiRejection({ channelId: target, principalKind: p ? "user" : "api", apiTokenId: p?.tokenId || null, name: outcomeOptions.name });
+    return { ok: false, code: 429, error: `Too many API runs in flight (${MAX_INFLIGHT}). Retry shortly.` };
+  }
   reservedStarts += 1;
   let settle = () => {};
   if (idemKey) pendingStarts.set(idemKey, new Promise((resolve) => { settle = resolve; }));
 
   let outcome;
   try {
-    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry });
+    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions });
   } catch (e) {
     releaseStart(idemKey, settle, { ok: false, code: 500, error: e.message });
     throw e;
@@ -591,7 +659,22 @@ function releaseStart(idemKey, settle, outcome) {
 
 // The claimed half: everything from here down may await freely, because the idempotency key and the
 // in-flight slot are already held by the caller above.
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry }) {
+// A channel token's principal (src/gateway/api-tokens.js, resolved by the route from the
+// credential — never from the body). The run is bound to the token's conversation and acts as the
+// token's creator with their LIVE rank; `author` in the body is ignored for it.
+async function userPrincipalRefusal(principal, entry, meta) {
+  if (!principal) return null;
+  if (entry.channelId !== principal.channelId) {
+    return { ok: false, code: 403, error: `This token belongs to conversation ${principal.slug}; it cannot start runs in "${entry.name || entry.slug}". Omit \`channel\` or create a token in that conversation.` };
+  }
+  const [adminUser, approvedUser] = await Promise.all([isAdmin(principal.createdBy), isApproved(principal.createdBy)]);
+  if (!isAuthorized(meta, principal.createdBy, Boolean(entry.isDM), { isAdminUser: adminUser, isApprovedUser: approvedUser })) {
+    return { ok: false, code: 403, error: "The token's owner is no longer authorized in this conversation; the token is unusable until they are." };
+  }
+  return null;
+}
+
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry, outcomeOptions = { successCriteria: "", reportOutcome: false, visibility: "visible" } }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -603,13 +686,18 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     }
   }
 
-  const authorId = (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || API_PRINCIPAL;
+  const authorId = principal ? principal.createdBy : (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || API_PRINCIPAL;
 
-  // Resolve the target folder.
+  // Resolve the target folder. A channel token's run defaults to — and may only name — its own
+  // conversation.
   let entry;
   if (channel) {
     entry = conversationEntry || await resolveChannel(channel);
     if (!entry) return { ok: false, code: 400, error: `Unknown channel "${channel}". Pass a registered Slack channel id, folder slug, or channel name.` };
+  } else if (principal) {
+    entry = await resolveChannel(principal.channelId);
+    if (!entry) return { ok: false, code: 403, error: "This token's conversation is no longer registered." };
+    channel = principal.channelId;
   } else {
     entry = await ensureApiChannel();
   }
@@ -620,11 +708,23 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
+  const refused = await userPrincipalRefusal(principal, entry, meta);
+  if (refused) return refused;
   // Reject an explicit disallowed override before preparing files or posting a kickoff. Reused
   // conversations resolve their session owner later, under the ordinary run admission guard.
   try {
-    if (engineOv || !conversationKey) assertChannelEngineApproved(meta, engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine());
-  } catch (error) { return { ok: false, code: error.statusCode || 403, error: error.message }; }
+    if (engineOv || !conversationKey) {
+      const selectedEngine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
+      assertChannelEngineApproved(meta, selectedEngine);
+      await assertEngineSelectable(selectedEngine, { channelId: entry.channelId, meta });
+      // A named `model` the license cannot serve used to be dropped at spawn, so the caller got
+      // an answer from a different model and nothing said so. Refuse it while there is still a
+      // caller to tell. (A reused conversation without a harness is checked when its live
+      // selection resolves — run.js — and fails that job with the same sentence.)
+      const unserved = unservedModelReason(overrides?.model, selectedEngine);
+      if (unserved) return { ok: false, code: 400, error: `${unserved} Name the license that serves it in \`harness\`, or omit \`model\` to use the license's default.` };
+    }
+  } catch (error) { return { ok: false, code: error.statusCode || error.status || 400, error: error.message }; }
   await ensureChannelFolder(slug, meta); // idempotent — writes the lockdown + uploads root exists
   const cwd = effectiveWorkDir(slug, meta);
 
@@ -642,7 +742,9 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
 
   // Real-channel runs use a Slack root as their session key. Keyed events resolve a durable root;
   // unkeyed events create their own, with the legacy headless fallback if the kickoff fails.
-  const canSlack = Boolean(channel) && registeredSlack;
+  // hidden / on-failure: no kickoff and no thread — the run is headless in its channel's folder;
+  // on-failure posts one alert to the channel only when the run needs attention.
+  const canSlack = Boolean(channel) && registeredSlack && outcomeOptions.visibility === "visible";
   let threadKey = `api:${jobId}`;
   let slackThread = false;
   let threadReused = false;
@@ -676,7 +778,8 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   const engine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
   const resumeCommand = presetSessionId ? await buildResumeCommand({ slug, cwd, sessionId: presetSessionId, engine }) : null;
 
-  const textForRun = buildTextForRun({ msg, authorId, attachmentPath });
+  const baseText = buildTextForRun({ msg, authorId, attachmentPath });
+  const textForRun = outcomeOptions.reportOutcome ? automationPrompt(baseText, { successCriteria: outcomeOptions.successCriteria }) : baseText;
 
   const now = Date.now();
   const job = {
@@ -687,6 +790,10 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     channelId: entry.channelId,
     threadKey,
     author: authorId,
+    // "user": a channel token's creator, a verified person the run acts AS; "api": the deprecated
+    // organization key's fixed principal (config/api-principal.js).
+    principalKind: principal ? "user" : "api",
+    apiTokenId: principal?.tokenId || null,
     engine,
     sessionId: presetSessionId,
     resumeCommand,
@@ -704,6 +811,13 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     deliveryPending: false,
     idempotencyKey: idemKey,
     overrides: overrides || null,
+    successCriteria: outcomeOptions.successCriteria,
+    reportOutcome: outcomeOptions.reportOutcome,
+    visibility: outcomeOptions.visibility,
+    name: outcomeOptions.name || "",
+    taskStatus: null,
+    outcome: null,
+    model: null,
     stopRequested: false,
     recoveryAttempts: 0,
     createdMs: now,
@@ -719,12 +833,15 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   const controller = new AbortController();
   controllers.set(jobId, controller);
   persist(job);
+  // The same ledger scheduled runs write: history, health and acknowledgement on the Automations page.
+  try { openApiRun(job); syncApiRun(job); } catch { /* telemetry only */ }
   houseKeep();
   await logEvent("api_run_start", { id: jobId, slug, channel: slackThread ? entry.channelId : "", author: authorId, hasFile: Boolean(attachmentPath) });
 
   // Drive the run in the background — the HTTP handler returns immediately. `driver` is injectable
   // for the same reason recoverApiRuns takes one: admission can then be tested without a subprocess.
-  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
+  driver(job, { textForRun, attachmentPath, client: slackThread ? client : null,
+    alertClient: outcomeOptions.visibility === "on-failure" && registeredSlack ? client : null, notifyClient: client, teamId: slack?.snapshot?.().teamId || null, overrides, signal: controller.signal, controller, queueMemoryReview });
 
   return startShape(job);
 }
@@ -741,6 +858,18 @@ export function settleRunCost(result = {}, ledger = null) {
   return { costUSD: null, estimated: false };
 }
 
+// The task outcome of an API run — the schedules' rules (schedule-outcome.js). Engine failures and
+// admission refusals (license cap, usage limit, harness lock) are gateway facts for every run; the
+// agent's own succeeded/no-op/failed/blocked report exists only when the caller asked for it
+// (`reportOutcome` or `successCriteria`). A clean run without one is "unreported": the engine
+// finished, nobody claimed the task did.
+export function apiRunOutcome(result = {}, { reportOutcome = false } = {}) {
+  const classified = classifyScheduleResult(result);
+  const outcome = classified.automationOutcome;
+  if (reportOutcome || outcome.source === "gateway") return classified;
+  return { ...result, automationOutcome: { status: "unreported", summary: "", connections: [], source: "none" } };
+}
+
 // The per-thread slot a turn holds while it runs — the SAME queue Slack messages use, so an API
 // run is one more turn in its thread: a follow-up posted into a channel-backed API thread gets the
 // ordinary Steer / Queue / Cancel choice instead of racing a second process onto the same session,
@@ -755,8 +884,39 @@ function apiTranscript(job, content) {
   return `User (HTTP API run${job.author !== API_PRINCIPAL ? ` on behalf of ${job.author}` : ""}):\n${job.message || "(file only)"}\n\nAssistant:\n${content || ""}`;
 }
 
+// visibility "on-failure": one top-level alert in the run's channel when the run needs attention
+// (failed, blocked, interrupted, or no valid outcome report). Never throws.
+const FAILURE_WORDS = { failed: "failed", blocked: "was blocked", interrupted: "was interrupted", unreported: "finished without reporting its outcome" };
+export function failureAlertText(job) {
+  const status = job.taskStatus || "failed";
+  const request = String(job.message || "(file only)").replace(/\s+/g, " ").trim();
+  const reason = job.error || job.outcome?.summary || "";
+  const broken = (job.outcome?.connections || []).filter((c) => c.status !== "available").map((c) => `${c.name} ${c.status}`);
+  return `⚠️ API run \`${job.id}\` ${FAILURE_WORDS[status] || status}` +
+    `\n*Request:* ${mdToMrkdwn(request.length > 300 ? `${request.slice(0, 300)}…` : request)}` +
+    (reason ? `\n*Reason:* ${mdToMrkdwn(reason.slice(0, 1000))}` : "") +
+    (broken.length ? `\n*Connections:* ${broken.join(", ")}` : "");
+}
+async function postFailureAlert(client, job) {
+  try {
+    await postNotice(client, { conversationId: job.channelId, text: failureAlertText(job) });
+    job.failureAlertedMs = Date.now();
+    persist(job);
+  } catch (e) {
+    await logEvent("api_failure_alert_error", { id: job.id, error: e.message }).catch(() => {});
+  }
+}
+
+// Three failures in a row from one source: one DM to the token's creator (the organization key
+// has no person behind it, so its sources alert nobody — admins read them on the board).
+async function alertApiFailureStreak(job, client) {
+  if (!client || job.principalKind !== "user" || !job.author) return;
+  await alertFailureStreak({ scheduleId: apiSourceId(job), channelId: job.channelId, title: job.name || `API runs in ${job.slug}`,
+    notify: (text) => postDirectMessage(client, { userId: job.author, text }) });
+}
+
 // The floating driver: run, record the outcome, post to Slack (thread runs only), fire the webhook.
-async function runInBackground(job, { textForRun, attachmentPath, client, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
+async function runInBackground(job, { textForRun, attachmentPath, client, alertClient = null, notifyClient = null, teamId = null, overrides, signal, controller = null, queueMemoryReview = maybeQueueMemoryReview }) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
   const runKey = threadRunKey(job);
@@ -782,26 +942,34 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     }
     const dir = client ? await getDirectory(client).catch(() => null) : null;
     if (client) {
+      const destination = await getChannelEntry(job.channelId);
       status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
-        isDM: false,
+        isDM: destination?.isDM === true || destination?.type === "im",
         authorId: job.author,
+        replyMentions: job.principalKind === "user" && userReplyMentionsEnabled(await getUser(job.author)),
         teamId,
         dir,
         // The caller-named author is attribution, not necessarily a Slack user: the reply menu is
-        // unbound and opens under whoever clicks it (their own authorization applies).
-        menuOwnerId: "",
+        // unbound and opens under whoever clicks it (their own authorization applies). A channel
+        // token's run belongs to its creator, so the menu is theirs like a Slack message's.
+        menuOwnerId: job.principalKind === "user" ? job.author : "",
       });
     }
     const onEvent = (ev) => {
       if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySaves += 1;
+      try { recordRunEvent(job.id, ev); } catch { /* telemetry only */ }
       status?.onEvent?.(ev);
     };
+    try { appendScheduleRunEvent(job.id, { kind: "agent_requested" }); } catch { /* telemetry only */ }
 
-    const result = await runMessage({
+    const rawResult = await runMessage({
       channelId: job.channelId,
-      // The run acts as the API principal: the key is an admin credential with no person behind
-      // it. `job.author` (caller-named) labels the kickoff, prompt provenance and usage ledger only.
-      authorId: API_PRINCIPAL,
+      // The deprecated organization key's run acts as the API principal: an admin credential with
+      // no person behind it, where `job.author` (caller-named) labels the kickoff, prompt
+      // provenance and usage ledger only. A channel token's run acts AS its creator — a verified
+      // person whose rank, authorization and personal scope are resolved live, as for a Slack
+      // message of theirs (src/gateway/api-tokens.js).
+      authorId: job.principalKind === "user" ? job.author : API_PRINCIPAL,
       workspaceId: teamId || process.env.CG_SLACK_TEAM_ID || "",
       text: textForRun,
       threadKey: job.threadKey,
@@ -809,16 +977,35 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       sessionId: job.conversationKey ? "" : job.sessionId,
       overrides,
       signal,
-      // No personal scope: nobody's personal Composio/Toolbox token, secrets or skills — the
-      // channel's (agent) identities only. Admin rank comes from the principal itself
-      // (config/api-principal.js). Recovery never re-enters this driver: it only delivers a saved
-      // result or interruption notice.
-      untrustedPrincipal: true,
+      // Organization key: no personal scope — nobody's personal Composio token, secrets or
+      // skills, the channel's (agent) identities only; admin rank comes from the principal itself
+      // (config/api-principal.js). Channel token: the creator is a trusted principal exactly as in
+      // Slack. Recovery never re-enters this driver: it only delivers a saved result or
+      // interruption notice.
+      untrustedPrincipal: job.principalKind !== "user",
       origin: "api_foreground",
       progressReport: Boolean(status && client),
-      onDelta: status?.onDelta,
+      // The outcome block is stripped from the final answer; streaming it live would show it.
+      onDelta: job.reportOutcome ? undefined : status?.onDelta,
       onEvent,
+      onRuntimeResolved: (runtime) => {
+        if (runtime?.model) job.model = runtime.model;
+        if (runtime?.engine && runtime.engine !== job.engine) job.engine = runtime.engine;
+        persist(job);
+        status?.onRuntimeResolved?.(runtime);
+      },
     });
+
+    const result = apiRunOutcome(rawResult, { reportOutcome: job.reportOutcome });
+    const outcome = result.automationOutcome;
+    job.taskStatus = outcome.status;
+    job.outcome = { status: outcome.status, summary: outcome.summary || "", connections: outcome.connections || [], source: outcome.source, errorKind: outcome.errorKind || null };
+    job.model = result.runtimeModel || result.model || job.model || null;
+    // Report the harness that actually answered, including a default's automatic failover.
+    // This also applies when a stop arrives as that harness is finishing.
+    job.engine = result.engine || job.engine;
+    // One recorder for both triggers: the ledger row gets the same outcome a scheduled run would.
+    try { recordTaskOutcome(job.id, result); } catch { /* telemetry only */ }
 
     // A stop that landed while the run was finishing: honor the intent — mark stopped, suppress the
     // answer (don't post/return it), but still bill what it cost.
@@ -841,7 +1028,6 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.completedMs = Date.now();
     // Take the engine + session actually used (Codex mints its own thread id), so the resume
     // command and session id are accurate on completion even if the engine differed from the guess.
-    job.engine = result.engine || job.engine;
     if (result.sessionId) job.sessionId = result.sessionId;
     if (result.cwd) job.cwd = result.cwd;
     job.resumeCommand = await buildResumeCommand({ slug: job.slug, cwd: job.cwd, sessionId: job.sessionId, engine: job.engine });
@@ -856,7 +1042,9 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.result = { content: result.content || "", costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs ?? null, usage: result.usage || null };
     persist(job);
 
-    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs });
+    await logEvent("api_run_done", { id: job.id, slug: job.slug, costUSD: cost.costUSD, costEstimated: cost.estimated, durationMs: result.durationMs, taskStatus: job.taskStatus });
+    // One posting rule for both triggers (schedule-outcome.js): on-failure posts only what needs attention.
+    if (alertClient && resultPosts(apiPostingRule(job.visibility), job.taskStatus)) await postFailureAlert(alertClient, job);
 
     if (client) {
       try {
@@ -882,7 +1070,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         channelId: job.channelId,
         slug: job.slug,
         threadKey: job.threadKey,
-        authorId: API_PRINCIPAL,
+        authorId: job.principalKind === "user" ? job.author : API_PRINCIPAL,
         meta: applyRunOverrides(effectiveMeta(stored || {}), overrides),
         userText: job.message || "",
         savedInTurn: memorySaves > 0,
@@ -901,18 +1089,24 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       await logEvent("api_run_stopped", { id: job.id, slug: job.slug }).catch(() => {});
     } else {
       job.status = "failed";
+      job.taskStatus = "failed";
       job.completedMs = Date.now();
       job.error = err.message;
+      // The category the Automations page files this under (login expired, usage limit, …).
+      job.errorKind = err.details?.providerKind || "execution";
+      job.ledgerError = plainFailureText(err.message) || "The run failed.";
       persist(job);
       await logEvent("api_run_error", { id: job.id, slug: job.slug, error: err.message }).catch(() => {});
       if (client) {
         await status?.stop?.();
         postNoticeWithMenu(client, { channel: job.channelId, threadKey: job.threadKey, text: `⚠️ API run \`${job.id}\` failed: ${err.message}` }).catch(() => {});
       }
+      if (alertClient) await postFailureAlert(alertClient, job);
     }
   } finally {
     if (queued) runQueue.release(runKey, handle);
     controllers.delete(job.id);
     await fireWebhook(job);
+    await alertApiFailureStreak(job, notifyClient);
   }
 }

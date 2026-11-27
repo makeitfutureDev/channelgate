@@ -15,10 +15,15 @@
 // list (bearer = `<scheme> <token>`, raw = the whole value, basic-password / basic-user = one half
 // of `Basic base64(user:password)`).
 //
-// PURE: imports only the CLI catalog, so the config layer can derive "protected: yes/no" for a
+// PURE: no database or network I/O, so the config layer can derive "protected: yes/no" for a
 // listing without importing the proxy or the database.
+import { isIP } from "node:net";
+import { classifyAddress } from "../../web/ip-policy.js";
+import { normalizeHost } from "./rules.js";
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
 import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
+import { resolveBedrockProvider } from "../../engines/bedrock.js";
+import { LICENSE_KINDS, licenseHosts, licenseOfRelaySecret, licenseRecord } from "../../engines/license-state.js";
 
 export const SWAP_FORMATS = Object.freeze(["bearer", "raw", "basic-password", "basic-user"]);
 export const DEFAULT_RULE_HEADERS = Object.freeze(["authorization"]);
@@ -34,6 +39,7 @@ const FORBIDDEN_HEADERS = new Set(["host", "connection", "proxy-authorization", 
 // The relayed Claude login (scope `relay`): the placeholder in CLAUDE_CODE_OAUTH_TOKEN is swapped
 // only in the Authorization header on the Anthropic API.
 export const RELAY_SECRET_NAME = "CLAUDE_CODE_OAUTH_TOKEN";
+export const CLAUDE_EXTRA_RELAY_SECRET_NAME = "CLAUDE_EXTRA_OAUTH_TOKEN";
 export const RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
 export const CLAUDE_API_RELAY_NAMES = Object.freeze(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
 const CLAUDE_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization", "x-api-key"]), format: Object.freeze(["bearer", "raw"]) });
@@ -43,14 +49,35 @@ const CLAUDE_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthrop
 // endpoints Codex authenticates to. `jwt` is the only format it accepts: a bare `cgph_` there is
 // never swapped. Kept in step with ENGINE_HOSTS.codex (engine-hosts.js).
 export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
+export const CODEX_CHANNEL_RELAY_SECRET_NAME = "CODEX_CHANNEL_ACCESS_TOKEN";
+export const CODEX_CHANNEL_API_RELAY_SECRET_NAME = "CODEX_CHANNEL_API_RELAY_KEY";
+export const CODEX_EU_RELAY_SECRET_NAME = "CODEX_EU_ACCESS_TOKEN";
 export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
 export const CODEX_API_RELAY_SECRET_NAME = "CODEX_API_RELAY_KEY";
 export const CODEX_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
 const PERPLEXITY_RELAY_RULE = Object.freeze({ hosts: Object.freeze([PERPLEXITY_HOST]), headers: Object.freeze(["cookie"]), format: Object.freeze(["cookie"]), cookies: Object.freeze([PERPLEXITY_SESSION_COOKIE]) });
-const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [PERPLEXITY_RELAY_SECRET_NAME]: PERPLEXITY_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_EU_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_CHANNEL_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_CHANNEL_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [PERPLEXITY_RELAY_SECRET_NAME]: PERPLEXITY_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
 
 // The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
 export function relayRuleFor(secretName) {
+  if (secretName === "AWS_BEARER_TOKEN_BEDROCK") {
+    const provider = resolveBedrockProvider();
+    return { hosts: provider.configured ? [new URL(provider.endpoint).hostname] : [], headers: ["authorization"], format: ["bearer"] };
+  }
+  if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) return RELAY_RULE;
+  // An admin-added license (engines/license-state.js): the relay name carries the license id, so
+  // each license's placeholder swaps for ITS credential on ITS hosts only. A license that no
+  // longer exists has no rule, which is what revokes the placeholders minted for it.
+  const license = licenseOfRelaySecret(secretName);
+  if (license) {
+    const record = licenseRecord(license.id);
+    if (!record) return null;
+    if (license.kind === "codex-login") return CODEX_RELAY_RULE;
+    if (license.kind === "claude-login") return RELAY_RULE;
+    // A provider license: its credential on the hosts its own endpoint resolves to, in the
+    // headers its kind sends a key in (`api-key` is Azure's and not a default swap header).
+    return { hosts: licenseHosts(record), headers: [...LICENSE_KINDS[record.kind].relayHeaders], format: ["bearer", "raw"] };
+  }
   return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
 }
 
@@ -152,15 +179,33 @@ export function assertValidSwapRuleFields({ hosts, headers, format } = {}) {
   return out;
 }
 
-// The channel meta's `egressRawHosts` (admin-set): hosts whose ports 22/5432/6543 get a raw CONNECT
-// tunnel through the proxy (SSH, Postgres) while the channel's network is on. Strict, for the
-// admin API; the proxy's policy re-filters tolerantly on read.
+// The channel meta's `egressRawHosts` (admin API or approved worker request): a host alone gets
+// the legacy SSH/Postgres ports, while an exact `host:port` entry gets only that TCP port.
+// The proxy's policy re-filters tolerantly on read.
+// Raw tunnels carry SSH/PostgreSQL/Azure SQL bytes, not credential substitutions. Public IP literals
+// are valid here without widening the DNS-only secret-host rule above.
+export function isValidRawHost(value) {
+  const host = normalizeHost(value);
+  return isIP(host) ? !host.includes("%") && classifyAddress(host) === "" : isValidRuleHost(host);
+}
+
+export function parseRawDestination(value) {
+  const raw = String(value ?? "").trim();
+  const scoped = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(raw);
+  const host = normalizeHost(scoped ? scoped[1] : raw);
+  const port = scoped ? Number(scoped[2]) : null;
+  if (!isValidRawHost(host) || (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535 || host.includes("*")))) return null;
+  return { host, port, value: port === null ? host : `${isIP(host) === 6 ? `[${host}]` : host}:${port}` };
+}
+
 export const MAX_RAW_HOSTS = 16;
 export function assertValidEgressRawHosts(value) {
-  const list = [...new Set(listOf(value).map(normalizeRuleHost))];
+  const inputs = listOf(value);
+  const parsed = inputs.map(parseRawDestination);
+  const badIndex = parsed.findIndex((entry) => entry === null);
+  if (badIndex !== -1) throw new Error(`"${inputs[badIndex]}" is not a raw destination — use a public host or an exact public host:port entry (TCP port 1–65535).`);
+  const list = [...new Set(parsed.map((entry) => entry.value))];
   if (list.length > MAX_RAW_HOSTS) throw new Error(`At most ${MAX_RAW_HOSTS} raw hosts per channel.`);
-  const bad = list.find((host) => !isValidRuleHost(host));
-  if (bad) throw new Error(`"${bad}" is not a host name — use a DNS name like db.example.com or a wildcard like *.pooler.supabase.com.`);
   return list;
 }
 

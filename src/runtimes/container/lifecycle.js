@@ -7,15 +7,19 @@
 // deliberately NOT in it: rotating a channel secret retires the warm engine process through the
 // pool's own fingerprint, and must not tear down a container that background jobs are using.
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
-import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
+import { containerLabels, containerName, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
+import { buildHistorySeedArgs, historyMounts, historySeedMarker } from "./history.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
-import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
+import { CONTAINER_AGENT_SSH_DIR, CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
+import { extraFolderMounts } from "../../gateway/extra-folders.js";
+import { agentSshDir, ensureAgentSshIdentity } from "../../config/agent-ssh.js";
+import { describePidsUse, pidsPressure, readPidsCounters } from "./pids-pressure.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -65,6 +69,10 @@ export const OPERATOR_HOME_MASKS = Object.freeze([path.join(".local", "share", "
 export const MASK_TMPFS_OPTIONS = "rw,noexec,nosuid,size=1m,notmpcopyup";
 
 const GONE_PATTERN = /no such container|no container with name|is not running|only create exec sessions on running containers|container state improper|removing container/i;
+// A stopped rootless Podman container can outlive its systemd scope's teardown. Retry only
+// that exact conflict, without deleting the container, changing cgroups or touching volumes.
+const START_SCOPE_CONFLICT = /unable to start unit "(libpod-[a-f0-9]{64}\.scope)"[\s\S]*Unit \1 was already loaded or has a fragment file\./i;
+const START_SCOPE_RETRY_MS = [1_000, 2_000];
 
 export function isContainerGoneError(text) {
   return GONE_PATTERN.test(String(text || ""));
@@ -104,6 +112,9 @@ const INSPECT_FIELDS = [
   `{{index .Config.Labels "${LABEL_CHANNEL}"}}`,
   `{{index .Config.Labels "${LABEL_PLATFORM}"}}`,
   `{{index .Config.Labels "${LABEL_MOUNTS}"}}`,
+  // The container's init as a HOST pid (0 when it is not running): the handle for reading its
+  // process-limit counters from outside (pids-pressure.js). Both podman and docker report it.
+  "{{.State.Pid}}",
 ];
 export const INSPECT_FORMAT = INSPECT_FIELDS.join("|");
 
@@ -126,6 +137,7 @@ export function parseInspectLine(line) {
     imageId: field(parts[3]),
     fingerprint: field(parts[4]),
     mountFingerprint: field(parts[9]),
+    pid: /^\d+$/.test(field(parts[10])) ? Number(field(parts[10])) : 0,
     labels: {
       [LABEL_INSTALL]: field(parts[5]),
       [LABEL_IMAGE]: field(parts[6]),
@@ -141,14 +153,16 @@ export function parseInspectLine(line) {
 // Identical absolute paths on both sides are LOAD-BEARING: session transcripts, /resume, git
 // worktrees and every absolute path the model prints have to stay valid in the daemon too.
 //
-// What is never mounted: the gateway root, config/, gateway.db, the per-channel metadata folder,
-// the daemon checkout, and the operator's ~/.claude or ~/.codex directories. The only sources under
-// the gateway root are the clean workspace (a bare workdir, mounted so clean mode works in a
-// container) and the MCP socket directory (read-only). The Codex auth FILE is the one credential
+// What is never mounted: the gateway root, the whole config/, gateway.db, the per-channel metadata folder,
+// the daemon checkout, and the operator's ~/.claude or ~/.codex directories. Sources under the
+// gateway root include the clean workspace (for clean mode), the read-only MCP socket directory
+// and the dedicated shared SSH identity below. The Codex auth FILE is a legacy credential
 // mount, and only outside the egress proxy (legacy bridge mode, or an API-key login): it is the
 // resolved real file — see credentials.js for why it is a file and not a dir. Behind the proxy
-// Codex is relayed and nothing credential-shaped is mounted.
-// The single, deliberate exception is the operator-home grant (operatorHomeMounts below): a
+// Codex is relayed. The deliberately shared outbound SSH keypair is a separate read-only
+// config/agent-ssh subdirectory mounted at ~/.ssh/channelgate in every channel and runtime scope.
+// It is readable/copyable by container shell users; it conveys no egress or destination grant.
+// A wider exception is the operator-home grant (operatorHomeMounts below): a
 // Full-access channel, while the gateway-wide switch is on, gets the daemon user's whole home.
 //
 // `/tmp` and `/var/tmp` are mounts rather than tmpfs so a stop cannot empty them
@@ -201,6 +215,9 @@ export function buildMounts(base) {
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
     { kind: "clean", type: "bind", source: base.cleanWorkDir, target: base.cleanWorkDir, mode: "rw" },
     { kind: "artifacts", type: "bind", source: base.artifactDir, target: base.artifactDir, mode: "rw" },
+    // Admin-declared additional folders at their identical host paths (src/gateway/extra-folders.js);
+    // the resolver already proved each one exists, is a real directory and overlaps nothing else.
+    ...extraFolderMounts(base),
     // Persistent /tmp and /var/tmp. Nothing an agent leaves in them is lost to a stop or a
     // recreate, which is the difference between a container channel and the host backend.
     ...PERSISTENT_TMP_DIRS.map(({ kind, target }) => ({
@@ -213,6 +230,8 @@ export function buildMounts(base) {
     // After /tmp: destinations are applied deepest-last, so this lands on top of the /tmp volume.
     ...codexSocketMount(base),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
+    { kind: "agent-ssh", type: "bind", source: agentSshDir(), target: CONTAINER_AGENT_SSH_DIR, mode: "ro" },
+    ...(base.container?.sharedHistory === true ? historyMounts(base) : []),
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
     ...egressMounts(base),
@@ -373,22 +392,36 @@ export function buildCreateArgs(target, caps, { fingerprint = "", mountFingerpri
 export const DEFAULT_RECREATE_WAIT_MS = 60_000; // repeat notice interval; never a run deadline
 export const DEFAULT_RECREATE_POLL_MS = 1_000;
 
+// Whether a host process still exists. EPERM means it exists under another user.
+export function hostPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
+}
+
 export function createContainerLifecycle({
   cli, image, reaper, log = () => {}, now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()),
   recreateWaitMs = DEFAULT_RECREATE_WAIT_MS,
   recreatePollMs = DEFAULT_RECREATE_POLL_MS,
+  readPids = readPidsCounters,
+  pidAlive = hostPidAlive,
 } = {}) {
   const preparing = new Map(); // container → leases waiting for readiness, not running inside
+
+  // The process-limit counters of a RUNNING container, read from the host. Unknown (null) on any
+  // failure — an unreadable cgroup must never fail a run or look like pressure.
+  async function pidsCountersFor(info) {
+    if (!info?.exists || info.status !== "running" || !(info.pid > 1)) return null;
+    try { return await readPids({ pid: info.pid }); } catch { return null; }
+  }
 
   const checkAbort = (signal) => {
     if (signal?.aborted) throw Object.assign(new Error("Run aborted while waiting for its channel container"), { name: "AbortError", details: { explicitStop: true } });
   };
-  async function waitPoll(signal) {
+  async function waitPoll(signal, delayMs = recreatePollMs) {
     checkAbort(signal);
     let onAbort;
     try {
-      await Promise.race([sleep(recreatePollMs), ...(signal ? [new Promise((_, reject) => {
+      await Promise.race([sleep(delayMs), ...(signal ? [new Promise((_, reject) => {
         onAbort = () => { try { checkAbort(signal); } catch (error) { reject(error); } };
         signal.addEventListener("abort", onAbort, { once: true });
       })] : [])]);
@@ -427,6 +460,9 @@ export function createContainerLifecycle({
   // ensureUp's mutex, BEFORE the fingerprint is computed, so what we compare is what we created.
   function settleTarget(target, { caps, img, env = process.env }) {
     const c = target.container;
+    // Publish a complete keypair before any CLI can auto-create its bind source. Validation on
+    // reuse fails closed on a damaged identity rather than handing out a replacement key.
+    ensureAgentSshIdentity();
     c.imageId = img.id;
     c.imageVersion = img.version;
     c.cgroupLimits = caps.cgroupLimits;
@@ -438,7 +474,7 @@ export function createContainerLifecycle({
       ? { pidsLimit: c.limits.pidsLimit, memory: c.limits.memory, cpus: c.limits.cpus }
       : null;
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
-      log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
+      log(`[container] ${/not delegated/.test(caps.reason || "") ? "cgroup limits are not delegated" : "resource limits are not verified"} — ${c.name} runs without pids/memory/cpu caps`);
     }
     const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true, meta: target.meta });
     c.credentialMode = settled.modes;
@@ -503,9 +539,48 @@ export function createContainerLifecycle({
     throw new Error(`could not create container ${target.container.name}: ${stderr || `exit ${result.code}`}`);
   }
 
-  async function startContainer(caps, name) {
-    const result = await cli.runWith(caps, ["start", name], { timeoutMs: 60_000 });
-    if (result.code !== 0) throw new Error(`could not start container ${name}: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
+  // The old project HOME is the only automatically publishable legacy source. An admin HOME
+  // may contain host-carried /sudo sessions and remains intact for an explicit reviewed import.
+  // Serialize both role lanes, and wait for old project writers before taking the one-time copy.
+  async function prepareSharedHistory(caps, target, { ownLeaseId, signal, announce }) {
+    if (!target.container?.sharedHistory) return;
+    const marker = historySeedMarker(target);
+    const releaseHistory = await acquireKeyedLock("cg-channel-history", target.container.historyRoot, { signal });
+    try {
+      if (existsSync(marker)) return;
+      const projectName = containerName({ ...target, runtimeScope: "project" });
+      const occupants = () => {
+        const excluded = new Set([ownLeaseId]);
+        for (const waiter of preparing.get(projectName) || []) excluded.add(waiter.leaseId);
+        return reaper.leaseCount(projectName, { exclude: [...excluded] });
+      };
+      while (occupants() > 0) {
+        announceOnce(announce, "Preparing shared channel history — waiting for existing project sessions to finish. Stop cancels this wait.");
+        await waitPoll(signal);
+      }
+      checkAbort(signal);
+      const result = await cli.runWith(caps, buildHistorySeedArgs(target, caps), { timeoutMs: 120_000 });
+      checkAbort(signal);
+      if (result.code !== 0) throw new Error("Could not prepare shared channel history. Original HOME volumes are unchanged; inspect the channel history migration before retrying.");
+      log(`[container] prepared shared conversation history for ${target.slug}`);
+    } finally {
+      releaseHistory();
+    }
+  }
+
+  async function startContainer(caps, name, { signal } = {}) {
+    for (let attempt = 0; ; attempt += 1) {
+      checkAbort(signal);
+      const result = await cli.runWith(caps, ["start", name], { timeoutMs: 60_000 });
+      if (result.code === 0) return;
+      checkAbort(signal);
+      const stderr = String(result.stderr || "").trim();
+      if (caps.kind !== "podman" || !caps.rootless || !START_SCOPE_CONFLICT.test(stderr) || attempt >= START_SCOPE_RETRY_MS.length) {
+        throw new Error(`could not start container ${name}: ${stderr || `exit ${result.code}`}`);
+      }
+      log(`[container] ${name} previous systemd scope is still loaded — retrying start (${attempt + 1}/${START_SCOPE_RETRY_MS.length})`);
+      await waitPoll(signal, START_SCOPE_RETRY_MS[attempt]);
+    }
   }
 
   async function stopContainer(name, { caps = null, settings = null, reason = "" } = {}) {
@@ -538,7 +613,13 @@ export function createContainerLifecycle({
   // the memory reviewer both do — the idle reaper must not stop an environment a turn is about to
   // spawn into). It is excluded from "is anyone else inside?", because a turn is not a reason to
   // refuse to rebuild the container that turn is waiting for.
-  async function ensureUp(target, { announce = null, lease = null, forceImage = false, signal = null } = {}) {
+  //
+  // `reclaimProcesses`: the caller is a turn that will TELL someone when a container full of
+  // leftover processes had to be restarted for it (run.js). Everything else that brings a container
+  // up — the memory reviewer, an SSH session, `/resume` inspection, a carry — never restarts one on
+  // its own: a silent restart would end processes the next turn was counting on, and a developer
+  // who attached to look at a full container must find it as it was.
+  async function ensureUp(target, { announce = null, lease = null, forceImage = false, signal = null, reclaimProcesses = false } = {}) {
     const name = target?.container?.name;
     if (!name) throw new Error("container target is missing its name");
     const ownLeaseId = typeof lease === "string" ? lease : (lease?.id || "");
@@ -564,6 +645,8 @@ export function createContainerLifecycle({
       // closed, remedy named) when the service cannot bind it.
       await ensureEgressFor(target);
       settleTarget(target, { caps, img });
+      ensureBindSources(target);
+      await prepareSharedHistory(caps, target, { ownLeaseId, signal, announce });
       const fingerprint = containerFingerprint(target);
       const mountFingerprint = containerMountFingerprint(target);
       target.container.fingerprint = fingerprint;
@@ -575,6 +658,15 @@ export function createContainerLifecycle({
           `a container named ${name} already exists but does not belong to this ChannelGate install `
           + `(cg.install=${info.labels[LABEL_INSTALL] || "none"}). Remove or rename it by hand — the gateway will not touch it.`,
         );
+      }
+      // Podman can report a container "running" or "stopping" whose processes are gone: on a
+      // system-service install the containers share the unit's cgroup, so systemd kills them on a
+      // gateway restart (even mid-stop) without Podman recording it, and every exec then fails.
+      // Its host init pid is the truth; a dead one is removed and recreated (HOME volume kept).
+      if (info.exists && ["running", "stopping"].includes(info.status) && info.pid > 1 && !pidAlive(info.pid)) {
+        log(`[container] ${name} is listed as ${info.status} but its process ${info.pid} is gone — removing and recreating it`);
+        await removeContainer(caps, name, { preserveLeases: true });
+        info = { exists: false, status: "missing" };
       }
       if (info.exists && !["running", "exited", "created", "stopped"].includes(info.status)) {
         throw new Error(`container ${name} is ${info.status} — the gateway will not use it. Inspect it by hand.`);
@@ -622,6 +714,46 @@ export function createContainerLifecycle({
         target.container.recreatePending = false;
       }
 
+      // ── Process-limit pressure ──────────────────────────────────────────────────────────────
+      // Work that ended can leave processes behind — a browser daemon that detached into its own
+      // session, a dev server, the children of an engine that crashed. They count against the
+      // container's process limit until it next goes idle, and a container AT the limit cannot
+      // start a thread: the engine aborts within seconds, every automatic resume is exec'd into
+      // the same full container and aborts the same way, and the agent cannot even run `kill`
+      // (live, 2026-11-18: four orphaned browsers held 1,000 of 1,024 slots through six attempts).
+      // Nothing inside can fix that, so the daemon does: when nobody else is working in the
+      // container, restart it — exactly what the idle reaper would have done a few minutes later.
+      // With other work inside it is left alone and the turn is told why it may fail.
+      let reclaimed = null;
+      let processPressure = null;
+      const counters = await pidsCountersFor(info);
+      const pressure = pidsPressure(counters);
+      // What this turn starts from, for the post-mortem (processLimitStatus): refusals counted
+      // before it began are not its own.
+      target.container.pidsBaseline = counters ? { pid: info.pid, deniedTotal: counters.deniedTotal } : null;
+      if (pressure.exhausted) {
+        const use = describePidsUse(pressure);
+        const others = othersInside();
+        if (reclaimProcesses && others === 0) {
+          log(`[container] ${name} is out of process slots (${use}) with no active work inside — restarting it to clear leftover processes`);
+          try {
+            await stopContainer(name, { caps, reason: `process limit reached (${use})` });
+            info = { ...info, status: "exited", pid: 0 };
+            reclaimed = { current: pressure.current, max: pressure.max };
+            target.container.pidsBaseline = null;
+          } catch (error) {
+            // A stop that failed leaves the container as it was: the turn is attempted in it and
+            // told it is full, exactly as when someone else is inside. Never a new way to fail.
+            log(`[container] could not restart ${name} to clear its processes: ${error?.message || error}`);
+            processPressure = { current: pressure.current, max: pressure.max, others };
+          }
+        } else {
+          log(`[container] ${name} is nearly out of process slots (${use})${others ? ` and ${others} other run(s) are active inside` : ""} — leaving it`);
+          processPressure = { current: pressure.current, max: pressure.max, others };
+        }
+      }
+      checkAbort(signal);
+
       let created = false;
       let started = false;
       if (!info.exists || info.status === "missing") {
@@ -638,7 +770,7 @@ export function createContainerLifecycle({
         prepareHostSide(target);
         const hadLeases = othersInside() > 0;
         slowTimer = announceAfter(announce, "Restarting this channel's container…");
-        await startContainer(caps, name);
+        await startContainer(caps, name, { signal });
         started = true;
         if (hadLeases) {
           announceOnce(announce, "The channel container had stopped — background processes from the previous session were lost.");
@@ -647,13 +779,39 @@ export function createContainerLifecycle({
 
       reaper.markRunning(name, target);
       checkAbort(signal);
-      return { created, started, warmupMs: now() - startedAt };
+      return { created, started, warmupMs: now() - startedAt, reclaimed, processPressure };
     } finally {
       if (slowTimer) clearTimeout(slowTimer);
       waiters.delete(waiter);
       if (!waiters.size) preparing.delete(name);
       release?.();
     }
+  }
+
+  // After an engine process died: was this container's process limit the reason? Read fresh (the
+  // container may have been restarted since ensureUp), from the host, with no exec.
+  // → { current, max, exhausted, full, denied } | null. `denied` counts the process/thread starts the
+  // limit refused since this turn's ensureUp — evidence that survives a tree that has since died
+  // and freed its slots.
+  async function processLimitStatus(target) {
+    const name = target?.container?.name;
+    if (!name) return null;
+    const caps = await cli.probe(target.settings, { image: target.settings?.image });
+    if (!caps.ok) return null;
+    const info = await inspectByRef(caps, name);
+    const counters = await pidsCountersFor(info);
+    if (!counters) return null;
+    const pressure = pidsPressure(counters);
+    if (pressure.max == null) return null;
+    const baseline = target.container.pidsBaseline;
+    // A different init pid is a restarted container: its counters started from zero.
+    const before = baseline && baseline.pid === info.pid ? baseline.deniedTotal : 0;
+    return {
+      current: pressure.current, max: pressure.max, exhausted: pressure.exhausted,
+      // AT the limit right now — unlike `exhausted` (the 85% early warning), this alone is evidence.
+      full: pressure.current >= pressure.max,
+      denied: Math.max(0, counters.deniedTotal - before),
+    };
   }
 
   async function destroy(target, { volumes = false, strictVolumes = false, reason = "" } = {}) {
@@ -675,9 +833,27 @@ export function createContainerLifecycle({
   // foreground and warm groups only; a detached background job is meant to survive a restart.
   async function bootReconcile(settings, { sweepKinds = ["run", "warm"] } = {}) {
     const caps = await cli.probe(settings, { image: settings?.image });
-    if (!caps.ok) return { ok: false, reason: caps.reason, running: [], swept: [] };
+    if (!caps.ok) return { ok: false, reason: caps.reason, running: [], swept: [], dead: [] };
     const containers = await listOurContainers(caps);
-    const running = containers.filter((entry) => entry.status === "running");
+    // A container the previous daemon's stop took down with it (service-unit.js) is still listed
+    // as running, or as stopping when something tried to stop the corpse. Registering it idle
+    // would only have the reaper `stop` it into a permanent "stopping"; remove it now and let its
+    // channel's next message create a fresh one (the HOME and temp volumes are kept).
+    const dead = [];
+    for (const entry of containers) {
+      if (!["running", "stopping"].includes(entry.status) || !(entry.pid > 1) || pidAlive(entry.pid)) continue;
+      try {
+        await removeContainer(caps, entry.name);
+        dead.push(entry.name);
+      } catch (error) {
+        log(`[container] boot reconcile could not remove dead container ${entry.name}: ${error?.message || error}`);
+      }
+    }
+    if (dead.length) {
+      log(`[container] boot reconcile: ${dead.length} container(s) were listed as running with their processes gone `
+        + `(${dead.join(", ")}) — removed; each is recreated on its channel's next message`);
+    }
+    const running = containers.filter((entry) => entry.status === "running" && !dead.includes(entry.name) && (!(entry.pid > 1) || pidAlive(entry.pid)));
     const swept = [];
     for (const entry of running) {
       const result = await cli.runWith(caps, ["exec", entry.name, "cg-sweep", ...sweepKinds], { timeoutMs: 60_000 });
@@ -695,11 +871,11 @@ export function createContainerLifecycle({
       if (leaseTarget) sweepRunCredentials(leaseTarget);
     }
     if (running.length) log(`[container] boot reconcile: ${running.length} running container(s) swept and registered idle`);
-    return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, containers };
+    return { ok: true, reason: "", running: running.map((entry) => entry.name), swept, dead, containers };
   }
 
   return {
-    ensureUp, destroy, stopContainer, removeContainer, listOurContainers, bootReconcile,
+    ensureUp, destroy, stopContainer, removeContainer, listOurContainers, bootReconcile, processLimitStatus,
     inspect: inspectByRef, settleTarget, prepareHostSide,
   };
 }

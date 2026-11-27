@@ -27,7 +27,8 @@ test("gateway operating guide frames the two Composio accounts as YOURS vs the r
   assert.match(skill, /not proof of the connected service owner's name or cross-channel sharing/is);
   assert.match(skill, /may reach the same service owner or different owners/is);
   assert.match(skill, /Matching owners never authorize substituting identities/is);
-  assert.match(skill, /not universally shared across channels/is);
+  assert.match(skill, /is channel-specific .* not shared across channels; a DM has none/is);
+  assert.doesNotMatch(skill, /organization default/i);
   assert.match(skill, /unless verified/is);
   const admin = await read("references/administration.md");
   assert.match(admin, /Routine replies need no credential details/is);
@@ -120,4 +121,29 @@ test("the references defer to SKILL.md and use the self-describing account names
     // The retired vocabulary that leaked the credential plumbing to users.
     assert.doesNotMatch(text, /channel account|company account|shared channel Composio/i, `${rel} leaks plumbing vocabulary`);
   }
+});
+
+test("guide separates Workbench code from container SDK scripts and keeps project keys scoped", async () => {
+  const scripts = await read("references/composio-scripts.md");
+  assert.match(scripts, /## Code with connections: Workbench or this container/);
+  // One block per Composio mode; the materialized guide keeps only the active one.
+  assert.match(scripts, /<!--if:composio-sdk-->[\s\S]*the Composio script relay \(no key\)[\s\S]*<!--endif-->/);
+  assert.match(scripts, /<!--if:composio-personal-->[\s\S]*\*\*project API key from that account\*\*[\s\S]*<!--endif-->/);
+  assert.match(scripts, /Without\s+such a key the Workbench is the only code path/);
+  assert.match(scripts, /deliberately gateway-side/);
+  assert.match(scripts, /can act as ANY user id/);
+  assert.match(scripts, /Do not recommend\s+sharing a project key with other channels or with organization scope/);
+  assert.match(scripts, /Composio sees each request and\s+response either way/);
+  const skill = await read("SKILL.md");
+  assert.match(skill, /in SDK mode through the gateway's Composio script relay \(no key/);
+});
+
+test("a requested form is a real ask_questions card, not Block Kit JSON or a Slack List", async () => {
+  const questions = await read("references/questions.md");
+  assert.match(questions, /## "Form" means this tool/);
+  assert.match(questions, /"formular"/);
+  assert.match(questions, /Do \*\*not\*\* answer with Block Kit or modal JSON, a\s+code sample, a Slack List/);
+  assert.match(questions, /post them as\s+a form instead of a bulleted list/);
+  const skill = await read("SKILL.md");
+  assert.match(skill, /send a \*\*form\*\* \("formular", survey, questionnaire\)/);
 });

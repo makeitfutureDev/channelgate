@@ -26,6 +26,11 @@ Never read unrelated business records just to identify an account.
 
 ## Choose the executor
 
+Composio Remote Workbench and Remote Bash are admitted by the gateway for remote data processing and bulk app
+calls. Their Python/shell code is not inspected by the structured membership-approval check. Any Slack
+join/invite/channel-creation action still needs human approval: issue it as a structured action
+and wait for its card, following `references/messages.md`.
+
 - **Small results or independent calls:** prefer `COMPOSIO_MULTI_EXECUTE_TOOL`. Its `tools` array
   contains `{tool_slug, arguments, account}` entries, with up to 50 logically independent calls.
   Include `session_id`, a concise `current_step` and `current_step_metric`, and the required
@@ -35,12 +40,118 @@ Never read unrelated business records just to identify an account.
   or later scripting is expected. Use the actual saved-file path returned by the executor.
   `COMPOSIO_REMOTE_WORKBENCH` runs Python in a persistent remote Jupyter sandbox; it is for remote
   files and bulk tool executions, not quick inline parsing, arithmetic or summaries.
+- **Local processing:** when records are returned inline, save them in the channel workspace and
+  run Python in the channel container when its mode permits shell/file work. A Composio
+  `/mnt/files/` path belongs to the remote sandbox and cannot be opened locally. A Workbench
+  failure alone does not mean local analysis or further structured reads are unavailable.
 - **Bulk app calls:** the workbench's preloaded
   `run_composio_tool(tool_slug, arguments, account=selected_account)` returns `(result, error)`.
   Use only already discovered app tools with known schemas, never `COMPOSIO_*` meta tools inside
   that helper. Inspect an ordinary request outside the workbench, an output schema, or the
   provided `invoke_llm` helper before assuming the response shape. Results have top-level `data`
   and can be nested; check `error` before using them.
+
+## Code with connections: Workbench or this container
+
+There are two places to run code that calls connected apps. Choose by what credential exists, not
+by habit. Which Composio mode this gateway runs decides what each identity IS, and so what a local
+script needs; this run's Composio identity line repeats the mode.
+
+<!--if:composio-sdk-->
+**This gateway runs Composio in SDK mode.** One organization SDK key, held by the daemon and never
+present in a container, backs every identity. Each identity is a stable **user id in the
+organization's Composio project**: the requester's for `composio-user`
+(`slack:<team>:user:<user id>`, or the Teams/Google Chat equivalent) and this conversation's for
+`composio-agent` (`slack:<team>:channel:<channel id>`). This run's identity line gives the exact
+ids. Connections people make — in Settings → Connections, the Activity page, or a connection you
+initiate on request with `COMPOSIO_MANAGE_CONNECTIONS` (never for inventory) — are stored under those ids, so every path below reaches the SAME
+connected accounts. The MCP tools run in a tool-router session scoped to this thread.
+
+- **Meta tools and Workbench (always available):** `COMPOSIO_MULTI_EXECUTE_TOOL`,
+  `COMPOSIO_REMOTE_WORKBENCH` and `COMPOSIO_REMOTE_BASH_TOOL` act as the session's user id. In the
+  Workbench, `run_composio_tool(tool_slug, arguments, account=…)` calls the same connections.
+  Nothing to install and no key in this container. The organization's allowed-apps and
+  multi-account policy applies to the session.
+- **Script in this container — the Composio script relay (no key):** every turn with an SDK
+  identity gets a **grant file**; the prompt line "Composio script relay for THIS turn" names it.
+  The gateway daemon runs each call with the organization key, as exactly this run's identity, so
+  scripts, saved automations and their data stay in the work folder and no key ever enters the
+  container. Use the bundled dependency-free client
+  `.claude/skills/gateway-usage/scripts/composio.mjs` (same path under `.agents/skills/` for Codex):
+
+  ```js
+  import { connectComposio } from "/abs/path/.claude/skills/gateway-usage/scripts/composio.mjs";
+  const composio = await connectComposio({ grant: "<grant file from this turn's prompt>" });
+  const { accounts } = await composio.accounts({ identity: "user", toolkit: "gmail" });
+  const r = await composio.execute({ identity: "user", tool: "GMAIL_FETCH_EMAILS",
+    arguments: { max_results: 10 }, account: accounts[0].id });   // account: needed when several
+  console.log(r.successful, r.data);
+  composio.close();
+  ```
+
+  or from the shell: `node <client> --grant <file> execute GMAIL_FETCH_EMAILS --identity user
+  --args '{"max_results":10}'` (`whoami`, `accounts`, `schema <TOOL>` too). `identity` is `"user"`
+  (the requester — `composio-user`) or `"agent"` (this conversation — `composio-agent`); pick it
+  with the same rules as the MCP tools. Discover the slug and its schema first
+  (`COMPOSIO_SEARCH_TOOLS` / `schema`); the relay runs app tools only, not `COMPOSIO_*` meta tools.
+  It enforces the organization's allowed apps, checks the account belongs to the identity, and
+  posts the same one-use approval card for a Slack join/invite/create. A personal identity pauses
+  while another person is working in this conversation. The grant stops working when the turn
+  ends: a saved script is re-run from a later turn with that turn's grant (pass the path in, never
+  hard-code it; never copy the grant anywhere else).
+- **Admin, in an Admin-mode channel:** the requester, when they are an organization admin and this
+  channel has Admin mode on, may also act as ANY user id in the organization project — pass
+  `userId` instead of `identity` (`whoami` reports `adminWide: true`; `users` lists the project's
+  connected accounts). Both conditions are re-checked by the daemon on every call. Use another
+  person's connections only when the admin explicitly asked for that person's account, say whose
+  account a result came from, and never make that the default.
+- **Your own Composio project key (not needed):** a project API key in the run's credential
+  inventory can also drive `@composio/core` directly, but it can act as ANY user in its project
+  for anyone who can talk in that channel. Prefer the relay; do not recommend adding such a key.
+<!--endif-->
+<!--if:composio-personal-->
+**This gateway runs Composio in Personal mode.** Each identity is its owner's **own Composio
+account**, reached through a Composio consumer key the gateway stores and relays:
+`composio-user` is the requester's key (set in Settings → You, or the App Home), `composio-agent`
+is this conversation's own key. A consumer key is not an SDK project API key, it never enters this
+container, and there is no organization project behind it: each identity's connections live in a
+different Composio account.
+
+- **Meta tools and Workbench (always available):** `COMPOSIO_MULTI_EXECUTE_TOOL`,
+  `COMPOSIO_REMOTE_WORKBENCH` and `COMPOSIO_REMOTE_BASH_TOOL` run against that identity's account.
+  In the Workbench, `run_composio_tool(tool_slug, arguments, account=…)` calls its connections.
+  This is the normal way to write code against a Personal-mode identity.
+- **Local SDK script in this container:** only when the owner of that same Composio account added
+  a **project API key from that account** to this run's credential inventory (a conversation
+  variable for `composio-agent`'s account, or the requester's personal variable for their own).
+  The account's user id is not known in advance: list the key's connected accounts and match them
+  to the aliases `COMPOSIO_SEARCH_TOOLS` reported for the selected identity before executing; if
+  none match, the key belongs to another account — stop and say so. Then call
+  `composio.tools.execute(slug, { userId, connectedAccountId, arguments, version })` with
+  `@composio/core` (Node) or the Python SDK (`pip install composio`), installed in the work folder. Without
+  such a key the Workbench is the only code path.
+<!--endif-->
+
+Either way, the Workbench keeps code, intermediate data and saved files in Composio's remote
+sandbox and is best for one-off exploration and bulk calls; a local script keeps them in the work
+folder, can be saved and re-run without spending model tokens, and can use local libraries,
+files and background jobs — best for repeatable automation. Never try to extract, copy or
+reconstruct the `composio-user`/`composio-agent` credentials or session URLs: they are
+deliberately gateway-side.
+
+Both paths still execute every app call on Composio's servers, so Composio sees each request and
+response either way; the container only keeps code, intermediate data and stored results out of
+the remote sandbox. Composio bills app calls either way. Neither path has a measured cost advantage
+unless you actually measured it — say so instead of claiming one.
+
+A project API key is **not** a personal credential: it can act as ANY user id in that Composio
+project, read their connected accounts and create or delete connections. Use only the `userId`
+and connected account matching the identity the request selected (the requester for "my", the
+channel's shared identity for "your/the agent's"), never another person's. Do not recommend
+sharing a project key with other channels or with organization scope; anyone who can talk in a
+channel holding it can act as every user in the project.
+
+## Workbench limits and batch pattern
 
 Each workbench cell has a hard **180-second limit**. Pass `code_to_execute`, `session_id`, and
 concise step/metric fields. Imports, variables and functions persist between cells; do not import

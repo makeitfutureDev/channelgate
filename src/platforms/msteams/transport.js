@@ -4,6 +4,7 @@
 // to us, so the transport's job is to hold a verified handler that the Express app can route to and
 // to prove the outbound credentials work before reporting itself connected.
 import { createTeamsFileResolver } from "./files.js";
+import { createTeamsHistory } from "./history.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createTeamsGraphEvents } from "./graph-events.js";
@@ -17,7 +18,10 @@ import { createTeamsActivityDispatcher, createTeamsWebhook } from "./webhook.js"
 import { activityFingerprint, createJwksCache } from "./verify.js";
 import { teamsActivationFingerprint } from "./reactions.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
-import { getDb, fromJson } from "../../db/index.js";
+import { attachQueuedEventControls } from "../queued-events.js";
+import { getDb, fromJson, toJson } from "../../db/index.js";
+import { recordPlatformThreadOutcome } from "../../gateway/platform-threads.js";
+import { interruptedCard } from "./recovery-controls.js";
 import { logEvent } from "../../util/logger.js";
 
 // The bot's own identity in an activity: Bot Framework prefixes the app id with the "28:" channel
@@ -117,16 +121,94 @@ export async function startTeams({
       return { allowed: true, cancelled };
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   };
+  // A queued message's own controls (the Steer / Cancel card) name it by its lane and durable id.
+  // The lane is a closed word mapped to THIS bot's namespaces, so card data can never point at
+  // another bot's or another transport's rows.
+  const queueKind = namespace => namespace === graphNamespace ? "graph" : "bot";
+  attachQueuedEventControls(connector, { namespaces: { bot: botNamespace, graph: graphNamespace }, authorOf: pendingAuthor });
+  // ── Interrupted work ────────────────────────────────────────────────────────────────────────
+  // A running turn remembers its visible "working" message on its own durable row, so after a
+  // restart the interruption notice replaces that message instead of leaving it spinning beside a
+  // second one. The notice offers "Run again": an explicit choice of the person who asked, never an
+  // automatic replay (the outcome of the interrupted run is unknown). The choice is a held row in
+  // its own namespace holding the original request; the card names only that row.
+  const retryNamespace = `msteams-retry:${appId}`;
+  const RETRY_TTL_MS = 24 * 60 * 60 * 1000;
+  getDb().prepare("DELETE FROM inbound_events WHERE namespace = ? AND created_ms < ?").run(retryNamespace, Date.now() - 7 * RETRY_TTL_MS);
+  const recordWorking = (namespace, eventId, placeholder) => {
+    if (!placeholder?.messageId || !eventId) return;
+    const db = getDb();
+    const row = db.prepare("SELECT data FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'running'").get(namespace, eventId);
+    if (!row) return;
+    const data = fromJson(row.data, {});
+    data.working = { conversationId: String(placeholder.conversationId || ""), messageId: String(placeholder.messageId) };
+    db.prepare("UPDATE inbound_events SET data = ? WHERE namespace = ? AND event_id = ? AND status = 'running'").run(toJson(data), namespace, eventId);
+  };
+  const withWorking = (namespace, eventId) => (message, context = {}) =>
+    onMessage(message, { ...context, onWorking: placeholder => recordWorking(namespace, eventId, placeholder) });
+  async function noticeInterrupted({ lane, payload, inbound, text }) {
+    const { working = null, ...original } = payload || {};
+    const sessionKey = sessionKeyForMessage(inbound);
+    try { recordPlatformThreadOutcome(inbound.conversationId, sessionKey, { status: "error" }); } catch { /* Activity is best-effort */ }
+    let retryId = "";
+    if (typeof connector.postCard === "function" && inbound.userId) {
+      retryId = randomUUID();
+      getDb().prepare("INSERT INTO inbound_events(namespace, event_id, conversation_id, status, created_ms, owner, data) VALUES (?, ?, ?, 'held', ?, '', ?)")
+        .run(retryNamespace, retryId, JSON.stringify([inbound.conversationId, sessionKey]), Date.now(),
+          toJson({ lane, payload: original, authorId: inbound.userId, conversationId: inbound.conversationId }));
+    }
+    const card = retryId ? interruptedCard(text, retryId) : null;
+    if (card && working?.messageId) {
+      try {
+        await connector.updateCard({ conversationId: working.conversationId || inbound.rawConversationId, messageId: working.messageId, card, text });
+        return;
+      } catch { /* the working message may be gone: post the notice instead */ }
+    }
+    if (card) {
+      try { await connector.postCard({ conversationId: inbound.rawConversationId, threadKey: inbound.threadKey, card, text }); return; }
+      catch { /* fall back to the plain notice below */ }
+    }
+    if (working?.messageId && typeof connector.edit === "function") {
+      try { await connector.edit({ conversationId: working.conversationId || inbound.rawConversationId, messageId: working.messageId, text }); return; }
+      catch { /* post it instead */ }
+    }
+    await connector.post({ conversationId: inbound.rawConversationId, threadKey: inbound.threadKey, text });
+  }
+  // The person who asked chooses to run the interrupted request again. Their current access is
+  // checked again when it runs, like any message.
+  connector.retryInterrupted = ({ id, actorId, conversationId }) => {
+    const db = getDb();
+    const row = typeof id === "string" && /^[0-9a-f-]{36}$/.test(id)
+      ? db.prepare("SELECT created_ms, data FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'held'").get(retryNamespace, id) : null;
+    if (!row) return { ok: false, reason: "gone" };
+    const held = fromJson(row.data, {});
+    if (held.conversationId !== conversationId) return { ok: false, reason: "conversation" };
+    if (!actorId || held.authorId !== actorId) return { ok: false, reason: "owner" };
+    const claimed = db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'held'").run(retryNamespace, id);
+    if (claimed.changes !== 1) return { ok: false, reason: "gone" };
+    if (Date.now() - row.created_ms > RETRY_TTL_MS) return { ok: false, reason: "expired" };
+    const target = held.lane === "graph" ? dispatchInbox : botInbox;
+    const inbound = held.lane === "graph" ? held.payload?.inbound : normalizeActivity(held.payload?.activity, { botId, activationReactions: getActivationReactions() });
+    if (!target || !inbound) return { ok: false, reason: "gone" };
+    const accepted = target.accept({ id: `retry:${id}`, conversationId: queueKey(inbound), payload: { ...held.payload, retryId: id } });
+    return accepted?.accepted ? { ok: true } : { ok: false, reason: "gone" };
+  };
   if (graphEventsEnabled) {
     if (!publicUrl || !tenantId) throw new Error("Teams all-message events require Public URL and tenant ID");
     const graphAuth = deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE });
     const normalizer = deps.normalizeGraphEvents || normalizeGraphEvents;
     eventStore = deps.eventStore || createTeamsEventStore({ appId });
+    // History reads ride the same Graph permissions and per-conversation subscription record as
+    // these events; without them `conversation_history` is not offered on Teams at all.
+    const history = createTeamsHistory({ auth: graphAuth, store: eventStore, resolveFile, fetchImpl: deps.graphFetch || fetch });
+    connector.readHistory = history.readHistory;
+    if (resolveFile) connector.historyFile = history.historyFile;
     const activeSubscription = async row => (await eventStore.list()).some(current =>
       current.conversationId === row.conversationId && current.startedAt === row.startedAt);
     const graphDispatchOptions = {
       conversationKey: ({ inbound }) => queueKey(inbound),
-      handle: async ({ inbound, serviceUrl: sourceUrl, subscription }) => {
+      handle: async ({ inbound, serviceUrl: sourceUrl, subscription, retryId = "" }) => {
+        connector.queuedEventStarted?.({ kind: "graph", eventId: inbound?.raw?.eventId || "" });
         if (!await activeSubscription(subscription)) return;
         if (inbound.reactionAction === 'engage') {
           const current = (await eventStore.list()).find(row => row.conversationId === subscription.conversationId);
@@ -138,11 +220,12 @@ export async function startTeams({
             || current?.activationReactionsStartedAt !== subscription.activationReactionsStartedAt) return;
         }
         if (resolveFile) inbound.attachments = (inbound.attachments || []).map(file => ({ ...file, download: file.reference ? resolveFile(file.reference) : null }));
-        await onMessage(inbound, { serviceUrl: sourceUrl });
+        await withWorking(graphNamespace, retryId ? `retry:${retryId}` : inbound?.raw?.eventId || "")(inbound, { serviceUrl: sourceUrl });
       },
-      interrupted: async ({ inbound, serviceUrl: sourceUrl }) => {
+      interrupted: async payload => {
+        const { inbound, serviceUrl: sourceUrl } = payload;
         if (sourceUrl) connector.rememberServiceUrl?.(inbound.rawConversationId || inbound.conversationId, sourceUrl);
-        await connector.post({ conversationId: inbound.conversationId, threadKey: inbound.threadKey,
+        await noticeInterrupted({ lane: "graph", payload, inbound: { ...inbound, rawConversationId: inbound.rawConversationId || inbound.conversationId },
           text: "A Teams edit or reaction request was interrupted before its outcome could be confirmed. Check the conversation before retrying; it was not run again automatically." });
       },
       log,
@@ -272,24 +355,30 @@ export async function startTeams({
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
   }
-  const botInboxOptions = {
-    handle: createTeamsActivityDispatcher({ botId, onMessage, resolveFile, onActivity, graphEventsEnabled, getActivationReactions }),
-    interrupted: async ({ activity, serviceUrl: sourceUrl }) => {
-      const message = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
+  const botInboxOptions = namespace => ({
+    // The row's id is the activity's fingerprint, except a "Run again" replay's own id; either way
+    // the dispatcher learns it from the row it is running (`eventId`, set below).
+    handle: async payload => {
+      const eventId = payload.retryId ? `retry:${payload.retryId}` : activityFingerprint(payload.activity);
+      connector.queuedEventStarted?.({ kind: "bot", eventId });
+      return createTeamsActivityDispatcher({ botId, onMessage: withWorking(namespace, eventId), resolveFile, onActivity, graphEventsEnabled, getActivationReactions })(payload);
+    },
+    interrupted: async payload => {
+      const message = normalizeActivity(payload.activity, { botId, activationReactions: getActivationReactions() });
       if (!message) return;
       // Both a failed handler and a restart may leave unknown external effects. Notify in the
       // original verified conversation instead of repeating the request automatically.
-      if (sourceUrl) connector.rememberServiceUrl?.(message.rawConversationId, sourceUrl);
-      await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey,
+      if (payload.serviceUrl) connector.rememberServiceUrl?.(message.rawConversationId, payload.serviceUrl);
+      await noticeInterrupted({ lane: "bot", payload, inbound: message,
         text: "This Teams request was interrupted before its outcome could be confirmed. External actions may already have happened. Inspect the task before retrying; it was not run again automatically." });
     },
     log,
-  };
+  });
   const botInbox = deps.botInbox || (deps.createInbox || createDurableInbox)({
-    ...botInboxOptions, namespace: botNamespace,
+    ...botInboxOptions(botNamespace), namespace: botNamespace,
   });
   const controlInbox = deps.botControlInbox || (deps.createInbox || createDurableInbox)({
-    ...botInboxOptions, namespace: `msteams-bot-controls:${appId}`, concurrencyGroup: "platform-controls",
+    ...botInboxOptions(`msteams-bot-controls:${appId}`), namespace: `msteams-bot-controls:${appId}`, concurrencyGroup: "platform-controls",
   });
   noticeInbox = deps.botNoticeInbox || (deps.createInbox || createDurableInbox)({
     namespace: `msteams-bot-queue-notices:${appId}`, concurrencyGroup: "platform-events",
@@ -297,12 +386,13 @@ export async function startTeams({
       const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'")
         .get(payload.namespace || botNamespace, payload.eventId || activityFingerprint(payload.activity));
       if (!isQueued()) return;
+      const queuedEvent = { kind: queueKind(payload.namespace || botNamespace), eventId: payload.eventId || activityFingerprint(payload.activity) };
       if (payload.inbound) {
-        await onMessage(payload.inbound, { serviceUrl: payload.serviceUrl, queuedNoticeOnly: true, position: payload.position, isQueued });
+        await onMessage(payload.inbound, { serviceUrl: payload.serviceUrl, queuedNoticeOnly: true, position: payload.position, isQueued, queuedEvent });
         return;
       }
       const dispatch = createTeamsActivityDispatcher({ botId, resolveFile, graphEventsEnabled, getActivationReactions,
-        onMessage: (message, context) => onMessage(message, { ...context, queuedNoticeOnly: true, position: payload.position, isQueued }),
+        onMessage: (message, context) => onMessage(message, { ...context, queuedNoticeOnly: true, position: payload.position, isQueued, queuedEvent }),
       });
       await dispatch(payload);
     },
@@ -313,7 +403,7 @@ export async function startTeams({
     acceptActivity: ({ activity, serviceUrl: sourceUrl }) => {
       const inbound = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
       const isControl = inbound && (inbound.trigger === "reaction" ? ["stop", "ack"].includes(inbound.reactionAction)
-        : /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i.test(inbound.text));
+        : /^\/(help|status|clear|stop|cancel|model|license|effort|harnesses|settings|files|secrets|sendfile|jobs)(?:\s|$)/i.test(inbound.text));
       const selectedInbox = isControl ? controlInbox : botInbox;
       const conversationId = inbound ? queueKey(inbound)
         : splitConversationId(activity.conversation.id).conversationId;

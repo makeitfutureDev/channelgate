@@ -11,6 +11,7 @@ const { createEditorLease, activeEditorLeases } = await import("../src/runtimes/
 const { createContainerReaper } = await import("../src/runtimes/container/reaper.js");
 const {
   vscodeAttachedContainerUri, installVscodeClaudeRelay, launchVscodeContainer, CLAUDE_ONBOARDING_SEED, CLAUDE_ONBOARDING_FILE,
+  VSCODE_CLAUDE_NOT_APPROVED,
 } = await import("../src/runtimes/container/vscode.js");
 
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -85,6 +86,42 @@ test("launcher holds an external lease until code --wait exits and removes the t
   assert.equal(codeSawLease, true);
   assert.equal(activeEditorLeases(t).length, 0);
   assert.throws(() => readFileSync(path.join(t.artifactDir, "vscode", "claude-token")), /ENOENT/);
+});
+
+test("launcher in a channel that does not approve Claude: the wrapper alone, no login resolved, no token file, an earlier one removed", async () => {
+  const t = { ...target("launch-off"), meta: { channelId: "C_VSCODE_OFF", approvedEngines: ["harness:codex"] } };
+  const tokenFile = path.join(t.artifactDir, "vscode", "claude-token");
+  mkdirSync(path.dirname(tokenFile), { recursive: true });
+  writeFileSync(tokenFile, "left-by-an-earlier-attach");
+  const calls = [];
+  const warned = [];
+  let tokenAtAttach = null;
+  const result = await launchVscodeContainer(t, {
+    cliBin: "podman",
+    refreshMs: 5,
+    resolveToken: async () => assert.fail("the gateway's login must not be resolved for this channel"),
+    log: { warn: (line) => warned.push(line) },
+    runCommand: async (bin, args, options = {}) => {
+      calls.push({ bin, args, input: options.input || "" });
+      if (bin !== "code") return;
+      await new Promise((resolve) => setTimeout(resolve, 25)); // long enough for a refresh timer, were one set
+      try { tokenAtAttach = readFileSync(tokenFile, "utf8"); } catch { tokenAtAttach = null; }
+    },
+  });
+  assert.equal(result.auth, null);
+  assert.equal(tokenAtAttach, null);
+  assert.deepEqual(warned, [`[vscode] ${VSCODE_CLAUDE_NOT_APPROVED}`]);
+  const podman = calls.filter((call) => call.bin === "podman");
+  assert.equal(podman.length, 1, "one exec: the launcher — no onboarding seed, no refresh");
+  assert.match(podman[0].input, /^#!\/bin\/sh/);
+  assert.match(String(podman[0].args.at(-1)), /cat > \/home\/agent\/\.local\/bin\/claude/);
+  assert.equal(activeEditorLeases(t).length, 0);
+  // The same channel once Claude is approved again attaches signed in.
+  const back = await launchVscodeContainer({ ...t, meta: { channelId: "C_VSCODE_OFF", approvedEngines: ["harness:codex", "claude"] } }, {
+    cliBin: "podman", refreshMs: 60_000, runCommand: async () => {},
+    resolveToken: async () => ({ token: "test-token", source: "settings", expiresAt: 0 }),
+  });
+  assert.equal(back.auth.source, "settings");
 });
 
 // Live finding (0.5.3 acceptance): SSH and VS Code Remote-SSH into a channel worked, but the first

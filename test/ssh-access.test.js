@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
@@ -184,6 +184,23 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
   assert.deepEqual(keys, [`environment="CG_SSH_USER=U_FILES" ecdsa-sha2-nistp256 ${ECDSA.split(" ")[1]} cg:U_FILES`]);
   assert.equal(access.renderContainerAuthorizedKeys([{ type: "ssh-ed25519", base64: ED25519.split(" ")[1], userId: "bad id" }]).split("\n")[1], `ssh-ed25519 ${ED25519.split(" ")[1]} cg:bad id`, "an id sshd could not carry gets no environment option");
   assert.equal(access.containerHostKeyFingerprint(target), "");
+  // Live finding (0.7.0): a carried-over host key at 0640 made sshd refuse it, so every session died
+  // before the handshake. The next session's preparation puts it back to 0600.
+  const hostKey = path.join(result.dir, "host_key");
+  writeFileSync(hostKey, "private\n", { mode: 0o640 });
+  chmodSync(hostKey, 0o640);
+  const again = access.materializeContainerSshFiles(target, [key]);
+  assert.equal(again.hostKeyPresent, true);
+  assert.equal(statSync(hostKey).mode & 0o777, 0o600, "a group-readable host key is tightened before sshd starts");
+  // The folder is writable from inside the container: a link planted as host_key is not followed.
+  const outside = path.join(target.artifactDir, "outside");
+  writeFileSync(outside, "x", { mode: 0o644 });
+  chmodSync(outside, 0o644);
+  rmSync(hostKey);
+  symlinkSync(outside, hostKey);
+  assert.equal(access.materializeContainerSshFiles(target, [key]).hostKeyPresent, false, "a link is not a host key");
+  assert.equal(statSync(outside).mode & 0o777, 0o644, "the link's target is left untouched");
+  rmSync(hostKey);
   writeFileSync(path.join(result.dir, "host_key.pub"), `${ED25519}\n`);
   assert.equal(access.containerHostKeyFingerprint(target), ED25519_FP);
   await access.removeSshKey("U_FILES", ECDSA_FP);
@@ -192,17 +209,21 @@ test("container side: the generated sshd_config is key-only, forwards inside, no
 
 // Live finding (0.5.3): over SSH, `claude` showed onboarding and a login screen while `claude -p`
 // answered — sshd had started the session with a clean environment, so CLAUDE_CONFIG_DIR (and PATH,
-// CODEX_HOME, TZ, the CG_* identity) never reached it.
+// TZ, the CG_* identity) never reached it.
 test("container side: the session inherits the container's environment through ONE SetEnv, and CG_WORKDIR names the channel folder", () => {
   const env = access.containerSessionEnv([
     "PATH=/home/agent/.local/bin:/usr/bin", "CLAUDE_CONFIG_DIR=/home/agent/.claude", "TZ=Europe/Bucharest",
-    "HOME=/home/agent", "HOSTNAME=abc", "container=podman", "TERM=xterm", "USER=agent",
+    "HOME=/home/agent", "HOSTNAME=abc", "container=podman", "TERM=xterm", "USER=agent", "CODEX_HOME=/home/agent/.cg-licenses/codex-lic-0a1b2c3d",
     'QUOTE=a"b', "BACKSLASH=a\\b", "NEWLINE=a\nb", "=nameless", "1BAD=x", "no-equals", "SPACED=a b",
   ], { workDir: "/home/me/My Project" });
   assert.deepEqual(env, {
     PATH: "/home/agent/.local/bin:/usr/bin", CLAUDE_CONFIG_DIR: "/home/agent/.claude", TZ: "Europe/Bucharest",
     SPACED: "a b", CG_WORKDIR: "/home/me/My Project",
   }, "names sshd owns and anything sshd_config cannot carry verbatim are dropped, never escaped");
+  // CODEX_HOME is a create-time fact — the license the channel ran on when its container was
+  // created — so a session never inherits it: the session's `codex` names the SELECTED license's
+  // directory itself (ssh-session.js codex-login.sh).
+  assert.equal(env.CODEX_HOME, undefined);
   const lines = access.renderContainerSshdConfig("/x/ssh", env).split("\n").filter((l) => l.startsWith("SetEnv"));
   assert.deepEqual(lines, ['SetEnv "CG_WORKDIR=/home/me/My Project" "CLAUDE_CONFIG_DIR=/home/agent/.claude" "PATH=/home/agent/.local/bin:/usr/bin" "SPACED=a b" "TZ=Europe/Bucharest"'],
     "sshd honours only the FIRST SetEnv line, so every variable rides one directive");
@@ -389,4 +410,16 @@ test("tools: the block on Admin + containerFullAccessHome is spelled out on gran
   assert.equal(sshBlockedByHomeGrant(await getChannelMeta(entry.slug), { fullAccessHome: true }), true);
   assert.equal(sshBlockedByHomeGrant(await getChannelMeta(entry.slug), original()), original().fullAccessHome === true);
   await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), adminMode: false });
+});
+
+
+test("show SSH access explains the requester's current-role history scope", async () => {
+  const admin = reply(await toolsFor(ADMIN).get("show_channel_ssh")({}));
+  const member = reply(await toolsFor(DEV).get("show_channel_ssh")({}));
+  assert.match(admin, /Your SSH credential\/runtime scope: \*\*admin\*\*/);
+  assert.match(member, /Your SSH credential\/runtime scope: \*\*project\*\*/);
+  for (const shown of [admin, member]) {
+    assert.match(shown, /conversation files/);
+    assert.match(shown, /role change requires reconnecting/);
+  }
 });

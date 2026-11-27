@@ -7,7 +7,7 @@ Model Context Protocol (MCP) servers expose tools the agent can call: searching 
 
 ## Select a connection for the conversation
 
-Administrators configure the native engine MCP inventory and assign optional connections through **Cloud MCP**. Conversation settings separate these selected servers from built-in gateway controls and credential-backed Composio, Toolbox, and Make connections.
+Administrators configure the native engine MCP inventory and assign optional connections through **Cloud MCP**. Conversation settings separate these selected servers from built-in gateway controls and credential-backed Composio and Make connections.
 
 A typical workflow is:
 
@@ -25,7 +25,7 @@ A grant selects the server; it does not authorize every possible write. The requ
 
 Claude supports selected HTTP and stdio connections through protected per-run configuration. Codex uses explicit per-run definitions and protected credential handling for managed integrations. An optional server without a complete compatible launch definition is refused with a reason.
 
-Qwen harnesses share Claude's Cloud MCP selections because they use the same CLI transport. The OpenCode proof adapter has no MCP support. Plugin servers also require explicit compatible grants and do not inherit arbitrary authentication from plugin source files.
+The Qwen licenses share Claude's Cloud MCP selections because they run the same Claude Code harness. Plugin servers also require explicit compatible grants and do not inherit arbitrary authentication from plugin source files.
 
 ## Troubleshoot a missing tool
 
@@ -40,4 +40,4 @@ Related: [MCP server configuration](/docs/configuration/mcp-servers), [connected
 - [Engine-specific MCP connection controls](/docs/controls/mcp-connections)
 - [External skills library endpoint](/docs/features/skills-library-mcp)
 - [Enterprise Composio SDK mode](/docs/features/composio-sdk)
-- [Toolbox and Make connections](/docs/features/toolbox-and-make)
+- [Make connections](/docs/features/make-mcp)

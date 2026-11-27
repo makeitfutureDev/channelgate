@@ -11,7 +11,7 @@
 // in-container forwarder on 127.0.0.1:3128, which pipes to the daemon's egress proxy. This speaks
 // `CONNECT host:port` to it and, on a 200, pipes stdin/stdout through the tunnel byte for byte. The
 // PROXY decides: a raw tunnel exists only for the host:ports it allows (github.com:22 always, plus
-// the channel's declared raw hosts on 22/5432/6543, and only with Allow network on). A refusal is
+// the channel's declared raw host/port rules, and only with Allow network on). A refusal is
 // one readable line on stderr and exit 1 — ssh then prints "kex_exchange_identification: Connection
 // closed by remote host", so the line naming the reason is what the developer needs to see. The
 // proxy cannot add an SSH key: the tunnel carries the developer's own authentication, nothing more.
@@ -24,6 +24,26 @@ export const DEFAULT_PROXY_PORT = 3128;
 const HEAD_LIMIT = 16 * 1024;
 const BODY_LIMIT = 4 * 1024;
 const HEAD_TIMEOUT_MS = 30_000;
+// The proxy's CONNECT 200 names the tunnel: `raw` (a declared host:port) or `inspect` (TLS only).
+// Same name as TUNNEL_MODE_HEADER in src/gateway/egress/proxy.js (this file imports built-ins only).
+export const TUNNEL_MODE_HEADER = "X-ChannelGate-Tunnel";
+const TLS_HANDSHAKE = 0x16; // the first byte of every TLS ClientHello record
+// A client that waits for the server to speak first (MySQL, SMTP) sends nothing an inspected
+// tunnel can check: say why it may hang after this long, once, without ending the tunnel.
+const INSPECT_HINT_MS = 5_000;
+
+export function tunnelMode(head) {
+  const match = new RegExp(`^${TUNNEL_MODE_HEADER}:[ \\t]*([A-Za-z-]+)[ \\t]*$`, "im").exec(String(head || ""));
+  return match ? match[1].toLowerCase() : "";
+}
+
+export function notRawLine(authority, host, port, state) {
+  const what = state === "refused"
+    ? "and this client is not speaking TLS, so nothing was sent"
+    : "and no TLS handshake has arrived yet — a client that waits for the server to speak first will hang";
+  const target = String(host || "").replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  return `cg-egress-connect: ${authority} is not a declared raw destination for this channel; the gateway's egress proxy carries only HTTPS (TLS) to it, ${what}. Ask for the exact host and port with allow_channel_ssh_host({host: "${target}", port: ${Number(port)}}) — an authorized channel member approves it — then retry.`;
+}
 const HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,62})(?:\.[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,62}))*\.?$/;
 
 // → "host:port" / "[v6]:port" for the CONNECT line, or throws with a usage-grade reason.
@@ -58,6 +78,7 @@ export function connectThroughProxy({
   proxyHost = DEFAULT_PROXY_HOST, proxyPort = DEFAULT_PROXY_PORT,
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
   headTimeoutMs = HEAD_TIMEOUT_MS,
+  inspectHintMs = INSPECT_HINT_MS,
 } = {}) {
   return new Promise((resolve) => {
     let authority;
@@ -114,12 +135,33 @@ export function connectThroughProxy({
       }
       tunnelled = true;
       clearTimeout(timer);
+      const inspected = tunnelMode(head) === "inspect";
       if (rest.length) stdout.write(rest);
       socket.pipe(stdout, { end: false });
-      stdin.pipe(socket);
+      let hint = null;
+      if (inspected) {
+        // An undeclared host:port: the proxy terminates TLS, so a raw protocol (SSH, a database)
+        // would just be dropped. Check the client's first bytes before any leave the container.
+        hint = setTimeout(() => stderr.write(`${notRawLine(authority, host, port, "waiting")}\n`), inspectHintMs);
+        hint.unref?.();
+        stdin.once("data", (chunk) => {
+          clearTimeout(hint);
+          if (chunk.length && chunk[0] !== TLS_HANDSHAKE) {
+            try { stdin.unpipe?.(socket); stdin.destroy?.(); } catch { /* already gone */ }
+            finish(1, notRawLine(authority, host, port, "refused"));
+            socket.destroy();
+            return;
+          }
+          socket.write(chunk);
+          stdin.pipe(socket);
+        });
+      } else {
+        stdin.pipe(socket);
+      }
       // The developer's ssh closed its side: half-close ours so the server sees EOF.
-      stdin.once("end", () => socket.end());
+      stdin.once("end", () => { clearTimeout(hint); socket.end(); });
       socket.once("close", () => {
+        clearTimeout(hint);
         try { stdin.unpipe(socket); } catch { /* already gone */ }
         // ssh keeps our stdin open until it sees our stdout end; stop reading so the process exits.
         try { stdin.destroy?.(); } catch { /* not destroyable */ }

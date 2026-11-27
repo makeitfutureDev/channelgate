@@ -30,15 +30,15 @@ const putSettings = async (body) => {
 };
 
 test("disabling every harness is refused", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
-  const res = await putSettings({ engineEnabled: { claude: false, codex: false, opencode: false } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
+  const res = await putSettings({ engineEnabled: { claude: false, codex: false } });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /at least one engine/i);
   assert.equal(isEngineEnabled("claude"), true, "the refused patch must not have been applied");
 });
 
 test("a partial map only changes the engines it names", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
   const res = await putSettings({ engineEnabled: { codex: false, bogus: false } });
   assert.equal(res.status, 200);
   assert.equal(isEngineEnabled("codex"), false);
@@ -47,7 +47,7 @@ test("a partial map only changes the engines it names", async () => {
 });
 
 test("the default engine is validated against the enable state being saved in the SAME request", async () => {
-  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, opencode: true } });
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true } });
 
   const conflicting = await putSettings({ engine: "codex", engineEnabled: { codex: false } });
   assert.equal(conflicting.status, 400);
@@ -90,7 +90,23 @@ test("the admin UI renders the harness switches and saves both engine settings",
   assert.match(client, /set-engine-fallback-mode"\)\.value = s\.engineFallbackMode \|\| "auto"/);
   assert.match(client, /engineFallbackMode: document\.getElementById\("set-engine-fallback-mode"\)\.value/);
   assert.match(client, /engineEnabled: \{ \.\.\.ENGINE_ENABLED \}/);
-  // Every engine picker is built from the enabled set, so a disabled harness can't be chosen.
-  assert.match(client, /function selectableEngines/);
-  assert.match(client, /selectableEngines\(\)\.map/);
+  // Every engine picker is built from the enabled set, so a disabled license can't be chosen:
+  // app.js hands each picker the live map, and the picker (admin-licenses.js) filters by it.
+  assert.match(client, /function licenseEnv\([^)]*\) \{\s*return \{ manifests: ENGINE_MANIFESTS, enabled: ENGINE_ENABLED,/);
+  assert.match(client, /mountLicensePicker\(\{[^}]*env: \(\) => licenseEnv\(/);
+  assert.doesNotMatch(client, /ENGINE_MANIFESTS\.map\(\(m\) => `<option/, "no picker lists the whole manifest");
+});
+
+test("a license switched off is offered by no admin UI picker", async () => {
+  const picker = await import("../public/admin-licenses.js");
+  const manifests = [
+    { id: "claude", harness: "claude", harnessLabel: "Claude Code", label: "Claude" },
+    { id: "codex", harness: "codex", harnessLabel: "Codex", label: "Codex" },
+    { id: "codex-eu", harness: "codex", harnessLabel: "Codex", label: "Codex EU", licenseLabel: "Codex EU" },
+  ];
+  const env = (enabled) => ({ manifests, enabled, policy: null });
+  assert.deepEqual(picker.usableLicenses(env({ claude: true, codex: true, "codex-eu": false }), "codex"), ["codex"]);
+  assert.deepEqual(picker.selectableHarnesses(env({ claude: true, codex: false, "codex-eu": false })).map((h) => h.id), ["claude"], "a harness with no license left is not offered");
+  assert.deepEqual(picker.engineChoices(env({ claude: true, codex: false, "codex-eu": true })), [{ id: "claude", label: "Claude Code" }, { id: "codex-eu", label: "Codex" }]);
+  assert.deepEqual(picker.resolveLicensePick(env({ claude: true, codex: false, "codex-eu": true }), { harness: "codex" }), { engine: "codex-eu", licensePool: "" });
 });

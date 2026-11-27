@@ -6,6 +6,7 @@ import {
   isStopCommand,
   mentionsBot,
   parseSlashCommand,
+  parseSudoCommand,
   stripMentions,
 } from "../src/slack/message-normalize.js";
 
@@ -36,4 +37,18 @@ test("inbound subtype and trusted-bot gating fails closed", () => {
 test("loop Stop phrases enter cancellation without swallowing requests about code", () => {
   for (const text of ["stop the loop", "Stop the check loop now!", "please cancel this loop", "halt my watch loop please"]) assert.equal(isStopCommand(text), true, text);
   for (const text of ["how do I stop the loop", "stop the loop when done", "stop reviewing", "please stop the loop and deploy"]) assert.equal(isStopCommand(text), false, text);
+});
+
+
+test("sudo preserves inline prompt formatting and reserves exact controls", () => {
+  assert.deepEqual(parseSudoCommand(" /SUDO "), { action: "on", task: "" });
+  assert.deepEqual(parseSudoCommand("/sudo ON"), { action: "on", task: "" });
+  assert.deepEqual(parseSudoCommand("/sudo status"), { action: "status", task: "" });
+  assert.deepEqual(parseSudoCommand("/sudo off"), { action: "off", task: "" });
+  const task = "Review these paths:\n```text\na  b\n```";
+  assert.deepEqual(parseSudoCommand(`/sudo ${task}`), { action: "on", task });
+  assert.deepEqual(parseSudoCommand(`/sudo on ${task}`), { action: "on", task });
+  assert.deepEqual(parseSudoCommand("/sudo off now"), { action: "off", task: "now", invalid: true });
+  assert.deepEqual(parseSudoCommand("/sudo status details"), { action: "status", task: "details", invalid: true });
+  for (const text of ["/sudoer task", "/help", "please /sudo task"]) assert.equal(parseSudoCommand(text), null);
 });

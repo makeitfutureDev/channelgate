@@ -59,7 +59,7 @@ test("trusted admin home access still requires Admin mode and the boolean gatewa
   assert.equal(operatorHomeGranted(worker), false);
 });
 
-test("project authors receive fresh HOME, tmp and artifacts separate from legacy admin state", () => {
+test("project authors retain separate HOME, tmp and artifacts while channel conversations are shared", () => {
   const admin = resolve({ isAdminAuthor: true });
   const member = resolve();
   assert.notEqual(member.container.name, admin.container.name);
@@ -70,6 +70,12 @@ test("project authors receive fresh HOME, tmp and artifacts separate from legacy
   assert.equal(member.artifactDir, path.join(`${runtimeArtifactsRoot()}-project-v2`, "slack", "author-isolation"));
   assert.equal(contains(admin.artifactDir, member.artifactDir), false);
   assert.equal(contains(member.artifactDir, admin.artifactDir), false);
+  const histories = (target) => target.container.mounts.filter((mount) => mount.kind.startsWith("history-"));
+  assert.ok(histories(admin).length >= 3);
+  assert.deepEqual(histories(member), histories(admin));
+  assert.equal(member.container.historyRoot, admin.container.historyRoot);
+  assert.equal(member.container.sharedHistory, true);
+  assert.ok(histories(member).every((mount) => !/auth|credentials|config\.toml/.test(mount.target)));
 });
 
 test("member storage cannot collide with another channel's privileged lane", () => {
@@ -155,6 +161,15 @@ test("host session carry cannot import privileged native history into the projec
   assert.equal(result, null);
 });
 
+test("host session carry cannot publish sudo-native transcripts through the admin shared store", async () => {
+  const result = await carrySession({
+    engine: "claude", sessionId: "host-private-session", cwd: resolve().cwd,
+    storedRuntime: JSON.stringify({ backend: "host", scope: "admin" }), target: resolve({ isAdminAuthor: true }),
+    resolveFor() { assert.fail("host state must never be read for a shared history import"); }, log() {},
+  });
+  assert.equal(result, null);
+});
+
 test("fork recovery rechecks current rank and rejects privileged or unclassified sources for members", async () => {
   const { setUser } = await import("../src/config/store.js");
   const { saveSession } = await import("../src/gateway/sessions.js");
@@ -168,6 +183,10 @@ test("fork recovery rechecks current rank and rejects privileged or unclassified
   assert.equal(await recoveryForkSessionId({ ...rec, forkSourceSessionId: "missing-source" }), "");
   await saveSession(rec.slug, "member-thread", "project-source", "claude", null, JSON.stringify({ backend: "container", scope: "project" }));
   assert.equal(await recoveryForkSessionId({ ...rec, forkSourceSessionId: "project-source" }), "project-source");
+  await saveSession(rec.slug, "shared-admin-thread", "shared-source", "claude", null, JSON.stringify({ backend: "container", scope: "admin", history: "channel-v1" }));
+  assert.equal(await recoveryForkSessionId({ ...rec, forkSourceSessionId: "shared-source" }), "shared-source");
+  await saveSession(rec.slug, "host-thread", "host-source", "claude", null, JSON.stringify({ backend: "host", scope: "admin", history: "channel-v1" }));
+  assert.equal(await recoveryForkSessionId({ ...rec, forkSourceSessionId: "host-source" }), "");
 });
 
 for (const engine of ["claude", "codex"]) {

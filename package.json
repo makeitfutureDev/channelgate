@@ -1,11 +1,11 @@
 {
   "name": "channelgate",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE.md",
   "author": "Tiberiu Socaci (MAKEITFUTURE S.R.L.)",
   "type": "module",
-  "description": "ChannelGate — a self-hosted daemon that runs coding agents (Claude Code, Codex) inside your team chat (Slack, Microsoft Teams, Google Chat) in per-conversation sandboxed folders, with per-user Composio tokens and an admin UI.",
+  "description": "ChannelGate \u2014 a self-hosted daemon that runs coding agents (Claude Code, Codex) inside your team chat (Slack, Microsoft Teams, Google Chat) in per-conversation sandboxed folders, with per-user Composio tokens and an admin UI.",
   "keywords": [
     "channelgate",
     "ai-agent",
@@ -26,15 +26,18 @@
     "test:coverage": "node scripts/run-tests.mjs --coverage",
     "test:security-coverage": "node scripts/security-coverage.mjs",
     "runtime:storage": "node scripts/runtime-storage.mjs",
+    "admin:recover": "node scripts/admin-recover.mjs",
     "test:live-container": "CG_LIVE_CONTAINER=1 node --test test/container-durability.live.test.js test/ssh-installer-access.test.js test/vscode-shared-server.live.test.js",
     "check:static": "node scripts/static-check.mjs",
     "check:dco": "node scripts/check-dco.mjs",
     "secret-scan": "node scripts/secret-scan.mjs",
     "dev": "node --watch src/start.js",
     "setup": "bash scripts/install.sh",
+    "hash-password": "node scripts/hash-password.mjs",
     "update": "bash scripts/update.sh",
     "service:install": "bash scripts/install-systemd.sh",
     "service:uninstall": "bash scripts/uninstall-systemd.sh",
+    "service:repair": "bash scripts/repair-service-unit.sh",
     "backup": "bash scripts/backup-config.sh",
     "restore": "bash scripts/restore-config.sh",
     "restore:drill": "bash scripts/restore-drill.sh",
@@ -47,26 +50,30 @@
     "whisper:install": "node scripts/install-whisper.mjs",
     "build:image": "node scripts/build-image.mjs",
     "vscode": "node scripts/open-vscode.mjs",
-    "vpn": "node scripts/channel-vpn.mjs"
+    "vpn": "node scripts/channel-vpn.mjs",
+    "check:types": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.0.0"
   },
   "dependencies": {
-    "@composio/core": "0.22.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@composio/core": "0.28.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@simplewebauthn/server": "14.0.3",
     "@slack/bolt": "^5.1.0",
     "express": "^5.3.0",
-    "imapflow": "2.9.1",
-    "mcp-remote": "0.14.3",
-    "nodemailer": "10.2.1",
-    "zod": "^4.6.5"
+    "imapflow": "2.10.2",
+    "mcp-remote": "0.16.1",
+    "nodemailer": "10.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "acorn": "8.19.0",
-    "acorn-globals": "7.0.1"
+    "acorn-globals": "7.0.1",
+    "typescript": "5.9.3"
   },
   "overrides": {
-    "qs": "6.16.0"
+    "qs": "6.16.1"
   }
 }

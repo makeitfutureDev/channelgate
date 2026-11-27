@@ -1,9 +1,10 @@
 // Read-only account metadata for the admin UI. Never creates SDK sessions, connected accounts,
 // or authorization links. Consumer SEARCH session IDs correlate read-only discovery requests.
 import { Composio } from "@composio/core";
-import { getComposioMode, getComposioSdkApiKey, getDefaultComposioToken } from "../config/settings.js";
+import { getComposioMode, getComposioSdkApiKey } from "../config/settings.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { composioIdentity } from "../ee/composio-sessions.js";
+import { composioSubject } from "./composio-workspace.js";
 import { connectRemoteClient } from "../mcp/remote-relay.js";
 import { publicPinnedFetch } from "../mcp/public-fetch.js";
 import { composioUrl } from "./mcp-catalog.js";
@@ -12,7 +13,7 @@ import { resolveComposioConnections } from "./run-integrations.js";
 const MAX_PAGES = 50;
 const MAX_APPS = 200;
 const MAX_ACCOUNTS = 10_000;
-const SLUG = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+const SLUG = /^[a-z0-9_][a-z0-9_-]{0,127}$/;
 const FAILURE = "Composio connections could not be loaded. Try refreshing.";
 
 function text(value, limit = 256) {
@@ -162,8 +163,8 @@ async function personalAccounts({ token, url, connect, timeoutMs, totalTimeoutMs
   }
 }
 
-async function sdkAccounts({ kind, id, config, sdkClient, timeoutMs, totalTimeoutMs }) {
-  const identity = composioIdentity({ workspaceId: config.workspaceId, kind, id });
+async function sdkAccounts({ kind, id, workspaceId, config, sdkClient, timeoutMs, totalTimeoutMs }) {
+  const identity = composioIdentity({ workspaceId, kind, id });
   const client = sdkClient || new Composio({
     apiKey: config.sdkApiKey, userApiKey: null, orgApiKey: null, allowTracking: false,
   });
@@ -199,7 +200,7 @@ async function sdkAccounts({ kind, id, config, sdkClient, timeoutMs, totalTimeou
 /** Configuration and network clients can be injected without touching gateway state in tests. */
 export async function loadComposioInventory({ kind, id, record = {} } = {}, options = {}) {
   const config = options.config || {
-    mode: getComposioMode(), defaultToken: getDefaultComposioToken(), sdkApiKey: getComposioSdkApiKey(),
+    mode: getComposioMode(), sdkApiKey: getComposioSdkApiKey(),
     url: composioUrl(), workspaceId: process.env.CG_SLACK_TEAM_ID || "",
   };
   const mode = config.mode === "sdk" ? "sdk" : "personal";
@@ -208,7 +209,7 @@ export async function loadComposioInventory({ kind, id, record = {} } = {}, opti
   const totalTimeoutMs = Math.max(10, Math.min(60_000, options.totalTimeoutMs || 60_000));
   const isDM = Boolean(record.isDM || record.type === "im");
   let source = mode === "sdk" ? `sdk-${kind}` : "none";
-  const secrets = [...new Set([record.composioToken, config.sdkApiKey, config.defaultToken])]
+  const secrets = [...new Set([record.composioToken, config.sdkApiKey])]
     .filter((value) => typeof value === "string" && value.length);
   const scrub = (value) => {
     if (typeof value === "string") return secrets.reduce((safe, secret) => safe.split(secret).join("[redacted]"), value);
@@ -227,15 +228,16 @@ export async function loadComposioInventory({ kind, id, record = {} } = {}, opti
       try { await (options.requireEntitlement || requireComposioSdkEntitlement)(); }
       catch { return answer({ state: "unavailable", message: "Composio SDK connections require an active Enterprise license.", accounts: [] }); }
       if (!config.sdkApiKey) return answer({ state: "unconfigured", message: "The organization Composio SDK key is not configured.", accounts: [] });
-      if (typeof config.workspaceId !== "string" || !config.workspaceId.trim()) {
-        return answer({ state: "unavailable", message: "The Slack workspace identity required for Composio SDK connections is not available.", accounts: [] });
-      }
-      return answer(await sdkAccounts({ kind, id, config, sdkClient: options.sdkClient, timeoutMs, totalTimeoutMs }));
+      // The workspace of the subject's surface, and the subject Composio knows it by (a Google
+      // Chat author's recorded `users/<id>`, not the e-mail the gateway keys them by).
+      const subject = await composioSubject({ kind, id, slackTeamId: typeof config.workspaceId === "string" ? config.workspaceId : "" },
+        options.getUser ? { loadUser: options.getUser } : {});
+      if (subject.missing) return answer({ state: "unavailable", message: subject.missing, accounts: [] });
+      return answer(await sdkAccounts({ kind, id: subject.id, workspaceId: subject.workspaceId, config, sdkClient: options.sdkClient, timeoutMs, totalTimeoutMs }));
     }
     const resolved = resolveComposioConnections({
       clean: false, userToken: kind === "user" ? record.composioToken : "",
-      channelToken: kind === "channel" ? record.composioToken : "", defaultToken: config.defaultToken,
-      noOrg: Boolean(record.noDefaultTokens), isDM,
+      channelToken: kind === "channel" ? record.composioToken : "", isDM,
     });
     const selected = kind === "user" ? resolved.user : resolved.shared;
     source = selected.source;

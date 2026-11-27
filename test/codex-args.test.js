@@ -374,7 +374,6 @@ test("a resumed Codex run configures exactly the MCP servers a fresh one does", 
   const shared = {
     composioUserToken: "ck_user_secret",
     composioToken: "ck_shared_secret",
-    toolboxToken: "tb_secret",
     makeToolboxUrl: "https://eu1.make.com/mcp/server/abc",
     makeToolboxKey: "make_secret",
     gatewayCapability: "signed-capability",
@@ -388,7 +387,7 @@ test("a resumed Codex run configures exactly the MCP servers a fresh one does", 
 
   assert.deepEqual(resumed.slice(0, 3), ["exec", "resume", "thread-1"]);
   assert.deepEqual(mcpOverrides(resumed), mcpOverrides(fresh));
-  for (const name of ["gateway", "composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]) {
+  for (const name of ["gateway", "composio-user", "composio-agent", "make-toolbox"]) {
     assert.ok(mcpOverrides(resumed).some((value) => value.startsWith(`mcp_servers.${name}.`)), `${name} is missing from the resumed run`);
   }
 });
@@ -400,17 +399,17 @@ test("the per-run headers helper resolves its credential from the run bundle alo
   const dir = tempDir("cg-codex-headers-");
   try {
     const bundlePath = path.join(dir, "cg-codex-secrets-1.json");
-    await writeFile(bundlePath, JSON.stringify({ toolboxToken: "tb-super-secret" }), { mode: 0o600 });
-    const helperPath = headerHelperPath(bundlePath, "makeitfuture-toolbox");
-    const source = headerHelperSource({ secretName: "toolboxToken", headerName: "Authorization", prefix: "Bearer ", bundlePath });
+    await writeFile(bundlePath, JSON.stringify({ makeToolboxKey: "mk-super-secret" }), { mode: 0o600 });
+    const helperPath = headerHelperPath(bundlePath, "make-toolbox");
+    const source = headerHelperSource({ secretName: "makeToolboxKey", headerName: "Authorization", prefix: "Bearer ", bundlePath });
     await writeFile(helperPath, source, { mode: 0o700 });
 
-    assert.doesNotMatch(source, /tb-super-secret/, "the helper script carries no credential of its own");
+    assert.doesNotMatch(source, /mk-super-secret/, "the helper script carries no credential of its own");
     assert.match(helperPath, /\.cjs$/, "written outside any package, so the extension fixes the module system");
 
     const ok = spawnSync(process.execPath, [helperPath], { encoding: "utf8", env: { PATH: process.env.PATH } });
     assert.equal(ok.status, 0, ok.stderr);
-    assert.deepEqual(JSON.parse(ok.stdout), { Authorization: "Bearer tb-super-secret" });
+    assert.deepEqual(JSON.parse(ok.stdout), { Authorization: "Bearer mk-super-secret" });
 
     // A cleaned-up (or never written) bundle must fail the server, not emit an empty header.
     await rm(bundlePath, { force: true });
@@ -518,7 +517,6 @@ test("every connector secret stays out of Codex argv and child env", () => {
     gatewayCapability: "signed-gateway-capability-secret",
     composioUserToken: "user-super-secret",
     composioToken: "shared-super-secret",
-    toolboxToken: "toolbox-super-secret",
     makeToolboxKey: "make-super-secret",
   };
   const args = argsFor({
@@ -543,7 +541,7 @@ test("every connector secret stays out of Codex argv and child env", () => {
   assert.match(argv, /gatewayCapability/);
   // Every remote MCP is relayed by the daemon: no headers helper, no URL, only the server's name.
   assert.doesNotMatch(argv, /headers\.cjs/);
-  for (const name of ["composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]) {
+  for (const name of ["composio-user", "composio-agent", "make-toolbox"]) {
     assert.ok(args.includes(`mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`), name);
   }
   // …and the run's bundle — a file in the artifact dir every container process can read — holds

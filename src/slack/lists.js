@@ -196,6 +196,15 @@ function coerceValue(col, v) {
       return { channel: Array.isArray(v) ? v : [v] };
     case "date":
       return { date: Array.isArray(v) ? v : [v] };
+    case "message":
+      return { message: Array.isArray(v) ? v : [v] };
+    case "attachment":
+      return { attachment: Array.isArray(v) ? v : [v] };
+    case "link":
+      return { link: (Array.isArray(v) ? v : [v]).map((value) => {
+        const link = typeof value === "string" ? { original_url: value } : value;
+        return { ...link, display_as_url: link.display_as_url ?? true, display_name: link.display_name ?? link.original_url };
+      }) };
     case "checkbox":
       return { checkbox: Boolean(v) };
     case "number":
@@ -227,6 +236,14 @@ function buildCells(schema, fields, rowId) {
 
 // A readable one-line value for a returned field (for list summaries).
 function fieldDisplay(field, schema) {
+  // Slack returns message objects and camelCase link objects, unlike the write payload.
+  if (Array.isArray(field?.message) && field.message.length) {
+    return field.message.map((m) => typeof m === "string" ? m : m?.value || "").filter(Boolean).join(", ");
+  }
+  if (Array.isArray(field?.link) && field.link.length) {
+    return field.link.map((l) => typeof l === "string" ? l : l?.originalUrl || l?.original_url || "").filter(Boolean).join(", ");
+  }
+  if (Array.isArray(field?.attachment) && field.attachment.length) return field.attachment.join(", ");
   if (typeof field?.text === "string" && field.text) return field.text;
   if (Array.isArray(field?.rich_text)) return flattenRichText(field.rich_text);
   if (Array.isArray(field?.select) && field.select.length) {

@@ -86,7 +86,12 @@ async function indexedRolloutPath(stateDir, sessionId) {
       db = new DatabaseSync(path.join(stateDir, name), { readOnly: true });
       const row = db.prepare("SELECT rollout_path FROM threads WHERE id = ? AND rollout_path IS NOT NULL").get(sessionId);
       const candidate = String(row?.rollout_path || "");
-      if (candidate && within(candidate, path.join(stateDir, "sessions"))) return candidate;
+      if (candidate && within(candidate, path.join(stateDir, "sessions"))) {
+        // The index outlives the file: a shared history store mounted over `sessions/` (or a
+        // Codex cleanup) leaves rows whose rollout is gone. A dangling path is a MISS for the
+        // filename scan below, never an open() that aborts the resume it was meant to meter.
+        try { await stat(candidate); return candidate; } catch { /* fall through to the scan */ }
+      }
     } catch {
       // Older Codex state databases may not have the current threads schema; scan below.
     } finally {
@@ -176,6 +181,14 @@ function uniqueRequests(nodes) {
     }
   }
   return requests;
+}
+
+// The latest provider request that read anything, with the window Codex reported alongside it.
+// Codex counts cached input inside `input_tokens`, so that alone is the request's full context.
+function latestCodexContext(nodes = []) {
+  const node = nodes.findLast((entry) => entry.last.input_tokens > 0);
+  if (!node) return null;
+  return { tokens: node.last.input_tokens, window: node.contextWindow || 0 };
 }
 
 function sumRequests(requests) {
@@ -323,6 +336,10 @@ export async function readCodexRootAccounting({ stateDir, sessionId, snapshot = 
   const requestMatch = cumulativeMatch || perTurnMatch;
   return {
     usage: delta,
+    // Context occupancy is NOT accounting: it is the latest request's input against the window
+    // Codex itself reported, and it survives a request chain that fails to reconcile with the
+    // cumulative counter (which only makes the per-request PRICING untrustworthy).
+    context: latestCodexContext(nodes),
     requests: requestMatch ? requests : [],
     model: parsed.lastModel || configuredModel || snapshot.model || "",
     exactRequests: requestMatch,
