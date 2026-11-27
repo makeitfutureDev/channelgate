@@ -2,6 +2,13 @@
 
 ## 0.7.1 — in development
 
+- Activity shows which request is running and which requests are queued in each visible thread.
+  Send `stop active` in the thread to stop the current turn and keep the queue. Slack keeps ▶️
+  on the root through a handoff and removes it when the thread becomes idle.
+- Voice requests keep the caller's identity and queue position across restart. When execution
+  has already started and its outcome is unknown, the gateway tells the thread.
+- Completed chat replies can be delivered after reconnect without another engine run.
+  A recovered reply is labeled when an earlier copy may already have reached the thread.
 - Teams and Google Chat now record interactive usage for consecutive turns on the same connector.
 - Slack marks running threads with ▶️ on the root message and clears its reaction when the last turn ends.
 - Fork a Teams channel discussion into separate threads with `/fork` or an approved batch.

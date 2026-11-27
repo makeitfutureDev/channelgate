@@ -1,6 +1,9 @@
 // Teams and Google Chat bindings for the shared incoming-message flow.
+import { isStopActiveCommand } from "./stop-active-command.ts";
+import { stopActiveTurn } from "../gateway/stop-active-turn.ts";
 import { conversationTurn } from "./conversation-turn.ts";
-import { checkMessageAdmission, dispatchIncomingMessage } from "../gateway/message-flow.ts";
+import { eligiblePendingMessage } from "./pending-activity.ts";
+import { dispatchIncomingMessage } from "../gateway/message-flow.ts";
 import { autoApproveUser } from "../gateway/user-auto-approval.js";
 import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
@@ -162,16 +165,12 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         await acknowledgeReaction({ message, reply, sessionKey });
         return { command: true };
       }
-      const pendingAdmission = async pending => {
-        if (!pending || !pending.text && !pending.attachments?.length) return false;
-        if (!pending.isDM && !pending.mentionsBot && !(pending.trigger === 'reaction' && platformSupports(adapter.id, 'reactionTriggers'))) return false;
-        const currentMeta = await getChannelMeta(entry.slug);
-        if (!currentMeta) return false;
-        const { denial } = await checkMessageAdmission({
-          actorId: pending.userId, isDM: pending.isDM, meta: currentMeta, slug: entry.slug, threadKey: sessionKey,
-        });
-        return !denial;
-      };
+      if (!fork && !message.attachments.length && message.trigger !== "reaction" && isStopActiveCommand(message.text)) {
+        await reply(stopActiveTurn({ slug: entry.slug, channelId: message.conversationId, threadKey: sessionKey,
+          actor: message.userId, admin: authorIsAdmin, eventId: message.messageId }));
+        return { command: true };
+      }
+      const pendingAdmission = pending => eligiblePendingMessage(adapter.id, pending, entry.slug, sessionKey);
       const pendingControls = {
         pendingForSession: connector.pendingForSession ? scope => connector.pendingForSession({ ...scope, isEligible: pendingAdmission }) : null,
         cancelPendingForSession: connector.cancelPendingForSession ? scope => connector.cancelPendingForSession({ ...scope, isEligible: pendingAdmission }) : null,

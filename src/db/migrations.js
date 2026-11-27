@@ -14,6 +14,9 @@ import { repairClaudeCumulativeCost } from "./claude-session-usage.js";
 
 import { ensureMemoryFtsTable } from "./fts.js";
 
+import { threadTurnMigration } from "./thread-turn-migration.ts";
+import { turnAnswerMigration } from "./turn-answer-migration.ts";
+
 export const migrations = [
   {
     version: 1,
@@ -1585,6 +1588,13 @@ export const migrations = [
           PRIMARY KEY (channel_id, thread_ts)
         );
       `);
+    },
+  },
+  {
+    version: 67,
+    up(db) {
+      db.exec(threadTurnMigration);
+      db.exec(turnAnswerMigration);
     },
   },
 ];

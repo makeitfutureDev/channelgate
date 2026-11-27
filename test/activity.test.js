@@ -1784,11 +1784,11 @@ test("combined Activity lists linked Chat and Teams threads, isolates viewers an
   assert.deepEqual((await snapshot(mine)).rows.map(r => r.platform), ['slack']);
 });
 
-async function linkedChatActivityFixture(t, { secondParticipant = false } = {}) {
+async function linkedChatActivityFixture(t, { secondParticipant = false, ...options } = {}) {
   const { registerTransport, unregisterTransport } = await import('../src/platforms/live.js');
   const { setActivityIdentities } = await import('../src/config/activity-identities.js');
   const index = await import('../src/gateway/platform-threads.js');
-  const f = await fixture(t);
+  const f = await fixture(t, options);
   const starter = 'users/ACTIVITY_RACE_STARTER', participant = 'users/ACTIVITY_RACE_PARTICIPANT';
   const channel = 'gchat:spaces/ACTIVITY_RACE', raw = 'spaces/ACTIVITY_RACE', thread = raw + '/threads/ROOT';
   for (const user of [starter, participant]) await setUser(user, { approved: true, platform: 'googlechat', activityIdentities: [] });
@@ -1889,4 +1889,20 @@ test("Load more widens only this session's window and needs the CSRF header", as
   assert.equal((await (await f.request(user.url + "/api/threads", { headers: user.headers })).json()).limits.done, 200);
   assert.equal((await f.request(user.url + "/api/threads/more", { method: "POST", headers: user.post, body: JSON.stringify({ group: "nope" }) })).status, 400);
   assert.equal((await f.request(user.url + "/api/threads/more", { method: "POST", headers: { ...user.post, "x-cg-csrf": "wrong" }, body: JSON.stringify({ group: "open" }) })).status, 403);
+});
+
+test("Activity publishes owner transitions and restores the current turn after reconnect", async t => {
+  const { verifyTurnStream } = await import("./fixtures/thread-turn-stream.ts");
+  const f = await fixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
+  await f.root();
+  await f.root("C_WORK", "900.000001", "U_OTHER");
+  const viewer = await f.login();
+  await verifyTurnStream(suffix => f.request(viewer.url + suffix, { headers: viewer.headers }), nextEvent);
+});
+
+
+test("Activity exposes only eligible native queued requests and reconnects at the current order", async t => {
+  const { verifyPendingActivityStream } = await import("./fixtures/thread-turn-stream.ts");
+  const f = await linkedChatActivityFixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
+  await verifyPendingActivityStream(f, suffix => f.request(f.mine.url + suffix, { headers: f.mine.headers }), nextEvent);
 });

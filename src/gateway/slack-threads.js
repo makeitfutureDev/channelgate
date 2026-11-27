@@ -2,6 +2,7 @@
 // durable creation record; participants have independent visibility without acquiring ownership.
 // Runtime state stays in its existing tables; this index keeps bounded root previews and
 // explicit completion/outcome facts.
+import { activeNativeTurns, inactiveActivityRecord } from "./thread-turn-view.ts";
 import { getDb, fromJson } from "../db/index.js";
 import { slackThreadFor, isSlackTs } from "../slack/thread-keys.js";
 import { messageHasCompletionReaction } from "./completion-reactions.js";
@@ -345,8 +346,10 @@ export function slackThreadRuntime({ pendingApprovals = [] } = {}) {
     const prev = states.get(key);
     if (!prev || state === "waiting") states.set(key, state);
   };
-  for (const row of db.prepare("SELECT data FROM active_runs").all()) {
+  for (const turn of activeNativeTurns()) add(turn, "working");
+  for (const row of db.prepare("SELECT id, data FROM active_runs").all()) {
     const rec = fromJson(row.data, {}) || {};
+    if (inactiveActivityRecord(row.id, rec)) continue;
     // Queued-message controls are optional: the accepted run owns the runtime state.
     // Ignore even orphaned controls so a stale card cannot manufacture a blocker or clock.
     if (rec.awaitingChoice && rec.queuedRunId) continue;
@@ -374,9 +377,12 @@ export function slackThreadWorkingSince() {
     const key = `${rec.channelId}::${thread}`;
     if (!since.has(key) || at < since.get(key)) since.set(key, at);
   };
-  for (const table of ["active_runs", "bg_jobs"]) {
-    for (const row of db.prepare(`SELECT data FROM ${table}`).all()) add(fromJson(row.data, {}) || {});
+  for (const turn of activeNativeTurns()) add(turn);
+  for (const row of db.prepare("SELECT id, data FROM active_runs").all()) {
+    const rec = fromJson(row.data, {}) || {};
+    if (!inactiveActivityRecord(row.id, rec)) add(rec);
   }
+  for (const row of db.prepare("SELECT data FROM bg_jobs").all()) add(fromJson(row.data, {}) || {});
   return since;
 }
 

@@ -12,7 +12,7 @@ const SHORTCUTS = [
   '`/model` — Choose the harness, model and effort.',
   '`/settings` — Open private controls for this conversation.',
   '`/files` — Browse this workspace from the current conversation.',
-  '`/stop` — Stop this session’s active and queued work.',
+  '`/stop` — Stop this session’s active and queued work. Send `stop active` to keep queued requests.',
 ];
 const COMMAND_HINT = 'In spaces and groups, mention me before a typed command: `@agent /help`. Registered slash commands selected from the Chat menu address me directly.';
 const ALL_TOPICS = [
@@ -30,7 +30,7 @@ const ALL_TOPICS = [
     '`/license [any|name[, name…]|default]` — Where a harness has several licenses: show them, or choose the one this session runs on and the ones to move to when it fails.',
     '`/harnesses [all|entry[, entry…]]` — Show which harnesses and licenses this conversation may run on. An organization admin sets the list (Enterprise); it must keep the license the conversation runs on.',
     '`/effort [level|default]` — Show or change reasoning effort.',
-    '`/stop` or `/cancel` — Stop this session’s active and queued work.',
+    '`/stop` or `/cancel` — Stop this session’s active and queued work. Send `stop active` to keep queued requests.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
     '`/fork <new message>` — In a threaded space, start a new thread from a copy of this thread’s session and send it that message. It waits for this thread’s current work first. Ask me to “split these topics into forks” to get one approval card for several at once.',
     'Only the run author or an administrator may stop a request. New requests for the same session queue while I work, with Steer and Cancel buttons.',

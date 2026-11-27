@@ -1,6 +1,5 @@
 import { assertEngineSelectable } from "../engines/selection.js";
-// Authorized text controls and a process-local lane per conversation/session. Engine/session
-// persistence stays in the existing gateway stores; the lane only owns live work and cancellation.
+import { runQueue, sessionOwnerKey } from '../gateway/thread-turn-owner.ts';
 import { clearSession, getSessionEngine } from '../gateway/sessions.js';
 import { resolveThreadEngine, getThreadEngine, getThreadModel, getThreadEffort, getThreadLicensePool, setThreadRuntimeOverrides, setThreadEffort } from '../gateway/thread-engine.js';
 import { harnessOf, isEngineId, modelBelongsToEngine, effortBelongsToModel, effortsForModel, modelsForEngine } from '../engines/registry.js';
@@ -20,19 +19,15 @@ export const STEERED = Object.freeze({ code: 'steered' });
 export const wasSteered = signal => signal?.aborted === true && signal.reason === STEERED;
 
 export function createConversationControls() {
-  const lanes = new Map();
-  const keyFor = (message, sessionKey) => JSON.stringify([message.conversationId, sessionKey]);
-  const laneFor = (key) => {
-    if (!lanes.has(key)) lanes.set(key, { tail: Promise.resolve(), jobs: new Set(), clearing: false });
-    return lanes.get(key);
-  };
+  const keyFor = (message, sessionKey) => sessionOwnerKey(message.conversationId, sessionKey);
   // The live work of one session, as far as steering needs to know: nothing running, only the
   // requester's own work, or someone else's (which a steer never interrupts).
   const steerState = (conversationId, sessionKey, authorId) => {
-    const lane = lanes.get(keyFor({ conversationId }, sessionKey));
-    if (!lane || !lane.jobs.size) return lane?.clearing ? 'clearing' : 'idle';
-    if (lane.clearing) return 'clearing';
-    return [...lane.jobs].every(job => job.author === authorId) ? 'own' : 'other-author';
+    const key = sessionOwnerKey(conversationId, sessionKey);
+    if (runQueue.isClearing(key)) return 'clearing';
+    const handles = runQueue.handles(key);
+    if (!handles.length) return 'idle';
+    return handles.every(handle => handle.authorId === authorId) ? 'own' : 'other-author';
   };
   return {
     // Synchronous on purpose: a caller checks, reorders its durable queue and steers with no await
@@ -41,7 +36,8 @@ export function createConversationControls() {
     steer({ conversationId, sessionKey, authorId }) {
       const state = steerState(conversationId, sessionKey, authorId);
       if (state !== 'own') return state;
-      for (const job of lanes.get(keyFor({ conversationId }, sessionKey)).jobs) job.controller.abort(STEERED);
+      const stopped = runQueue.abort(sessionOwnerKey(conversationId, sessionKey));
+      stopped?.active.controller?.abort(STEERED);
       return 'steered';
     },
     // `picked` is the license step a native picker already ran for the harness its /model names
@@ -60,30 +56,30 @@ export function createConversationControls() {
           actor: message.userId, source: 'chat-command', isAdmin: Boolean(authorIsAdmin) }, reply);
       }
       const key = keyFor(message, sessionKey);
-      const lane = laneFor(key);
       const pending = await pendingForSession?.({ conversationId: message.conversationId, sessionKey }) || { count: 0, authors: [] };
       const respond = async (text) => { await reply(text); return true; };
-      try {
+      {
         if (command === 'help') return await respond('Commands: /help, /status, /stop (or /cancel), /clear, /model [harness] [model|default], /license [any|name[, name…]|default], /effort [level|default], /harnesses [all|entry[, entry…]] (what this conversation may run on; admins change it). In a group chat, quote the message or bot reply to control its session and include the bot mention. A new unquoted group message starts a new session.');
         if (['stop', 'cancel', 'clear'].includes(command)) {
-          if (!authorIsAdmin && ([...lane.jobs].some(job => job.author !== message.userId)
+          if (!authorIsAdmin && (runQueue.handles(key).some(handle => handle.authorId !== message.userId)
             || pending.authors.some(author => author !== message.userId))) return await respond('Only the run author or an administrator may stop or clear another person’s active or queued work.');
-          if (lane.clearing) return await respond('This session is already being cleared.');
+          if (runQueue.isClearing(key)) return await respond('This session is already being cleared.');
           const cancelled = await cancelPendingForSession?.({ conversationId: message.conversationId, sessionKey, authorId: message.userId, authorIsAdmin });
           if (cancelled?.changed) return await respond('This session’s queue changed while checking it. Please repeat the command.');
           if (cancelled?.allowed === false) return await respond('Only the run author or an administrator may stop or clear another person’s active or queued work.');
-          if (!authorIsAdmin && [...lane.jobs].some(job => job.author !== message.userId)) return await respond('Only the run author or an administrator may stop or clear another person’s active or queued work.');
-          for (const job of lane.jobs) job.controller.abort();
-          if (command !== 'clear') return await respond(lane.jobs.size || cancelled?.cancelled ? 'Stop requested for this session’s active and queued work.' : 'No active work in this session.');
-          lane.clearing = true;
+          if (!authorIsAdmin && runQueue.handles(key).some(handle => handle.authorId !== message.userId)) return await respond('Only the run author or an administrator may stop or clear another person’s active or queued work.');
+          if (command === 'clear' && !runQueue.beginClear(key)) return await respond('This session is already being cleared.');
+          const stopped = runQueue.abort(key);
+          stopped?.active.controller?.abort();
+          if (command !== 'clear') return await respond(stopped || cancelled?.cancelled ? 'Stop requested for this session’s active and queued work.' : 'No active work in this session.');
           try {
             await reply('Clearing this session; waiting for its active work to stop…');
             // Bump before waiting as well as after: a late engine result must not resurrect it.
             await clearSession(slug, sessionKey);
-            await lane.tail;
+            await runQueue.waitForIdle(key);
             await clearSession(slug, sessionKey);
             return await respond('Session cleared. Your next message in this session starts fresh.');
-          } finally { lane.clearing = false; }
+          } finally { runQueue.endClear(key); }
         }
         const [rawEngine, rawModel, rawEffort, rawPool] = await Promise.all([
           getThreadEngine(slug, sessionKey), getThreadModel(slug, sessionKey), getThreadEffort(slug, sessionKey), getThreadLicensePool(slug, sessionKey),
@@ -102,7 +98,7 @@ export function createConversationControls() {
         const compatibleModel = (candidates, selectedEngine) => candidates.find(value => value && modelBelongsToEngine(value, selectedEngine)) || '';
         const model = compatibleModel([rawModel, meta.model, getDefaultModel(engine)], engine);
         const effort = [rawEffort, meta.effort].find(value => value && effortBelongsToModel(value, engine, model)) || '';
-        const jobCount = lane.jobs.size + pending.count;
+        const jobCount = runQueue.count(key) + pending.count;
         if (command === 'status') return await respond(`Harness: ${described()}; model: ${model || 'engine default'}; effort: ${effort || 'engine default'}. ${jobCount ? `${jobCount} active/queued request(s).` : 'Idle.'}`);
         // The license step exists only when this harness has several licenses usable here.
         const picker = licensePicker({ harness, meta, engine, pool });
@@ -115,7 +111,7 @@ export function createConversationControls() {
             : `License selection: ${described()}. ${nothingToChoose}`);
           return await respond(`Effort: ${effort || 'engine default'}. Available: ${effortsForModel(engine, model).join(', ')}.`);
         }
-        if (jobCount || lane.clearing) return await respond(busy);
+        if (jobCount || runQueue.isClearing(key)) return await respond(busy);
         if (command === 'effort') {
           const selected = arg === 'default' ? '' : arg.toLowerCase();
           if (!effortBelongsToModel(selected, engine, model)) return await respond(`Choose an effort from: ${effortsForModel(engine, model).join(', ')}, default.`);
@@ -124,7 +120,7 @@ export function createConversationControls() {
         }
         const stillIdle = async () => {
           const currentPending = await pendingForSession?.({ conversationId: message.conversationId, sessionKey });
-          return !(lane.jobs.size || lane.clearing || currentPending?.count);
+          return !(runQueue.count(key) || runQueue.isClearing(key) || currentPending?.count);
         };
         if (command === 'license') {
           // `default` drops the session's pin: it follows the conversation again. Anything else
@@ -182,31 +178,25 @@ export function createConversationControls() {
         try { setThreadRuntimeOverrides(slug, sessionKey, { engine: selectedEngine, model: selectedModel, effort: selectedEffort, licensePool: selected.licensePool }, { expected }); }
         catch (error) { return await respond(error.message); }
         return await respond(`${SESSION_RUNTIME_SAVED} ${described(selectedEngine, selected.licensePool)}; model: ${selectedModel || 'inherited default'}.`);
-      } finally {
-        if (!lane.jobs.size && !lane.clearing) lanes.delete(key);
       }
     },
-    async execute({ message, sessionKey, queued, work }) {
+    async execute({ message, sessionKey, queued, work, requestId = "", origin = "", durable = Boolean(requestId) }) {
       const key = keyFor(message, sessionKey);
-      const lane = laneFor(key);
-      if (lane.clearing) { await queued('This session is being cleared; send the message again after it finishes.'); return { skipped: 'clearing' }; }
+      if (runQueue.isClearing(key)) { await queued('This session is being cleared; send the message again after it finishes.'); return { skipped: 'clearing' }; }
       const controller = new AbortController();
-      const job = { author: message.userId, controller };
-      const predecessor = lane.tail;
-      const position = lane.jobs.size;
-      lane.jobs.add(job);
-      let release;
-      lane.tail = new Promise((resolve) => { release = resolve; });
+      const handle = { authorId: message.userId, controller, runId: requestId, durable, origin,
+        channelId: message.conversationId, threadKey: message.threadKey || sessionKey, aborted: false };
+      const position = runQueue.count(key);
+      const acquired = runQueue.acquire(key, handle).then(() => null, error => error);
       try {
-        if (position) await queued(`Queued in this session (position ${position}).`);
-        await predecessor;
-        if (controller.signal.aborted) { await queued('Cancelled before starting.'); return { skipped: 'cancelled' }; }
+        if (position && runQueue.handles(key).includes(handle)) await queued(`Queued in this session (position ${position}).`);
+        const error = await acquired;
+        if (error?.name === 'DuplicateTurnRequest') return { skipped: 'duplicate' };
+        if (error?.name === 'RunQueueFull') { await queued(error.message); return { skipped: 'queue-full' }; }
+        if (error) throw error;
+        if (handle.aborted || controller.signal.aborted) { await queued('Cancelled before starting.'); return { skipped: 'cancelled' }; }
         return await work(controller.signal);
-      } finally {
-        lane.jobs.delete(job);
-        release();
-        if (!lane.jobs.size && !lane.clearing) lanes.delete(key);
-      }
+      } finally { runQueue.release(key, handle); }
     },
   };
 }

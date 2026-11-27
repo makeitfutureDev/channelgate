@@ -45,7 +45,7 @@ import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js"
 import { assertPublicHttpUrl, resolvePublicHttpUrl } from "../web/security.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { buildResumeCommand as buildThreadResumeCommand } from "../slack/footer.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { isMemorySaveTool } from "./channel-memory.js";
 import { maybeQueueMemoryReview } from "./memory-review.js";
 import { ensureChannelFolder, effectiveWorkDir } from "./folders.js";
@@ -920,7 +920,8 @@ async function runInBackground(job, { textForRun, attachmentPath, client, alertC
   const attachments = Array.isArray(job.attachments) ? job.attachments : attachmentPath ? [attachmentPath] : [];
   let status = null;
   const runKey = threadRunKey(job);
-  const handle = { aborted: false, controller, authorId: job.author, runId: `${runKey}::api:${job.id}`, api: true };
+  const handle = { aborted: false, controller, authorId: job.principalKind === "user" ? job.author : API_PRINCIPAL, runId: `${runKey}::api:${job.id}`,
+    origin: "api_foreground", channelId: job.channelId, threadKey: job.threadKey, visible: Boolean(client && job.slackThread), durable: true, api: true };
   let queued = false;
   let memorySaves = 0;
   try {

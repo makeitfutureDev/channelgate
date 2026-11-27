@@ -1,5 +1,8 @@
 import { getDb } from "../db/index.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
+import { runQueue } from "../gateway/thread-turn-owner.ts";
+import type { ThreadSnapshot } from "../gateway/thread-turn-queue.ts";
+import { platformOfConversation } from "../platforms/ids.js";
 import { slackThreadFor } from "./thread-keys.js";
 
 type ReactionArgs = { channel: string; timestamp: string; name: string };
@@ -8,17 +11,18 @@ type Client = { reactions?: { add: ReactionMethod; remove: ReactionMethod } };
 const owners = new Map<string, number>();
 const retryMs = 60_000;
 
-async function sync(client: Client, channel: string, thread: string) {
+async function sync(client: Client | null, channel: string, thread: string) {
   const key = channel + ":" + thread;
   const release = await acquireKeyedLock("running-reaction", key);
   try {
     const db = getDb();
     const wanted = owners.has(key);
     const row = db.prepare("SELECT retry_ms FROM slack_running_reactions WHERE channel_id=? AND thread_ts=?").get(channel, thread);
-    if (!client.reactions || (wanted ? row?.retry_ms === null : !row)) return;
+    if (wanted ? row?.retry_ms === null : !row) return;
     // Persist BEFORE the write. Slack may accept it even when the response is lost.
     db.prepare("INSERT OR REPLACE INTO slack_running_reactions(channel_id, thread_ts, retry_ms) VALUES(?,?,?)")
-      .run(channel, thread, Date.now() + retryMs);
+      .run(channel, thread, client?.reactions ? Date.now() + retryMs : 0);
+    if (!client?.reactions) return;
     try {
       const result = await client.reactions[wanted ? "add" : "remove"]({ channel, timestamp: thread, name: "arrow_forward" });
       if (result?.ok === false) throw Object.assign(new Error(), { code: result.error });
@@ -41,11 +45,15 @@ async function sync(client: Client, channel: string, thread: string) {
 export function startRunningReaction(client: Client, channel: string, threadKey: string | null) {
   const thread = slackThreadFor(threadKey);
   if (!thread || !channel || !client?.reactions?.add || !client.reactions.remove) return () => {};
+  return holdRunningReaction(() => client, channel, thread);
+}
+
+function holdRunningReaction(getClient: () => Client | null, channel: string, thread: string) {
   const key = channel + ":" + thread;
   const count = owners.get(key) || 0;
   owners.set(key, count + 1);
   // Keep all Slack I/O off the engine/delivery critical path, including rate-limit waits.
-  const update = () => { void sync(client, channel, thread).catch(() => {}); };
+  const update = () => { void sync(getClient(), channel, thread).catch(() => {}); };
   if (!count) update();
   let closed = false;
   return () => {
@@ -58,6 +66,27 @@ export function startRunningReaction(client: Client, channel: string, threadKey:
       owners.delete(key);
       update();
     }
+  };
+}
+
+// Keep the root marked for the whole owned turn, including text/voice handoffs on the same
+// session. Native progress (including legacy jobs) shares the underlying reference count.
+export function observeRunningTurns(getClient: () => Client | null) {
+  const held = new Map<string, { channel: string; thread: string; release: () => void }>();
+  function update(key: string, { active }: ThreadSnapshot) {
+    const channel = active?.channelId || "";
+    const thread = active?.visible && platformOfConversation(channel) === "slack" ? slackThreadFor(active.threadKey) : null;
+    const current = held.get(key);
+    if (current?.channel === channel && current.thread === thread) return;
+    if (current) { current.release(); held.delete(key); }
+    if (thread) held.set(key, { channel, thread, release: holdRunningReaction(getClient, channel, thread) });
+  }
+  const unsubscribe = runQueue.subscribe(update);
+  for (const key of runQueue.keys()) update(key, runQueue.snapshot(key));
+  return () => {
+    unsubscribe();
+    for (const lease of held.values()) lease.release();
+    held.clear();
   };
 }
 

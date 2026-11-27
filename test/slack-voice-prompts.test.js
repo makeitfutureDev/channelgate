@@ -9,7 +9,7 @@ const appSource = readFileSync(new URL("../src/slack/app.js", import.meta.url), 
 
 test("robot-face reactions reuse message files and explicitly bypass the mention gate", () => {
   assert.match(appSource, /const synthetic = \{[\s\S]*user: event\.user[\s\S]*files: msg\.files[\s\S]*\};/);
-  assert.match(appSource, /processMessageEvent\(synthetic, client, \{ botUserId, teamId, bypassMention: true \}\)/);
+  assert.match(appSource, /processMessageEvent\(synthetic, client, \{ botUserId, teamId, bypassMention: true,\s*reactionId: event\.event_ts/);
 });
 
 test("audio prompt composition occurs before durable active-run persistence", () => {

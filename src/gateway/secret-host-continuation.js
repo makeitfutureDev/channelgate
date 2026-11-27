@@ -4,7 +4,7 @@ import { automationTarget, postNotice } from "../platforms/notify.js";
 import { getChannelEntry, getChannelMeta, isAdminPrincipal, isApproved } from "../config/store.js";
 import { isAuthorized } from "./modes.js";
 import { runMessage } from "./run.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { deliverResult } from "../slack/deliver.js";
 import { createUsageBank } from "./usage.js";
 import { platformOfConversation } from "../platforms/ids.js";
@@ -16,7 +16,7 @@ export function createSecretHostContinuation({ slack, runner = runMessage, deliv
     isReady: (channelId) => Boolean(target(channelId)),
     async handle(action) {
       const key = `${action.slug}::${action.threadKey}`;
-      const handle = { aborted: false, controller: new AbortController(), authorId: action.authorId, background: true };
+      const handle = { aborted: false, controller: new AbortController(), authorId: action.authorId, origin: "continuation", channelId: action.channelId, threadKey: action.threadKey, background: true };
       await runQueue.acquire(key, handle);
       try {
         if (handle.aborted) return;

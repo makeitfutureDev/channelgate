@@ -128,7 +128,11 @@ test("a recovered turn banks its spend even when delivery throws", async () => {
   // M8: the engine spent these tokens before Slack was ever asked to accept the answer.
   assert.equal(usage.length, 1, "spend is recorded exactly once, before delivery");
   assert.equal(usage[0].result.usage.output_tokens, 4242);
-  assert.match(posts.at(-1).text, /slack rejected the message/, "and the failure is reported in-thread");
+  const saved = getDb().prepare("SELECT state, attempts, payload FROM turn_answers WHERE id=?").get(rec.id);
+  assert.equal(saved.state, "uncertain");
+  assert.equal(saved.attempts, 1);
+  assert.equal(JSON.parse(saved.payload).text, "an expensive answer");
+  assert.ok(!posts.some(post => /send it again/i.test(post.text)), "delivery retry needs no second engine run");
 });
 
 test("a replay whose answer AND whose failure notice both fail keeps its durable row", async () => {

@@ -1,4 +1,8 @@
 // Wiring: credentials → Chat API + Pub/Sub puller + connector, started and stopped as one unit.
+import { notifyInboxThread } from "../inbox-thread-change.ts";
+import { pendingActivityReader } from "../pending-activity.ts";
+import { notifyThreadChanged } from "../../gateway/thread-changes.js";
+import { isStopActiveCommand } from "../stop-active-command.ts";
 import { createHash } from "node:crypto";
 import { forkSessionHolds } from "../fork-session-holds.ts";
 import { createDurableInbox } from "../durable-inbox.js";
@@ -71,6 +75,7 @@ export async function startGoogleChat({
   let historyApiCache = deps.historyApi || null;
   const historyApi = () => (historyApiCache ||= createChatApi({ auth: eventsAuth() }));
   const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, historyApi, log });
+  connector.deliveryIdentity = subscription && auth.clientEmail ? JSON.stringify([subscription, auth.clientEmail]) : "";
   const seenThreads = createSeenThreads();
   const namespace = `googlechat:${subscription}`;
   const controlNamespace = `googlechat-controls:${subscription}`;
@@ -80,7 +85,7 @@ export async function startGoogleChat({
     // A fork's opening request is a request in its new thread, whatever its text says.
     if (event.fork) return false;
     const text = messageCommandText(event.message, { appCommand: event.appCommand });
-    return GOOGLE_CHAT_CONTROL_COMMAND.test(text) && !GOOGLE_CHAT_QUEUED_COMMAND.test(text);
+    return isStopActiveCommand(text) || (GOOGLE_CHAT_CONTROL_COMMAND.test(text) && !GOOGLE_CHAT_QUEUED_COMMAND.test(text));
   };
   const inboundFor = ({ event, botId, threadKey }) => {
     if (event.type === 'reaction') return reactionInbound({ event, botId, threadKey });
@@ -173,23 +178,31 @@ export async function startGoogleChat({
   const pendingRows = (conversationId, sessionKey) => getDb().prepare(`SELECT event_id, data FROM inbound_events
     WHERE namespace = ? AND conversation_id = ? AND status = 'queued' ORDER BY rowid`)
     .all(namespace, JSON.stringify([conversationId, sessionKey]));
+  const pendingMessage = row => {
+    const payload = fromJson(row.data, {});
+    return payload.event.type === "reaction" ? resolvedReaction(payload, { quiet: true }) : inboundFor(payload);
+  };
+  connector.pendingForActivity = pendingActivityReader([namespace], pendingMessage);
   connector.pendingForSession = async ({ conversationId, sessionKey, isEligible = async () => true }) => {
     const eligible = [];
     for (const row of pendingRows(conversationId, sessionKey)) {
-      const message = inboundFor(fromJson(row.data, {}));
-      if (await isEligible(message)) eligible.push(message);
+      const message = await pendingMessage(row);
+      if (message && await isEligible(message)) eligible.push(message);
     }
     return { count: eligible.length, authors: [...new Set(eligible.map(m => m.userId))] };
   };
   connector.cancelPendingForSession = async ({ conversationId, sessionKey, authorId, authorIsAdmin, isEligible = async () => true }) => {
     const eligibility = new Map();
-    for (const row of pendingRows(conversationId, sessionKey)) eligibility.set(row.event_id, await isEligible(inboundFor(fromJson(row.data, {}))));
+    for (const row of pendingRows(conversationId, sessionKey)) {
+      const message = await pendingMessage(row);
+      eligibility.set(row.event_id, message && await isEligible(message) ? message.userId : null);
+    }
     const db = getDb();
     db.exec('BEGIN IMMEDIATE');
     try {
       const rows = pendingRows(conversationId, sessionKey);
       if (rows.some(row => !eligibility.has(row.event_id))) { db.exec('ROLLBACK'); return { allowed: false, changed: true, cancelled: 0 }; }
-      if (!authorIsAdmin && rows.some(row => eligibility.get(row.event_id) && inboundFor(fromJson(row.data, {})).userId !== authorId)) {
+      if (!authorIsAdmin && rows.some(row => eligibility.get(row.event_id) && eligibility.get(row.event_id) !== authorId)) {
         db.exec('ROLLBACK'); return { allowed: false, cancelled: 0 };
       }
       const cancel = db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued'");
@@ -200,6 +213,7 @@ export async function startGoogleChat({
         const fork = fromJson(row.data, {}).event?.fork;
         if (fork) connector.settleFork?.(fork.id);
       }
+      if (cancelled) notifyThreadChanged({ channelId: conversationId, threadTs: sessionKey });
       return { allowed: true, cancelled };
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   };
@@ -260,8 +274,9 @@ export async function startGoogleChat({
     if (removedReactions.size > 2000) removedReactions.delete(removedReactions.keys().next().value);
     // A queued (not yet started) action for this reaction is withdrawn. Running work is not undone:
     // removing a Stop after it acted cannot restart anything.
-    getDb().prepare(`UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace IN (?, ?) AND status = 'queued'
-      AND json_extract(data, '$.event.reaction.name') = ?`).run(namespace, controlNamespace, item.name);
+    const withdrawn = getDb().prepare(`UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace IN (?, ?) AND status = 'queued'
+      AND json_extract(data, '$.event.reaction.name') = ? RETURNING conversation_id`).all(namespace, controlNamespace, item.name);
+    for (const row of withdrawn) notifyInboxThread(row.conversation_id);
   }
   async function fetchReacted(messageName) {
     // chat.bot reaches the app's own and addressed messages; the admin-approved app scope reaches
@@ -342,10 +357,11 @@ export async function startGoogleChat({
     // update older than the queued edit (out-of-order delivery) withdraws nothing.
     const at = Date.parse(item.lastUpdateTime);
     for (const ns of [namespace, controlNamespace]) {
-      const row = getDb().prepare("SELECT data FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(ns, item.messageName);
+      const row = getDb().prepare("SELECT conversation_id,data FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(ns, item.messageName);
       const queued = row ? fromJson(row.data, {}).event : null;
       if (!queued?.edit || !(Date.parse(queued.message?.lastUpdateTime) < at)) continue;
       getDb().prepare("DELETE FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").run(ns, item.messageName);
+      notifyInboxThread(row.conversation_id);
       log.info?.(`[googlechat] mention removed from ${item.messageName} before its edit trigger ran; withdrawn`);
     }
   }

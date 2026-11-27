@@ -81,3 +81,36 @@ test("a failed removal retries; boot clears an interrupted marker even without a
   assert.deepEqual(calls.at(-1), ["remove", { channel: "C4", timestamp: "61.2", name: "arrow_forward" }]);
   assert.equal(db.prepare("SELECT count(*) n FROM slack_running_reactions").get().n, 0);
 });
+
+test("native reconnect marks the active voice turn and a queued handoff keeps its reaction", async (t) => {
+  const { runQueue } = await import("../src/gateway/thread-turn-owner.ts");
+  const { observeRunningTurns } = await import("../src/slack/thread-running-reaction.ts");
+  const { client, calls } = fakeSlack();
+  let connected = false;
+  const stopObserving = observeRunningTurns(() => connected ? client : null);
+  t.after(stopObserving);
+  const key = "workspace::70.2";
+  const voice = { channelId: "C5", threadKey: "70.2", origin: "voice_call" };
+  const chat = { ...voice, origin: "slack_foreground" };
+  const foreign = { channelId: "teams:room", threadKey: "70.2", origin: "msteams_foreground" };
+  await runQueue.acquire(key, voice);
+  await runQueue.acquire("external", foreign);
+  const waiting = runQueue.acquire(key, chat);
+  await turn();
+  assert.equal(getDb().prepare("SELECT retry_ms FROM slack_running_reactions WHERE channel_id='C5'").get()?.retry_ms, 0);
+  connected = true;
+  await retryRunningReactions(client);
+  const args = { channel: "C5", timestamp: "70.2", name: "arrow_forward" };
+  assert.deepEqual(calls, [["add", args]]);
+  runQueue.release(key, voice);
+  await waiting;
+  await turn();
+  assert.deepEqual(calls, [["add", args]]);
+  connected = false;
+  runQueue.release(key, chat);
+  runQueue.release("external", foreign);
+  await turn();
+  connected = true;
+  await retryRunningReactions(client);
+  assert.deepEqual(calls, [["add", args], ["remove", args]]);
+});

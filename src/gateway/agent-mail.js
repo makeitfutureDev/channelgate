@@ -50,7 +50,7 @@ import { deliverResult } from "../slack/deliver.js";
 import { startProgress, setAssistantStatus } from "../slack/progress.js";
 import { getDirectory } from "../slack/directory.js";
 import { getProgressView } from "../config/settings.js";
-import { runQueue } from "../slack/message-lifecycle.js";
+import { runQueue } from "./thread-turn-owner.ts";
 import { slackThreadFor } from "../slack/thread-keys.js";
 import { defangControlSeqs, mdToMrkdwn } from "../slack/format.js";
 import { postNotice, automationTarget } from "../platforms/notify.js";
@@ -327,13 +327,13 @@ export class AgentMail {
   // its session: Slack's per-thread run queue, or — on a surface whose ingest owns its lanes
   // (`conversationLanes`) — that very lane, which also lets /stop there reach this turn. `fn`
   // runs inside it; nothing runs (undefined) when the lane refused or was stopped first.
-  async _withLane(client, { channelId, slug, threadKey, authorId, controller = new AbortController() }, fn) {
+  async _withLane(client, { channelId, slug, threadKey, authorId, requestId, controller = new AbortController() }, fn) {
     const lanes = this._native(channelId) ? null : client?.conversationLanes;
     if (typeof lanes?.execute === "function") {
       let out;
       await lanes.execute({
         message: { conversationId: channelId, userId: authorId },
-        sessionKey: threadKey,
+        sessionKey: threadKey, requestId, origin: AGENT_MESSAGE_ORIGIN, durable: false,
         queued: (notice) => this._notice(client, channelId, threadKey, notice),
         work: async (signal) => {
           const relay = () => controller.abort(signal.reason);
@@ -346,9 +346,10 @@ export class AgentMail {
       return out;
     }
     const runKey = `${slug || channelId}::${threadKey}`;
-    const handle = { aborted: false, controller, authorId, background: true };
+    const handle = { aborted: false, controller, authorId, runId: requestId, channelId, threadKey: slackThreadFor(threadKey), origin: AGENT_MESSAGE_ORIGIN, background: true };
     await runQueue.acquire(runKey, handle);
     try {
+      if (handle.aborted || controller.signal.aborted) return;
       return await fn({ stopped: () => handle.aborted || controller.signal.aborted });
     } finally {
       runQueue.release(runKey, handle);
@@ -541,7 +542,7 @@ export class AgentMail {
     let result = null;
     let failure = "";
     try {
-      await this._withLane(client, { channelId: record.toChannelId, slug: record.toSlug, threadKey: record.toThreadKey, authorId: record.requestedBy, controller }, async ({ stopped }) => {
+      await this._withLane(client, { channelId: record.toChannelId, slug: record.toSlug, threadKey: record.toThreadKey, authorId: record.requestedBy, requestId: `mail:${record.id}:${record.turns || 1}:receive`, controller }, async ({ stopped }) => {
         const timer = setTimeout(() => { record.timedOut = true; controller.abort(); }, this.turnMaxMs);
         timer.unref?.();
         try { status = await this.progress({ client, channelId: record.toChannelId, threadKey: record.toThreadKey, authorId: record.requestedBy, menuOwnerId: "" }); } catch { status = null; }
@@ -631,7 +632,7 @@ export class AgentMail {
     const controller = new AbortController();
     const homeThread = this._thread(record.fromChannelId, record.fromThreadKey);
     let next = "";
-    await this._withLane(client, { channelId: record.fromChannelId, slug: record.fromSlug, threadKey: record.fromThreadKey, authorId: record.requestedBy, controller }, async ({ stopped }) => {
+    await this._withLane(client, { channelId: record.fromChannelId, slug: record.fromSlug, threadKey: record.fromThreadKey, authorId: record.requestedBy, requestId: `mail:${record.id}:${record.turns || 1}:reply`, controller }, async ({ stopped }) => {
     try {
       if (stopped()) return;
       // The other agent's words, verbatim, under its persona — then this side answers as itself.
