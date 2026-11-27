@@ -126,9 +126,7 @@ test("Voice calls section offers the closed choices and saves the person's own p
   const language = panel.querySelectorAll("input").find((c) => c.attrs.name === "language" || c.name === "language");
   assert.equal(language.value, "Romanian");
   const selects = panel.querySelectorAll("select");
-  assert.deepEqual(selects.map((s) => s.name), ["style", "patience", "provider", "taskSpeed"]);
-  assert.deepEqual(selects[2].children.map((o) => o.value), ["", "gemini"], "only providers an admin turned on are offered");
-  assert.deepEqual(selects[3].children.map((o) => o.value), ["normal", "quick"]);
+  assert.deepEqual(selects.map((s) => s.name), ["style", "patience"]);
   assert.deepEqual(selects[0].children.map((o) => o.value), ["brief", "conversational", "thinking-partner"]);
   assert.equal(selects[0].children.find((o) => o.selected).value, "conversational");
   assert.equal(selects[1].children.find((o) => o.selected).value, "patient");
@@ -140,7 +138,7 @@ test("Voice calls section offers the closed choices and saves the person's own p
   await flush();
   const post = requests.at(-1);
   assert.equal(post.options.headers["X-CG-CSRF"], "fixture-csrf");
-  assert.deepEqual(JSON.parse(post.options.body), { action: "voice.save", language: "English", style: "conversational", patience: "quick", instructions: "Keep it short.", provider: "", taskSpeed: "normal" });
+  assert.deepEqual(JSON.parse(post.options.body), { action: "voice.save", language: "English", style: "conversational", patience: "quick", instructions: "Keep it short." });
   assert.equal(status.textContent, "Voice preferences saved. They apply to your next call.");
 });
 

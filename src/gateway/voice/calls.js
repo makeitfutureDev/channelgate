@@ -24,7 +24,7 @@ import { turnReplyCallbacks } from "../turn-replies.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getVoiceCallConfig, getProgressView, voiceProviderState } from "../../config/settings.js";
+import { getVoiceCallConfig, getProgressView } from "../../config/settings.js";
 import { getChannelEntry, getChannelMeta, getUser, listChannels } from "../../config/store.js";
 import { userReplyMentionsEnabled, userVoicePreferences } from "../../config/user-preferences.js";
 import { accessContext, activityThreadSnapshot } from "../../slack/home-threads.js";
@@ -40,16 +40,12 @@ import { logEvent } from "../../util/logger.js";
 import { effectiveWorkDir } from "../folders.js";
 import { memoryEnabled, updateChannelMemory } from "../channel-memory.js";
 import { createGeminiLiveSession, estimateVoiceCost } from "./gemini-live.js";
-import { startChatgptLiveCall } from "./chatgpt-live.ts";
-import { CHATGPT_VOICE_ENGINE, GEMINI_VOICE_ENGINE, VOICE_PROVIDER_LABELS, chooseVoiceProvider } from "./providers.ts";
-import { channelNameFrom, routeDelegation } from "./delegation-router.ts";
-import { VOICE_TASK_EFFORT, buildVoiceTaskText, describeActivity } from "./voice-task.ts";
 import { saveCallHistory } from "./history.js";
 import { completeThreadForCaller, recordVoiceThreadRequest } from "../../slack/thread-done-action.js";
 import { indexSlackVoiceThread } from "../slack-threads.js";
 
 export const VOICE_CALL_ORIGIN = "voice_call";
-export const VOICE_ENGINE = GEMINI_VOICE_ENGINE;
+export const VOICE_ENGINE = "gemini-live";
 export const MAX_REQUEST_CHARS = 4_000;
 export const MAX_TRANSCRIPT_POST_CHARS = 2_800;
 export const INITIAL_CONVERSATIONS = 8;
@@ -66,11 +62,6 @@ const RESULT_TO_MODEL_CHARS = 1_500;
 const END_CALL_GRACE_MS = 4_000;
 export const SUSPEND_GRACE_MS = 45_000;
 const STATUS_FILTERS = Object.freeze(["open", "working", "waiting", "error", "idle", "later", "done", "all"]);
-// A ChatGPT call waits this long for the browser's WebRTC offer before it is dropped.
-const OFFER_TIMEOUT_MS = 30_000;
-// Quiet "the agent is <doing X>" context pushed to a ChatGPT voice at most this often per task.
-const ACTIVITY_CONTEXT_MS = 20_000;
-const MAX_DELEGATIONS_REMEMBERED = 200;
 
 export const TOOL_DECLARATIONS = Object.freeze([
   {
@@ -80,7 +71,7 @@ export const TOOL_DECLARATIONS = Object.freeze([
   },
   {
     name: "check_tasks",
-    description: "List the tasks dispatched during this call with their status (queued, running, done, failed), how long each has been going, what the agent is doing right now (activity) and a short result summary.",
+    description: "List the tasks dispatched during this call with their status (queued, running, done, failed) and a short result summary.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -178,35 +169,6 @@ export function buildSystemInstruction({ callerName, channelName = "", conversat
   ].filter(Boolean).join("\n\n");
 }
 
-// The GPT-Live session's instructions (ChatGPT sign-in). GPT-Live has no tools: everything it
-// cannot answer from this briefing goes to the gateway as a DELEGATION, which calls.js routes to
-// the same actions Gemini calls as tools (delegation-router.ts). So the briefing describes what a
-// delegation can do in plain words and numbers the conversations, which a caller can then name or
-// pick by number ("open the second one").
-export function buildChatgptInstruction({ callerName, channelName = "", topLevel = false, agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
-  const prefs = preferences || {};
-  const style = Object.hasOwn(STYLE_RULES, prefs.style) ? STYLE_RULES[prefs.style] : STYLE_RULES.brief;
-  const language = prefs.language ? `Speak ${prefs.language} by default; if the caller switches language, follow them.` : "Speak the language the caller uses.";
-  const patience = Object.hasOwn(PATIENCE_RULES, prefs.patience) ? PATIENCE_RULES[prefs.patience] : "";
-  const own = prefs.instructions ? `The caller's own instructions for how to treat them on a call (follow them unless they conflict with the rules above):\n${prefs.instructions}` : "";
-  const recent = Array.isArray(history) && history.length ? `From the caller's own memory, their recent calls (use for continuity, never read aloud unless asked):\n${history.map((line) => `- ${line}`).join("\n")}` : "";
-  const bound = Boolean(channelName);
-  const list = conversations.length
-    ? `The caller's most recent open conversations, numbered:\n${conversations.map((c, i) => `${i + 1}. ${c.channel} — ${c.title || "Untitled"} (${c.status}${c.lastActivity ? `, ${c.lastActivity}` : ""})`).join("\n")}`
-    : "The caller has no tracked conversations yet.";
-  return [
-    `You are the voice connection between ${callerName}${isAdmin ? " (an organization admin)" : ""} and ${agentName}, the ChannelGate agent working in their Slack conversations. You are NOT that agent and you do not have its knowledge, files, tools or memory: you are the phone line between the caller and the agent. ${bound ? `The call is currently in the Slack conversation ${channelName}${topLevel ? ", at the channel's top level: the first request you delegate is posted as a new message in the channel and the call then follows that thread" : ""}.` : "The call is not in any conversation yet."}`,
-    "Delegation policy. Your backend is the ChannelGate gateway. Delegate to it when the caller: asks for any work or any fact, detail, status or decision that is not literally in this briefing; asks to move the call (\"switch to the sales channel\", \"open the pipeline review\", \"open the second one\"); asks what they are working on or what is pending; asks whether a task is done or how it is going; asks what was said in the conversation; asks to mark this thread done; or says goodbye or asks to hang up. Delegate one request at a time, in the caller's own words with every detail they gave. Do not delegate greetings, small talk, a request to repeat something you already said, or a short clarification you need yourself.",
-    "Assume nothing. Never answer from your own knowledge, never guess a result while waiting, and never announce an outcome before the gateway's answer arrives: say in a few words that you are on it, then wait. Every work request is posted in the Slack conversation and run there by the agent; it may take minutes. Results arrive as messages starting with [gateway]: relay them in one or two spoken sentences without adding anything, mentioning anything the caller must decide. When a [gateway] message says an answer is waiting in a conversation the call has left, say so in one sentence and offer to switch back. Quiet context such as \"the agent is running tests\" is for answering \"how is it going\" — do not announce it unprompted.",
-    "Never read conversation IDs, URLs or code aloud.",
-    [style, language, patience].filter(Boolean).join(" "),
-    own,
-    recent,
-    list,
-    threadContext ? `The messages of the current conversation, oldest first (your only knowledge of it; it may not be complete — delegate "read the thread" for more):\n${threadContext}` : bound && !topLevel ? "The current conversation is new and empty." : "",
-  ].filter(Boolean).join("\n\n");
-}
-
 async function defaultReadThread(client, channelId, threadTs, { limit = CONTEXT_MESSAGES, botUserId = "" } = {}) {
   if (typeof client?.conversations?.replies !== "function") return [];
   const page = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: Math.min(Math.max(limit, 1), 100) });
@@ -258,24 +220,13 @@ export function createCallManager({
   loadEntry = getChannelEntry, loadUser = getUser, channels = listChannels, access = accessContext, readThread = defaultReadThread,
   snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory, loadHistory = defaultLoadVoiceHistory,
   log = logEvent, saveHistory = saveCallHistory, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS, suspendGraceMs = SUSPEND_GRACE_MS,
-  startChatgpt = startChatgptLiveCall, providerState = null, offerTimeoutMs = OFFER_TIMEOUT_MS,
 } = {}) {
   const calls = new Map();
   const config = () => {
     const c = getConfig() || {};
-    const chatgpt = c.chatgpt && typeof c.chatgpt === "object" ? c.chatgpt : {};
-    return { enabled: c.enabled === true, apiKey: c.apiKey || "", model: c.model, voice: c.voice,
-      chatgpt: { enabled: chatgpt.enabled === true, login: chatgpt.login || "codex", model: chatgpt.model || "" },
-      defaultProvider: c.defaultProvider === "chatgpt" ? "chatgpt" : "gemini" };
+    return { enabled: c.enabled === true, apiKey: c.apiKey || "", model: c.model, voice: c.voice };
   };
-  // Which providers can take a call: an injected reader (tests), else derived from the config.
-  const providers = () => {
-    if (providerState) return providerState();
-    if (getConfig === getVoiceCallConfig) return voiceProviderState();
-    const c = config();
-    return { gemini: c.enabled && Boolean(c.apiKey), chatgpt: c.enabled && c.chatgpt.enabled, defaultProvider: c.defaultProvider };
-  };
-  const available = () => { const state = providers(); return Boolean(state.gemini || state.chatgpt); };
+  const available = () => { const c = config(); return c.enabled && Boolean(c.apiKey); };
 
   function broadcast(call, event) {
     for (const listener of call.listeners) { try { listener(event); } catch { /* a dead listener is dropped by its owner */ } }
@@ -299,7 +250,7 @@ export function createCallManager({
     if (last) last.open = false;
   }
   function taskView(task) {
-    return { id: task.id, status: task.status, request: task.request, summary: task.summary || "", activity: task.status === "running" ? task.activity || "" : "", startedMs: task.startedMs, endedMs: task.endedMs || 0, channelName: task.channelName, threadTs: task.threadTs };
+    return { id: task.id, status: task.status, request: task.request, summary: task.summary || "", startedMs: task.startedMs, endedMs: task.endedMs || 0, channelName: task.channelName, threadTs: task.threadTs };
   }
   function boundView(call) {
     return call.bound ? { channelId: call.bound.channelId, channelName: call.bound.channelName, threadTs: call.bound.threadTs, title: call.bound.title || "", topLevel: !call.bound.threadTs } : null;
@@ -397,27 +348,20 @@ export function createCallManager({
     return pending;
   }
 
-  async function start({ ownerId, channelId = "", threadTs = "", client, teamId = "", botUserId = "", openingReason = "", webrtc = false }) {
+  async function start({ ownerId, channelId = "", threadTs = "", client, teamId = "", botUserId = "", openingReason = "" }) {
     const c = config();
-    const state = providers();
-    if (!state.gemini && !state.chatgpt) throw httpError(503, "Voice calls are not configured. An administrator enables them under Settings → Calls.");
+    if (!c.enabled || !c.apiKey) throw httpError(503, "Voice calls are not configured. An administrator enables them under Settings → Voice calls.");
     if (!ownerId || !client) throw httpError(400, "A call needs a caller.");
     if (threadTs && !channelId) throw httpError(400, "A thread needs its conversation.");
     const user = (await loadUser(ownerId)) || {};
     if (!user.approved && !user.isAdmin) throw httpError(403, "You are not authorized to call the agent.");
-    // The caller's own choice when that provider is on, else the gateway default. ChatGPT needs a
-    // WebRTC client; without one (the iPhone app) the call uses Gemini, or is refused if only
-    // ChatGPT is on.
-    const provider = chooseVoiceProvider(state, { preferred: userVoicePreferences(user).provider, webrtc: webrtc === true });
-    if (!provider) throw httpError(503, "This device cannot carry a ChatGPT voice call (it needs WebRTC), and Gemini voice is not configured. Call from the Activity page in a current browser.");
     for (const existing of calls.values()) if (existing.ownerId === ownerId) await end(existing.id, ownerId, "replaced by a new call");
     if (calls.size >= maxCalls) throw httpError(429, "Too many calls are active right now. Try again in a few minutes.");
     const callerName = clean(user.name || user.realName || ownerId, 80);
     const startedMs = now();
     const id = crypto.randomBytes(12).toString("base64url");
     const call = {
-      id, ownerId, client, teamId, botUserId, callerName, isAdmin: user.isAdmin === true, provider, model: provider === "chatgpt" ? c.chatgpt.model : c.model, startedMs, lastActivityMs: startedMs, status: provider === "chatgpt" ? "awaiting-offer" : "connecting",
-      delegations: new Map(), lastListed: [], chatgptLogin: c.chatgpt.login, audioMs: 0,
+      id, ownerId, client, teamId, botUserId, callerName, isAdmin: user.isAdmin === true, model: c.model, startedMs, lastActivityMs: startedMs, status: "connecting",
       openingReason: clean(openingReason, 160),
       bound: null, visited: [], segmentStart: 0, listeners: new Set(), transcript: [], transcriptTruncated: false,
       doneActions: new Map(), taskAdmissions: new Map(), tasks: new Map(), nextTask: 1, usage: { audioIn: 0, textIn: 0, audioOut: 0, textOut: 0 }, session: null, ending: false, timers: [],
@@ -434,91 +378,33 @@ export function createCallManager({
     // the turn-taking; nothing here widens what the voice may do.
     const preferences = userVoicePreferences(user);
     call.preferences = preferences;
-    call.lastListed = recent;
-    const briefing = { callerName, conversationId: call.bound?.threadTs ? `${call.bound.channelId}:${call.bound.threadTs}` : "", channelName: call.bound?.channelName || "", topLevel: Boolean(call.bound) && !call.bound.threadTs, isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history };
-    if (provider === "chatgpt") {
-      // The session starts when the browser's WebRTC offer arrives (offer()); until then the call
-      // exists only to receive it, and is dropped if it never comes.
-      call.instructions = buildChatgptInstruction(briefing);
-      const pending = setTimeout(() => { if (!call.session) void end(id, ownerId, "the browser never completed the call setup"); }, offerTimeoutMs); pending.unref?.();
-      call.timers.push(pending);
-    } else try {
+    try {
       call.session = createSession({
         apiKey: c.apiKey, model: c.model, voice: c.voice, tools: TOOL_DECLARATIONS, patience: preferences.patience,
-        systemInstruction: buildSystemInstruction(briefing),
+        systemInstruction: buildSystemInstruction({ callerName, conversationId: call.bound?.threadTs ? `${call.bound.channelId}:${call.bound.threadTs}` : "", channelName: call.bound?.channelName || "", topLevel: Boolean(call.bound) && !call.bound.threadTs, isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
       });
     } catch (error) {
       calls.delete(id);
       throw httpError(502, `Could not reach the voice service: ${error.message}`);
     }
-    if (call.session) wire(call);
+    wire(call);
     const limit = setTimeout(() => { void end(id, ownerId, "maximum call length reached"); }, maxCallMs); limit.unref?.();
     const idle = setInterval(() => { if (now() - call.lastActivityMs > idleMs) void end(id, ownerId, "no audio for a while"); }, Math.min(idleMs, 30_000)); idle.unref?.();
     call.timers.push(limit, idle);
-    await log("voice_call_started", { id, channelId: call.bound?.channelId || "", threadTs: call.bound?.threadTs || "", ownerId, model: call.model, provider }).catch(() => {});
-    return { id, threadTs: call.bound?.threadTs || "", channelName: call.bound?.channelName || "", callerName, model: call.model, provider, providerLabel: VOICE_PROVIDER_LABELS[provider], awaitingOffer: provider === "chatgpt", bound: boundView(call) };
-  }
-
-  // ChatGPT: the browser's WebRTC offer becomes a GPT-Live call created with the gateway's ChatGPT
-  // sign-in; the gateway joins its control channel and returns OpenAI's answer to the browser.
-  async function offer(id, ownerId, sdp) {
-    const call = calls.get(id);
-    if (!call || call.ownerId !== ownerId || call.ending) throw httpError(404, "That call is not active.");
-    if (call.provider !== "chatgpt") throw httpError(409, "This call does not use WebRTC.");
-    if (call.session || call.offering) throw httpError(409, "This call is already connected.");
-    call.offering = true;
-    try {
-      const started = await startChatgpt({ sdp, loginId: call.chatgptLogin, model: call.model, instructions: call.instructions || "" });
-      if (call.ending || calls.get(id) !== call) { try { started.session.close(); } catch { /* fine */ } throw httpError(404, "That call is not active."); }
-      call.session = started.session; call.status = "connecting"; call.planType = started.planType || "";
-      wire(call);
-      touch(call);
-      return { sdp: started.answer };
-    } catch (error) {
-      call.offering = false;
-      if (!call.ending) void end(id, ownerId, `ChatGPT voice could not start (${clean(error?.message || "error", 200)})`);
-      throw httpError(error?.status && error.status < 500 ? error.status : 502, clean(error?.message || "ChatGPT voice could not start.", 400));
-    }
-  }
-
-  // A ChatGPT call sends no audio through the gateway, so the browser reports it is still there.
-  function heartbeat(id, ownerId) {
-    const call = calls.get(id);
-    if (!call || call.ownerId !== ownerId) throw httpError(404, "That call is not active.");
-    touch(call); resume(call);
-    return true;
+    await log("voice_call_started", { id, channelId: call.bound?.channelId || "", threadTs: call.bound?.threadTs || "", ownerId, model: c.model }).catch(() => {});
+    return { id, threadTs: call.bound?.threadTs || "", channelName: call.bound?.channelName || "", callerName, model: c.model, bound: boundView(call) };
   }
 
   function wire(call) {
     const session = call.session;
-    session.on("ready", () => {
-      call.status = "live"; broadcast(call, { type: "ready" });
-      // Gemini greets an incoming call on its first audio chunk; a ChatGPT call has none here.
-      if (call.provider === "chatgpt" && call.openingReason) {
-        const reason = call.openingReason; call.openingReason = "";
-        session.sendText(`[gateway] The person answered an incoming call. Its approved reason is ${JSON.stringify(reason)}. Briefly greet them and explain this reason, then listen. Do not perform a task until they ask.`);
-      }
-    });
+    session.on("ready", () => { call.status = "live"; broadcast(call, { type: "ready" }); });
     session.on("audio", (buffer) => { broadcast(call, { type: "audio", data: buffer.toString("base64") }); });
     session.on("interrupted", () => { closeTranscriptTurn(call); broadcast(call, { type: "interrupted" }); });
-    session.on("input_transcript", ({ text }) => { touch(call); appendTranscript(call, "caller", text); });
-    session.on("output_transcript", ({ text }) => { touch(call); appendTranscript(call, "agent", text); });
+    session.on("input_transcript", ({ text }) => appendTranscript(call, "caller", text));
+    session.on("output_transcript", ({ text }) => appendTranscript(call, "agent", text));
     session.on("turn_complete", () => { closeTranscriptTurn(call); broadcast(call, { type: "turn_complete" }); });
-    session.on("usage", (usage) => {
-      if (call.provider === "chatgpt") {
-        call.audioMs = Math.max(call.audioMs, Number(usage?.audioMs) || 0);
-        const status = String(usage?.limit?.status || "");
-        if (status && !/^(ok|available|within|normal)/i.test(status) && call.limitStatus !== status) {
-          call.limitStatus = status;
-          broadcast(call, { type: "error", message: `ChatGPT voice allowance: ${clean(status, 60)}${usage.limit.resetSeconds ? ` (renews in about ${Math.ceil(usage.limit.resetSeconds / 60)} min)` : ""}` });
-        }
-        return;
-      }
-      const delta = usage?.delta || {};
-      for (const key of Object.keys(call.usage)) call.usage[key] += delta[key] || 0;
-    });
+    session.on("usage", ({ delta }) => { for (const key of Object.keys(call.usage)) call.usage[key] += delta[key] || 0; });
     session.on("tool_call", (tool) => { void handleTool(call, tool); });
-    session.on("delegation", (delegation) => { void handleDelegation(call, delegation); });
     session.on("error", (error) => { broadcast(call, { type: "error", message: clean(error?.message || "voice service error", 300) }); });
     session.on("closed", ({ reason }) => { if (!call.ending) void end(call.id, call.ownerId, reason ? `voice service closed the connection (${clean(reason, 120)})` : "voice service closed the connection"); });
   }
@@ -555,9 +441,7 @@ export function createCallManager({
         const { response, scheduling } = await call.taskAdmissions.get(id);
         return respond(response, scheduling);
       }
-      if (name === "check_tasks") return respond({ tasks: [...call.tasks.values()].map((t) => ({ task: t.id, status: t.status, conversation: t.channelName, request: t.request.slice(0, 200),
-        seconds: Math.round(((t.endedMs || now()) - t.startedMs) / 1000), ...(t.status === "running" && t.activity ? { activity: t.activity, activitySecondsAgo: Math.round((now() - (t.activityMs || now())) / 1000) } : {}),
-        summary: t.summary.slice(0, 600) })) });
+      if (name === "check_tasks") return respond({ tasks: [...call.tasks.values()].map((t) => ({ task: t.id, status: t.status, conversation: t.channelName, request: t.request.slice(0, 200), summary: t.summary.slice(0, 600) })) });
       if (name === "read_thread") {
         if (!call.bound) return respond({ error: "The call is not in a conversation yet." });
         const limit = Math.min(Math.max(Number(args?.limit) || 15, 1), 40);
@@ -566,17 +450,11 @@ export function createCallManager({
         for (const row of rows) if (row.from !== "agent" && !names.has(row.from)) names.set(row.from, clean((await loadUser(row.from).catch(() => null))?.name || "Member", 60));
         return respond({ conversation: call.bound.channelName, messages: rows.map((row) => ({ from: row.from === "agent" ? "Agent" : names.get(row.from) || "Member", text: row.text })) });
       }
-      if (name === "list_conversations") {
-        const listed = await conversations(call, { status: clean(args?.status, 20) || "open", channel: clean(args?.channel, 80), limit: args?.limit });
-        call.lastListed = listed.conversations;
-        return respond(call.provider === "chatgpt" ? numbered(listed) : listed);
-      }
+      if (name === "list_conversations") return respond(await conversations(call, { status: clean(args?.status, 20) || "open", channel: clean(args?.channel, 80), limit: args?.limit }));
       if (name === "search_conversations") {
         const query = clean(args?.query, 200);
         if (!query) return respond({ error: "Say what to search for." });
-        const found = await conversations(call, { status: "all", channel: clean(args?.channel, 80), query, limit: args?.limit });
-        call.lastListed = found.conversations;
-        return respond(call.provider === "chatgpt" ? numbered(found) : found);
+        return respond(await conversations(call, { status: "all", channel: clean(args?.channel, 80), query, limit: args?.limit }));
       }
       if (name === "switch_conversation") {
         const target = await resolveSwitch(call, args);
@@ -622,81 +500,6 @@ export function createCallManager({
     } catch (error) {
       respond({ error: clean(error?.message || "tool failed", 300) });
     }
-  }
-
-  // What the agent is doing right now, for check_tasks, the overlay and (ChatGPT) quiet context.
-  function noteActivity(call, task, event) {
-    const activity = describeActivity(event);
-    if (!activity || call.ending) return;
-    const changed = activity !== task.activity;
-    task.activity = activity; task.activityMs = now();
-    if (!changed) return;
-    broadcast(call, { type: "task", ...taskView(task) });
-    const here = call.bound?.channelId === task.channelId && call.bound?.threadTs === task.threadTs;
-    if (call.provider === "chatgpt" && here && call.session?.ready && typeof call.session.sendContext === "function" && now() - (task.contextMs || 0) >= ACTIVITY_CONTEXT_MS) {
-      task.contextMs = now();
-      call.session.sendContext(`[gateway] Task ${task.id} is still running; the agent is ${activity}.`);
-    }
-  }
-
-  // A list as GPT-Live reads it: numbered, without the routing ids it cannot use.
-  function numbered(listed) {
-    return { ...listed, conversations: listed.conversations.map((c, i) => ({ number: i + 1, title: c.title, channel: c.channel, status: c.status, lastActivity: c.lastActivity })),
-      note: "The caller can pick one by number or by name." };
-  }
-
-  // GPT-Live (ChatGPT sign-in): every request the voice cannot answer arrives as a delegation; the
-  // router turns it into one of the tools Gemini would have called, and the answer goes back on
-  // the same delegation. A redelivered delegation id is answered once.
-  async function handleDelegation(call, { id, text }) {
-    if (!id || call.ending) return;
-    if (call.delegations.has(id)) return;
-    if (call.delegations.size >= MAX_DELEGATIONS_REMEMBERED) call.delegations.delete(call.delegations.keys().next().value);
-    call.delegations.set(id, now());
-    touch(call);
-    const request = clean(text, MAX_REQUEST_CHARS) || clean([...call.transcript].reverse().find((row) => row.who === "caller")?.text, MAX_REQUEST_CHARS);
-    const answer = (response) => { try { call.session?.sendToolResponse({ id, name: "gateway", response }); } catch { /* session gone */ } };
-    if (!request) return answer({ error: "No request came through. Ask the caller to repeat it." });
-    const intent = routeDelegation(request);
-    const tool = (name, args = {}) => handleTool(call, { id, name, args });
-    try {
-      if (intent.kind === "end_call") return await tool("end_call");
-      if (intent.kind === "check_tasks") return await tool("check_tasks");
-      if (intent.kind === "read_thread") return await tool("read_thread");
-      if (intent.kind === "list") return await tool("list_conversations", { status: intent.status, channel: intent.channel });
-      if (intent.kind === "mark_done") {
-        if (!call.bound?.threadTs) return answer({ error: "The call is not in a thread, so there is nothing to mark Done." });
-        return await tool("mark_thread_done", { id: `${call.bound.channelId}:${call.bound.threadTs}` });
-      }
-      if (intent.kind === "switch") {
-        const target = await spokenTarget(call, intent);
-        if (target.error) return answer({ error: target.error });
-        if (target.choices) return answer({ switched: false, note: "Several conversations match; ask the caller which one (by number or name).", conversations: target.choices });
-        return await tool("switch_conversation", target.args);
-      }
-      return await tool("run_task", { request });
-    } catch (error) {
-      return answer({ error: clean(error?.message || "The gateway could not handle that request.", 300) });
-    }
-  }
-
-  // "the second one", "the sales channel", "the pipeline review" → switch_conversation arguments.
-  async function spokenTarget(call, { target, index }) {
-    if (index) {
-      const list = call.lastListed || [];
-      const pick = index === -1 ? list[list.length - 1] : list[index - 1];
-      return pick ? { args: { id: pick.id } } : { error: `There is no conversation number ${index === -1 ? "last" : index} in the list. Ask what they are working on to list them again.` };
-    }
-    const channel = channelNameFrom(target);
-    if (channel) return { args: { channel } };
-    const found = (await conversations(call, { status: "all", query: target, limit: 5 })).conversations;
-    const wanted = target.toLowerCase();
-    const exact = found.filter((c) => c.title.toLowerCase() === wanted);
-    if (found.length === 1 || exact.length === 1) return { args: { id: (exact[0] || found[0]).id } };
-    if (found.length > 1) { call.lastListed = found; return { choices: numbered({ conversations: found, total: found.length, more: false, unavailable: false }).conversations }; }
-    // No conversation by that name: perhaps a channel ("switch to sales").
-    try { const resolved = await resolveSwitch(call, { channel: target }); return { args: { channel: resolved.channelId } }; }
-    catch { return { error: `No conversation or channel matches "${clean(target, 80)}".` }; }
   }
 
   async function admitTask(call, id, args) {
@@ -768,16 +571,10 @@ export function createCallManager({
         controller.signal.throwIfAborted();
         if (task.preserveOnShutdown || isForceStopping()) return;
         if (!beginVoiceExecution(task.runId)) throw new Error("The voice request is no longer queued.");
-        const replies = turnReplyCallbacks(controller.signal, status);
         result = await runner({
-          channelId, authorId: ownerId, workspaceId: call.teamId || "", threadKey: threadTs,
-          // The request as spoken plus the voice note (mishearings, spoken-answer shape, the last
-          // exchanges); the thread shows only the request.
-          text: buildVoiceTaskText({ request: task.request, callerName: call.callerName, transcript: call.transcript, provider: call.provider }),
-          ...(call.preferences?.taskSpeed === "quick" ? { overrides: { effort: VOICE_TASK_EFFORT } } : {}),
+          channelId, authorId: ownerId, workspaceId: call.teamId || "", text: task.request, threadKey: threadTs,
           origin: VOICE_CALL_ORIGIN, signal: controller.signal, progressReport: Boolean(status),
-          ...replies,
-          onEvent: (event) => { noteActivity(call, task, event); return replies.onEvent?.(event); },
+          ...turnReplyCallbacks(controller.signal, status),
         });
       } catch (error) {
         failure = handle.aborted || controller.signal.aborted ? "stopped" : (error?.message || String(error));
@@ -905,8 +702,7 @@ export function createCallManager({
       lines.push(`📞 *Voice call moved on* — ${minutes(now() - bound.since)} min here · ${here.length} task${here.length === 1 ? "" : "s"}`);
     } else {
       const all = [...call.tasks.values()];
-      const voiceCost = call.provider === "chatgpt" ? "ChatGPT plan voice" : `~$${costUSD.toFixed(4)} voice`;
-      lines.push(`📞 *Voice call ended* — ${minutes(durationMs)} min · ${all.length} task${all.length === 1 ? "" : "s"} · ${voiceCost}${reason && reason !== "the caller hung up" ? ` · ${mdToMrkdwn(reason)}` : ""}`);
+      lines.push(`📞 *Voice call ended* — ${minutes(durationMs)} min · ${all.length} task${all.length === 1 ? "" : "s"} · ~$${costUSD.toFixed(4)} voice${reason && reason !== "the caller hung up" ? ` · ${mdToMrkdwn(reason)}` : ""}`);
       const elsewhere = call.visited.filter((v) => !(v.channelId === bound.channelId && v.threadTs === bound.threadTs));
       if (elsewhere.length) lines.push("*Also visited:* " + [...new Map(elsewhere.map((v) => [`${v.channelId}:${v.threadTs}`, v])).values()].map((v) => `${v.channelName}${v.title ? ` — ${mdToMrkdwn(v.title)}` : ""}`).join(" · "));
     }
@@ -953,13 +749,11 @@ export function createCallManager({
       finishActiveRun(task.runId);
     }
     const durationMs = Math.max(0, now() - call.startedMs);
-    // A ChatGPT-sign-in call is paid by the plan's voice allowance: no API cost to estimate.
-    const costUSD = call.provider === "chatgpt" ? 0 : estimateVoiceCost(call.model, call.usage);
+    const costUSD = estimateVoiceCost(call.model, call.usage);
     const first = call.visited[0] || null;
-    const connected = call.provider !== "chatgpt" || Boolean(call.session);
     try {
-      if (connected) await record({ channelId: call.bound?.channelId || first?.channelId || "", slug: call.bound?.slug || "", authorId: call.ownerId, engine: call.provider === "chatgpt" ? CHATGPT_VOICE_ENGINE : VOICE_ENGINE, model: call.model, taskKind: "voice-call",
-        result: { usage: { input_tokens: call.usage.audioIn + call.usage.textIn, output_tokens: call.usage.audioOut + call.usage.textOut }, costUSD, durationMs, model: call.model, ...(call.provider === "chatgpt" ? { audioMs: call.audioMs, subscription: true } : {}) } });
+      await record({ channelId: call.bound?.channelId || first?.channelId || "", slug: call.bound?.slug || "", authorId: call.ownerId, engine: VOICE_ENGINE, model: call.model, taskKind: "voice-call",
+        result: { usage: { input_tokens: call.usage.audioIn + call.usage.textIn, output_tokens: call.usage.audioOut + call.usage.textOut }, costUSD, durationMs, model: call.model } });
     } catch { /* accounting is best-effort */ }
     await leaveSegment(call, { durationMs, costUSD, reason, endedMs: call.startedMs + durationMs });
     const threads = [...new Map(call.visited.map((v) => [`${v.channelId}:${v.threadTs}`, {
@@ -991,7 +785,7 @@ export function createCallManager({
     await Promise.all([...calls.keys()].map((id) => end(id, "", reason, true)));
   }
 
-  return { available, start, offer, heartbeat, subscribe, audio, switchConversation, suspend, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
+  return { available, start, subscribe, audio, switchConversation, suspend, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
 }
 
 let shared = null;

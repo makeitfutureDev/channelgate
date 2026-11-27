@@ -1,7 +1,5 @@
 import { normalizePrivateMcpHosts } from "../../config/private-mcp-hosts.js";
 import { parsePushKey } from "../../gateway/voice/apns.ts";
-import { CHATGPT_VOICE_MODELS, DEFAULT_CHATGPT_VOICE_LOGIN, VOICE_PROVIDERS, isChatgptVoiceLogin, isVoiceProvider } from "../../gateway/voice/providers.ts";
-import { licenseRecord } from "../../engines/license-state.js";
 import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
@@ -305,24 +303,6 @@ export function createSettingsRouter({
       if (Object.hasOwn(body, "voiceCallModel")) {
         if (!VOICE_CALL_MODELS.includes(body.voiceCallModel)) return res.status(400).json({ error: `voiceCallModel must be one of: ${VOICE_CALL_MODELS.join(", ")}` });
         patch.voiceCallModel = body.voiceCallModel;
-      }
-      if (Object.hasOwn(body, "voiceChatgptEnabled")) {
-        if (typeof body.voiceChatgptEnabled !== "boolean") return res.status(400).json({ error: "voiceChatgptEnabled must be a boolean" });
-        patch.voiceChatgptEnabled = body.voiceChatgptEnabled;
-      }
-      if (Object.hasOwn(body, "voiceChatgptLogin")) {
-        const id = String(body.voiceChatgptLogin || "");
-        const record = id === DEFAULT_CHATGPT_VOICE_LOGIN ? null : licenseRecord(id);
-        if (!isChatgptVoiceLogin(id) || (id !== DEFAULT_CHATGPT_VOICE_LOGIN && record?.kind !== "codex-login")) return res.status(400).json({ error: "voiceChatgptLogin must be the default Codex sign-in or a ChatGPT sign-in license" });
-        patch.voiceChatgptLogin = id;
-      }
-      if (Object.hasOwn(body, "voiceChatgptModel")) {
-        if (!CHATGPT_VOICE_MODELS.includes(body.voiceChatgptModel)) return res.status(400).json({ error: `voiceChatgptModel must be one of: ${CHATGPT_VOICE_MODELS.join(", ")}` });
-        patch.voiceChatgptModel = body.voiceChatgptModel;
-      }
-      if (Object.hasOwn(body, "voiceDefaultProvider")) {
-        if (!isVoiceProvider(body.voiceDefaultProvider)) return res.status(400).json({ error: `voiceDefaultProvider must be one of: ${VOICE_PROVIDERS.join(", ")}` });
-        patch.voiceDefaultProvider = body.voiceDefaultProvider;
       }
       if (Object.hasOwn(body, "voiceCallVoice")) {
         if (!VOICE_CALL_VOICES.includes(body.voiceCallVoice)) return res.status(400).json({ error: `voiceCallVoice must be one of: ${VOICE_CALL_VOICES.join(", ")}` });

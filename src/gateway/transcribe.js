@@ -5,7 +5,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { buildChildEnv } from "../engines/child-env.js";
 import { whisperCliPath, whisperModelPath } from "../config/paths.js";
-import { dropWhisperPhantoms } from "./whisper-phantoms.ts";
 import { createSemaphore } from "../util/semaphore.js";
 import { processFailureMessage } from "../util/process-outcome.js";
 
@@ -347,8 +346,7 @@ async function transcribeCore(filePath, {
       envExtra: runtimeEnv,
       signal,
     });
-    // Credits and tags Whisper invents from silence are not speech (whisper-phantoms.ts).
-    return normalizeTranscript(dropWhisperPhantoms(result?.stdout));
+    return normalizeTranscript(result?.stdout);
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }

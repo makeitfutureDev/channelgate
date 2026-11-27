@@ -235,10 +235,8 @@ export function createActivityRouter({
     next();
   });
   // Settings carries a variable value (up to 16 KB) or an email account; everything else is tiny.
-  // A ChatGPT call's WebRTC offer (SDP) is a few kilobytes and can pass 8 KB with many candidates.
-  const smallJson = express.json({ limit: "8kb" }), settingsJson = express.json({ limit: "48kb" }), offerJson = express.json({ limit: "96kb" });
-  router.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/api\/(?:settings|automations\/[^/]+\/[^/]+\/update)$/.test(req.path) ? settingsJson
-    : req.method === "POST" && /^\/[^/]+\/call\/[^/]+\/offer$/.test(req.path) ? offerJson : smallJson)(req, res, next));
+  const smallJson = express.json({ limit: "8kb" }), settingsJson = express.json({ limit: "48kb" });
+  router.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/api\/(?:settings|automations\/[^/]+\/[^/]+\/update)$/.test(req.path) ? settingsJson : smallJson)(req, res, next));
   const authorize = async (session) => {
     if (!session || session.expiresAt <= now() || session.origin !== baseFor(getBaseUrl())?.origin) throw Object.assign(new Error("Activity expired"), { status: 401 });
     const user = await getUser(session.ownerId);
@@ -505,9 +503,7 @@ export function createActivityRouter({
       const target = callTarget(req);
       if (!target) return res.status(400).json({ error: "That conversation reference is malformed." });
       const identity = getBotIdentity() || {};
-      // `webrtc: true` = this browser can carry a ChatGPT (GPT-Live) call; the manager picks the
-      // caller's provider and, for ChatGPT, waits for the offer below.
-      const call = await callsFor().start({ ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client, teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "", webrtc: req.body?.webrtc === true });
+      const call = await callsFor().start({ ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client, teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" });
       await context(req);
       return res.json(call);
     } catch (error) {
@@ -544,29 +540,6 @@ export function createActivityRouter({
       if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "audio body missing" });
       const accepted = callsFor().audio(req.params.callId, session.ownerId, req.body);
       return res.json({ ok: true, accepted });
-    } catch (error) { return unavailable(res, error.status || 404); }
-  });
-  // ChatGPT calls: the browser's WebRTC offer in, OpenAI's answer out. The gateway creates the call
-  // with its ChatGPT sign-in, so no credential ever reaches the browser.
-  router.post("/:id/call/:callId/offer", async (req, res) => {
-    try {
-      const { session } = await context(req);
-      if (!csrfOk(req, session)) return unavailable(res, 403);
-      const sdp = typeof req.body?.sdp === "string" ? req.body.sdp : "";
-      if (!sdp) return res.status(400).json({ error: "The call offer is missing." });
-      return res.json(await callsFor().offer(req.params.callId, session.ownerId, sdp));
-    } catch (error) {
-      if (error.status === 401 || error.status === 403) return unavailable(res, error.status);
-      return res.status(error.status || 502).json({ error: error.message || "The call could not connect." });
-    }
-  });
-  // ChatGPT calls send no audio through the gateway; the browser says it is still there.
-  router.post("/:id/call/:callId/alive", async (req, res) => {
-    try {
-      const { session } = await context(req);
-      if (!csrfOk(req, session)) return unavailable(res, 403);
-      const calls = callsFor();
-      return res.json({ ok: typeof calls.heartbeat === "function" ? calls.heartbeat(req.params.callId, session.ownerId) : false });
     } catch (error) { return unavailable(res, error.status || 404); }
   });
   router.post("/:id/call/:callId/switch", async (req, res) => {

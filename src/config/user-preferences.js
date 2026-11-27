@@ -13,10 +13,6 @@ export function userVoiceAutoStartEnabled(user) {
 // their Activity Settings page; every field is bounded and closed-set where it drives behaviour.
 export const VOICE_STYLES = Object.freeze(["brief", "conversational", "thinking-partner"]);
 export const VOICE_PATIENCE = Object.freeze(["quick", "normal", "patient"]);
-// Which voice provider the person calls with ("" = the gateway's default) and how hard the agent
-// thinks on tasks spoken on a call ("quick" = low reasoning effort on the thread's own model).
-export const VOICE_PROVIDER_CHOICES = Object.freeze(["", "gemini", "chatgpt"]);
-export const VOICE_TASK_SPEED_CHOICES = Object.freeze(["normal", "quick"]);
 export const VOICE_LANGUAGE_MAX = 60;
 export const VOICE_INSTRUCTIONS_MAX = 2000;
 const text = (value, max) => typeof value === "string" ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
@@ -27,7 +23,5 @@ export function userVoicePreferences(user) {
     style: VOICE_STYLES.includes(raw.style) ? raw.style : "brief",
     patience: VOICE_PATIENCE.includes(raw.patience) ? raw.patience : "normal",
     instructions: text(raw.instructions, VOICE_INSTRUCTIONS_MAX),
-    provider: VOICE_PROVIDER_CHOICES.includes(raw.provider) ? raw.provider : "",
-    taskSpeed: VOICE_TASK_SPEED_CHOICES.includes(raw.taskSpeed) ? raw.taskSpeed : "normal",
   };
 }

@@ -9,7 +9,7 @@ import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
 import { stripDeadSettings } from "./dead-fields.js";
 import { ENGINE_IDS, adapterOr, harnessOf, isGatewayWideLicense, isRemovedLicense, modelsForEngine, syncLicenseAdapters } from "../engines/registry.js";
-import { builtinLicenseName, licenseChannelOf, licenseRecords, setBuiltinLicenseState } from "../engines/license-state.js";
+import { licenseChannelOf, setBuiltinLicenseState } from "../engines/license-state.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -20,7 +20,6 @@ import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { CONTAINER_DEFAULT_PIDS_LIMIT, CONTAINER_LEGACY_PIDS_LIMIT } from "../runtimes/container/pids-pressure.js";
 import { logoColor } from "./appearance.js";
-import { CHATGPT_VOICE_MODELS, DEFAULT_CHATGPT_VOICE_LOGIN, isChatgptVoiceLogin, isVoiceProvider } from "../gateway/voice/providers.ts";
 import { readPrivateMcpHosts } from "./private-mcp-hosts.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
@@ -685,32 +684,12 @@ export function getVoiceCallConfig() {
   const stored = typeof s.geminiApiKey === "string" ? s.geminiApiKey.trim() : "";
   const env = typeof process.env.GEMINI_API_KEY === "string" ? process.env.GEMINI_API_KEY.trim() : "";
   const apiKey = isGeminiApiKey(stored) ? stored : isGeminiApiKey(env) ? env : "";
-  const chatgptEnabled = s.voiceChatgptEnabled === true;
   return {
     enabled: s.voiceCallsEnabled === true,
     apiKey,
     model: VOICE_CALL_MODELS.includes(s.voiceCallModel) ? s.voiceCallModel : VOICE_CALL_MODELS[0],
     voice: VOICE_CALL_VOICES.includes(s.voiceCallVoice) ? s.voiceCallVoice : VOICE_CALL_VOICES[0],
-    // GPT-Live on a ChatGPT sign-in the gateway already holds for Codex (gateway/voice/chatgpt-live.ts).
-    // Whether that sign-in still works is checked when a call starts, never on a listing.
-    chatgpt: {
-      enabled: chatgptEnabled,
-      login: isChatgptVoiceLogin(s.voiceChatgptLogin) ? s.voiceChatgptLogin : DEFAULT_CHATGPT_VOICE_LOGIN,
-      model: CHATGPT_VOICE_MODELS.includes(s.voiceChatgptModel) ? s.voiceChatgptModel : CHATGPT_VOICE_MODELS[0],
-    },
-    defaultProvider: isVoiceProvider(s.voiceDefaultProvider) ? s.voiceDefaultProvider : (apiKey || !chatgptEnabled ? "gemini" : "chatgpt"),
   };
-}
-// The ChatGPT sign-ins a voice call may use: the default Codex sign-in and every "ChatGPT
-// sign-in" license. Names only — never a token or a file path.
-export function voiceChatgptLoginOptions() {
-  return [{ id: DEFAULT_CHATGPT_VOICE_LOGIN, label: builtinLicenseName(DEFAULT_CHATGPT_VOICE_LOGIN) || "Default Codex sign-in" },
-    ...licenseRecords().filter((record) => record.kind === "codex-login").map((record) => ({ id: record.id, label: record.label }))];
-}
-// Which voice providers can take a call right now (enabled and configured).
-export function voiceProviderState() {
-  const c = getVoiceCallConfig();
-  return { gemini: c.enabled && Boolean(c.apiKey), chatgpt: c.enabled && c.chatgpt.enabled, defaultProvider: c.defaultProvider };
 }
 // iPhone/APNs settings are private; listings expose presence only.
 export function getIosCallConfig() {
@@ -720,8 +699,8 @@ export function getIosCallConfig() {
     privateKey: String(s.apnsPrivateKey || "") };
 }
 export function voiceCallsAvailable() {
-  const state = voiceProviderState();
-  return state.gemini || state.chatgpt;
+  const c = getVoiceCallConfig();
+  return c.enabled && Boolean(c.apiKey);
 }
 // What the admin UI renders one card from, per provider. Presence and endpoint only — the key
 // itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
@@ -1425,8 +1404,6 @@ export function settingsForApi() {
       voice: getVoiceCallConfig().voice,
       models: [...VOICE_CALL_MODELS],
       voices: [...VOICE_CALL_VOICES],
-      defaultProvider: getVoiceCallConfig().defaultProvider,
-      chatgpt: { ...getVoiceCallConfig().chatgpt, models: [...CHATGPT_VOICE_MODELS], logins: voiceChatgptLoginOptions() },
     },
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),

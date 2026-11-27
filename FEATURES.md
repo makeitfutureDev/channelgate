@@ -2157,58 +2157,6 @@ icon URLs and uncached manifest responses expose updates without changing app id
 Chrome controls installed icon updates; an existing Dock icon may need the app reopened or
 reinstalled to refresh. No macOS-specific update timing is promised.
 
-## Voice calls on a ChatGPT sign-in, task context and activity · Beta (2026-11-27)
-
-**ChatGPT voice (GPT-Live).** Besides Gemini, a call can be answered by OpenAI's GPT-Live on a
-ChatGPT sign-in the gateway already holds for Codex: the default Codex sign-in or any "ChatGPT
-sign-in" license, picked by an admin in Settings → Calls ("Also offer ChatGPT voice", sign-in,
-model `gpt-live-1.1-codex` or `gpt-live-1-codex`, and the default provider for callers). Each
-person picks Gemini, ChatGPT or the gateway default in Activity → Settings → Voice calls; only the
-providers an admin turned on are offered. Minutes come from that plan's voice allowance, so the
-`usage` row (`engine: "chatgpt-live"`, `taskKind: "voice-call"`) carries cost 0 and the measured
-audio duration, and the end summary says "ChatGPT plan voice". `src/gateway/voice/chatgpt-live.ts`
-reaches GPT-Live the way the Codex CLI does (Codex realtime v3, `openai-alpha: quicksilver=v2`):
-a ChatGPT sign-in cannot open the all-in-one realtime WebSocket, so the browser's WebRTC offer is
-posted to the gateway (`POST /activity/<session>/call/<id>/offer`), the gateway creates the call on
-`chatgpt.com/backend-api/codex/realtime/calls` with the sign-in's access token (from the same
-relay Codex container runs use; never the refresh token, never sent to a browser) and returns
-OpenAI's SDP answer; microphone and voice then travel over WebRTC between the browser and OpenAI,
-while the gateway holds the call's control WebSocket (`wss://api.openai.com/v1/live/<call id>`)
-for transcripts, delegations, context and usage. The browser reports `…/alive` every 20 seconds
-because no audio passes the gateway; a call whose offer never arrives is dropped after 30 seconds
-and records no usage. The iPhone app and browsers without WebRTC fall back to Gemini; with only
-ChatGPT on, such a client is refused with the remedy. GPT-Live has no function tools: everything it
-cannot answer arrives as one delegation, which `src/gateway/voice/delegation-router.ts` routes to
-the same actions Gemini calls as tools — list ("what am I working on?", numbered without routing
-ids), switch ("switch to the sales channel", "open the pipeline review", "open the second one";
-several matches come back as a numbered choice), task status, read the thread, mark this thread
-done, hang up — and everything else, including any request that mixes navigation with work, to
-`run_task`. A redelivered delegation id is answered once. The voice's spoken voice is a setting of
-the ChatGPT account itself and is not changed by the gateway. This is the Codex CLI's own internal
-endpoint, not a published API, and can change without notice.
-
-**Voice note and spoken context on tasks (both providers).** A spoken task reaches the channel
-agent as the request followed by a marked "[Voice call note …]": the request was spoken (and, for
-ChatGPT, is the caller's own words as speech recognition heard them), names and numbers may be
-misheard and later words correct earlier ones, ask before acting when a misheard value would change
-an action, the answer is posted AND read aloud so its first sentence must state the outcome, and
-the last spoken exchanges (up to eight lines, 1,500 characters). The thread still shows only the
-request. **Task speed:** a person may set "Quick" in Activity → Settings → Voice calls; their
-spoken tasks then run with a `low` effort override on the thread's own engine and model (typed
-messages unaffected; an effort the model does not accept falls back as usual).
-
-**What the agent is doing.** While a voice task runs, its latest step (from the run's progress
-events) is kept as a short phrase — "reading a file: meta.json", "running a command", "searching
-the web" — never a command line or URL. `check_tasks` returns it with how long each task has run,
-the overlay's task list shows "Agent is …", and on a ChatGPT call the gateway also sends it as quiet
-commentary context (at most every 20 seconds per task, only for the conversation the call is in)
-so the voice can answer "how is it going?" without announcing it unprompted.
-
-**Whisper phantoms.** A voice clip whose whole local-Whisper transcript is only material Whisper
-invents from silence — "[BLANK_AUDIO]", "(music)", "Thanks for watching", subtitle credits — is
-treated as no speech (`src/gateway/whisper-phantoms.ts`); short real replies such as "okay",
-"thanks" or "bye" are kept.
-
 ## Voice calls with a channel's agent · Beta (2026-11-13, navigation 2026-11-14, relay and phone behaviour 2026-11-17)
 
 An approved user can talk to a channel's agent from a voice-call overlay on their personal
