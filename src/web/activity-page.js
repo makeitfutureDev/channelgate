@@ -1451,11 +1451,16 @@ function settingsBrowser(config, browser, theme, connections) {
       return [account, appearance, reminders, mentions, voiceStart, keys];
     },
     voice() {
-      const v = data.voice || { language: "", style: "brief", patience: "normal", instructions: "", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } };
+      const v = data.voice || { language: "", style: "brief", patience: "normal", instructions: "", provider: "", taskSpeed: "normal", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } };
       const prefs = card("How the agent talks to you on a call", "Your voice calls only. Saved to your account; your next call uses it. The voice always knows who you are, which conversations you have open and what you did on recent calls.");
       if (!voiceCalls) prefs.append(node("p", "settings-copy", "Voice calls are not enabled on this gateway yet; an administrator turns them on under Settings → Calls. Your preferences are kept for when they are."));
       const styleLabels = { brief: "Brief — short answers, gets on with it", conversational: "Conversational — a little more, elaborates when asked", "thinking-partner": "Thinking partner — listens while you think aloud, asks one question at a time" };
       const patienceLabels = { quick: "Quick — answers as soon as you stop", normal: "Normal", patient: "Patient — waits through your pauses" };
+      const providers = v.providers || { gemini: true, chatgpt: false, defaultProvider: "gemini" };
+      const providerName = { gemini: "Gemini", chatgpt: "ChatGPT" };
+      const providerOptions = ["", ...["gemini", "chatgpt"].filter((id) => providers[id] || v.provider === id)];
+      const providerLabels = { "": "Gateway default (" + (providerName[providers.defaultProvider] || "Gemini") + ")", gemini: "Gemini — works everywhere, including the iPhone app", chatgpt: "ChatGPT (GPT-Live) — on the organization's ChatGPT plan; needs a browser with WebRTC" };
+      const speedLabels = { normal: "Normal — the agent thinks as hard as it does on typed messages", quick: "Quick — the agent answers spoken tasks with low reasoning effort" };
       const select = (name, options, current, labels) => {
         const item = node("select", "settings-input"); item.name = name; item.disabled = busy || ended;
         for (const value of options) { const option = node("option", "", labels[value] || value); option.value = value; option.selected = value === current; item.append(option); }
@@ -1466,8 +1471,10 @@ function settingsBrowser(config, browser, theme, connections) {
         field("Language", input("language", { value: v.language, max: v.limits.language, placeholder: "e.g. Romanian, English" }), "Leave empty and it follows whatever language you speak."),
         field("Style", select("style", v.styles, v.style, styleLabels)),
         field("Patience", select("patience", v.patience_options, v.patience, patienceLabels), "How long it waits after you stop talking before it answers."),
+        field("Voice engine", select("provider", providerOptions, v.provider || "", providerLabels), "Which voice answers your calls. With ChatGPT, audio goes straight between your browser and OpenAI; the iPhone app always uses Gemini."),
+        field("Task speed", select("taskSpeed", v.task_speeds || ["normal", "quick"], v.taskSpeed || "normal", speedLabels), "How hard the channel agent thinks on tasks you ask for on a call. Typed messages are unaffected."),
         field("Your instructions", input("instructions", { multiline: true, value: v.instructions, max: v.limits.instructions, placeholder: "e.g. Call me Tibi. Confirm before starting anything that touches production. Keep summaries to one sentence." }), "Free text the voice reads at the start of every call, after the gateway's own rules."),
-      ], "Save", (values) => ({ action: "voice.save", language: values.language, style: values.style, patience: values.patience, instructions: values.instructions })));
+      ], "Save", (values) => ({ action: "voice.save", language: values.language, style: values.style, patience: values.patience, instructions: values.instructions, provider: values.provider, taskSpeed: values.taskSpeed })));
       return [prefs];
     },
     connections() {

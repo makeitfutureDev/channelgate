@@ -2,6 +2,14 @@
 
 ## 0.7.1 — in development
 
+- Voice calls can use ChatGPT voice (GPT-Live) on a ChatGPT sign-in the gateway already holds for
+  Codex, chosen per person in Activity → Settings → Voice calls. Audio goes over WebRTC between the
+  browser and OpenAI; the gateway keeps the transcript, tasks, Slack logging and accounting.
+- Tasks spoken on a call now reach the agent with a voice note (possible mishearings, answer first
+  in one spoken sentence) and the last spoken exchanges; an optional Quick task speed runs them at
+  low effort. The voice can tell what the agent is doing while a task runs.
+- Voice clips whose transcript is only Whisper's silence artefacts ("Thanks for watching",
+  "[BLANK_AUDIO]") no longer start a turn.
 - An HTTP run API call into a Google Chat space (or a Teams conversation) now posts there: the
   kickoff opens a thread in the space and the agent's answer follows in it, as in Slack. Before,
   such a run was silently headless and its answer only reachable through the API. Responses add
