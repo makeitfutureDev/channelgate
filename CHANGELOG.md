@@ -19,6 +19,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Slack to-do Lists now accept Assignee, Due Date and Completed values when adding or updating
+  items, instead of failing with `invalid_input_type`. Assignees and due dates can be cleared,
+  and completed items can be reopened.
+
 - SSH access: a channel whose SSH host key had become group-readable (`0640`, for example after
   a copy or a restore) refused every SSH and VS Code session before the handshake, because
   OpenSSH rejects an unprotected private key. The gateway now resets the key to `0600` before

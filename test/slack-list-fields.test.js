@@ -4,13 +4,16 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const { saveSettings } = await import("../src/config/settings.js");
-const { addItem, updateItem, listItems } = await import("../src/slack/lists.js");
+const { addItem, updateItem, listItems, describeSchema } = await import("../src/slack/lists.js");
 const channelId = "C_LIST_FIELDS";
 const listId = "FLISTFIELDS";
 const itemId = "RecFIELDS";
 const message = "https://example.slack.com/archives/C_LIST_FIELDS/p1700000000123456";
 const schema = [
   { id: "ColNAME", key: "name", name: "Name", type: "text", is_primary_column: true },
+  { id: "ColASSIGNEE", key: "todo_assignee", name: "Assignee", type: "todo_assignee" },
+  { id: "ColDUE", key: "todo_due_date", name: "Due Date", type: "todo_due_date" },
+  { id: "ColCOMPLETED", key: "todo_completed", name: "Completed", type: "todo_completed" },
   { id: "ColMESSAGE", key: "message", name: "Message", type: "message" },
   { id: "ColFILE", key: "files", name: "Attachments", type: "attachment" },
   { id: "ColLINK", key: "url", name: "Link", type: "link" },
@@ -97,4 +100,67 @@ test("typed message and link writes cannot access a List outside the current cha
     /not shared with the current channel/,
   );
   assert.deepEqual(calls.map(({ method }) => method), ["files.info", "files.info"]);
+});
+
+
+test("creating to-do items sends user, date and checkbox values instead of rich text", async (t) => {
+  const calls = mockSlack(t);
+  await addItem({ listId, channelId, name: "Assigned task", fields: {
+    Assignee: "U012A34BCDE", todo_due_date: "2026-12-01", ColCOMPLETED: false,
+  } });
+  assert.deepEqual(calls.at(-1), { method: "slackLists.items.create", body: { list_id: listId, initial_fields: [
+    { column_id: "ColASSIGNEE", user: ["U012A34BCDE"] },
+    { column_id: "ColDUE", date: ["2026-12-01"] },
+    { column_id: "ColCOMPLETED", checkbox: false },
+    { column_id: "ColNAME", rich_text: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "Assigned task" }] }] }] },
+  ] } });
+  await addItem({ listId, channelId, fields: {
+    todo_assignee: ["U012A34BCDE", "U023B45CDEF"], "Due Date": ["2026-12-02"], Completed: true,
+  } });
+  assert.deepEqual(calls.at(-1).body.initial_fields, [
+    { column_id: "ColASSIGNEE", user: ["U012A34BCDE", "U023B45CDEF"] },
+    { column_id: "ColDUE", date: ["2026-12-02"] },
+    { column_id: "ColCOMPLETED", checkbox: true },
+  ]);
+});
+
+test("updating to-do items uses native values and supports clearing and reopening", async (t) => {
+  const calls = mockSlack(t);
+  for (const assignee of ["U012A34BCDE", ["U012A34BCDE"]]) {
+    await updateItem({ listId, channelId, itemId, fields: {
+      Assignee: assignee, "Due Date": "2026-12-01", Completed: true,
+    } });
+    assert.deepEqual(calls.at(-1), { method: "slackLists.items.update", body: { list_id: listId, cells: [
+      { row_id: itemId, column_id: "ColASSIGNEE", user: ["U012A34BCDE"] },
+      { row_id: itemId, column_id: "ColDUE", date: ["2026-12-01"] },
+      { row_id: itemId, column_id: "ColCOMPLETED", checkbox: true },
+    ] } });
+  }
+  await updateItem({ listId, channelId, itemId, fields: {
+    ColASSIGNEE: [], todo_due_date: [], todo_completed: false,
+  } });
+  assert.deepEqual(calls.at(-1).body.cells, [
+    { row_id: itemId, column_id: "ColASSIGNEE", user: [] },
+    { row_id: itemId, column_id: "ColDUE", date: [] },
+    { row_id: itemId, column_id: "ColCOMPLETED", checkbox: false },
+  ]);
+});
+
+test("to-do readback and schema descriptions preserve assignees, dates and completion", async (t) => {
+  mockSlack(t, [false, true].map((completed) => ({ id: itemId, fields: [
+    { column_id: "ColNAME", text: "Assigned task" },
+    { column_id: "ColASSIGNEE", user: ["U012A34BCDE", "U023B45CDEF"] },
+    { column_id: "ColDUE", date: ["2026-12-01"] },
+    { column_id: "ColCOMPLETED", checkbox: completed },
+  ] })));
+  const { items } = await listItems({ listId, channelId });
+  for (const [index, mark] of ["☐", "☑"].entries()) {
+    assert.deepEqual(items[index], { id: itemId, title: "Assigned task", cols: {
+      Assignee: "<@U012A34BCDE>, <@U023B45CDEF>", "Due Date": "2026-12-01", Completed: mark,
+    } });
+  }
+  const description = await describeSchema(listId, channelId);
+  assert.ok(description.includes("Assignee (key: todo_assignee, id: ColASSIGNEE, type: todo_assignee)"));
+  assert.ok(description.includes("Due Date (key: todo_due_date, id: ColDUE, type: todo_due_date)"));
+  assert.ok(description.includes("Completed (key: todo_completed, id: ColCOMPLETED, type: todo_completed)"));
 });

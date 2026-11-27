@@ -6083,7 +6083,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   can spin up a tasklist (default **Name** + **Status** New/In progress/Done, or `todo_mode`/custom
   columns) and read/add/update rows. Composio has no Lists coverage, so these call the Slack Web API
   (`slackLists.*`) directly with the workspace bot token (needs `lists:read`/`lists:write`); text cells
-  are wrapped as rich text and select values accept the option label. Message columns accept source
+  are wrapped as rich text and select values accept the option label. To-do lists support Assignee
+  (`todo_assignee` → user IDs), Due Date (`todo_due_date` → ISO dates), and Completed
+  (`todo_completed` → boolean) on add/update; empty arrays clear assignees/dates and false reopens
+  completed items. Readback preserves these values. Message columns accept source
   permalinks as native clickable references, attachment columns accept existing Slack file IDs, and
   link columns accept URLs or labeled link objects; reads retain their URLs and file IDs. Empty arrays
   clear these typed fields. `list_id` accepts a raw F-id or a
