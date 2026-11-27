@@ -1,5 +1,19 @@
 # ChannelGate — Test Plan
 
+## Foreground message admission and delivery
+
+Run `test/message-flow.test.ts` and `test/platform-ingest.test.js` with the Slack busy-thread,
+attachment and sudo suites. Verify denial before file reads, early replies that bypass the
+engine, queue ownership through delivery and independent usage for consecutive turns.
+
+For each of Claude and Codex, use a private Slack thread, threaded Google Chat space and Teams
+channel. As an unapproved member, mention the agent with a text file and verify a refusal and
+zero runs. As an approved member, ask the agent to wait 20 seconds and reply FIRST. While it
+works, send a second request with a bot-readable text file and ask for its contents. Queue the
+request if prompted. Verify exactly one answer per request in the source thread, in order, with
+the expected file contents. Keep the connector running across both messages and check the
+usage ledger for two interactive rows attributed to the correct author and conversation.
+
 ## Dashboard updates during an active turn
 
 Run `test/dashboard-update.test.ts` with the updater and Calls view suites. Check a UI-only

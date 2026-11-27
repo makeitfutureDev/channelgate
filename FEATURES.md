@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+## Foreground chat messages
+
+Slack, Teams and Google Chat check channel access and sudo-thread access in the same message
+dispatcher. A thread keeps its queue slot while the agent's final reply is being delivered.
+Each completed Teams or Google Chat turn records its own interactive usage, including consecutive
+turns served by the same connector.
+
 ## Dashboard-only updates
 
 The updater can release the admin dashboard shell, styles and independent browser modules

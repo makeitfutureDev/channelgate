@@ -8,6 +8,9 @@ export function hasVoiceAttachments(message) {
   return (message.attachments || []).some((file) => isAudioFile({ name: file.name, mimetype: file.contentType }));
 }
 
+/** @param {ReturnType<typeof import("./inbound.js").makeInbound>} message
+ * @param {string[]} paths
+ * @param {{signal?: AbortSignal, enabled?: boolean, transcribe?: typeof transcribeAudioFiles, removeProcessed?: ((file: {path: string}) => Promise<boolean>) | null}} options */
 export async function prepareVoiceAttachments(message, paths, {
   signal, enabled = getWhisperEnabled(), transcribe = transcribeAudioFiles, removeProcessed = null,
 } = {}) {

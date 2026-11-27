@@ -2,6 +2,7 @@
 // function retains its native address, formatting, chunking and quoted-message bookkeeping.
 import { runApprovedHarnessesCommand } from "./approved-harnesses.js";
 import { activeAgentMail, AgentMailError, parseAskDirective } from "./agent-mail.js";
+import { platformSupports } from "../platforms/registry.js";
 import { logEvent } from "../util/logger.js";
 
 type ChatFeatureRequest = { channelId: string; slug: string; actor: string } & (
@@ -35,4 +36,12 @@ export async function dispatchChatFeature(request: ChatFeatureRequest, reply: (t
   if (text === null) return false;
   await reply(text);
   return true;
+}
+
+// Ordinary admitted text reaches this entry point on every chat surface. Each feature checks
+// its own capability here so adding another text handler requires no transport routing changes.
+type MessageText = Omit<Extract<ChatFeatureRequest, { kind: "ask" }>, "kind">;
+export async function dispatchMessageText(message: MessageText, reply: (text: string) => Promise<unknown>): Promise<boolean> {
+  if (platformSupports(message.platform, "agentDirectory") && await dispatchChatFeature({ ...message, kind: "ask" }, reply)) return true;
+  return false;
 }

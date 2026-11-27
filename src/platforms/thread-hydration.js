@@ -108,6 +108,7 @@ export async function threadExcerpt({ connector, message, timeoutMs = HYDRATION_
 // like Slack, on the persistent has-ever-had-a-session marker rather than "no live session", so a
 // /clear never re-injects the thread; checked by the caller after the per-session queue, so a
 // turn queued behind the thread's first run resumes instead of replaying.
+/** @param {{connector?: object, message?: object, slug?: string, sessionKey?: string, hasSession?: typeof hasThreadSession, log?: Pick<Console, "warn">, timeoutMs?: number}} options */
 export async function hydrateFreshThread({ connector, message, slug, sessionKey, hasSession = hasThreadSession, ...options } = {}) {
   const scope = typeof connector?.hydrationScope === "function" ? connector.hydrationScope(message) : null;
   if (!scope?.threadKey || !slug || !sessionKey) return "";

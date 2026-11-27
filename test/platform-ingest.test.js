@@ -138,6 +138,28 @@ test("an approved author's message registers the space, runs, and replaces the p
   assert.equal(meta.channelId, "gchat:spaces/INGEST1");
 });
 
+for (const platform of ["googlechat", "msteams"]) {
+  test(`${platform} records each completed message on a reused connector once`, async () => {
+    const { getDb } = await import("../src/db/index.js");
+    const connector = fakeConnector({ platform });
+    const userId = "usage-test-author";
+    await setUser(userId, { approved: true });
+    const conversationId = platform === "googlechat" ? "spaces/USAGE" : "19:usage@thread.tacv2";
+    const ingest = createIngest({
+      connector,
+      run: async ({ text }) => ({ sessionId: text, engine: "codex", content: "Done." }),
+    });
+    const inbound = text => chatMessage({ platform, conversationId, userId, text, threadKey: "usage-root" });
+    const first = inbound("first-session");
+    await ingest(first);
+    await ingest(inbound("second-session"));
+    const sessions = getDb().prepare(
+      "SELECT session_id FROM usage WHERE channel_id = ? AND task_kind = 'interactive' ORDER BY id",
+    ).all(first.conversationId).map(row => row.session_id);
+    assert.deepEqual(sessions, ["first-session", "second-session"]);
+  });
+}
+
 test("a failed run is reported in the thread instead of leaving the placeholder hanging", async () => {
   await setUser("ana@example.com", { name: "Ana Pop", approved: true });
   const connector = fakeConnector();
