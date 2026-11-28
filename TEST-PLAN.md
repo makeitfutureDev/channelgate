@@ -18587,3 +18587,21 @@ is the existing secret injection contract, which both engines read through the s
 - [ ] **Audit:** Pass: `events` holds `secret_mode_set` rows with the scope, name and mode, and no
   value.
 
+## Slack Variables modal visibility switch (2026-11-28)
+
+Regression: `test/slack-secret-actions.test.js` checks that the 🔑 Variables / `/secrets` modal
+switches a channel variable to readable (with a confirm) and back. The stored value stays the same and
+never appears in the view. A non-admin gets no organization-row button, and a forged click is refused.
+A 60-variable list stays within Slack's 100-block limit.
+
+Live acceptance (engine-independent for the switch itself; its effect is the shared injection
+contract):
+
+- [ ] In a test channel, open 🔑 Variables from a reply footer. On a hidden test variable, click
+  **Make readable**. Pass: Slack shows the confirmation, the modal then says the variable is
+  readable, and a Claude turn and a Codex turn each see a value that does not start with `cgph_`
+  (length only). Click **Make secret**. Pass: no confirmation, and the next turn on each engine
+  sees `cgph_…`.
+- [ ] As an approved non-admin, open `/secrets`. Pass: organization rows have no buttons, while
+  the viewer's personal rows and the channel's rows (with edit rights) do.
+

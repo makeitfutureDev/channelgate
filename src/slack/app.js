@@ -72,7 +72,7 @@ import {
   buildSecretFormView, buildSecretsErrorView, buildSecretsView, parseActionValue as parseSecretActionValue,
   parseSecretsMetadata, readSecretForm, SECRETS_ACTION_PATTERN, SECRETS_ADD_ACTION_ID,
   SECRETS_ADD_ORG_ACTION_ID, SECRETS_ADD_PERSONAL_ACTION_ID, normalizeSecretScope, scopeFromActionId,
-  SECRETS_FORM_CALLBACK_ID, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
+  SECRETS_FORM_CALLBACK_ID, SECRETS_MODE_ACTION_PREFIX, SECRETS_NAME_BLOCK_ID, SECRETS_REMOVE_ACTION_PREFIX, SECRETS_SHORTCUT_ID,
   SECRETS_VALUE_BLOCK_ID,
   SECRETS_DOMAINS_BLOCK_ID,
 } from "./secret-explorer.js";
@@ -514,6 +514,26 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
         trigger_id: body.trigger_id,
         view: buildSecretFormView(state, { channelName: entry.name, suggested: cliEnvKeys(cliIntegrationIds()), scope: addScope }),
       });
+      return;
+    }
+    if (String(action?.action_id || "").startsWith(SECRETS_MODE_ACTION_PREFIX)) {
+      const name = String(command.n || "");
+      // Scope from the action_id (as for Remove); the clicked value only says which way to switch.
+      const scope = scopeFromActionId(action.action_id);
+      assertMaySecretScope(scope, { mayEdit, userIsAdmin });
+      const exposure = command.x === "readable" ? "readable" : "hidden";
+      const row = await patchSecretEntry({ scope, slug: entry.slug, userId: clicker, name, exposure });
+      await logEvent("secret_mode_set", { scope, slug: entry.slug, name, exposure, actor: clicker });
+      const notice = exposure === "readable"
+        ? `👁 *${name}* is readable: the next run receives the real value.`
+        : row?.protected
+          ? `🔒 *${name}* is secret again: the next run receives a stand-in.`
+          : `*${name}* stays readable: it ${row?.exposureReason?.replace(/^auto: it |^kept readable although hidden was chosen: it /, "") || "is used outside HTTPS"}. Add allowed servers to hide it.`;
+      const meta = await getChannelMeta(entry.slug);
+      const nextView = state.returnTo === "settings"
+        ? await rootView(entry, meta, { ...state, tab: "variables" }, userIsAdmin, { notice })
+        : buildSecretsView(await secretScopeLists(meta, clicker), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
+      await updateFileExplorerView(client, body, nextView);
       return;
     }
     if (String(action?.action_id || "").startsWith(SECRETS_REMOVE_ACTION_PREFIX)) {

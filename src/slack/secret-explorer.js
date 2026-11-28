@@ -22,8 +22,9 @@ export const SECRET_SCOPES = Object.freeze(["organization", "personal", "channel
 const SCOPE_LETTER = Object.freeze({ organization: "o", personal: "p", channel: "c" });
 const LETTER_SCOPE = Object.freeze({ o: "organization", p: "personal", c: "channel" });
 export function scopeFromActionId(actionId = "") {
-  const suffix = String(actionId).slice(SECRETS_REMOVE_ACTION_PREFIX.length);
-  return LETTER_SCOPE[suffix[0]] || "channel";
+  const id = String(actionId);
+  const prefix = id.startsWith(SECRETS_MODE_ACTION_PREFIX) ? SECRETS_MODE_ACTION_PREFIX : SECRETS_REMOVE_ACTION_PREFIX;
+  return LETTER_SCOPE[id.slice(prefix.length)[0]] || "channel";
 }
 export function normalizeSecretScope(value) {
   return SECRET_SCOPES.includes(String(value)) ? String(value) : "channel";
@@ -37,6 +38,8 @@ export const SECRETS_REFRESH_ACTION_ID = "cg_channel_secrets_refresh";
 // Row buttons need per-view-unique action ids (Slack rejects a modal when any two controls share
 // one), so removals are `cg_channel_secrets_remove_<row>` and the RegExp below catches them all.
 export const SECRETS_REMOVE_ACTION_PREFIX = "cg_channel_secrets_remove_";
+// Secret ↔ readable for one row, value untouched: `cg_channel_secrets_mode_<scope letter><row>`.
+export const SECRETS_MODE_ACTION_PREFIX = "cg_channel_secrets_mode_";
 export const SECRETS_ACTION_PATTERN = /^cg_channel_secrets(?:$|_)/;
 export const SECRETS_SHORTCUT_ID = "cg_manage_channel_secrets";
 export const SECRETS_FORM_CALLBACK_ID = "cg_channel_secrets_form";
@@ -173,7 +176,37 @@ const SCOPE_COPY = Object.freeze({
   },
 });
 
-function scopeBlocks(scope, vars, state, mayEdit) {
+// A Slack modal holds at most 100 blocks. Each row's Make readable / Make secret button is its own
+// actions block, so a very long list drops those buttons (Settings → Variables still has them)
+// rather than making the whole modal fail to open.
+const MAX_MODAL_BLOCKS = 100;
+
+// The row's visibility switch. Make readable confirms first, because programs then receive the
+// raw value; Make secret applies at once (the gateway may still keep a password readable and says so).
+function modeButton(scope, index, entry, state) {
+  const readable = entry.protected === true;
+  return {
+    type: "actions",
+    elements: [{
+      type: "button",
+      action_id: `${SECRETS_MODE_ACTION_PREFIX}${SCOPE_LETTER[scope]}${index}`,
+      text: plain(readable ? "Make readable" : "Make secret"),
+      ...(readable
+        ? {
+            confirm: {
+              title: plain("Make it readable?"),
+              text: mrkdwn(`Programs will receive the real value of *${entry.name}* instead of a stand-in. Use this for a password, connection string or private key a program needs directly.`),
+              confirm: plain("Make readable"),
+              deny: plain("Keep secret"),
+            },
+          }
+        : {}),
+      value: actionValue("mode", { c: state.channelId, u: state.ownerId, n: entry.name, s: SCOPE_LETTER[scope], x: readable ? "readable" : "hidden" }),
+    }],
+  };
+}
+
+function scopeBlocks(scope, vars, state, mayEdit, { modeButtons = true } = {}) {
   const copy = SCOPE_COPY[scope];
   const blocks = [
     { type: "divider" },
@@ -205,6 +238,7 @@ function scopeBlocks(scope, vars, state, mayEdit) {
           }
         : {}),
     });
+    if (mayEdit && modeButtons) blocks.push(modeButton(scope, index, entry, state));
   }
   if (mayEdit) {
     blocks.push({
@@ -244,7 +278,10 @@ export function buildSecretsView(scopes = {}, state = {}, { channelName = "", ma
       `Values can never be read back here, or anywhere else. To replace one, set it again.`,
     )],
   });
-  for (const scope of SECRET_SCOPES) blocks.push(...scopeBlocks(scope, lists[scope], state, editable[scope]));
+  const plainBlocks = SECRET_SCOPES.reduce((n, scope) => n + scopeBlocks(scope, lists[scope], state, editable[scope], { modeButtons: false }).length, blocks.length);
+  const modeRows = SECRET_SCOPES.reduce((n, scope) => n + (editable[scope] ? lists[scope].length : 0), 0);
+  const modeButtons = plainBlocks + modeRows <= MAX_MODAL_BLOCKS;
+  for (const scope of SECRET_SCOPES) blocks.push(...scopeBlocks(scope, lists[scope], state, editable[scope], { modeButtons }));
   return {
     type: "modal",
     callback_id: "cg_channel_secrets_modal",
