@@ -7,7 +7,7 @@
 // neither resurrect a cleared session nor point at another thread. `cleanMode` is applied from
 // the thread's own flag because a clean thread runs in a different folder, and the resume command
 // has to name the folder the session was actually minted in.
-import { buildResumeCommand } from "./footer.js";
+import { buildResumeCommand, resumeCommandReply } from "./footer.js";
 import { getSession, getSessionEngine, getSessionRuntime } from "../gateway/sessions.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
 import { getThreadClean, resolveThreadEngine } from "../gateway/thread-engine.js";
@@ -49,4 +49,14 @@ export async function resolveResumeSession({ entry, meta, isAdminAuthor = false 
   const shellCommand = buildResumeCommand(workDir, sessionId, engine, null);
   const command = buildResumeCommand(workDir, sessionId, engine, target);
   return { inThread, sessionId, engine, workDir, command, shellCommand, hostCommand: command !== shellCommand ? command : "", runtimeScope };
+}
+
+// What a bare `/resume` typed in a thread answers. It reads the SAME resolution as /menu's Resume
+// button and Settings → Diagnostics, so a `/clean` thread prints the clean workspace its session was
+// minted in instead of the channel's normal folder (the two used to disagree for one session id).
+export const RESUME_ACCESS_REFUSAL = "Run a new turn under your own access level before resuming this thread.";
+export async function resumeReplyForThread({ entry, meta, isAdminAuthor = false }, threadTs = "") {
+  const resume = await resolveResumeSession({ entry, meta, isAdminAuthor }, threadTs);
+  if (resume.sessionId && !resume.command && resume.runtimeScope === "admin" && !isAdminAuthor) return RESUME_ACCESS_REFUSAL;
+  return resumeCommandReply(resume.command, resume.sessionId, resume.engine);
 }
