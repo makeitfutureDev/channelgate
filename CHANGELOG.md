@@ -2,6 +2,10 @@
 
 ## 0.7.1 — in development
 
+- Slack: a 🤖 activation reaction on a thread's first message now starts the agent on the first try,
+  even when the message already has replies. Previously it was ignored until the agent had been
+  `@mentioned` once in that thread. Reactions on replies in threads the agent does not manage are
+  still ignored.
 - Voice calls can use ChatGPT voice (GPT-Live) on a ChatGPT sign-in the gateway already holds for
   Codex, chosen per person in Activity → Settings → Voice calls. Audio goes over WebRTC between the
   browser and OpenAI; the gateway keeps the transcript, tasks, Slack logging and accounting.
