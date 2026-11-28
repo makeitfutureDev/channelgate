@@ -88,6 +88,7 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 <div class="call-body"><p class="call-binding" data-call="binding">Not in a conversation yet.</p>
 <div class="call-controls"><button type="button" class="primary" data-call="start">Start call</button><button type="button" class="danger" data-call="hangup" hidden>Hang up</button><button type="button" data-call="mute" hidden aria-pressed="false">Mute</button><span class="timer" data-call="timer">00:00</span></div>
 <p class="call-status" data-call="status" role="status" aria-live="polite"></p>
+<p class="call-foot" data-call="minutes" hidden></p>
 <h3 class="call-transcript-label">Transcript</h3>
 <div class="call-transcript" data-call="transcript" aria-label="Transcript" aria-live="polite"></div>
 <section class="call-tasks" data-call="tasks-section" hidden><h3>Tasks sent to the agent</h3><ul data-call="tasks"></ul></section>
@@ -107,7 +108,7 @@ export function callOverlayBrowser(config, env) {
   const root = document.getElementById("call-overlay");
   if (!root) return { open() {}, active: () => false };
   const q = (name) => root.querySelector('[data-call="' + name + '"]');
-  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer");
+  const minutesLine = q("minutes"), binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer");
   const topButton = document.getElementById("call-agent");
   let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
   let playhead = 0; const playing = new Set();
@@ -309,6 +310,7 @@ export function callOverlayBrowser(config, env) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "The call could not start.");
       callId = data.id; startedAt = Date.now(); provider = data.provider || "gemini";
+      if (minutesLine) { minutesLine.textContent = data.minutes && data.minutes.text ? "ChatGPT plan voice: " + data.minutes.text : ""; minutesLine.hidden = !minutesLine.textContent; }
       muted = false; mute.textContent = "Mute"; mute.setAttribute("aria-pressed", "false");
       transcript.replaceChildren(); tasks.replaceChildren(); tasksSection.hidden = true;
       bound = data.bound; showBinding(bound);

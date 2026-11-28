@@ -2,6 +2,7 @@ import { normalizePrivateMcpHosts } from "../../config/private-mcp-hosts.js";
 import { parsePushKey } from "../../gateway/voice/apns.ts";
 import { CHATGPT_VOICE_MODELS, DEFAULT_CHATGPT_VOICE_LOGIN, VOICE_PROVIDERS, isChatgptVoiceLogin, isVoiceProvider } from "../../gateway/voice/providers.ts";
 import { licenseRecord } from "../../engines/license-state.js";
+import { MAX_ALLOWANCE_MINUTES } from "../../gateway/voice/voice-minutes.ts";
 import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
@@ -319,6 +320,11 @@ export function createSettingsRouter({
       if (Object.hasOwn(body, "voiceChatgptModel")) {
         if (!CHATGPT_VOICE_MODELS.includes(body.voiceChatgptModel)) return res.status(400).json({ error: `voiceChatgptModel must be one of: ${CHATGPT_VOICE_MODELS.join(", ")}` });
         patch.voiceChatgptModel = body.voiceChatgptModel;
+      }
+      if (Object.hasOwn(body, "voiceChatgptAllowanceMinutes")) {
+        const minutes = body.voiceChatgptAllowanceMinutes;
+        if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_ALLOWANCE_MINUTES) return res.status(400).json({ error: `voiceChatgptAllowanceMinutes must be a whole number from 0 (unknown) to ${MAX_ALLOWANCE_MINUTES}` });
+        patch.voiceChatgptAllowanceMinutes = minutes;
       }
       if (Object.hasOwn(body, "voiceDefaultProvider")) {
         if (!isVoiceProvider(body.voiceDefaultProvider)) return res.status(400).json({ error: `voiceDefaultProvider must be one of: ${VOICE_PROVIDERS.join(", ")}` });

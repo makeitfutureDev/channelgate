@@ -2132,6 +2132,19 @@ done, hang up — and everything else, including any request that mixes navigati
 the ChatGPT account itself and is not changed by the gateway. This is the Codex CLI's own internal
 endpoint, not a published API, and can change without notice.
 
+**ChatGPT voice-minute meter (2026-11-28).** OpenAI does not expose what is left of a plan's rolling
+voice allowance, so the gateway meters its own ChatGPT calls per sign-in
+(`src/gateway/voice/voice-minutes.ts`): each connected call writes one `voice_chatgpt_usage` event
+(sign-in, OpenAI's reported audio duration, connected time, plan type) and an allowance status other
+than ok writes one `voice_chatgpt_limit` event (status, renewal time); no schema change. The meter
+sums the last 5 hours and 7 days per sign-in, counting OpenAI's audio time when reported and the
+connected time otherwise, plus calls still running. It is shown in Activity → Settings → Voice calls
+(with the caller's own share), under the call panel when a ChatGPT call starts, and on the admin
+Calls card (with the 7-day total). An optional admin estimate, **Plan voice allowance (min per 5 h)**
+(`voiceChatgptAllowanceMinutes`, whole minutes 0–1440, 0 = unknown), adds "about N min left of M";
+a reported used-up allowance shows "renews in about N min" until it renews. Use of the same plan in
+the ChatGPT apps is not counted.
+
 **Voice note and spoken context on tasks (both providers).** A spoken task reaches the channel
 agent as the request followed by a marked "[Voice call note …]": the request was spoken (and, for
 ChatGPT, is the caller's own words as speech recognition heard them), names and numbers may be

@@ -816,7 +816,9 @@
                     <label class="field"><span>ChatGPT sign-in</span><select id="set-voice-chatgpt-login"></select></label>
                     <label class="field"><span>ChatGPT voice model</span><select id="set-voice-chatgpt-model"></select></label>
                     <label class="field"><span>Default for callers</span><select id="set-voice-default-provider"><option value="gemini">Gemini</option><option value="chatgpt">ChatGPT</option></select></label>
+                    <label class="field"><span>Plan voice allowance (min per 5 h)</span><input id="set-voice-chatgpt-allowance" type="number" min="0" max="1440" step="1" placeholder="0 = unknown" /></label>
                   </div>
+                  <em class="state" id="voice-chatgpt-minutes"></em>
                   </div>
                 </article>
                 <article data-feature-toggle="set-ios-calls-enabled" class="setcard" id="iphone-calls-card" data-setkey="ios push notifications voip apns">

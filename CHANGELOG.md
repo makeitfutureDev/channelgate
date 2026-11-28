@@ -8,6 +8,9 @@
 - Tasks spoken on a call now reach the agent with a voice note (possible mishearings, answer first
   in one spoken sentence) and the last spoken exchanges; an optional Quick task speed runs them at
   low effort. The voice can tell what the agent is doing while a task runs.
+- ChatGPT voice shows how many minutes this gateway used on the plan in the last 5 hours (and
+  your share), in Activity settings, on the call panel and on the admin Calls card. With an
+  admin's allowance estimate it also shows the minutes left.
 - Voice clips whose transcript is only Whisper's silence artefacts ("Thanks for watching",
   "[BLANK_AUDIO]") no longer start a turn.
 - An HTTP run API call into a Google Chat space (or a Teams conversation) now posts there: the

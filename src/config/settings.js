@@ -21,6 +21,7 @@ import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { CONTAINER_DEFAULT_PIDS_LIMIT, CONTAINER_LEGACY_PIDS_LIMIT } from "../runtimes/container/pids-pressure.js";
 import { logoColor } from "./appearance.js";
 import { CHATGPT_VOICE_MODELS, DEFAULT_CHATGPT_VOICE_LOGIN, isChatgptVoiceLogin, isVoiceProvider } from "../gateway/voice/providers.ts";
+import { MAX_ALLOWANCE_MINUTES, chatgptVoiceMeter, describeVoiceMeter } from "../gateway/voice/voice-minutes.ts";
 import { readPrivateMcpHosts } from "./private-mcp-hosts.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 import { normalizeComposioSdkPolicy } from "./composio-sdk-policy.js";
@@ -697,6 +698,9 @@ export function getVoiceCallConfig() {
       enabled: chatgptEnabled,
       login: isChatgptVoiceLogin(s.voiceChatgptLogin) ? s.voiceChatgptLogin : DEFAULT_CHATGPT_VOICE_LOGIN,
       model: CHATGPT_VOICE_MODELS.includes(s.voiceChatgptModel) ? s.voiceChatgptModel : CHATGPT_VOICE_MODELS[0],
+      // The admin's estimate of the plan's 5-hour voice allowance, in minutes (0 = unknown); OpenAI
+      // does not publish or expose it, so it only turns "used" into "about N left".
+      allowanceMinutes: Number.isInteger(s.voiceChatgptAllowanceMinutes) && s.voiceChatgptAllowanceMinutes > 0 && s.voiceChatgptAllowanceMinutes <= MAX_ALLOWANCE_MINUTES ? s.voiceChatgptAllowanceMinutes : 0,
     },
     defaultProvider: isVoiceProvider(s.voiceDefaultProvider) ? s.voiceDefaultProvider : (apiKey || !chatgptEnabled ? "gemini" : "chatgpt"),
   };
@@ -706,6 +710,14 @@ export function getVoiceCallConfig() {
 export function voiceChatgptLoginOptions() {
   return [{ id: DEFAULT_CHATGPT_VOICE_LOGIN, label: builtinLicenseName(DEFAULT_CHATGPT_VOICE_LOGIN) || "Default Codex sign-in" },
     ...licenseRecords().filter((record) => record.kind === "codex-login").map((record) => ({ id: record.id, label: record.label }))];
+}
+// The voice-minute meter for the configured ChatGPT sign-in (all callers), for the admin card.
+export function voiceMinutesView({ ownerId = "" } = {}) {
+  const c = getVoiceCallConfig();
+  try {
+    const meter = chatgptVoiceMeter({ login: c.chatgpt.login, ownerId, allowanceMinutes: c.chatgpt.allowanceMinutes });
+    return { ...meter, text: describeVoiceMeter(meter, { own: Boolean(ownerId) }) };
+  } catch { return null; }
 }
 // Which voice providers can take a call right now (enabled and configured).
 export function voiceProviderState() {
@@ -1426,7 +1438,7 @@ export function settingsForApi() {
       models: [...VOICE_CALL_MODELS],
       voices: [...VOICE_CALL_VOICES],
       defaultProvider: getVoiceCallConfig().defaultProvider,
-      chatgpt: { ...getVoiceCallConfig().chatgpt, models: [...CHATGPT_VOICE_MODELS], logins: voiceChatgptLoginOptions() },
+      chatgpt: { ...getVoiceCallConfig().chatgpt, models: [...CHATGPT_VOICE_MODELS], logins: voiceChatgptLoginOptions(), meter: voiceMinutesView() },
     },
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
