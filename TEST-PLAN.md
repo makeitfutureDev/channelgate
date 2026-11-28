@@ -18560,3 +18560,30 @@ Composio project key in the channel inventory:
   delivery and silent startup. Have the task delegate a harmless marker to a background agent.
   Verify each job notice and the final marker have the original root as their Slack `thread_ts`
   and appear once. Confirm the next schedule fire still starts a fresh engine session.
+
+## Admin console variable visibility switch (2026-11-28)
+
+Regression: `test/admin-variable-visibility.test.js` covers organization, conversation and personal
+scopes through the real admin router. A stored hidden variable switches to readable and back with
+`PATCH { exposure }`. The value is unchanged and never appears in a response or an audit row.
+`secret_mode_set` names the scope, the variable and the mode. A body with a value, an unknown mode
+or an unknown name is refused with 400. The client test checks that Make readable confirms before
+sending its PATCH.
+
+Live acceptance (engine-independent: the switch is an admin web action. Its effect on the next run
+is the existing secret injection contract, which both engines read through the same spawn env):
+
+- [ ] **Organization:** in the admin console, Variables → Organization variables, add a test
+  variable `CG_QA_VIS_KEY` with Secret ticked. Click **Make readable**. Pass: a confirmation asks
+  first, and after confirming the row shows 👁 Readable. `list_secrets` reports `readable (raw)
+  [set readable]`. In a test channel, a Claude turn and a Codex turn each report that
+  `${#CG_QA_VIS_KEY}` equals the real length and that the value does not start with `cgph_`, without
+  printing it. Click **Make secret**. Pass: the row shows 🔒 Secret without a confirmation, and the
+  next turn on each engine sees a value starting with `cgph_`.
+- [ ] **Conversation and personal:** repeat on a channel card's Environment variables and on a
+  user's Personal variables. Pass: the same row changes, and only that scope's runs are affected.
+- [ ] **Password-like name:** add `CG_QA_VIS_PASSWORD`, then Make readable followed by Make secret. Pass: the hint
+  says it stays readable and gives the reason.
+- [ ] **Audit:** Pass: `events` holds `secret_mode_set` rows with the scope, name and mode, and no
+  value.
+

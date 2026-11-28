@@ -72,7 +72,7 @@ import { channelCodexHome } from "../../gateway/channel-codex-auth.js";
 import { engineLabel, modelBelongsToEngine } from "../../engines/registry.js";
 // Per-channel environment secrets. WRITE-ONLY: listChannelEnv is the only shape that may leave the
 // process, and there is deliberately no reveal route (see config/channel-env.js and web/secrets.js).
-import { listChannelEnv, normalizeEnvName, patchChannelEnv, swapRuleFieldsFrom } from "../../config/channel-env.js";
+import { listChannelEnv, normalizeEnvName, parseExposureChange, patchChannelEnv, patchEnvEntry, swapRuleFieldsFrom } from "../../config/channel-env.js";
 // Per-channel POLICY changes (Allow-network, Full access, work folder, access lists, engine…) are
 // audited by diffing the record that was replaced against the one now stored — see config/channel-audit.js.
 import { ADMIN_UI_ACTOR, logChannelPolicyChange } from "../../config/channel-audit.js";
@@ -842,6 +842,31 @@ export function createChannelsRouter({
       await ensureChannelFolder(ctx.entry.slug, effectiveMeta(saved));
       // Name only. The audit trail must never carry what was set.
       logEvent("channel_env_set", { slug: ctx.entry.slug, name, actor: WEB_ADMIN_ACTOR });
+      res.json({ ok: true, vars: listChannelEnv(saved) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Secret ↔ readable for one variable, value untouched (the Slack settings modal's Make readable /
+  // Make secret, for the web console). Inside the store transaction like the PUT.
+  router.patch("/channels/:channelId/env/:name", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      const name = normalizeEnvName(req.params.name);
+      let saved;
+      let exposure;
+      try {
+        exposure = parseExposureChange(req.body);
+        saved = await patchChannelMeta(ctx.entry.slug, (existing) => ({
+          env: patchEnvEntry(existing?.env, req.params.name, { exposure, scopeWhere: "this channel" }),
+        }));
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      await ensureChannelFolder(ctx.entry.slug, effectiveMeta(saved));
+      logEvent("secret_mode_set", { scope: "channel", slug: ctx.entry.slug, name, exposure, actor: WEB_ADMIN_ACTOR });
       res.json({ ok: true, vars: listChannelEnv(saved) });
     } catch (e) {
       next(e);

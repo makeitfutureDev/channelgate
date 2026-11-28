@@ -73,8 +73,8 @@ import { isValidModel } from "../../slack/util.js";
 import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS, effortShortcut } from "../../config/model-shortcuts.js";
 // Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
 // listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
-import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
-import { normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
+import { listOrgEnv, patchOrgEnv, patchSecretEntry } from "../../config/scoped-env.js";
+import { normalizeEnvName, parseExposureChange, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
 import { invalidateAllSessions, authEnabled, adminSession, requireRecentAdminAuth, passkeysConfigured } from "../auth.js";
 import { readSecret } from "../secrets.js";
@@ -1097,6 +1097,24 @@ export function createSettingsRouter({
       // Name only. The audit trail must never carry what was set.
       logEvent("org_env_set", { name, actor: ORG_SECRET_ACTOR });
       res.json({ ok: true, vars });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Switch one variable between secret (a proxy placeholder) and readable (the raw value) without
+  // re-entering it. The value is never read or returned; the audit line carries the name and mode.
+  router.patch("/org-secrets/:name", async (req, res, next) => {
+    try {
+      const name = normalizeEnvName(req.params.name);
+      try {
+        const exposure = parseExposureChange(req.body);
+        await patchSecretEntry({ scope: "organization", name: req.params.name, exposure });
+        logEvent("secret_mode_set", { scope: "organization", name, exposure, actor: ORG_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(e.statusCode || 400).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
+      }
+      res.json({ ok: true, vars: listOrgEnv() });
     } catch (e) {
       next(e);
     }
