@@ -199,7 +199,6 @@ export function allowedRootFor(target, roots = allowedFsRoots()) {
   return roots.find((root) => pathWithin(root, target)) || "";
 }
 
-// resolveWithinRoot over every allowed root: the real path when it sits inside ANY of them.
 /** Names of the sub-folders of `dir` for the folder pickers, sorted. A symlink counts only when it
  *  resolves to a directory: a link to a regular file (a channel's AGENTS.md -> CLAUDE.md) or a
  *  dangling link is not a folder anyone can pick. */
@@ -214,6 +213,7 @@ export async function listSubfolderNames(dir) {
   return kept.filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
+// resolveWithinRoot over every allowed root: the real path when it sits inside ANY of them.
 export function resolveWithinRoots(candidate, roots = allowedFsRoots()) {
   for (const root of roots) {
     const real = resolveWithinRoot(root, candidate);
