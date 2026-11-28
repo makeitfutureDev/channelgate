@@ -4076,6 +4076,7 @@ function readSettingsForm() {
     ...(document.getElementById("set-voice-chatgpt-login").value ? { voiceChatgptLogin: document.getElementById("set-voice-chatgpt-login").value } : {}),
     ...(document.getElementById("set-voice-chatgpt-model").value ? { voiceChatgptModel: document.getElementById("set-voice-chatgpt-model").value } : {}),
     voiceDefaultProvider: document.getElementById("set-voice-default-provider").value || "gemini",
+    voiceChatgptAllowanceMinutes: Math.max(0, Math.min(1440, Math.round(Number(document.getElementById("set-voice-chatgpt-allowance").value) || 0))),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
@@ -4160,6 +4161,11 @@ function paintSettings(s) {
   chatgptModel.replaceChildren(...(chatgptVoice.models || []).map((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; return option; }));
   chatgptModel.value = chatgptVoice.model || "";
   document.getElementById("set-voice-default-provider").value = voice.defaultProvider || "gemini";
+  document.getElementById("set-voice-chatgpt-allowance").value = chatgptVoice.allowanceMinutes ? String(chatgptVoice.allowanceMinutes) : "";
+  // OpenAI does not expose the plan's voice allowance: this counts this gateway's own ChatGPT calls.
+  document.getElementById("voice-chatgpt-minutes").textContent = chatgptVoice.meter?.text
+    ? `This gateway's ChatGPT voice: ${chatgptVoice.meter.text}; ${Math.round((chatgptVoice.meter.weekMs || 0) / 60000)} min in the last 7 days. Use in the ChatGPT apps on the same plan is not counted.`
+    : "";
   document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
   document.getElementById("set-perplexity-session-token").value = "";
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";

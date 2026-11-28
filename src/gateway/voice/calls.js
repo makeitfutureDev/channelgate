@@ -38,6 +38,7 @@ import { startChatgptLiveCall } from "./chatgpt-live.ts";
 import { CHATGPT_VOICE_ENGINE, GEMINI_VOICE_ENGINE, VOICE_PROVIDER_LABELS, chooseVoiceProvider } from "./providers.ts";
 import { channelNameFrom, routeDelegation } from "./delegation-router.ts";
 import { VOICE_TASK_EFFORT, buildVoiceTaskText, describeActivity } from "./voice-task.ts";
+import { callUsedMs, chatgptVoiceMeter, describeVoiceMeter, recordChatgptCallUsage, recordChatgptLimit, setLiveChatgptUsageSource } from "./voice-minutes.ts";
 import { saveCallHistory } from "./history.js";
 import { completeThreadForCaller, recordVoiceThreadRequest } from "../../slack/thread-done-action.js";
 import { indexSlackVoiceThread } from "../slack-threads.js";
@@ -253,13 +254,14 @@ export function createCallManager({
   snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory, loadHistory = defaultLoadVoiceHistory,
   log = logEvent, saveHistory = saveCallHistory, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS, suspendGraceMs = SUSPEND_GRACE_MS,
   startChatgpt = startChatgptLiveCall, providerState = null, offerTimeoutMs = OFFER_TIMEOUT_MS,
+  meter = chatgptVoiceMeter, recordMinutes = recordChatgptCallUsage, recordLimit = recordChatgptLimit,
 } = {}) {
   const calls = new Map();
   const config = () => {
     const c = getConfig() || {};
     const chatgpt = c.chatgpt && typeof c.chatgpt === "object" ? c.chatgpt : {};
     return { enabled: c.enabled === true, apiKey: c.apiKey || "", model: c.model, voice: c.voice,
-      chatgpt: { enabled: chatgpt.enabled === true, login: chatgpt.login || "codex", model: chatgpt.model || "" },
+      chatgpt: { enabled: chatgpt.enabled === true, login: chatgpt.login || "codex", model: chatgpt.model || "", allowanceMinutes: Number(chatgpt.allowanceMinutes) || 0 },
       defaultProvider: c.defaultProvider === "chatgpt" ? "chatgpt" : "gemini" };
   };
   // Which providers can take a call: an injected reader (tests), else derived from the config.
@@ -451,7 +453,10 @@ export function createCallManager({
     const idle = setInterval(() => { if (now() - call.lastActivityMs > idleMs) void end(id, ownerId, "no audio for a while"); }, Math.min(idleMs, 30_000)); idle.unref?.();
     call.timers.push(limit, idle);
     await log("voice_call_started", { id, channelId: call.bound?.channelId || "", threadTs: call.bound?.threadTs || "", ownerId, model: call.model, provider }).catch(() => {});
-    return { id, threadTs: call.bound?.threadTs || "", channelName: call.bound?.channelName || "", callerName, model: call.model, provider, providerLabel: VOICE_PROVIDER_LABELS[provider], awaitingOffer: provider === "chatgpt", bound: boundView(call) };
+    // A ChatGPT caller sees how much of the plan's rolling voice allowance this gateway has used.
+    let minutes = null;
+    if (provider === "chatgpt") { try { minutes = meter({ login: call.chatgptLogin, ownerId, allowanceMinutes: c.chatgpt.allowanceMinutes, now: now() }); } catch { minutes = null; } }
+    return { id, threadTs: call.bound?.threadTs || "", channelName: call.bound?.channelName || "", callerName, model: call.model, provider, providerLabel: VOICE_PROVIDER_LABELS[provider], awaitingOffer: provider === "chatgpt", bound: boundView(call), ...(minutes ? { minutes: { ...minutes, text: describeVoiceMeter(minutes, { own: true, now: now() }) } } : {}) };
   }
 
   // ChatGPT: the browser's WebRTC offer becomes a GPT-Live call created with the gateway's ChatGPT
@@ -488,6 +493,7 @@ export function createCallManager({
     const session = call.session;
     session.on("ready", () => {
       call.status = "live"; broadcast(call, { type: "ready" });
+      if (!call.connectedAtMs) call.connectedAtMs = now();
       // Gemini greets an incoming call on its first audio chunk; a ChatGPT call has none here.
       if (call.provider === "chatgpt" && call.openingReason) {
         const reason = call.openingReason; call.openingReason = "";
@@ -505,6 +511,7 @@ export function createCallManager({
         const status = String(usage?.limit?.status || "");
         if (status && !/^(ok|available|within|normal)/i.test(status) && call.limitStatus !== status) {
           call.limitStatus = status;
+          void recordLimit({ login: call.chatgptLogin, ownerId: call.ownerId, status, resetSeconds: Number(usage.limit.resetSeconds) || 0 }).catch(() => {});
           broadcast(call, { type: "error", message: `ChatGPT voice allowance: ${clean(status, 60)}${usage.limit.resetSeconds ? ` (renews in about ${Math.ceil(usage.limit.resetSeconds / 60)} min)` : ""}` });
         }
         return;
@@ -896,6 +903,11 @@ export function createCallManager({
       if (connected) await record({ channelId: call.bound?.channelId || first?.channelId || "", slug: call.bound?.slug || "", authorId: call.ownerId, engine: call.provider === "chatgpt" ? CHATGPT_VOICE_ENGINE : VOICE_ENGINE, model: call.model, taskKind: "voice-call",
         result: { usage: { input_tokens: call.usage.audioIn + call.usage.textIn, output_tokens: call.usage.audioOut + call.usage.textOut }, costUSD, durationMs, model: call.model, ...(call.provider === "chatgpt" ? { audioMs: call.audioMs, subscription: true } : {}) } });
     } catch { /* accounting is best-effort */ }
+    // The voice-minute meter (voice-minutes.ts): one record per connected ChatGPT call.
+    if (call.provider === "chatgpt" && call.connectedAtMs) {
+      try { await recordMinutes({ callId: id, login: call.chatgptLogin, ownerId: call.ownerId, audioMs: call.audioMs, connectedMs: now() - call.connectedAtMs, planType: call.planType || "" }); }
+      catch { /* metering is best-effort */ }
+    }
     await leaveSegment(call, { durationMs, costUSD, reason, endedMs: call.startedMs + durationMs });
     const threads = [...new Map(call.visited.map((v) => [`${v.channelId}:${v.threadTs}`, {
       channelId: v.channelId, channelName: v.channelName, threadTs: v.threadTs, title: v.title,
@@ -926,9 +938,18 @@ export function createCallManager({
     await Promise.all([...calls.keys()].map((id) => end(id, "", reason)));
   }
 
-  return { available, start, offer, heartbeat, subscribe, audio, switchConversation, suspend, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
+  // Running ChatGPT calls, for the voice-minute meter: what each has used so far.
+  function liveChatgpt() {
+    return [...calls.values()].filter((call) => call.provider === "chatgpt" && call.connectedAtMs && !call.ending)
+      .map((call) => ({ login: call.chatgptLogin, ownerId: call.ownerId, usedMs: callUsedMs({ audioMs: call.audioMs, connectedMs: now() - call.connectedAtMs }) }));
+  }
+
+  return { available, start, offer, heartbeat, subscribe, audio, switchConversation, suspend, end, endAll, liveChatgpt, get: (id) => calls.get(id) || null, size: () => calls.size };
 }
 
 let shared = null;
-export function callManager() { return shared || (shared = createCallManager()); }
+export function callManager() {
+  if (!shared) { shared = createCallManager(); setLiveChatgptUsageSource(() => shared?.liveChatgpt?.() || []); }
+  return shared;
+}
 export function resetCallManagerForTests(manager = null) { shared = manager; }

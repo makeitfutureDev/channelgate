@@ -6,7 +6,7 @@
 import { getComposioMode, getEmailAccountsEnabled, userNudgesEnabled } from "../config/settings.js";
 import { getUser, setUser } from "../config/store.js";
 import { userReplyMentionsEnabled, userVoiceAutoStartEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX, VOICE_PROVIDER_CHOICES, VOICE_TASK_SPEED_CHOICES } from "../config/user-preferences.js";
-import { voiceProviderState } from "../config/settings.js";
+import { voiceMinutesView, voiceProviderState } from "../config/settings.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
 import { listUserEnv, patchUserEnv } from "../config/scoped-env.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
@@ -94,7 +94,7 @@ export async function userSettingsSnapshot(userId) {
     general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user), voiceAutoStart: userVoiceAutoStartEnabled(user) },
     // How the voice talks to this person on a call (gateway/voice/calls.js). Plain preferences,
     // nothing secret; the closed sets travel with the values so the page offers exactly them.
-    voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], task_speeds: [...VOICE_TASK_SPEED_CHOICES], providers: voiceProvidersView(), limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
+    voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], task_speeds: [...VOICE_TASK_SPEED_CHOICES], providers: voiceProvidersView(), minutes: voiceProviderState().chatgpt ? voiceMinutesView({ ownerId: userId }) : null, limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },

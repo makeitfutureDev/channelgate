@@ -113,6 +113,14 @@ test("secret inputs are never prefilled, and access loss clears the page", async
   assert.match(status.textContent, /session has ended/);
 });
 
+test("Voice calls section shows the ChatGPT voice-minute meter when ChatGPT voice is on", async () => {
+  const data = snapshot({ voice: { language: "", style: "brief", patience: "normal", instructions: "", provider: "chatgpt", taskSpeed: "normal", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], task_speeds: ["normal", "quick"], providers: { gemini: true, chatgpt: true, defaultProvider: "gemini" }, minutes: { usedMs: 720000, text: "12 min used in the last 5 hours (3 min by you) · about 18 min left of 30 min" }, limits: { language: 60, instructions: 2000 } } });
+  const { panel } = browser(async () => reply(data), { hash: "#voice" });
+  await flush();
+  assert.ok(find(panel, "p", "ChatGPT voice on this gateway's plan: 12 min used in the last 5 hours (3 min by you) · about 18 min left of 30 min. Minutes used in the ChatGPT apps on the same plan are not counted here."));
+  assert.deepEqual(panel.querySelectorAll("select")[2].children.map((o) => o.value), ["", "gemini", "chatgpt"]);
+});
+
 test("Voice calls section offers the closed choices and saves the person's own preferences", async () => {
   let data = snapshot({ voice: { language: "Romanian", style: "conversational", patience: "patient", instructions: "Call me Tibi.", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } } });
   const { panel, nav, requests, status } = browser(async (url, options) => {
@@ -129,6 +137,7 @@ test("Voice calls section offers the closed choices and saves the person's own p
   assert.deepEqual(selects.map((s) => s.name), ["style", "patience", "provider", "taskSpeed"]);
   assert.deepEqual(selects[2].children.map((o) => o.value), ["", "gemini"], "only providers an admin turned on are offered");
   assert.deepEqual(selects[3].children.map((o) => o.value), ["normal", "quick"]);
+  assert.ok(!panel.all().some((c) => c.tag === "p" && /ChatGPT voice on this gateway/.test(c.textContent || "")), "no meter without ChatGPT voice");
   assert.deepEqual(selects[0].children.map((o) => o.value), ["brief", "conversational", "thinking-partner"]);
   assert.equal(selects[0].children.find((o) => o.selected).value, "conversational");
   assert.equal(selects[1].children.find((o) => o.selected).value, "patient");

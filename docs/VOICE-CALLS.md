@@ -109,6 +109,13 @@ What differs:
   time. These phrasings are English; in other languages your request reaches the agent as a task,
   and the dashboard still moves the call by click.
 - **The voice is the ChatGPT account's own voice setting**; the gateway does not change it.
+- **Voice minutes.** OpenAI does not say how much of the plan's rolling voice allowance is left, so
+  the gateway counts its own ChatGPT calls per sign-in: "12 min used in the last 5 hours (3 min by
+  you)". It appears in Activity → Settings → Voice calls, under the call panel when a ChatGPT call
+  starts, and on the admin Calls card (with the last 7 days). If an administrator enters the plan's
+  allowance per 5 hours, it also says "about 18 min left of 30 min"; once OpenAI reports the
+  allowance used up, it says so and when it renews. Use of the same plan in the ChatGPT apps is not
+  counted.
 - This is the voice endpoint the Codex CLI uses, not a published API: OpenAI can change it without
   notice. If a ChatGPT call fails to connect, the panel shows OpenAI's reason (for example a used-up
   allowance).
@@ -180,7 +187,9 @@ Settings → **Voice calls**:
 - **Also offer ChatGPT voice (GPT-Live) on a ChatGPT sign-in** — off by default. Pick the
   **ChatGPT sign-in** (the default Codex sign-in, or any "ChatGPT sign-in" license under Settings →
   Engines; an API-key login does not work), the **ChatGPT voice model** (`gpt-live-1.1-codex` by
-  default) and the **Default for callers**. Every caller draws on that one plan's voice allowance;
+  default), the **Default for callers** and, optionally, the **Plan voice allowance (min per 5 h)** —
+  your estimate of what the plan allows, used only to show minutes left (OpenAI does not publish
+  it; leave 0 for unknown). Every caller draws on that one plan's voice allowance;
   pick a sign-in whose plan can carry your team's minutes. Voice calls work with only ChatGPT on
   (no Gemini key), except from the iPhone app.
 
@@ -234,6 +243,10 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
   speakable and commentary context (≤500-byte chunks), usage and the allowance status.
 - `src/gateway/voice/delegation-router.ts` — turns a GPT-Live delegation into one of the call's
   tools (conservative; anything unclear is a task).
+- `src/gateway/voice/voice-minutes.ts` — the ChatGPT voice-minute meter: one
+  `voice_chatgpt_usage` event per connected call (sign-in, audio time OpenAI reported, connected
+  time) and a `voice_chatgpt_limit` event when OpenAI reports the allowance used up; the meter sums
+  the last 5 hours and 7 days per sign-in plus the calls still running.
 - `src/gateway/voice/voice-task.ts` — the voice note added to a spoken task and the short activity
   phrases.
 - `src/web/call-overlay.js` — the overlay: microphone capture through an AudioWorklet

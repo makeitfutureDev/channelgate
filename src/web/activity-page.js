@@ -1467,6 +1467,7 @@ function settingsBrowser(config, browser, theme, connections) {
         item.value = current;
         return item;
       };
+      if (v.minutes && v.minutes.text) prefs.append(node("p", "settings-copy", "ChatGPT voice on this gateway's plan: " + v.minutes.text + ". Minutes used in the ChatGPT apps on the same plan are not counted here."));
       prefs.append(form([
         field("Language", input("language", { value: v.language, max: v.limits.language, placeholder: "e.g. Romanian, English" }), "Leave empty and it follows whatever language you speak."),
         field("Style", select("style", v.styles, v.style, styleLabels)),

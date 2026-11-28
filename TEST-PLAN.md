@@ -3094,6 +3094,18 @@ Engine-independent daemon command: as an approved member, send mentioned `/mode`
   CSRF, `/alive`, `webrtc` passed through `/call/start`, overlay markup), `test/user-settings.test.js`
   and `test/activity-settings-page.test.js` (provider and task speed saved, defaults kept for older
   clients, only enabled providers offered).
+- ChatGPT voice-minute meter (engine-independent): `test/voice-minutes.test.ts` (5-hour and 7-day
+  sums per sign-in, audio time preferred over connected time, live calls and the caller's share,
+  allowance remaining never below 0 and clamped to a day, the used-up status until renewal, the admin
+  setting accepted as whole minutes 0–1440 and refused otherwise without change, the admin listing's
+  meter text), `test/voice-calls.test.js` (the start response's meter text for a ChatGPT call and
+  none for Gemini, a running call counted, one limit record per status change, one usage record per
+  connected call, none for a call that never connected, the overlay's minutes line) and
+  `test/activity-settings-page.test.js` (the Voice calls section shows the meter only with ChatGPT
+  voice on). Live: after VOICE-CHATGPT-01, set Plan voice allowance to 30, make a 2-minute ChatGPT
+  call, then confirm Activity → Settings → Voice calls, the next call's panel and the admin Calls
+  card all show about 2 min used and about 28 min left; with a second person's call, each sees the
+  same total and their own share.
 - Live acceptance — ChatGPT voice (engine-independent for the voice lane; the dispatched task runs
   separately on Claude and on Codex): fixture: a gateway with a Public URL over HTTPS, Codex signed
   in with a ChatGPT plan (or a "ChatGPT sign-in" license), a disposable Worker channel with one open

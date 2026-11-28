@@ -1144,12 +1144,14 @@ class FakeChatgptSession extends EventEmitter {
   live() { this.ready = true; this.emit("ready"); }
 }
 function chatgptFixture(overrides = {}) {
-  const offers = [];
+  const offers = [], minuteRecords = [], limitRecords = [];
   let session = null;
-  const both = { enabled: true, apiKey: "AIzaTestKey_0123456789abc", model: "gemini-3.8-live", voice: "Kore", chatgpt: { enabled: true, login: "codex-lic-0a1b2c3d", model: "gpt-live-1.1-codex" }, defaultProvider: "chatgpt" };
+  const both = { enabled: true, apiKey: "AIzaTestKey_0123456789abc", model: "gemini-3.8-live", voice: "Kore", chatgpt: { enabled: true, login: "codex-lic-0a1b2c3d", model: "gpt-live-1.1-codex", allowanceMinutes: 30 }, defaultProvider: "chatgpt" };
   const f = fixture({
     getConfig: () => both,
     startChatgpt: async (options) => { offers.push(options); session = new FakeChatgptSession(); return { session, answer: "v=0\r\nanswer", planType: "pro" }; },
+    meter: ({ login, ownerId, allowanceMinutes }) => ({ login, windowMs: 18_000_000, usedMs: 12 * 60_000, ownUsedMs: 3 * 60_000, weekMs: 40 * 60_000, calls: 2, allowanceMs: allowanceMinutes * 60_000, remainingMs: allowanceMinutes ? (allowanceMinutes - 12) * 60_000 : null, limit: null, ownerId }),
+    recordMinutes: async (row) => { minuteRecords.push(row); }, recordLimit: async (row) => { limitRecords.push(row); },
     runner: async (args) => {
       f.runs.push(args);
       args.onEvent?.({ kind: "tool_use", name: "Bash", target: "npm test -- --token=sk-secret" });
@@ -1158,7 +1160,7 @@ function chatgptFixture(overrides = {}) {
     },
     ...overrides,
   });
-  return Object.assign(f, { offers, session: () => session });
+  return Object.assign(f, { offers, minuteRecords, limitRecords, session: () => session });
 }
 
 test("a ChatGPT call waits for the browser's WebRTC offer, routes delegations to the call's tools and is accounted to the plan", async () => {
@@ -1172,6 +1174,8 @@ test("a ChatGPT call waits for the browser's WebRTC offer, routes delegations to
   await f.manager.end(phone.id, "U_MINE", "test");
   const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client, webrtc: true });
   assert.equal(call.provider, "chatgpt"); assert.equal(call.awaitingOffer, true); assert.equal(call.model, "gpt-live-1.1-codex");
+  assert.equal(call.minutes.text, "12 min used in the last 5 hours (3 min by you) · about 18 min left of 30 min", "the caller sees the plan's recent voice use");
+  assert.equal(phone.minutes, undefined, "a Gemini call carries no ChatGPT meter");
   await assert.rejects(f.manager.offer(call.id, "U_OTHER", "v=0"), (e) => e.status === 404, "only the caller's browser completes the call");
   const answer = await f.manager.offer(call.id, "U_MINE", "v=0\r\noffer");
   assert.deepEqual(answer, { sdp: "v=0\r\nanswer" });
@@ -1184,6 +1188,7 @@ test("a ChatGPT call waits for the browser's WebRTC offer, routes delegations to
   f.manager.subscribe(call.id, "U_MINE", (event) => seen.push(event));
   session.live();
   assert.ok(f.manager.heartbeat(call.id, "U_MINE"));
+  assert.deepEqual(f.manager.liveChatgpt().map(({ login, ownerId }) => ({ login, ownerId })), [{ login: "codex-lic-0a1b2c3d", ownerId: "U_MINE" }], "a running call counts toward the meter");
   // Listing and picking by number.
   session.emit("delegation", { id: "d1", text: "What am I working on?" });
   await tick();
@@ -1222,10 +1227,18 @@ test("a ChatGPT call waits for the browser's WebRTC offer, routes delegations to
   await tick();
   assert.match(session.responses.at(-1).response.error, /No channel named|No conversation or channel/);
   session.emit("usage", { audioMs: 125_000, limit: { status: "ok" } });
+  assert.equal(f.limitRecords.length, 0);
+  session.emit("usage", { audioMs: 125_000, limit: { status: "exceeded", resetSeconds: 900 } });
+  session.emit("usage", { audioMs: 125_000, limit: { status: "exceeded", resetSeconds: 890 } });
+  assert.deepEqual(f.limitRecords, [{ login: "codex-lic-0a1b2c3d", ownerId: "U_MINE", status: "exceeded", resetSeconds: 900 }], "a used-up allowance is recorded once");
   session.emit("delegation", { id: "d6", text: "Goodbye" });
   await tick(30);
   assert.equal(f.manager.get(call.id), null, "the call ended");
   assert.ok(session.closed);
+  assert.equal(f.minuteRecords.length, 1);
+  assert.equal(f.minuteRecords[0].login, "codex-lic-0a1b2c3d"); assert.equal(f.minuteRecords[0].ownerId, "U_MINE");
+  assert.equal(f.minuteRecords[0].audioMs, 125_000); assert.equal(f.minuteRecords[0].planType, "pro"); assert.ok(f.minuteRecords[0].connectedMs >= 0);
+  assert.equal(f.manager.liveChatgpt().length, 0);
   const usage = f.records.find((r) => r.engine === "chatgpt-live");
   assert.equal(usage.taskKind, "voice-call"); assert.equal(usage.result.costUSD, 0); assert.equal(usage.result.audioMs, 125_000); assert.equal(usage.model, "gpt-live-1.1-codex");
   assert.match(f.posted.at(-1).text, /Voice call ended\* — \d+ min · 1 task · ChatGPT plan voice/);
@@ -1239,6 +1252,7 @@ test("a ChatGPT call with no offer is dropped, and a failed offer ends the call 
   await tick(40);
   assert.equal(quiet.manager.get(pending.id), null);
   assert.equal(quiet.records.length, 0, "a call that never connected records no voice usage");
+  assert.equal(quiet.minuteRecords.length, 0, "and no voice minutes");
   const failing = chatgptFixture({ startChatgpt: async () => { throw Object.assign(new Error("ChatGPT voice refused the call: HTTP 401"), { status: 502 }); } });
   const call = await failing.manager.start({ ownerId: "U_MINE", client: failing.client, webrtc: true });
   await assert.rejects(failing.manager.offer(call.id, "U_MINE", "v=0"), (e) => e.status === 502 && /HTTP 401/.test(e.message));
@@ -1272,5 +1286,6 @@ test("the offer and alive routes are the session owner's, CSRF-protected, and ta
   await f.request(`${s.sessionBase}/call/start`, { method: "POST", headers: { ...s.headers, "Content-Type": "application/json" }, body: JSON.stringify({ channelId: "C_WORK", webrtc: true }) });
   assert.equal(f.started.at(-1).webrtc, true);
   const page = await (await f.request(s.sessionBase, { headers: { cookie: s.cookie } })).text();
+  assert.match(page, /data-call="minutes"/); assert.match(page, /"ChatGPT plan voice: " \+ data\.minutes\.text/);
   assert.match(page, /RTCPeerConnection/); assert.match(page, /createDataChannel\("oai-events"\)/); assert.match(page, /\/call\/" \+ id \+ "\/offer"/);
 });
