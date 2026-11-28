@@ -3879,8 +3879,12 @@ control-plane status.
   failed, or unreported. Missing, malformed, duplicate, incomplete, or contradictory connection
   reports cannot count as healthy empty checks. Only an explicit healthy `no-op` is filtered by
   `on-result`. Failure/unreported messages remain visible unless the owner selects
-  failure-notification suppression. Connection checks are names and available/unavailable/unknown
-  status, explicitly agent-reported rather than independently verified.
+  failure-notification suppression. Automation-result fences are stripped from delivered answers
+  even when malformed, duplicated, followed by later output, or unterminated; unrelated code
+  fences are preserved. Missing or invalid reports append a short outcome-not-reported notice
+  when scheduled output is delivered, including saved delivery retries. API answers use the same
+  stripping without changing their reporting policy. Connection checks are names and
+  available/unavailable/unknown status, explicitly agent-reported rather than independently verified.
 - Admin UI → Automations → **Runs** shows KPIs, run/request/due timestamps, scheduling delay, last
   activity, duration, observed agent activity, engine/model, tools, token use, cost (unknown stays
   unknown), connection checks and bounded event logs. The dialog refreshes every five seconds while

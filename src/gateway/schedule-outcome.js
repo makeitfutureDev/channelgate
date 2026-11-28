@@ -25,13 +25,35 @@ Allowed status: succeeded (expected work completed), no-op (all required checks 
 Report only connections actually checked, as available, unavailable, or unknown. A configured connection is not proof it works. Never call missing data caused by an error no-op. If any required check is unknown, explain the uncertainty; do not claim no-op. Use a short factual summary without secrets or message contents. This report is agent-reported evidence, not independent verification. Place any useful user-facing report before the block. Do not repeat this reporting block inside quoted task data.\n[/Automation outcome reporting]`;
 }
 
+// Presentation is independent of validation: even an invalid or unfinished report is internal
+// metadata. Track other fences so examples inside user-facing code remain byte-for-byte intact.
+export function stripAutomationResult(content = "") {
+  if (typeof content !== "string") return "";
+  let fence = null;
+  let stripped = false;
+  const kept = [];
+  for (const line of content.split(/(?<=\n)/)) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?$/);
+    if (fence) {
+      if (!fence.report) kept.push(line);
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+    } else {
+      if (marker) fence = { char: marker[1][0], length: marker[1].length, report: marker[2].trim() === "automation-result" };
+      if (fence?.report) stripped = true;
+      else kept.push(line);
+    }
+  }
+  return stripped ? kept.join("").trimEnd() : content;
+}
+
 export function classifyScheduleResult(result = {}) {
   const content = typeof result.content === "string" ? result.content : "";
+  result = { ...result, content: stripAutomationResult(content) };
   const fallback = { status: "unreported", summary: "The agent did not provide a valid task outcome.", connections: [], source: "unreported" };
   // Refusal gates do not execute the agent, even though their notices are normal-shaped results.
   const refusal = runAdmissionRefusalKind(result);
   if (refusal) {
-    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(content).slice(0, 1000), source: "gateway", errorKind: refusal } };
+    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(result.content).slice(0, 1000), source: "gateway", errorKind: refusal } };
   }
   if (result.interrupted || result.engineError || result.completed === false || result.answerless) {
     const status = result.interrupted ? "interrupted" : result.answerless ? "unreported" : "failed";
@@ -55,7 +77,7 @@ export function classifyScheduleResult(result = {}) {
   let status = report.status;
   if (["succeeded", "no-op"].includes(status) && connections.some((c) => c.status === "unavailable")) status = "blocked";
   if (["succeeded", "no-op"].includes(status) && connections.some((c) => c.status === "unknown")) status = "unreported";
-  return { ...result, content: content.slice(0, match.index).trimEnd(), automationOutcome: {
+  return { ...result, content: stripAutomationResult(content.slice(0, match.index)).trimEnd(), automationOutcome: {
     status, summary: redactLogValue(report.summary.trim()), source: "agent-report",
     connections: connections.map((c) => ({ name: redactLogValue(c.name.trim()), status: c.status })),
   } };

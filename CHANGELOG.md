@@ -19,6 +19,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Scheduled and API answers strip invalid or unfinished automation outcome blocks while preserving
+  other code fences. Scheduled output with a missing or invalid report now includes an explicit
+  outcome-not-reported notice when delivery is enabled, including saved delivery retries.
+
 - Folder browsing (`list_folders` and the working-folder picker) no longer lists a link to a file,
   such as a channel's `AGENTS.md`, as a folder. Links to folders are still listed.
 

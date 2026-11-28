@@ -64,7 +64,7 @@ test("a Chat schedule retries its saved result with Slack disconnected, without 
     assert.equal(saved.executionState, "completed");
     await scheduler.runSchedule(saved, { ...deps, deliver: async (_target, { result }) => posts.push(result) });
     assert.equal(executions, 1);
-    assert.equal(posts.at(-1).content, "saved answer");
+    assert.equal(posts.at(-1).content, "saved answer\n\nAutomation outcome not reported: The agent did not provide a valid task outcome.");
     assert.equal(schedules.getSchedules().some((item) => item.id === sched.id), false);
   } finally { clearInterval(timer); unregisterTransport("googlechat"); }
 });
@@ -87,7 +87,7 @@ test("API recovery retries delivery checkpoints and never executes an interrupte
   const db = getDb();
   const insert = (job) => db.prepare("INSERT INTO api_jobs(id,status,created_ms,data) VALUES(?,?,?,?)").run(job.id, job.status, Date.now(), toJson({ ...job, createdMs: Date.now() }));
   insert({ id: "release-api-unknown", status: "running", textForRun: "side effects may have happened" });
-  insert({ id: "release-api-output", status: "completed", slackThread: true, channelId: "C_TEST", threadKey: "123.000100", deliveryPending: true, result: { content: "durable result" } });
+  insert({ id: "release-api-output", status: "completed", slackThread: true, channelId: "C_TEST", threadKey: "123.000100", deliveryPending: true, result: { content: "durable result\n```automation-result\n{bad json\n```" } });
   let delivered = 0;
   const slack = { snapshot: () => ({ connected: true }), getClient: () => ({}) };
   await recoverApiRuns({ slack, deliver: async () => { throw new Error("offline"); } });

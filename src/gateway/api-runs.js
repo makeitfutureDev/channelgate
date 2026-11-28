@@ -62,7 +62,7 @@ import { isAdmin, isApproved } from "../config/store.js";
 import { postNotice, postDirectMessage, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
-import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule } from "./schedule-outcome.js";
+import { automationPrompt, classifyScheduleResult, normalizeSuccessCriteria, resultPosts, apiPostingRule, stripAutomationResult } from "./schedule-outcome.js";
 import { API_MAX_INFLIGHT, apiSourceId, backfillApiRunLedger, normalizeApiRunName, noteApiDuplicate, noteApiRejection, openApiRun, syncApiRun } from "./api-run-history.js";
 import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
 import { appendScheduleRunEvent } from "./schedule-runs.js";
@@ -261,6 +261,8 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
     const client = job.slackThread || job.visibility === "on-failure" ? connectedClient : null;
     try {
       if (client && job.slackThread && job.deliveryPending && job.result) {
+        // Checkpoints saved before outcome stripping may still contain internal report blocks.
+        job.result = { ...job.result, content: stripAutomationResult(job.result.content) };
         await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
           result: { ...job.result, engine: job.engine, cwd: job.cwd, sessionId: job.sessionId }, footer: true });
         job.deliveryPending = false;
@@ -867,7 +869,7 @@ export function apiRunOutcome(result = {}, { reportOutcome = false } = {}) {
   const classified = classifyScheduleResult(result);
   const outcome = classified.automationOutcome;
   if (reportOutcome || outcome.source === "gateway") return classified;
-  return { ...result, automationOutcome: { status: "unreported", summary: "", connections: [], source: "none" } };
+  return { ...classified, automationOutcome: { status: "unreported", summary: "", connections: [], source: "none" } };
 }
 
 // The per-thread slot a turn holds while it runs — the SAME queue Slack messages use, so an API
