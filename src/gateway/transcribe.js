@@ -185,7 +185,8 @@ export async function transcribeSlackAudioFiles(files, {
 }
 
 // Resolve each source clip in Slack order. Local Whisper is preferred when enabled, but any local
-// download/transcription failure falls through to Slack's generated transcript for that same clip.
+// download/transcription failure falls through to Slack's generated transcript for that same clip,
+// except measured digital silence: no text source can turn that signal into spoken words.
 // Keeping the download callback inside the enabled branch is the guarantee that no-Whisper servers
 // do not download raw audio at all.
 export async function resolveAudioTranscripts(files, {
@@ -223,15 +224,17 @@ export async function resolveAudioTranscripts(files, {
       }
     }
 
+    if (localFailure?.code === "NO_SPEECH") {
+      failed.push(localFailure);
+      continue;
+    }
     if (!complete) {
       const slack = await slackTranscriber([source], slackOptions);
       if (slack.transcripts?.[0]?.text) {
         transcripts.push({ name, text: slack.transcripts[0].text });
         complete = true;
       } else {
-        failed.push(localFailure?.code === "NO_SPEECH" ? localFailure : {
-          name, reason: boundedReason(slack.failed?.[0]?.reason || "Slack transcript is not ready — click Generate transcript, then re-trigger the bot."),
-        });
+        failed.push({ name, reason: boundedReason(slack.failed?.[0]?.reason || "Slack transcript is not ready — click Generate transcript, then re-trigger the bot.") });
       }
     }
     if (complete && saved?.path && typeof removeProcessed === "function") {

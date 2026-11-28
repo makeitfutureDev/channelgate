@@ -313,23 +313,22 @@ test("silent decoded audio produces a named no-speech failure before Whisper", a
   assert.deepEqual(await readdir(dir), ["silent.m4a"], "scratch is cleaned on silence rejection");
 });
 
-test("no-speech failure survives unavailable Slack fallback, while completed VTT stays usable", async () => {
-  const options = {
+test("measured silence is terminal even when Slack supplies a completed transcript", async () => {
+  let removals = 0;
+  const result = await resolveAudioTranscripts([{
+    name: "silent.wav",
+    transcription: { status: "complete", preview: { content: "you", has_more: false } },
+  }], {
     downloadLocal: async file => ({ ...file, path: "/fixture/silent.wav" }),
     localTranscriber: async () => ({ transcripts: [], failed: [{ reason: "No speech detected in this audio clip.", code: "NO_SPEECH" }] }),
-    slackTranscriber: async () => ({ transcripts: [], failed: [{ reason: "Slack transcript is not ready" }] }),
-  };
-  const source = [{ name: "silent.wav" }];
-  const result = await resolveAudioTranscripts(source, options);
+    slackTranscriber: async () => assert.fail("completed VTT cannot override proven silence"),
+    removeProcessed: async () => { removals++; return true; },
+  });
   assert.deepEqual(result.transcripts, []);
   assert.equal(result.failed[0].code, "NO_SPEECH");
   assert.match(result.failed[0].reason, /no speech detected/i);
-  const fallback = await resolveAudioTranscripts(source, {
-    ...options,
-    slackTranscriber: async () => ({ transcripts: [{ text: "Actual completed Slack transcript" }], failed: [] }),
-  });
-  assert.deepEqual(fallback.transcripts, [{ name: "silent.wav", text: "Actual completed Slack transcript" }]);
-  assert.deepEqual(fallback.failed, []);
+  assert.deepEqual(result.localFailed, result.failed);
+  assert.equal(removals, 0, "unresolved audio is retained for retry");
 });
 
 for (const text of ["you", "Thank you.", "Please summarize the report."]) {

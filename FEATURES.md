@@ -5478,7 +5478,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   measurement floor returns **No speech detected** before Whisper can invent words. An otherwise
   empty request with no completed Slack transcript starts no engine and posts no successful
   transcript. Audible short words (including “you”) remain eligible; this is a silence check,
-  not a phrase blacklist or general speech detector. Completed Slack VTT fallback remains available.
+  not a phrase blacklist or general speech detector. Confirmed silence cannot be overridden by a
+  completed Slack transcript; VTT fallback remains available for disabled or failed local processing.
   Teams and Google Chat likewise retain transcript replies before the agent answer and receive
   the same local silence check.
   → TEST-PLAN: Voice prompts.

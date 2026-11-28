@@ -11774,16 +11774,16 @@ structural invariants are automated; rendered navigation and feature claims also
 
 ### Voice prompts (optional local Whisper + Slack fallback)
 - [x] Silence regression: `test/whisper-transcribe.test.js` rejects silent decoded audio before
-      model invocation with `NO_SPEECH`, retains that named failure if Slack fallback is unavailable,
-      and still accepts completed Slack transcripts. Audible clips can return “you”, “Thank you.”,
+      model invocation with `NO_SPEECH` and keeps that failure even if Slack has a completed
+      transcript; measured silence never queries Slack fallback. Audible clips can return “you”, “Thank you.”,
       or longer speech without a blacklist. A real FFmpeg fixture verifies all-zero PCM encoded as
       AAC is rejected and a short audible signal between silent tails is accepted (recognition is
       mocked; this does not prove speech recognition accuracy). That codec leg skips if FFmpeg is
       absent; deterministic tests still run. Missing level analysis fails locally and preserves
       the existing Slack fallback.
 - [x] Slack intake regression: `test/slack-voice-delivery.test.js` exercises local silent-clip
-      failures with both fake engines: a named no-speech notice, zero model/engine starts, and zero
-      successful-transcript posts. Existing completed-VTT delivery/ordering tests still apply.
+      failures with both fake engines, even with completed Slack metadata: a named no-speech
+      notice, zero model/engine starts, and zero successful-transcript posts. Existing completed-VTT delivery/ordering tests still apply.
 - [ ] Exact live silence retest, **VOICE-DISPLAY-01**, Claude and Codex separately: on approved
       Worker/Auto attachment fixtures with local Whisper enabled, use an all-zero PCM WAV
       (`ffmpeg -f lavfi -i anullsrc=r=48000:cl=mono -t 12 -c:a pcm_s16le silence.wav`)

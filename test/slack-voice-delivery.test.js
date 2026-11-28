@@ -132,7 +132,7 @@ process.stdout.write('you');
         downloads++;
         return new Response(Buffer.alloc(100), { headers: { 'content-type': 'audio/wav' } });
       }
-      if (String(url) === 'https://slack.com/api/files.info') return Response.json({ ok: true, file: { transcription: { status: 'pending' } } });
+      if (String(url) === 'https://slack.com/api/files.info') assert.fail('proven silence must not query Slack transcripts');
       throw new Error(`Unexpected fixture fetch: ${url}`);
     };
     saveSettings({ engine, whisperEnabled: true, slackBotToken: 'xoxb-test-voice', composioMode: 'personal' });
@@ -140,7 +140,7 @@ process.stdout.write('you');
     const before = backend.calls.spawn.length;
     const client = slack(async () => assert.fail('silence must never post a successful transcript'));
     await processMessageEvent({ type: 'message', channel: `D_SILENT_${engine}`, channel_type: 'im', user: 'U_VOICE', text: '',
-      files: [{ id: 'F_SILENT', name: 'silent.wav', mimetype: 'audio/wav', url_private: 'https://files.slack.com/silent.wav' }], ts: '3010.001',
+      files: [{ id: 'F_SILENT', name: 'silent.wav', mimetype: 'audio/wav', url_private: 'https://files.slack.com/silent.wav', transcription: { status: 'complete', preview: { content: 'you', has_more: false } } }], ts: '3010.001',
     }, client, { botUserId: 'U_BOT' });
     assert.equal(downloads, 1, 'local conversion path was reached');
     assert.equal(existsSync(modelMarker), false, 'silence never reaches the model');
