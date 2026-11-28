@@ -82,7 +82,8 @@ import path from "node:path";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
 import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor, wasAttachmentDelivered } from "./download.js";
 
-import { buildResumeCommand, footerButtons, footerText, resumeCommandReply } from "./footer.js";
+import { footerButtons, footerText } from "./footer.js";
+import { resumeReplyForThread } from "./resume-session.js";
 import { SUDO_DISABLED_TEXT, sudoOffButton } from "./sudo-button.js";
 import { postNoticeWithMenu } from "./deliver.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
@@ -1146,12 +1147,9 @@ const slackMessages = {
         let runtimeTarget = null;
         try { runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: authorIsAdmin }); } catch { /* fall back to the host form */ }
         if (!sc.arg) {
-          const storedRuntime = await getSessionRuntime(entry.slug, threadKey);
-          const adminSession = storedRuntime?.scope !== "project";
-          if (adminSession && !authorIsAdmin) { await reply("Run a new turn under your own access level before resuming this thread."); return; }
-          runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: adminSession });
-          const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
-          await reply(resumeCommandReply(cmd, sessionId, threadEngine));
+          // The one shared resolution (/menu Resume, Settings → Diagnostics): it applies the
+          // thread's `/clean` flag, so a clean session's command names the clean workspace.
+          await reply(await resumeReplyForThread({ entry, meta, isAdminAuthor: authorIsAdmin }, threadKey));
           return;
         }
         // Repointing the thread mid-run would leave the running turn writing to the session it
