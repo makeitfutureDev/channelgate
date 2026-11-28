@@ -7,7 +7,6 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 import { z } from "zod";
 import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
 import { statSync } from "node:fs";
-import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { getChannelMeta, patchChannelMeta } from "../../config/store.js";
 import { effectiveWorkDir, updateChannelInstructions } from "../../gateway/folders.js";
@@ -37,7 +36,7 @@ function describeDriveSyncStatus(status) {
     ? `✔️ Last sync succeeded at ${when(last.at)}${first}.`
     : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
 }
-import { allowedFsRoots, allowedRootFor, resolveWithinRoots } from "../../web/security.js";
+import { allowedFsRoots, allowedRootFor, listSubfolderNames, resolveWithinRoots } from "../../web/security.js";
 import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 import { EXTRA_FOLDER_MODES, MAX_EXTRA_FOLDERS, normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
@@ -492,11 +491,7 @@ export function register(server, ctx) {
       if (!target) return text(`That path doesn't exist or is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")}).`);
       const root = allowedRootFor(target, roots);
       try {
-        const entries = await readdir(target, { withFileTypes: true });
-        const folders = entries
-          .filter((e) => e.isDirectory() || e.isSymbolicLink())
-          .map((e) => e.name)
-          .sort((a, b) => a.localeCompare(b));
+        const folders = await listSubfolderNames(target);
         const parent = path.dirname(target);
         const parentOk = parent !== target && Boolean(allowedRootFor(parent, roots));
         const head = `📂 ${target}\n${parentOk ? `↑ up: ${parent}` : "(top of an allowed root)"}`;

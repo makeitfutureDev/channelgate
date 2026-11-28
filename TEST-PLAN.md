@@ -2953,7 +2953,14 @@ Regression gate: historical reaction-only self-completion must dismiss the verif
   list; with the share as a root it is accepted as an additional folder and as a working folder,
   the picker lists it at the primary root only and stops Up at its top, `list_folders` names it
   and `add_channel_folder` accepts it; removing the root makes the stored folder refuse again.
+  `list_folders` and the picker route list a real sub-folder and a symlink to one, and omit a
+  symlink to a regular file (`AGENTS.md` → `CLAUDE.md`) and a dangling symlink.
 - [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, Claude and Codex (QA case IFACE-WORKDIR-TOOLS-01): in a channel whose working folder
+  holds the managed `AGENTS.md` → `CLAUDE.md` link, an admin asks "What is this channel's working
+  folder, and which folders are inside it?". Expected: the reply names the working folder and lists
+  its sub-folders (`.claude`, `memory`, `uploads`, …) without `AGENTS.md` or any other file link.
+  Pass on each engine when `list_folders` ran and the listing holds only directories.
 - [ ] Live, engine-independent (admin UI): on a deployment whose working data lives outside the
   gateway user's home (e.g. `/mnt/comercial/Comercial`), add that directory's parent under
   Settings → Container runtime → *Additional allowed roots* and save. Expected: the folder picker

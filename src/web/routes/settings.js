@@ -12,12 +12,11 @@ import { normalizeComposioSdkPolicy } from "../../config/composio-sdk-policy.js"
 import { hasAutomaticUpdateEntitlement, MANUAL_UPDATE_MESSAGE } from "../../ee/update-entitlement.js";
 import { Router } from "express";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
-import { readdir } from "node:fs/promises";
 import { realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
-import { allowedFsRoot, allowedFsRoots, allowedRootFor, resolveWithinRoots, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
+import { allowedFsRoot, allowedFsRoots, allowedRootFor, listSubfolderNames, resolveWithinRoots, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
 import { getSkill, listSkills as listCatalogSkills } from "../../gateway/skills/catalog.js";
 import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
@@ -1021,11 +1020,7 @@ export function createSettingsRouter({
       const dir = resolveWithinRoots(req.query.path ? String(req.query.path) : roots[0], roots);
       if (!dir) return res.status(400).json({ error: `path is outside the allowed root${roots.length > 1 ? "s" : ""} (${roots.join(", ")})` });
       const root = allowedRootFor(dir, roots);
-      const entries = await readdir(dir, { withFileTypes: true });
-      const dirs = entries
-        .filter((e) => e.isDirectory() || e.isSymbolicLink())
-        .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const dirs = (await listSubfolderNames(dir)).map((name) => ({ name, path: path.join(dir, name) }));
       const parent = path.dirname(dir);
       const parentOk = parent !== dir && pathWithin(root, parent);
       const assignedConversations = workspaceAssignmentsAtPath(await listChannels(), dir);

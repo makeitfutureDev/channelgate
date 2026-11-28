@@ -19,6 +19,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Folder browsing (`list_folders` and the working-folder picker) no longer lists a link to a file,
+  such as a channel's `AGENTS.md`, as a folder. Links to folders are still listed.
+
 - Slack: a 🤖 activation reaction on a thread's first message now starts the agent on the first try,
   even when the message already has replies. Previously it was ignored until the agent had been
   `@mentioned` once in that thread. Reactions on replies in threads the agent does not manage are
