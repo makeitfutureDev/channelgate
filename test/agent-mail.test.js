@@ -131,6 +131,18 @@ test("resolveTargetChannel accepts an id, a slug or an exact name and refuses am
   assert.equal(resolveTargetChannel(channels, ""), null);
 });
 
+test("resolveTargetChannel matches a registered name stored with its leading #", () => {
+  // The channel index keeps Slack names as "#name"; a typed `ask #name …` must still resolve.
+  const channels = [
+    { channelId: "C0BTFTRU33Q", slug: "cg-qa-auto", name: "#cg-testing-claude-auto" },
+    { channelId: "C9", slug: "other", name: "#other" },
+  ];
+  assert.equal(resolveTargetChannel(channels, "#cg-testing-claude-auto").channelId, "C0BTFTRU33Q");
+  assert.equal(resolveTargetChannel(channels, "cg-testing-claude-auto").channelId, "C0BTFTRU33Q");
+  assert.equal(resolveTargetChannel(channels, "#CG-Testing-Claude-Auto").channelId, "C0BTFTRU33Q");
+  assert.equal(resolveTargetChannel([...channels, { channelId: "C10", slug: "dup", name: "cg-testing-claude-auto" }], "#cg-testing-claude-auto"), null);
+});
+
 test("a complete exchange: gate, target thread, agent-principal turn, reply re-injected into the origin thread", async () => {
   const f = fixture();
   const sent = await f.send();
