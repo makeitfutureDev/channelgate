@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import {
@@ -78,7 +79,7 @@ test("transcription uses argv arrays, truncates output, and cleans temporary aud
   const runner = async (command, args) => {
     calls.push({ command, args });
     if (command === "/usr/bin/ffmpeg-test") await writeFile(args.at(-1), "wav");
-    return { stdout: command === "/usr/bin/whisper-test" ? `  ${"word ".repeat(MAX_TRANSCRIPT_CHARS)}  ` : "", stderr: "" };
+    return { stdout: command === "/usr/bin/whisper-test" ? `  ${"word ".repeat(MAX_TRANSCRIPT_CHARS)}  ` : "", stderr: "[Parsed_volumedetect_0 @ 0x123] max_volume: -12.0 dB" };
   };
 
   const transcript = await transcribeAudioFile(source, {
@@ -104,7 +105,7 @@ test("empty Whisper output is a bounded failure", async (t) => {
   await writeFile(source, "audio");
   const runner = async (_command, args) => {
     if (args.includes("-ar")) await writeFile(args.at(-1), "wav");
-    return { stdout: "  \n", stderr: "" };
+    return { stdout: "  \n", stderr: "[Parsed_volumedetect_0 @ 0x123] max_volume: -12.0 dB" };
   };
   await assert.rejects(() => transcribeAudioFile(source, { runner, ffmpegPath: "ffmpeg", cliPath: "whisper", modelPath: "model" }), /no speech/i);
 });
@@ -284,4 +285,110 @@ test("an audio source is retained when neither local nor Slack processing succee
   assert.equal(result.transcripts.length, 0);
   assert.equal(result.failed.length, 1);
   assert.equal(removals, 0);
+});
+
+// FFmpeg reports digital silence at its signed-16-bit measurement floor. Whisper must never
+// receive it, even if the model would otherwise confidently hallucinate a short word.
+test("silent decoded audio produces a named no-speech failure before Whisper", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cg-whisper-silent-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, "silent.m4a");
+  await writeFile(source, "encoded silent audio");
+  let modelCalls = 0;
+  const runner = async (command, args) => {
+    if (command === "ffmpeg") {
+      await writeFile(args.at(-1), "decoded silent wav");
+      return { stdout: "", stderr: "[Parsed_volumedetect_0 @ 0x123] max_volume: -91.0 dB" };
+    }
+    modelCalls++;
+    return { stdout: "you", stderr: "" };
+  };
+  const result = await transcribeAudioFiles([{ name: "silent.m4a", path: source }], {
+    runner, ffmpegPath: "ffmpeg", cliPath: "whisper", modelPath: "model",
+  });
+  assert.equal(modelCalls, 0);
+  assert.deepEqual(result.transcripts, []);
+  assert.equal(result.failed[0].code, "NO_SPEECH");
+  assert.match(result.failed[0].reason, /no speech detected/i);
+  assert.deepEqual(await readdir(dir), ["silent.m4a"], "scratch is cleaned on silence rejection");
+});
+
+test("measured silence is terminal even when Slack supplies a completed transcript", async () => {
+  let removals = 0;
+  const result = await resolveAudioTranscripts([{
+    name: "silent.wav",
+    transcription: { status: "complete", preview: { content: "you", has_more: false } },
+  }], {
+    downloadLocal: async file => ({ ...file, path: "/fixture/silent.wav" }),
+    localTranscriber: async () => ({ transcripts: [], failed: [{ reason: "No speech detected in this audio clip.", code: "NO_SPEECH" }] }),
+    slackTranscriber: async () => assert.fail("completed VTT cannot override proven silence"),
+    removeProcessed: async () => { removals++; return true; },
+  });
+  assert.deepEqual(result.transcripts, []);
+  assert.equal(result.failed[0].code, "NO_SPEECH");
+  assert.match(result.failed[0].reason, /no speech detected/i);
+  assert.deepEqual(result.localFailed, result.failed);
+  assert.equal(removals, 0, "unresolved audio is retained for retry");
+});
+
+for (const text of ["you", "Thank you.", "Please summarize the report."]) {
+  test(`audible audio keeps the model's text without a phrase blocklist: ${text}`, async (t) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "cg-whisper-audible-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const runner = async (command, args) => {
+      if (command === "ffmpeg") {
+        assert.ok(args.some(arg => arg.endsWith(",volumedetect")));
+        await writeFile(args.at(-1), "decoded audible wav");
+        return { stdout: "", stderr: "[Parsed_volumedetect_0 @ 0x123] max_volume: -65.0 dB" };
+      }
+      return { stdout: text, stderr: "" };
+    };
+    assert.equal(await transcribeAudioFile(path.join(dir, "word.wav"), {
+      runner, ffmpegPath: "ffmpeg", cliPath: "whisper", modelPath: "model",
+    }), text);
+  });
+}
+
+test("missing audio-level analysis fails locally instead of trusting an unchecked model transcript", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cg-whisper-unmeasured-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await assert.rejects(() => transcribeAudioFile(path.join(dir, "word.wav"), {
+    runner: async command => {
+      assert.equal(command, "ffmpeg");
+      return { stdout: "", stderr: "" };
+    }, ffmpegPath: "ffmpeg", cliPath: "whisper", modelPath: "model",
+  }), /audio level could not be measured/i);
+});
+
+test("real FFmpeg rejects all-zero PCM after AAC encoding and accepts a short signal between silent tails", async (t) => {
+  if (spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status !== 0) {
+    t.skip("FFmpeg is not installed; deterministic level-analysis and intake regressions still run");
+    return;
+  }
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cg-whisper-codec-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const silent = path.join(dir, "silent.m4a");
+  await runProcess("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.3", "-c:a", "aac", silent]);
+  let modelCalls = 0;
+  const runner = async (command, args, options) => {
+    if (command === "ffmpeg") return runProcess(command, args, options);
+    modelCalls++;
+    return { stdout: "you", stderr: "" };
+  };
+  const options = { runner, ffmpegPath: "ffmpeg", cliPath: "whisper-fixture", modelPath: "model" };
+  await assert.rejects(() => transcribeAudioFile(silent, options), { code: "NO_SPEECH" });
+  assert.equal(modelCalls, 0);
+  const cancelled = path.join(dir, "cancelled.wav");
+  await runProcess("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+    "aevalsrc=0.1*sin(2*PI*440*t)|-0.1*sin(2*PI*440*t):s=48000:d=0.1", cancelled]);
+  await assert.rejects(() => transcribeAudioFile(cancelled, options), { code: "NO_SPEECH" });
+  assert.equal(modelCalls, 0, "measure silence after stereo downmix, as heard by the model");
+
+  // A 100 ms signal followed by silence guards against whole-clip mean-energy/duration gates.
+  // Recognition is mocked: this verifies signal acceptance and no blacklist of the word "you".
+  const audible = path.join(dir, "audible.wav");
+  await runProcess("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.1", "-af", "adelay=1000,apad=pad_dur=1", audible]);
+  assert.equal(await transcribeAudioFile(audible, options), "you");
+  assert.equal(modelCalls, 1);
+  assert.deepEqual((await readdir(dir)).sort(), ["audible.wav", "cancelled.wav", "silent.m4a"]);
 });

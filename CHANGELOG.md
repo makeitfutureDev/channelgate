@@ -24,6 +24,8 @@
   or invalid report now includes an explicit outcome-not-reported notice when delivery is enabled,
   including saved delivery retries. Thread loop ticks receive no missing-report notice; API runs
   without outcome reporting preserve their response content.
+- Silent voice clips now report **No speech detected** before local Whisper can invent a word
+  and start an agent turn. Audible short words and completed Slack transcript fallback still work.
 
 - Folder browsing (`list_folders` and the working-folder picker) no longer lists a link to a file,
   such as a channel's `AGENTS.md`, as a folder. Links to folders are still listed.

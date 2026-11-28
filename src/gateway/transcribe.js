@@ -12,6 +12,9 @@ const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".mp4", ".mpe
 const MAX_PROCESS_OUTPUT = 1024 * 1024;
 const MAX_VTT_BYTES = 1024 * 1024;
 const MAX_REASON_CHARS = 240;
+// volumedetect measures signed 16-bit samples; -91 dB is its digital-silence floor.
+// Stay at the quantization floor rather than imposing a speech-volume or duration threshold.
+const SILENT_PEAK_DB = -90;
 export const MAX_TRANSCRIPT_CHARS = 80_000;
 export const DEFAULT_WHISPER_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -182,7 +185,8 @@ export async function transcribeSlackAudioFiles(files, {
 }
 
 // Resolve each source clip in Slack order. Local Whisper is preferred when enabled, but any local
-// download/transcription failure falls through to Slack's generated transcript for that same clip.
+// download/transcription failure falls through to Slack's generated transcript for that same clip,
+// except measured digital silence: no text source can turn that signal into spoken words.
 // Keeping the download callback inside the enabled branch is the guarantee that no-Whisper servers
 // do not download raw audio at all.
 export async function resolveAudioTranscripts(files, {
@@ -202,6 +206,7 @@ export async function resolveAudioTranscripts(files, {
     const name = safeLabel(source?.name);
     let saved = null;
     let complete = false;
+    let localFailure = null;
     if (localEnabled) {
       try {
         saved = await downloadLocal(source);
@@ -211,13 +216,18 @@ export async function resolveAudioTranscripts(files, {
           transcripts.push({ name, text: local.transcripts[0].text });
           complete = true;
         } else {
-          throw new Error(local.failed?.[0]?.reason || "Local Whisper produced no transcript.");
+          throw Object.assign(new Error(local.failed?.[0]?.reason || "Local Whisper produced no transcript."), { code: local.failed?.[0]?.code });
         }
       } catch (error) {
-        localFailed.push({ name, reason: boundedReason(error) });
+        localFailure = { name, reason: boundedReason(error), ...(error?.code === "NO_SPEECH" ? { code: "NO_SPEECH" } : {}) };
+        localFailed.push(localFailure);
       }
     }
 
+    if (localFailure?.code === "NO_SPEECH") {
+      failed.push(localFailure);
+      continue;
+    }
     if (!complete) {
       const slack = await slackTranscriber([source], slackOptions);
       if (slack.transcripts?.[0]?.text) {
@@ -334,11 +344,18 @@ async function transcribeCore(filePath, {
     DYLD_LIBRARY_PATH: [runtimeBin, runtimeLib, process.env.DYLD_LIBRARY_PATH].filter(Boolean).join(path.delimiter),
   };
   try {
-    await runner(ffmpegPath, [
-      "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-      "-i", source, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav,
+    // Measure the same mono/16 kHz PCM the model receives, including downmix cancellation.
+    const decoded = await runner(ffmpegPath, [
+      "-nostdin", "-hide_banner", "-nostats", "-loglevel", "info", "-y",
+      "-i", source, "-ar", "16000", "-ac", "1", "-af", "aformat=sample_fmts=s16:sample_rates=16000:channel_layouts=mono,volumedetect", "-c:a", "pcm_s16le", wav,
     ], { cwd: scratch, timeout, maxOutput: MAX_PROCESS_OUTPUT, signal });
     signal?.throwIfAborted();
+    const peakMatch = String(decoded?.stderr || "").match(/\[Parsed_volumedetect_\d+ @ [^\]\r\n]+\] max_volume:\s*(-inf|-?\d+(?:\.\d+)?) dB/);
+    if (!peakMatch) throw new Error("Local audio level could not be measured.");
+    const peakDb = peakMatch[1] === "-inf" ? -Infinity : Number(peakMatch[1]);
+    if (peakDb <= SILENT_PEAK_DB) {
+      throw Object.assign(new Error("No speech detected in this audio clip (silent audio)."), { code: "NO_SPEECH" });
+    }
     const result = await runner(cliPath, ["-m", modelPath, "-f", wav, "-nt"], {
       cwd: scratch,
       timeout,
@@ -386,7 +403,7 @@ export async function transcribeAudioFiles(files, options = {}) {
         }
       }
     } catch (error) {
-      failed.push({ name: safeLabel(file?.name), reason: boundedReason(error) });
+      failed.push({ name: safeLabel(file?.name), reason: boundedReason(error), ...(error?.code === "NO_SPEECH" ? { code: "NO_SPEECH" } : {}) });
     }
   }
   return { transcripts, failed, cleanupFailed };

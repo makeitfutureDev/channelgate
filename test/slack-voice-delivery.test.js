@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { ensureTestEnv } from './helpers.js';
+import { ensureTestEnv, tempDir } from './helpers.js';
 
 ensureTestEnv();
 process.env.PATH = `${fileURLToPath(new URL('./fixtures', import.meta.url))}${path.delimiter}${process.env.PATH || ''}`;
@@ -97,3 +99,53 @@ test('failed Slack transcript delivery prevents engine processing and reports th
   assert.equal(backend.calls.spawn.length, before);
   assert.ok(client.posts.some(p => /processing hasn’t started/.test(p.text || '')));
 });
+
+for (const engine of ['claude', 'codex']) {
+  test(`${engine}: silent local voice reports no speech and starts no engine or successful transcript`, async (t) => {
+    const dir = tempDir('cg-test-silent-intake-');
+    const ffmpeg = path.join(dir, 'ffmpeg-fixture');
+    const whisper = path.join(dir, 'whisper-fixture');
+    const modelMarker = path.join(dir, 'model-started');
+    await writeFile(ffmpeg, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync(process.argv.at(-1), 'decoded silent wav');
+process.stderr.write('[Parsed_volumedetect_0 @ 0x123] max_volume: -91.0 dB');
+`, { mode: 0o700 });
+    await writeFile(whisper, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(modelMarker)}, 'called');
+process.stdout.write('you');
+`, { mode: 0o700 });
+    const originalFetch = globalThis.fetch;
+    const envNames = ['WHISPER_FFMPEG_PATH', 'WHISPER_CLI_PATH', 'WHISPER_MODEL_PATH'];
+    const previousEnv = envNames.map(name => process.env[name]);
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+      envNames.forEach((name, index) => { if (previousEnv[index] === undefined) delete process.env[name]; else process.env[name] = previousEnv[index]; });
+    });
+    process.env.WHISPER_FFMPEG_PATH = ffmpeg;
+    process.env.WHISPER_CLI_PATH = whisper;
+    process.env.WHISPER_MODEL_PATH = path.join(dir, 'model');
+    let downloads = 0;
+    globalThis.fetch = async url => {
+      if (String(url) === 'https://files.slack.com/silent.wav') {
+        downloads++;
+        return new Response(Buffer.alloc(100), { headers: { 'content-type': 'audio/wav' } });
+      }
+      if (String(url) === 'https://slack.com/api/files.info') assert.fail('proven silence must not query Slack transcripts');
+      throw new Error(`Unexpected fixture fetch: ${url}`);
+    };
+    saveSettings({ engine, whisperEnabled: true, slackBotToken: 'xoxb-test-voice', composioMode: 'personal' });
+    await setUser('U_VOICE', { approved: true });
+    const before = backend.calls.spawn.length;
+    const client = slack(async () => assert.fail('silence must never post a successful transcript'));
+    await processMessageEvent({ type: 'message', channel: `D_SILENT_${engine}`, channel_type: 'im', user: 'U_VOICE', text: '',
+      files: [{ id: 'F_SILENT', name: 'silent.wav', mimetype: 'audio/wav', url_private: 'https://files.slack.com/silent.wav', transcription: { status: 'complete', preview: { content: 'you', has_more: false } } }], ts: '3010.001',
+    }, client, { botUserId: 'U_BOT' });
+    assert.equal(downloads, 1, 'local conversion path was reached');
+    assert.equal(existsSync(modelMarker), false, 'silence never reaches the model');
+    assert.equal(backend.calls.spawn.length, before, 'neither engine starts');
+    assert.ok(client.posts.some(p => /No speech detected/.test(p.text || '')), JSON.stringify(client.posts));
+    assert.equal(client.posts.some(p => p.blocks?.[0]?.text?.type === 'plain_text'), false);
+  });
+}
