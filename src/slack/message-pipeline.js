@@ -1609,7 +1609,9 @@ const slackMessages = {
           await client.chat.postMessage({
             channel: event.channel,
             ...threadOpts,
-            text: "🎙️ Local voice transcription is disabled or unavailable, and Slack has no completed transcript yet. Click *Generate transcript* on the voice note, then mention me again or react 🤖.",
+            text: voice.failed.some((item) => item.code === "NO_SPEECH")
+              ? "🎙️ No speech detected in the audio clip. Record a new clip with audible speech, or send your request as text."
+              : "🎙️ Local voice transcription is disabled or unavailable, and Slack has no completed transcript yet. Click *Generate transcript* on the voice note, then mention me again or react 🤖.",
           });
           return handledMessage();
         }

@@ -19,6 +19,9 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Silent voice clips now report **No speech detected** before local Whisper can invent a word
+  and start an agent turn. Audible short words and completed Slack transcript fallback still work.
+
 - Folder browsing (`list_folders` and the working-folder picker) no longer lists a link to a file,
   such as a channel's `AGENTS.md`, as a folder. Links to folders are still listed.
 

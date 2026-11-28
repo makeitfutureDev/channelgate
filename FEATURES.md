@@ -5474,7 +5474,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failure; unresolved audio is retained for retry. Successful transcripts are posted in the source
   thread before Claude/Codex starts processing, for local transcription and Slack fallback alike.
   Each clip is named, long transcripts are split without truncation, and a delivery failure stops
-  processing. Teams and Google Chat likewise retain transcript replies before the agent answer.
+  processing. The local decode also measures peak audio level: digital silence at the 16-bit
+  measurement floor returns **No speech detected** before Whisper can invent words. An otherwise
+  empty request with no completed Slack transcript starts no engine and posts no successful
+  transcript. Audible short words (including “you”) remain eligible; this is a silence check,
+  not a phrase blacklist or general speech detector. Completed Slack VTT fallback remains available.
+  Teams and Google Chat likewise retain transcript replies before the agent answer and receive
+  the same local silence check.
   → TEST-PLAN: Voice prompts.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and

@@ -11773,6 +11773,28 @@ structural invariants are automated; rendered navigation and feature claims also
       a leave/re-join doesn't resurrect an old mention (window + existing-session guard).
 
 ### Voice prompts (optional local Whisper + Slack fallback)
+- [x] Silence regression: `test/whisper-transcribe.test.js` rejects silent decoded audio before
+      model invocation with `NO_SPEECH`, retains that named failure if Slack fallback is unavailable,
+      and still accepts completed Slack transcripts. Audible clips can return “you”, “Thank you.”,
+      or longer speech without a blacklist. A real FFmpeg fixture verifies all-zero PCM encoded as
+      AAC is rejected and a short audible signal between silent tails is accepted (recognition is
+      mocked; this does not prove speech recognition accuracy). That codec leg skips if FFmpeg is
+      absent; deterministic tests still run. Missing level analysis fails locally and preserves
+      the existing Slack fallback.
+- [x] Slack intake regression: `test/slack-voice-delivery.test.js` exercises local silent-clip
+      failures with both fake engines: a named no-speech notice, zero model/engine starts, and zero
+      successful-transcript posts. Existing completed-VTT delivery/ordering tests still apply.
+- [ ] Exact live silence retest, **VOICE-DISPLAY-01**, Claude and Codex separately: on approved
+      Worker/Auto attachment fixtures with local Whisper enabled, use an all-zero PCM WAV
+      (`ffmpeg -f lavfi -i anullsrc=r=48000:cl=mono -t 12 -c:a pcm_s16le silence.wav`)
+      as the native client's microphone source. Verify source PCM peak and a same-client capture
+      peak of zero. Mention the bot with no other text and record/send a native clip. Require a
+      **No speech detected** notice, no successful-transcript post, and no engine `run_config` or
+      `run_start` for that message. Record source/notice timestamps and deployed revision. Repeat
+      with a real audible short “you” and “Reply with VOICE_DISPLAY_OK”: both must transcribe and
+      start the chosen engine. Repeat completed Slack VTT fallback with local transcription
+      disabled, then restore the captured setting. A unit or synthetic-codec pass does not close
+      this native-client gate.
 - [x] Regression: Slack awaits the transcript post before spawning either Claude or Codex; an
       unsuccessful post reports the failure and starts no engine. Plain-text blocks suppress Slack
       mention/link markup, redact credential-shaped text, preserve clip order and Unicode, and split
