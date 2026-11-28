@@ -351,6 +351,16 @@ export function swapRuleFieldsFrom(body = {}) {
   return out;
 }
 
+// The admin API's secret ↔ readable switch body: `{ exposure: "readable" | "hidden" | "auto" }`,
+// nothing else. A value in the body is refused rather than ignored, so a caller that meant to
+// rotate the value learns it must use PUT instead of silently keeping the old one.
+export function parseExposureChange(body = {}) {
+  if (body && Object.hasOwn(body, "value")) throw new Error("Changing the visibility does not take a value. Use PUT to replace the value.");
+  const exposure = body?.exposure;
+  if (!["readable", "hidden", "auto"].includes(exposure)) throw new Error('Choose the visibility: "readable", "hidden" or "auto".');
+  return exposure;
+}
+
 // One mutation entry point, so the admin API and the Slack modal cannot drift into two different
 // validation stories. Pure — the caller decides how to persist the returned map (atomically, via
 // the function form of patchChannelMeta, so two people editing at once can't lose an entry).

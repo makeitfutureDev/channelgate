@@ -14,8 +14,8 @@ import { getSkill } from "../../gateway/skills/catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
-import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
-import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
+import { listUserEnv, patchSecretEntry, patchUserEnv } from "../../config/scoped-env.js";
+import { listEnvVars, normalizeEnvName, parseExposureChange, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeUserCustomMcp, saveUserCustomMcp } from "../../gateway/custom-mcp-store.js";
 import { listEmailAccounts } from "../../gateway/email-accounts.js";
@@ -161,6 +161,24 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
       }
       logEvent("user_env_set", { user: userId, name, actor: USER_SECRET_ACTOR });
       res.json({ ok: true, vars });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Secret ↔ readable for one of this person's variables, value untouched.
+  router.patch("/users/:userId/env/:name", async (req, res, next) => {
+    try {
+      const { userId } = req.params;
+      const name = normalizeEnvName(req.params.name);
+      try {
+        const exposure = parseExposureChange(req.body);
+        await patchSecretEntry({ scope: "personal", userId, name: req.params.name, exposure });
+        logEvent("secret_mode_set", { scope: "personal", user: userId, name, exposure, actor: USER_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, vars: await listUserEnv(userId) });
     } catch (e) {
       next(e);
     }

@@ -19,6 +19,10 @@
 
 ## 0.7.0 — candidate, pending approval
 
+- Admins can switch an organization, conversation or personal variable between secret and
+  readable from the admin console's Variables tables (**Make readable**, with confirmation, or
+  **Make secret**) without re-entering its value. Before, only Slack settings and `set_secret_mode`
+  could do it, so a private key that a program needed raw had to be pasted again.
 - Scheduled answers and API answers that requested outcome reporting strip invalid or unfinished
   automation outcome blocks while preserving other code fences. Scheduled output with a missing
   or invalid report now includes an explicit outcome-not-reported notice when delivery is enabled,

@@ -85,6 +85,41 @@ export function mountSecretEditor({
       cell(entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "—", { className: "state" });
       const actions = row.insertCell();
       actions.className = "vars-actions";
+      // Secret ↔ readable without re-entering the value (PATCH, the value is never sent or read).
+      // Making one readable hands programs the raw value, so it asks first; making it secret again
+      // does not, but the gateway may still keep a password or connection string readable.
+      if (!disabled) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "ghost secret-mode";
+        toggle.textContent = secret ? "Make readable" : "Make secret";
+        toggle.addEventListener("click", async () => {
+          if (secret) {
+            const ok = await confirmDialog({
+              title: `Make ${entry.name} readable?`,
+              body: "Programs will receive the real value instead of a stand-in, on every server. Use this for a password, connection string or private key a program needs directly. Runs that already started keep what they have.",
+              confirmLabel: "Make readable", danger: true,
+            });
+            if (!ok) return;
+          }
+          toggle.disabled = true;
+          try {
+            const result = await api(endpoint(entry.name), { method: "PATCH", body: JSON.stringify({ exposure: secret ? "readable" : "hidden" }) });
+            current = result.vars || [];
+            const after = current.find((v) => v.name === entry.name);
+            hint.textContent = secret
+              ? `${entry.name} is readable. The next run receives the real value.`
+              : after?.protected
+                ? `${entry.name} is secret again. The next run receives a stand-in.`
+                : `${entry.name} stays readable (${after?.exposureReason || "it is used outside HTTPS"}).`;
+            render();
+          } catch (e) {
+            toggle.disabled = false;
+            hint.textContent = e.message || "Couldn't change that variable.";
+          }
+        });
+        actions.appendChild(toggle);
+      }
       if (!disabled || allowRemoval) {
         const remove = document.createElement("button");
         remove.type = "button";

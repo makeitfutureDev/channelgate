@@ -7787,6 +7787,15 @@ are retired, bullet by bullet; everything else stands.
   secret READABLE needs an admin's click, so a recruited bystander cannot approve it) overrides the
   kind; `list_secrets` and the admin secrets page show "hidden (placeholder); approved servers: …" /
   "readable (raw)". Request bodies and URL paths are never rewritten.
+  **The admin console's Variables tables switch a stored variable between secret and readable
+  (2026-11-28)** for organization, conversation and personal variables without re-entering the value.
+  Each row has **Make readable** (it confirms first, because programs then receive the raw value, which a
+  private or decryption key used outside HTTPS needs) or **Make secret** (applies at once; a
+  password-like variable stays readable and the hint says why). The change goes through `PATCH
+  /api/org-secrets/:name`, `/api/channels/:channelId/env/:name` or `/api/users/:userId/env/:name`
+  with `{ exposure: "readable" | "hidden" | "auto" }`. These routes refuse a body that carries a value or
+  an unknown mode, never read or return the value, and audit `secret_mode_set` with the scope,
+  name and mode only. The next run receives the change.
   **Adding a variable asks one thing (2026-09-28): is it a secret?** The Slack add-variable form
   (titled *Variables* — the menu button, footer, Settings tab and admin UI say "variables", since a
   readable value is configuration as often as a secret) and the admin editor carry a single
