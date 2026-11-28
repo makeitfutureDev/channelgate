@@ -52,7 +52,7 @@ test("an API run's outcome: gateway facts always, the agent's report only when a
   assert.equal(broken.automationOutcome.status, "blocked");
 });
 
-test("API outcome answers strip invalid and unsolicited report metadata without changing status rules", () => {
+test("API outcome answers strip metadata only when outcome reporting was requested", () => {
   const valid = report({ status: "no-op", summary: "Empty", connections: [] });
   for (const content of [
     "Done.\n\n```automation-result\n{bad json\n```",
@@ -62,13 +62,15 @@ test("API outcome answers strip invalid and unsolicited report metadata without 
   ]) {
     for (const reportOutcome of [true, false]) {
       const result = apiRunOutcome({ content }, { reportOutcome });
-      assert.doesNotMatch(result.content, /```automation-result/);
+      if (reportOutcome) assert.doesNotMatch(result.content, /```automation-result/);
+      else assert.equal(result.content, content);
       assert.match(result.content, /Done\./);
       assert.equal(result.automationOutcome.status, "unreported");
       assert.equal(result.automationOutcome.source, reportOutcome ? "unreported" : "none");
     }
   }
-  assert.equal(apiRunOutcome({ content: valid }).content, "Done.");
+  assert.equal(apiRunOutcome({ content: valid }).content, valid);
+  assert.equal(apiRunOutcome({ content: valid, engineError: true }).content, valid);
 });
 
 test("startApiRun validates and stores successCriteria, and wraps the prompt with it", async () => {

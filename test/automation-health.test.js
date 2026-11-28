@@ -6,7 +6,8 @@ ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const schedules = await import("../src/config/schedules.js");
 const scheduler = await import("../src/gateway/scheduler.js");
-const { classifyScheduleResult } = await import("../src/gateway/schedule-outcome.js");
+const { classifyScheduleResult, stripAutomationResult } = await import("../src/gateway/schedule-outcome.js");
+const { armLoop } = await import("../src/gateway/loops.js");
 const runs = await import("../src/gateway/schedule-runs.js");
 const { register } = await import("../src/mcp/tools/schedules.js");
 
@@ -124,6 +125,49 @@ test("valid outcomes retain their user-facing JSON code and report classificatio
 test("outcome stripping preserves other fenced code, including quoted report examples", () => {
   const example = `\`\`\`\`markdown\n${report("no-op")}\n\`\`\`\``;
   assert.equal(classifyScheduleResult({ content: example }).content, example);
+});
+
+test("backticks in an info string do not open a code fence around a later report", () => {
+  const prose = "```npm test``` is the command.";
+  assert.equal(stripAutomationResult(`${prose}\n\`\`\`automation-result\n{bad\n\`\`\``), prose);
+});
+
+test("long backtick lines containing a lone carriage return are processed in bounded time", () => {
+  const content = `${"`".repeat(40_000)}\rtext`;
+  const started = performance.now();
+  assert.equal(stripAutomationResult(content), content);
+  assert.ok(performance.now() - started < 1000, "a single fence line must not take a second");
+});
+
+test("a thread loop tick keeps its reply without an unrequested outcome notice, including retry", async () => {
+  const { schedule: sched } = armLoop({ channelId: "C_HEALTH", slug: "health", authorId: "U_HEALTH",
+    threadTs: "1791000010.123456", wakeup: { kind: "loop_wakeup", mode: "interval", cron: "* * * * *", prompt: "Check progress" } });
+  const content = `Checked.\n\n${unrelatedJson}`;
+  let executions = 0;
+  await scheduler.runSchedule(sched, {
+    runner: async ({ text }) => {
+      executions++;
+      assert.equal(text, sched.prompt, "loop ticks do not request an automation outcome report");
+      return { engine: "codex", content };
+    },
+    deliver: async (_client, { result }) => {
+      assert.equal(result.content, content);
+      throw new Error("temporary delivery failure");
+    },
+  });
+  assert.equal(history(sched.id)[0].deliveryStatus, "failed");
+  let delivered = 0;
+  await scheduler.runSchedule(stored(sched.id), {
+    runner: async () => assert.fail("retry cannot reexecute a loop tick"),
+    deliver: async (_client, { result, threadKey }) => {
+      delivered++;
+      assert.equal(threadKey, sched.threadTs);
+      assert.equal(result.content, content);
+    },
+  });
+  assert.equal(executions, 1);
+  assert.equal(delivered, 1);
+  assert.equal(history(sched.id)[0].deliveryStatus, "delivered");
 });
 
 test("an invalid report alone delivers a notice without raw metadata", async () => {

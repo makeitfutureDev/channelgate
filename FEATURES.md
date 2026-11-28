@@ -3882,8 +3882,10 @@ control-plane status.
   failure-notification suppression. Automation-result fences are stripped from delivered answers
   even when malformed, duplicated, followed by later output, or unterminated; unrelated code
   fences are preserved. Missing or invalid reports append a short outcome-not-reported notice
-  when scheduled output is delivered, including saved delivery retries. API answers use the same
-  stripping without changing their reporting policy. Connection checks are names and
+  when scheduled output is delivered, including saved delivery retries. Thread loop ticks do not
+  request an outcome report and do not receive that notice. API answers use the same stripping
+  only when outcome reporting was requested; other API runs preserve their response content,
+  including on saved delivery retries. Connection checks are names and
   available/unavailable/unknown status, explicitly agent-reported rather than independently verified.
 - Admin UI → Automations → **Runs** shows KPIs, run/request/due timestamps, scheduling delay, last
   activity, duration, observed agent activity, engine/model, tools, token use, cost (unknown stays

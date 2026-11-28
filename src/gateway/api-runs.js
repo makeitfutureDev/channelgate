@@ -261,8 +261,8 @@ export async function recoverApiRuns({ slack, deliver = deliverResult, webhook =
     const client = job.slackThread || job.visibility === "on-failure" ? connectedClient : null;
     try {
       if (client && job.slackThread && job.deliveryPending && job.result) {
-        // Checkpoints saved before outcome stripping may still contain internal report blocks.
-        job.result = { ...job.result, content: stripAutomationResult(job.result.content) };
+        // Reporting checkpoints saved before stripping may still contain internal report blocks.
+        if (job.reportOutcome) job.result = { ...job.result, content: stripAutomationResult(job.result.content) };
         await deliver(client, { channel: job.channelId, threadKey: job.threadKey,
           result: { ...job.result, engine: job.engine, cwd: job.cwd, sessionId: job.sessionId }, footer: true });
         job.deliveryPending = false;
@@ -868,8 +868,10 @@ export function settleRunCost(result = {}, ledger = null) {
 export function apiRunOutcome(result = {}, { reportOutcome = false } = {}) {
   const classified = classifyScheduleResult(result);
   const outcome = classified.automationOutcome;
-  if (reportOutcome || outcome.source === "gateway") return classified;
-  return { ...classified, automationOutcome: { status: "unreported", summary: "", connections: [], source: "none" } };
+  if (reportOutcome) return classified;
+  // Without a reporting instruction, an automation-result fence is ordinary caller content.
+  return { ...result, automationOutcome: outcome.source === "gateway" ? outcome :
+    { status: "unreported", summary: "", connections: [], source: "none" } };
 }
 
 // The per-thread slot a turn holds while it runs — the SAME queue Slack messages use, so an API

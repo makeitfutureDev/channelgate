@@ -95,7 +95,8 @@ async function deliverScheduledResult(client, sched, result, threadTs, deliver) 
   }
   // Saved checkpoints may predate report stripping; never reclassify a saved valid outcome.
   result = { ...result, content: stripAutomationResult(result.content) };
-  if (result.automationOutcome?.source === "unreported") {
+  // Thread loop ticks use the plain prompt, without an outcome-report instruction.
+  if (!(isLoopRow(sched) && sched.resumeThread) && result.automationOutcome?.source === "unreported") {
     const notice = `Automation outcome not reported: ${result.automationOutcome.summary}`;
     result.content = [result.content.trim(), notice].filter(Boolean).join("\n\n");
   }

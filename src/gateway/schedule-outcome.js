@@ -33,12 +33,16 @@ export function stripAutomationResult(content = "") {
   let stripped = false;
   const kept = [];
   for (const line of content.split(/(?<=\n)/)) {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?$/);
+    // A lone CR is content too; excluding it makes long marker runs backtrack quadratically.
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})([^\n]*)\n?$/);
     if (fence) {
       if (!fence.report) kept.push(line);
       if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
     } else {
-      if (marker) fence = { char: marker[1][0], length: marker[1].length, report: marker[2].trim() === "automation-result" };
+      // CommonMark forbids backticks in a backtick fence's info string.
+      if (marker && !(marker[1][0] === "`" && marker[2].includes("`"))) {
+        fence = { char: marker[1][0], length: marker[1].length, report: marker[2].trim() === "automation-result" };
+      }
       if (fence?.report) stripped = true;
       else kept.push(line);
     }
