@@ -6868,6 +6868,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channel's admin page. Managing them needs the same privilege as running
   commands with them (`canEditChannelFiles`); everyone authorized in the channel can see that they
   exist.
+- **Secret ↔ readable in the 🔑 Variables / `/secrets` modal (2026-11-28).** Each row that the
+  viewer may change has a **Make readable** button, which confirms first, or a **Make secret** button,
+  which applies at once. The value stays the same, as in Settings → Variables. The scope comes from the
+  button's action id, and each scope keeps its authority (organization rows need an admin, channel
+  rows the channel edit right, personal rows are the viewer's own). Every switch logs
+  `secret_mode_set` with the name only. A list too long for Slack's 100-block modal drops these buttons, and
+  Settings → Variables still offers them.
 - **Host credential suppression.** A channel supplying its own key for a catalog CLI stops getting
   the daemon's shared saved login linked in behind it, so it can never silently fall back to a
   different identity.

@@ -228,3 +228,60 @@ test("the entry form says which scope it writes into, and the submission honours
   assert.deepEqual(Object.keys((await store.getChannelMeta(f.entry.slug)).env).sort(), ["KEEP_ME", "REMOVE_ME"]);
   assert.doesNotMatch(JSON.stringify(f.updates), /org-form-value|personal-form-value/);
 });
+
+// ── Secret ↔ readable in the 🔑 Variables / `/secrets` modal ──────────────────────────────────
+// The Settings tab's ⋯ menu could already switch a variable; the standalone manager could only add
+// and remove, so a private key a program needed raw had to be pasted again.
+const modeButtonFor = (view, name) => view.blocks
+  .filter((b) => b.type === "actions")
+  .flatMap((b) => b.elements)
+  .find((el) => el.action_id?.startsWith("cg_channel_secrets_mode_") && el.value.includes(`"n":"${name}"`));
+
+test("the Variables modal switches a channel variable to readable (confirmed) and back, value untouched", async () => {
+  const f = await fixture("MODE");
+  let env = patchChannelEnv((await store.getChannelMeta(f.entry.slug)).env, { set: { name: "SC_DECRYPT", value: "dummy-mode-value-4444", exposure: "hidden" } });
+  await store.patchChannelMeta(f.entry.slug, () => ({ env }));
+  const meta = await store.getChannelMeta(f.entry.slug);
+  const view = buildSecretsView(listChannelEnv(meta), f.state, { mayEdit: true });
+  const readable = modeButtonFor(view, "SC_DECRYPT");
+  assert.equal(readable.text.text, "Make readable");
+  assert.ok(readable.confirm, "making a variable readable asks first");
+  await handleSecretsAction({ ...f, action: readable, body: { user: { id: ownerId }, view: { ...view, id: "V_SECRETS" } } });
+  const after = f.updates.at(-1).view;
+  assert.equal(after.callback_id, "cg_channel_secrets_modal");
+  assert.match(JSON.stringify(after.blocks[0]), /SC_DECRYPT\* is readable/);
+  const stored = (await store.getChannelMeta(f.entry.slug)).env.SC_DECRYPT;
+  assert.equal(stored.exposure, "readable");
+  assert.equal(stored.value, "dummy-mode-value-4444");
+  assert.doesNotMatch(JSON.stringify(after), /dummy-mode-value/);
+
+  const secret = modeButtonFor(after, "SC_DECRYPT");
+  assert.equal(secret.text.text, "Make secret");
+  assert.equal(secret.confirm, undefined, "making it secret again applies at once");
+  await handleSecretsAction({ ...f, action: secret, body: { user: { id: ownerId }, view: { ...after, id: "V_SECRETS" } } });
+  assert.equal((await store.getChannelMeta(f.entry.slug)).env.SC_DECRYPT.exposure, "hidden");
+});
+
+test("the Variables modal's mode switch keeps each scope's authority; a non-admin cannot switch an organization variable", async () => {
+  const f = await fixture("MODE_ORG");
+  const { testLicenseEnv } = await import("./helpers.js");
+  testLicenseEnv({ tier: "enterprise" });
+  patchOrgEnv({ set: { name: "ORG_MODE_KEY", value: "dummy-org-mode-5555", exposure: "hidden" } });
+  const adminView = buildSecretsView(await secretScopeLists(await store.getChannelMeta(f.entry.slug), ownerId), f.state, { mayEdit: true, canEditOrg: true });
+  const button = modeButtonFor(adminView, "ORG_MODE_KEY");
+  assert.ok(button?.action_id.startsWith("cg_channel_secrets_mode_o"), "the organization row carries the organization letter");
+  assert.equal(modeButtonFor(buildSecretsView(await secretScopeLists(await store.getChannelMeta(f.entry.slug), ownerId), f.state, { mayEdit: true, canEditOrg: false }), "ORG_MODE_KEY"), undefined, "no button for a non-admin");
+  const context = async () => ({ entry: f.entry, meta: await store.getChannelMeta(f.entry.slug), mayEdit: true, userIsAdmin: false });
+  await handleSecretsAction({ ...f, action: button, body: { user: { id: ownerId }, view: { ...adminView, id: "V_SECRETS" } } }, { context });
+  assert.equal(f.updates.at(-1).view.callback_id, "cg_channel_secrets_error");
+  assert.equal(listOrgEnv().find((v) => v.name === "ORG_MODE_KEY").protected, true, "still secret");
+  patchOrgEnv({ remove: "ORG_MODE_KEY" });
+});
+
+test("a very long Variables list drops the mode buttons instead of exceeding Slack's 100-block modal limit", () => {
+  const channel = Array.from({ length: 60 }, (_, i) => ({ name: `VAR_${i}`, last4: "1234", protected: true, hosts: ["api.example.com"] }));
+  const view = buildSecretsView({ channel }, {}, { mayEdit: true });
+  assert.ok(view.blocks.length <= 100);
+  const short = buildSecretsView({ channel: channel.slice(0, 5) }, {}, { mayEdit: true });
+  assert.equal(short.blocks.filter((b) => b.type === "actions" && b.elements[0].action_id.startsWith("cg_channel_secrets_mode_")).length, 5);
+});
