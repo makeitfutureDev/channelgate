@@ -177,7 +177,9 @@ export function resolveTargetChannel(channels, to) {
   const lower = wanted.toLowerCase();
   const byId = channels.find((c) => c.channelId === wanted);
   if (byId) return byId;
-  const matches = channels.filter((c) => c.slug === lower || String(c.name || "").toLowerCase() === lower);
+  // The channel index stores Slack names WITH their leading "#" ("#sales"); the typed name has had
+  // its own "#" removed above, so both sides are compared without it.
+  const matches = channels.filter((c) => c.slug === lower || String(c.name || "").trim().replace(/^#/, "").toLowerCase() === lower);
   return matches.length === 1 ? matches[0] : null;
 }
 
