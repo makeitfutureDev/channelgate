@@ -2012,6 +2012,9 @@ at the kernel.
   the folder picker (which offers the other roots at the primary root and stops Up at each root's
   top) and `list_folders`. A root that is removed later makes an already-stored folder under it
   fail closed at the next spawn with the remedy, like any other refusal.
+  Both browsers (`list_folders` and the picker's `/api/fs/list`, through `listSubfolderNames`)
+  list only sub-folders: a symlink appears when it resolves to a directory, never when it points at
+  a file (a channel's `AGENTS.md` → `CLAUDE.md`) or nowhere.
 - **Validated at every door; any conversation folder is allowed.** An entry must be an absolute
   path to an existing directory that realpath-resolves inside the allowlisted root and is none of
   the daemon's own trees (`sensitiveWorkDirRoots` in `src/gateway/workdir-boundary.js`: the home

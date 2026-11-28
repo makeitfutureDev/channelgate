@@ -5,6 +5,7 @@
 import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { classifyAddress } from "./ip-policy.js";
 export { classifyAddress } from "./ip-policy.js";
@@ -199,6 +200,20 @@ export function allowedRootFor(target, roots = allowedFsRoots()) {
 }
 
 // resolveWithinRoot over every allowed root: the real path when it sits inside ANY of them.
+/** Names of the sub-folders of `dir` for the folder pickers, sorted. A symlink counts only when it
+ *  resolves to a directory: a link to a regular file (a channel's AGENTS.md -> CLAUDE.md) or a
+ *  dangling link is not a folder anyone can pick. */
+export async function listSubfolderNames(dir) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const isFolder = async (e) => {
+    if (e.isDirectory()) return true;
+    if (!e.isSymbolicLink()) return false;
+    try { return (await stat(path.join(dir, e.name))).isDirectory(); } catch { return false; }
+  };
+  const kept = await Promise.all(entries.map(async (e) => ((await isFolder(e)) ? e.name : null)));
+  return kept.filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
 export function resolveWithinRoots(candidate, roots = allowedFsRoots()) {
   for (const root of roots) {
     const real = resolveWithinRoot(root, candidate);

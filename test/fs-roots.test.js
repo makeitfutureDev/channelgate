@@ -7,7 +7,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import path from "node:path";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
@@ -108,4 +108,22 @@ test("with the share as an allowed root, it can be an additional folder or a wor
   await saveSettings({ fsRoots: [] });
   assert.deepEqual(allowedFsRoots(), [PRIMARY]);
   assert.match(validateExtraFolder(COMERCIAL, { slug: chan.slug, workDir: PROJECT }).error, /outside the allowed root/);
+});
+
+test("list_folders lists directory symlinks but not links to files or dangling links", async () => {
+  const tools = new Map();
+  registerChannelAdmin({ registerTool: (name, _spec, handler) => tools.set(name, handler) }, ctxFromClaims({ channelId: "C_FSROOTS", slug: chan.slug, authorId: ADMIN, threadKey: "1700000000.000301", principalTrusted: true, engine: "claude" }));
+  const dir = ensure(path.join(PRIMARY, "Code", "listing"));
+  ensure(path.join(dir, "real-dir"));
+  writeFileSync(path.join(dir, "CLAUDE.md"), "x");
+  symlinkSync("CLAUDE.md", path.join(dir, "AGENTS.md"));
+  symlinkSync("real-dir", path.join(dir, "dir-link"));
+  symlinkSync("missing", path.join(dir, "dangling"));
+  const listed = (await tools.get("list_folders")({ path: dir })).content[0].text;
+  assert.ok(listed.includes(`📁 ${path.join(dir, "real-dir")}`), listed);
+  assert.ok(listed.includes(`📁 ${path.join(dir, "dir-link")}`), listed);
+  assert.ok(!listed.includes("AGENTS.md") && !listed.includes("CLAUDE.md") && !listed.includes("dangling"), listed);
+  // The admin UI's folder picker uses the same rule.
+  const ui = await request(`/fs/list?path=${encodeURIComponent(dir)}`);
+  assert.deepEqual(ui.json.dirs.map((d) => d.name), ["dir-link", "real-dir"]);
 });
