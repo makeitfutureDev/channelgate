@@ -64,7 +64,7 @@ test("a Chat schedule retries its saved result with Slack disconnected, without 
     assert.equal(saved.executionState, "completed");
     await scheduler.runSchedule(saved, { ...deps, deliver: async (_target, { result }) => posts.push(result) });
     assert.equal(executions, 1);
-    assert.equal(posts.at(-1).content, "saved answer");
+    assert.equal(posts.at(-1).content, "saved answer\n\nAutomation outcome not reported: The agent did not provide a valid task outcome.");
     assert.equal(schedules.getSchedules().some((item) => item.id === sched.id), false);
   } finally { clearInterval(timer); unregisterTransport("googlechat"); }
 });
@@ -87,16 +87,21 @@ test("API recovery retries delivery checkpoints and never executes an interrupte
   const db = getDb();
   const insert = (job) => db.prepare("INSERT INTO api_jobs(id,status,created_ms,data) VALUES(?,?,?,?)").run(job.id, job.status, Date.now(), toJson({ ...job, createdMs: Date.now() }));
   insert({ id: "release-api-unknown", status: "running", textForRun: "side effects may have happened" });
-  insert({ id: "release-api-output", status: "completed", slackThread: true, channelId: "C_TEST", threadKey: "123.000100", deliveryPending: true, result: { content: "durable result" } });
+  const content = "durable result\n```automation-result\n{bad json\n```";
+  insert({ id: "release-api-output", status: "completed", reportOutcome: true, slackThread: true, channelId: "C_TEST", threadKey: "123.000100", deliveryPending: true, result: { content } });
+  insert({ id: "release-api-plain-output", status: "completed", reportOutcome: false, slackThread: true, channelId: "C_TEST", threadKey: "123.000200", deliveryPending: true, result: { content } });
   let delivered = 0;
   const slack = { snapshot: () => ({ connected: true }), getClient: () => ({}) };
   await recoverApiRuns({ slack, deliver: async () => { throw new Error("offline"); } });
   assert.equal(getApiJob("release-api-unknown").status, "interrupted");
   assert.match(getApiJob("release-api-unknown").error, /not run again/);
   assert.equal(getApiJob("release-api-output").deliveryPending, true);
-  await recoverApiRuns({ slack, deliver: async (_target, args) => { assert.equal(args.result.content, "durable result"); delivered++; } });
+  await recoverApiRuns({ slack, deliver: async (_target, args) => {
+    assert.equal(args.result.content, args.threadKey === "123.000100" ? "durable result" : content);
+    delivered++;
+  } });
   await recoverApiRuns({ slack, deliver: async () => { delivered++; } });
-  assert.equal(delivered, 1);
+  assert.equal(delivered, 2);
 });
 
 test("durable intake isolates conversations, orders each conversation, and stops without waiting for engines", async () => {

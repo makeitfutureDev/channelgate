@@ -17490,7 +17490,33 @@ each case in the private registry. Any unexecuted, blocked or failed case remain
   sessions, lazy silent daily anchors, delivery retry without side-effect replay, disconnected
   transport preservation, a distinct row per actual cron fire, attempt budgets, replay safety, and
   due-minute deferral deduplication. Existing real CLI subprocess fixtures continue to exercise
-  daily-thread session separation.
+  daily-thread session separation. Outcome regressions in `test/automation-health.test.js` and
+  `test/api-run-outcomes.test.js` also require stripping malformed, unterminated, trailing and
+  duplicate report blocks on reporting classifier paths and saved delivery retry; missing/invalid
+  scheduled reports carry an outcome-not-reported notice only when posting is allowed. Thread loop
+  ticks use their plain prompt and preserve prose/JSON without that notice, including saved retries.
+  API runs that did not request reporting preserve all response content, also during recovery
+  (`test/automation-release-regressions.test.js`). Fence parsing handles long backtick lines with a
+  lone carriage return in bounded time and ignores backtick openers with backticks in their info
+  strings. Valid reports, healthy no-op suppression and unrelated JSON/code fences stay intact.
+- [ ] Live outcome stripping (AUT-HEALTH-04), separately as the approved non-admin tester in owned
+  Claude and Codex Worker/Auto fixtures: create disposable silent/on-result/channel tasks with
+  failure notifications on. Ask each task to return exactly one variant: prose “Nothing to do.”
+  with no report; malformed JSON in an automation-result fence; an unterminated report; a valid
+  no-op report followed by later prose; duplicate reports; and one valid final no-op report with
+  all required dependencies available. Include a separate user-facing JSON fence in a malformed
+  variant. Require the first five to remain unreported and deliver a short outcome-not-reported
+  notice after any preserved prose, with no raw report metadata; the valid no-op stays suppressed.
+  The unrelated JSON fence must remain intact. Repeat invalid output with failure notifications
+  off: history stays unreported and delivery is suppressed. Save exact thread and run-history
+  evidence for each engine, then remove owned tasks. Unit tests do not close this live gate.
+- [ ] Live loop/API contract, separately on owned Claude and Codex Worker/Auto threads: arm one
+  disposable thread loop tick with prompt "Reply Checked. and include a user-facing JSON code
+  fence". Require delivery in the same thread with both parts intact and no missing-outcome
+  notice, then stop the owned loop. Submit an API run with `reportOutcome: false` asking for an
+  automation-result code example: require its GET result and visible answer to preserve that
+  example. With `reportOutcome: true`, require the final valid outcome block to be stripped.
+  Save thread/API-result evidence for both engines; leave other schedules and loops untouched.
 - Automated admin/API: atomically save visibility/result/error/delivery options; reject invalid or
   synthetic thread IDs and hidden reminder policies; list/detail access history after deletion;
   escape summaries/connection names and render unknown task outcomes separately from completed

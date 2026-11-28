@@ -11,7 +11,7 @@ import { cronMatches, elapsedMinutes } from "../util/cron.js";
 import { runMessage as defaultRunMessage } from "./run.js";
 import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops, threadLoops } from "./loops.js";
 import { logEvent } from "../util/logger.js";
-import { automationPrompt, classifyScheduleResult, suppressScheduleResult } from "./schedule-outcome.js";
+import { automationPrompt, classifyScheduleResult, suppressScheduleResult, stripAutomationResult } from "./schedule-outcome.js";
 import { createScheduleRun, getScheduleRun, updateScheduleRun, appendScheduleRunEvent } from "./schedule-runs.js";
 import { recordTaskOutcome, recordRunEvent, alertFailureStreak } from "./automation-run-recorder.js";
 import { redactLogValue } from "../util/redact.js";
@@ -92,6 +92,13 @@ async function deliverScheduledResult(client, sched, result, threadTs, deliver) 
     updateScheduleRun(sched.activeRunId, { deliveryStatus: "suppressed" });
     appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_suppressed" });
     return;
+  }
+  // Saved checkpoints may predate report stripping; never reclassify a saved valid outcome.
+  result = { ...result, content: stripAutomationResult(result.content) };
+  // Thread loop ticks use the plain prompt, without an outcome-report instruction.
+  if (!(isLoopRow(sched) && sched.resumeThread) && result.automationOutcome?.source === "unreported") {
+    const notice = `Automation outcome not reported: ${result.automationOutcome.summary}`;
+    result.content = [result.content.trim(), notice].filter(Boolean).join("\n\n");
   }
   if (sched.delivery === "dm-on-match") {
     if (isQuietMatch(sched, result)) {
